@@ -69,31 +69,31 @@ Enter -> true [] | open=true row=None focus=ModeChevron model_open=false | chat=
 Tab -> true [] | open=true row=Some(6) focus=ModeChevron model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=false
 Enter -> true [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("plan"), "agent-claude")) current=Some("plan") note=None settings=true
 # presses, a chat not made yet
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
-row 1 @[514.00 120.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
-row 4 @[514.00 258.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
-row 0 @[514.00 74.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip again @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-outside @[450.00 70.50 0.00 0.00] -> None [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-change default @[745.00 363.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=true
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+row 1 @[522.00 99.00 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+row 4 @[522.00 237.00 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+row 0 @[522.00 53.00 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip again @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+outside @[458.00 49.00 0.00 0.00] -> None [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+change default @[753.00 342.00 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=true
 # presses, a made chat
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
-row 1 @[514.00 120.50 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("acceptEdits") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
-row 4 @[514.00 258.50 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("bypassPermissions") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
-row 0 @[514.00 74.50 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("default") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip again @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-outside @[450.00 70.50 0.00 0.00] -> None [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-chip @[807.00 401.50 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
-change default @[745.00 363.50 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=true
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((None, "agent-claude")) current=Some("default") note=None settings=false
+row 1 @[522.00 99.00 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("acceptEdits") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=None settings=false
+row 4 @[522.00 237.00 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("bypassPermissions") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("bypassPermissions"), "agent-claude")) current=Some("bypassPermissions") note=None settings=false
+row 0 @[522.00 53.00 0.00 0.00] -> Some(true) [update_agent_settings mode=Some("default") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip again @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+outside @[458.00 49.00 0.00 0.00] -> None [] | open=false row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+chip @[824.00 380.00 0.00 0.00] -> Some(true) [] | open=true row=None focus=ModeChevron model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=false
+change default @[753.00 342.00 0.00 0.00] -> Some(true) [] | open=false row=None focus=Composer model_open=false | chat=Some((Some("default"), "agent-claude")) current=Some("default") note=None settings=true
 # Shift+Tab, a made chat with a reply running
 chip None
 Shift+Tab -> true [update_agent_settings mode=Some("acceptEdits") fast=None] | open=false row=None focus=Composer model_open=false | chat=Some((Some("acceptEdits"), "agent-claude")) current=Some("acceptEdits") note=Some("Accept edits · applies to your next message") settings=false

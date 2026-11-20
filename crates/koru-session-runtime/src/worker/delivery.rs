@@ -141,6 +141,30 @@ pub(super) struct PendingSubmission {
     reported: BTreeSet<(AttachmentId, ReportedOutcome)>,
 }
 
+/// A retained provider response proves the exact carrier reached the agent.
+/// TurnStarted is deliberately excluded: adapters may emit it on a write.
+pub(super) fn observe_orientation(
+    state: &mut State,
+    event: &koru_session_protocol::AgentEvent,
+) -> Option<(AgentTurnId, koru_delegate_preamble::Notice)> {
+    use koru_session_protocol::AgentEvent;
+    let turn = match event {
+        AgentEvent::MessageDelta { turn_id, .. }
+        | AgentEvent::ToolStarted { turn_id, .. }
+        | AgentEvent::ApprovalRequired { turn_id, .. }
+        | AgentEvent::QuestionsRequired { turn_id, .. }
+        | AgentEvent::TurnCompleted { turn_id } => *turn_id,
+        _ => return None,
+    };
+    let key = state.orientation.owner()?;
+    let pending = state.pending_inputs.get_mut(&key)?;
+    if pending.turn_id != turn {
+        return None;
+    }
+    pending.command_sent = true;
+    state.orientation.accepted(key).map(|notice| (turn, notice))
+}
+
 impl SessionHandle {
     /// Conditional steering has its own reservation and never calls send_input.
     pub fn steer_pending_input(
@@ -602,6 +626,11 @@ impl SessionHandle {
             }
         }
 
+        if answers.is_none() {
+            state
+                .orientation
+                .preflight(input.idempotency_key, &input.text)?;
+        }
         let turn_id = AgentTurnId::mint();
         for attachment_id in &input.attachment_ids {
             let attachment = state
@@ -759,7 +788,10 @@ impl SessionHandle {
         provider: ProviderKind,
         answers: Option<QuestionsReply>,
     ) -> Result<(), ErrorCode> {
-        let candidates = {
+        let SessionIo::Managed(managed) = &self.shared.io else {
+            return Err(ErrorCode::CapabilityNotNegotiated);
+        };
+        let (candidates, text) = {
             let mut state = self.shared.lock();
             require_lease(&state, lease)?;
             if !matches!(
@@ -776,7 +808,7 @@ impl SessionHandle {
             for attachment_id in &input.attachment_ids {
                 let attachment = state
                     .attachments
-                    .get_mut(attachment_id)
+                    .get(attachment_id)
                     .ok_or(ErrorCode::AttachmentNotFound)?;
                 if attachment.delivery_mode == DeliveryMode::NativeStructured
                     && matches!(
@@ -784,7 +816,6 @@ impl SessionHandle {
                         DeliveryState::Pending | DeliveryState::Failed { .. }
                     )
                 {
-                    attachment.delivery = DeliveryState::Delivering { turn_id };
                     candidates.push(AgentAttachment {
                         id: *attachment_id,
                         kind: attachment.kind,
@@ -792,18 +823,28 @@ impl SessionHandle {
                     });
                 }
             }
-            candidates
-        };
-
-        let SessionIo::Managed(managed) = &self.shared.io else {
-            return Err(ErrorCode::CapabilityNotNegotiated);
+            let text = if answers.is_none() {
+                state
+                    .orientation
+                    .reserve(input.idempotency_key, &input.text)?
+            } else {
+                input.text.clone()
+            };
+            // Every local fallible check precedes the carrier reservation.
+            // The lock also keeps these validated attachments present.
+            for candidate in &candidates {
+                if let Some(attachment) = state.attachments.get_mut(&candidate.id) {
+                    attachment.delivery = DeliveryState::Delivering { turn_id };
+                }
+            }
+            (candidates, text)
         };
         let answered = answers.is_some();
         let response = managed.submit(
             AgentInput {
                 model: input.model.clone(),
                 turn_id,
-                text: input.text.clone(),
+                text,
                 attachments: candidates.clone(),
                 references: input.references.clone(),
                 mode: input.mode.clone(),
@@ -816,9 +857,13 @@ impl SessionHandle {
         let mut state = self.shared.lock();
         // The request was lease-authorized before dispatch. Losing that lease
         // after provider acceptance cannot undo the accepted command.
-        match response {
+        let mut notice = None;
+        let result = match response {
             Ok(()) => {
                 submission_mut(&mut state, input.idempotency_key)?.command_sent = true;
+                if !answered {
+                    notice = state.orientation.accepted(input.idempotency_key);
+                }
                 // The adapter moved the session to the turn's model: it is
                 // the one the session asks for now, and the one last
                 // reported was the old model's until the agent names one.
@@ -831,7 +876,13 @@ impl SessionHandle {
                 }
                 Ok(())
             }
-            Err(code) => {
+            Err(error) => {
+                if !answered {
+                    state
+                        .orientation
+                        .failed(input.idempotency_key, error.known_unsent);
+                }
+                let code = error.code;
                 for candidate in candidates {
                     if let Some(attachment) = state.attachments.get_mut(&candidate.id) {
                         attachment.delivery = DeliveryState::Failed {
@@ -850,7 +901,16 @@ impl SessionHandle {
                     Ok(())
                 }
             }
+        };
+        drop(state);
+        if let Some(notice) = notice {
+            self.shared
+                .apply_agent_event(koru_session_protocol::AgentEvent::Notice {
+                    turn_id,
+                    text: notice.message(koru_i18n::Lang::En),
+                });
         }
+        result
     }
 
     fn finish_pending_input(

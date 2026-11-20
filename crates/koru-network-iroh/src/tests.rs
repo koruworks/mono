@@ -13,7 +13,6 @@ use koru_sync_control::{AuthorizationSnapshot, AuthorizedPeer, ControlSessionId}
 use super::*;
 use crate::hydration::{BLOB_CHUNK_BYTES, MAX_BLOB_HYDRATION_BYTES};
 
-mod bots;
 mod profile_units;
 mod redial;
 mod root_catalog;

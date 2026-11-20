@@ -62,8 +62,40 @@ impl RunsDb {
     /// latest attempt is unretired ([`LedgerError::AttemptLive`]).
     pub fn open_attempt(&mut self, run: RunId) -> Result<AttemptRow, LedgerError> {
         self.write(WriteOp::OpenAttempt, |tx, now| {
-            crate::bots::routines::deny_run(tx, run)?;
-            open_on(tx, run, now)
+            let state: Option<String> = tx
+                .query_row(
+                    "SELECT state FROM run_intents WHERE run_id = ?1 AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.scope.kind') IN ('none','temporary','project_root','project_folder') ELSE 0 END",
+                    params![run.to_storage()],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| LedgerError::sql("read an intent", error))?;
+            let state = IntentState::parse(&state.ok_or(LedgerError::UnknownRun)?)?;
+            if state != IntentState::Satisfied {
+                return Err(LedgerError::RunNotCreated);
+            }
+            let generation = match latest(tx, run)? {
+                Some(previous) if !previous.retired => {
+                    return Err(LedgerError::AttemptLive {
+                        generation: previous.generation,
+                    });
+                }
+                Some(previous) => previous.generation.next(),
+                None => AttemptGeneration::FIRST,
+            };
+            let attempt = RunAttemptId::mint();
+            tx.execute(
+                "INSERT INTO run_attempts (run_id, generation, attempt_id, state, updated_at_ms)
+                 VALUES (?1, ?2, ?3, 'created', ?4)",
+                params![
+                    run.to_storage(),
+                    generation.get(),
+                    attempt.to_storage(),
+                    now
+                ],
+            )
+            .map_err(|error| LedgerError::sql("open an attempt", error))?;
+            current(tx, run)
         })
     }
 
@@ -116,7 +148,55 @@ impl RunsDb {
         host: HostInstanceId,
     ) -> Result<AttemptRow, LedgerError> {
         self.write(WriteOp::BindSession, |tx, now| {
-            bind_on(tx, run, generation, session, host, now)
+            let attempt = writable(tx, run, generation)?;
+            if attempt.phase.is_terminal() {
+                return Err(LedgerError::AttemptEnded {
+                    phase: attempt.phase,
+                });
+            }
+            if let Some(bound) = attempt.provider_session {
+                let same_key = bound.idempotency == session.idempotency;
+                let same_session = match (bound.session, session.session) {
+                    (Some(stored), Some(offered)) => stored == offered,
+                    _ => true,
+                };
+                if !same_key || !same_session || attempt.host_instance != Some(host) {
+                    return Err(LedgerError::SessionKeyConflict);
+                }
+            }
+            let held_elsewhere: i64 = tx
+                .query_row(
+                    "SELECT count(*) FROM run_attempts
+                      WHERE session_key = ?1 AND NOT (run_id = ?2 AND generation = ?3)",
+                    params![
+                        session.idempotency.to_string(),
+                        run.to_storage(),
+                        generation.get()
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(|error| LedgerError::sql("check a session key", error))?;
+            if held_elsewhere > 0 {
+                return Err(LedgerError::SessionKeyConflict);
+            }
+            tx.execute(
+                "UPDATE run_attempts
+                    SET session_key = ?3,
+                        session_id = COALESCE(?4, session_id),
+                        host_instance_id = ?5,
+                        updated_at_ms = ?6
+                  WHERE run_id = ?1 AND generation = ?2",
+                params![
+                    run.to_storage(),
+                    generation.get(),
+                    session.idempotency.to_string(),
+                    session.session.map(|id| id.to_string()),
+                    host.as_uuid().to_string(),
+                    now
+                ],
+            )
+            .map_err(|error| LedgerError::sql("bind a session", error))?;
+            current(tx, run)
         })
     }
 
@@ -170,7 +250,7 @@ impl RunsDb {
             self.conn(),
             &format!(
                 "SELECT {COLUMNS} FROM run_attempts
-                  WHERE retired = 0 AND state IN ('created', 'starting', 'running')
+                  WHERE EXISTS(SELECT 1 FROM run_intents i WHERE i.run_id=run_attempts.run_id AND CASE WHEN json_valid(i.payload_json) THEN coalesce(json_extract(i.payload_json, '$.scope.kind') != 'bot_folder', 1) ELSE 1 END) AND retired = 0 AND state IN ('created', 'starting', 'running')
                   ORDER BY updated_at_ms, run_id, generation"
             ),
             [],
@@ -200,91 +280,6 @@ impl RunsDb {
             projection_cursor: self.cursor(run, Projection::HeaderSummary)?,
         }))
     }
-}
-
-/// Shared insertion owner. The public ordinary entry performs marker denial;
-/// the Bot entry validates its full subject and current execution proof first.
-pub(crate) fn open_on(
-    conn: &rusqlite::Connection,
-    run: RunId,
-    now: i64,
-) -> Result<AttemptRow, LedgerError> {
-    let state: Option<String> = conn
-        .query_row(
-            "SELECT state FROM run_intents WHERE run_id=?1",
-            [run.to_storage()],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| LedgerError::sql("read an intent", error))?;
-    if IntentState::parse(&state.ok_or(LedgerError::UnknownRun)?)? != IntentState::Satisfied {
-        return Err(LedgerError::RunNotCreated);
-    }
-    let generation = match latest(conn, run)? {
-        Some(previous) if !previous.retired => {
-            return Err(LedgerError::AttemptLive {
-                generation: previous.generation,
-            });
-        }
-        Some(previous) => previous.generation.next(),
-        None => AttemptGeneration::FIRST,
-    };
-    let attempt = RunAttemptId::mint();
-    conn.execute(
-        "INSERT INTO run_attempts (run_id,generation,attempt_id,state,updated_at_ms) VALUES(?1,?2,?3,'created',?4)",
-        params![run.to_storage(),generation.get(),attempt.to_storage(),now],
-    ).map_err(|error| LedgerError::sql("open an attempt", error))?;
-    current(conn, run)
-}
-
-/// One owning bind transaction body, shared by ordinary starts and an exact
-/// retained decision successor. Callers provide their admission/decision guard.
-pub(crate) fn bind_on(
-    tx: &rusqlite::Connection,
-    run: RunId,
-    generation: AttemptGeneration,
-    session: ProviderSessionKey,
-    host: HostInstanceId,
-    now: i64,
-) -> Result<AttemptRow, LedgerError> {
-    let attempt = writable(tx, run, generation)?;
-    if attempt.phase.is_terminal() {
-        return Err(LedgerError::AttemptEnded {
-            phase: attempt.phase,
-        });
-    }
-    if let Some(bound) = attempt.provider_session {
-        let same_key = bound.idempotency == session.idempotency;
-        let same_session = match (bound.session, session.session) {
-            (Some(stored), Some(offered)) => stored == offered,
-            _ => true,
-        };
-        if !same_key || !same_session || attempt.host_instance != Some(host) {
-            return Err(LedgerError::SessionKeyConflict);
-        }
-    }
-    let held_elsewhere: i64 = tx
-        .query_row(
-            "SELECT count(*) FROM run_attempts
-         WHERE session_key=?1 AND NOT (run_id=?2 AND generation=?3)",
-            params![
-                session.idempotency.to_string(),
-                run.to_storage(),
-                generation.get()
-            ],
-            |row| row.get(0),
-        )
-        .map_err(|error| LedgerError::sql("check a session key", error))?;
-    if held_elsewhere > 0 {
-        return Err(LedgerError::SessionKeyConflict);
-    }
-    tx.execute(
-        "UPDATE run_attempts SET session_key=?3,session_id=COALESCE(?4,session_id),host_instance_id=?5,updated_at_ms=?6
-         WHERE run_id=?1 AND generation=?2",
-        params![run.to_storage(),generation.get(),session.idempotency.to_string(),
-            session.session.map(|id| id.to_string()),host.as_uuid().to_string(),now],
-    ).map_err(|error| LedgerError::sql("bind a session", error))?;
-    current(tx, run)
 }
 
 /// The current attempt, admitting only `generation` and only unretired.
@@ -322,28 +317,6 @@ pub(crate) fn latest(
     .optional()
     .map_err(|error| LedgerError::sql("read an attempt", error))?
     .transpose()
-}
-
-/// Exact historical attempt through the same decoder, with raw cells bounded
-/// before allocation. Decision origin evidence must not read the newest row.
-pub(crate) fn retained_bounded(
-    conn: &rusqlite::Connection,
-    run: RunId,
-    generation: AttemptGeneration,
-) -> Result<Option<AttemptRow>, LedgerError> {
-    conn.query_row("SELECT
-        CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END,
-        CASE WHEN typeof(generation)='integer' THEN generation END,
-        CASE WHEN typeof(attempt_id)='text' AND length(CAST(attempt_id AS BLOB))=36 THEN attempt_id END,
-        CASE WHEN typeof(state)='text' AND length(CAST(state AS BLOB))<=32 THEN state END,
-        CASE WHEN session_key IS NULL OR (typeof(session_key)='text' AND length(CAST(session_key AS BLOB))=36) THEN session_key ELSE zeroblob(1) END,
-        CASE WHEN session_id IS NULL OR (typeof(session_id)='text' AND length(CAST(session_id AS BLOB))=36) THEN session_id ELSE zeroblob(1) END,
-        CASE WHEN host_instance_id IS NULL OR (typeof(host_instance_id)='text' AND length(CAST(host_instance_id AS BLOB))=36) THEN host_instance_id ELSE zeroblob(1) END,
-        CASE WHEN typeof(retired)='integer' AND retired IN (0,1) THEN retired END,
-        CASE WHEN started_at_ms IS NULL OR typeof(started_at_ms)='integer' THEN started_at_ms ELSE zeroblob(1) END,
-        CASE WHEN typeof(updated_at_ms)='integer' THEN updated_at_ms END
-        FROM run_attempts WHERE run_id=?1 AND generation=?2",params![run.to_storage(),generation.get()],from_row)
-        .optional().map_err(|e|LedgerError::sql("read retained bounded attempt",e))?.transpose()
 }
 
 fn query<P: rusqlite::Params>(

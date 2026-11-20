@@ -40,7 +40,6 @@ use koru_draw::theme::{Ink, Line, Space, roles};
 use koru_i18n::{Key as Words, t};
 use koru_ui::button::ActionStyle;
 
-use super::controls::IconLeaf;
 use super::{BotView, SURFACE};
 use crate::bots::lifecycle::{Ask, Finished, Outcome, Stage, parked_words};
 use crate::bots::link::{Command, Failure};
@@ -121,24 +120,6 @@ impl BotView {
     /// Whether the header shows its ⋯: once there is a row to offer.
     fn shows_actions(&self) -> bool {
         !self.lifecycle_rows().is_empty()
-    }
-
-    /// The ⋯ as an element.
-    pub(super) fn actions_button(&self) -> El {
-        leaf(
-            "Bot actions",
-            IconLeaf {
-                glyph: koru_draw::icons::DOTS_THREE,
-                disabled: false,
-            },
-        )
-        .semantic()
-        .id(ACTIONS_BUTTON)
-        .hit()
-        .focusable()
-        .states(&ICON_STATES)
-        .semantics(Role::Button)
-        .name(Words::BotsActions)
     }
 
     /// **The confirmation a whole-Bot ask needs**, in the person's words:
@@ -487,6 +468,7 @@ impl BotView {
         let Some(outcome) = self.lifecycle.take_just() else {
             return;
         };
+        self.conversation_roster_dirty = true;
         // A Restore's word about the Routines goes to their pane: they stay
         // paused, and which of them need a look.
         if matches!(outcome, Outcome::Restored | Outcome::Unarchived) {
@@ -882,11 +864,6 @@ impl BotView {
     /// place.
     pub(crate) fn shows_conversation(&self) -> bool {
         !self.chat_in_trash && !self.facts.as_ref().is_some_and(|facts| facts.trashed)
-    }
-
-    /// Whether the header shows its ⋯, for the frame.
-    pub(super) fn header_shows_actions(&self) -> bool {
-        self.shows_actions()
     }
 
     /// Fold what the lifecycle shows into the accessibility fingerprint.

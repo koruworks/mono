@@ -64,7 +64,7 @@ use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
 use crate::{ChatSurface, Focus, reader::Command};
 
-mod elements;
+pub(crate) mod elements;
 pub(crate) mod input;
 mod tokens;
 

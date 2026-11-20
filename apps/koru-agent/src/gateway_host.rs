@@ -537,12 +537,12 @@ static GATEWAY: OnceLock<Supervisor> = OnceLock::new();
 pub fn start(
     paths: &Paths,
     device: koru_device::DeviceId,
-    bot_authority: koru_network_bridge::BotDelegateAuthority,
+    run_authority: koru_network_bridge::RunAuthorityCredential,
 ) -> &'static Supervisor {
     install(Supervisor::over(Box::new(worker::start(gateway_spec(
         paths,
         device,
-        Some(bot_authority),
+        Some(run_authority),
     )))))
 }
 
@@ -832,7 +832,7 @@ impl Supervisor {
 fn gateway_spec(
     paths: &Paths,
     device: koru_device::DeviceId,
-    bot_authority: Option<koru_network_bridge::BotDelegateAuthority>,
+    run_authority: Option<koru_network_bridge::RunAuthorityCredential>,
 ) -> WorkerSpec<GatewayChild> {
     let segment: String = crate::segment().into();
     let root = paths.root().to_path_buf();
@@ -859,9 +859,10 @@ fn gateway_spec(
             let launch_id = uuid::Uuid::new_v4().to_string();
             let bootstrap = koru_network_bridge::LaunchBootstrap {
                 device_id: Some(device.to_storage()),
-                bot_delegate: bot_authority.clone(),
-                bots_engine: crate::bots_host::authority()
-                    .map(koru_network_bridge::BotEngineAuthority::new),
+                run_authority: run_authority.clone(),
+                bots_engine: Some(koru_network_bridge::BotEngineAuthority::new(
+                    crate::bots_host::authority(),
+                )),
                 launch_id: launch_id.clone(),
                 bridge_version: koru_network_bridge::BRIDGE_VERSION,
                 channel: launch_segment.clone(),

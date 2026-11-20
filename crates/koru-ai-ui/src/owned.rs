@@ -63,36 +63,9 @@
 //! throughout. The seam is not tied to an owned conversation; a surface
 //! whose host never asks is unchanged, which `owned/tests.rs` pins.
 //!
-//! ## A saved copy
-//!
-//! A host may show a conversation that **another computer runs**, from the
-//! copy this computer keeps of it (Bots M8, P8.3). The surface reads and
-//! sends as it always does; what differs is said by the host, as plain
-//! data ([`ChatSurface::set_saved_copy`], [`SavedCopy`]):
-//!
-//! - **Whether anything can be sent now.** While it cannot
-//!   ([`SavedCopy::held`]), Send does nothing, the composer keeps what was
-//!   typed and its placeholder is the host's sentence. Nothing is queued,
-//!   so nothing is sent later behind the person's back.
-//! - **What a refused send means** ([`CopyOutcome`]): the host names the
-//!   refusals that are about the other computer, by code and by one detail,
-//!   with the sentence each reads as and whether the message comes back to
-//!   the composer ([`CopyDraft::Kept`]: nothing left this computer) or does
-//!   not ([`CopyDraft::Sent`]: it left, and sending it again by hand would
-//!   make a second message). A message that does not come back stays in the
-//!   composer's history, one Up away.
-//! - **What a copied message could not carry** ([`CopyNote`]): a sentence
-//!   in place of a text that was too large to copy, or one under a message
-//!   whose attachments stayed where they are.
-//!
-//! **The surface knows nothing about computers, copies or their codes.** It
-//! takes sentences and codes as data and calls nothing for them. A surface
-//! whose host never says any of this is unchanged, which `owned/tests.rs`
-//! pins.
-
 use std::path::PathBuf;
 
-use koru_ai_core::{AiProviderId, ChatId, MessageId, WorkspaceId};
+use koru_ai_core::{AiProviderId, ChatId, WorkspaceId};
 use koru_draw::geometry::Rect;
 
 use crate::ChatSurface;
@@ -140,9 +113,9 @@ pub type Refusals = &'static [(&'static str, koru_i18n::Key)];
 /// **The controls an owner admits beyond the conversation itself.** Each is
 /// absent while `false`, which is the default: the Bot owner refuses all of
 /// them today. Sending, steering, Stop, approvals and answers, the model and
-/// effort within the agent, the agent's own mode and Fast, Branch, storing a
+/// effort within the agent, the agent's own mode and Fast, storing a
 /// reply as a page, and attaching pictures and stored files are the
-/// conversation and are always offered.
+/// conversation and are offered when supported. Bot chats cannot be branched.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct OwnedOffers {
     /// Renaming the chat, and the automatic title from its first message.
@@ -187,6 +160,12 @@ pub enum Unavailable {
 }
 
 impl ChatSurface {
+    /// Bot conversations follow their latest message until the reader scrolls
+    /// away. The engine host uses this conversation flow.
+    pub(crate) fn bot_chat_flow(&self) -> bool {
+        self.owned.is_some() || self.managed.is_some()
+    }
+
     /// **A surface for a conversation a host owns**: [`Self::new_at`], whose
     /// threads connect first-party with the ordinary scopes and
     /// `bots.manage`. Bind it with [`Self::bind_owned`] before activating it,
@@ -206,6 +185,7 @@ impl ChatSurface {
         if self.owned.as_ref() == Some(&conversation) && self.unavailable.is_none() {
             return false;
         }
+        self.close_bot_work();
         let previous = self.owned.as_ref().map(|owned| owned.chat);
         let reread = self.unavailable.is_some() || previous != Some(conversation.chat);
         let chat = conversation.chat;
@@ -369,13 +349,9 @@ impl ChatSurface {
         self.owned.as_ref().map_or(&[], |owned| owned.refusals)
     }
 
-    /// **A refusal as this surface says it**: what a saved copy's host
-    /// says of it ([`CopyOutcome`]), else the host's sentence for a code it
-    /// names, else the chat's own reading ([`crate::failure_text`]).
+    /// A refusal as this surface says it: the host's sentence for a named
+    /// code, otherwise the chat's reading ([`crate::failure_text`]).
     pub(crate) fn failure_words(&self, failure: &koru_ai_wire::Failure) -> String {
-        if let Some(outcome) = self.copy_outcome(failure) {
-            return outcome.words.clone();
-        }
         crate::failure_text(failure, self.lang, self.refusals())
     }
 
@@ -396,6 +372,7 @@ impl ChatSurface {
     /// another chat stays on screen and nothing sets out to make one; the
     /// host still knows which conversation it is ([`Self::owned`]).
     pub(crate) fn owned_unavailable(&mut self, reason: Unavailable) {
+        self.close_bot_work();
         self.unavailable = Some(reason);
         self.fresh_chat_wanted = false;
         self.unmade_chat = None;
@@ -502,19 +479,6 @@ impl ChatSurface {
     /// host's own call or a path nobody drew cannot reach the service either.
     /// An ordinary surface queues everything, as it always did.
     pub(crate) fn owned_admits(&self, command: &Command) -> bool {
-        // **A held saved copy sends no turn**: the floor under the composer
-        // that keeps its draft and the controls that say why.
-        if self.copy_holds_send()
-            && matches!(
-                command,
-                Command::Send(_)
-                    | Command::Retry(..)
-                    | Command::Steer(..)
-                    | Command::AnswerQuestions(..)
-            )
-        {
-            return false;
-        }
         let Some(owned) = &self.owned else {
             return true;
         };
@@ -523,6 +487,12 @@ impl ChatSurface {
             // A new chat, and the person's own provider settings — where a
             // new chat starts — are never an owned surface's to change.
             Command::Create(_)
+            | Command::ListChats(_)
+            | Command::Branch(..)
+            | Command::Engine {
+                command: koru_ai_wire::bot_threads::Command::Branch { .. },
+                ..
+            }
             | Command::SelectProvider(_)
             | Command::UpdateOpenAi(_)
             | Command::UpdateOllama(_)
@@ -541,208 +511,6 @@ impl ChatSurface {
             Command::Retry(_, request) => !self.copied_from_elsewhere(request.message_id),
             _ => true,
         }
-    }
-}
-
-// ---------------------------------------------------- a saved copy (M8)
-
-/// **What a host says about a conversation it shows from a saved copy**:
-/// one another computer runs. Plain data; every sentence is already in the
-/// person's language and already names what it is about.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SavedCopy {
-    /// **Nothing can be sent now**, and this is why, in a sentence: the
-    /// composer's placeholder while it holds. `None` while sending is open.
-    pub held: Option<String>,
-    /// Said over the composer while a message is on its way and no reply
-    /// has begun. Empty says nothing.
-    pub sending: String,
-    /// The refusals that are about the other computer.
-    pub outcomes: Vec<CopyOutcome>,
-    /// What copied messages could not carry.
-    pub notes: Vec<CopyNote>,
-    /// Said when a page link of this conversation leads to a page this
-    /// computer does not hold ([`ChatSurface::say_page_missing`]).
-    pub page_missing: String,
-}
-
-/// **One refusal a saved copy's host names**: which failure it is, the
-/// sentence it reads as, and what becomes of the message that was sent.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CopyOutcome {
-    /// The failure's stable code.
-    pub code: String,
-    /// One of the failure's details that must also hold, as its key and its
-    /// text value. `None` matches the code alone, and is tried last.
-    pub detail: Option<(String, String)>,
-    pub draft: CopyDraft,
-    pub words: String,
-}
-
-/// What becomes of a message whose send was refused.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CopyDraft {
-    /// **Nothing left this computer**: the message is back in the composer.
-    Kept,
-    /// **It left this computer**, and whether it arrived is not known:
-    /// it does not come back to the composer, where a second Send would
-    /// make a second message. It stays in the composer's history.
-    Sent,
-}
-
-/// **What one copied message could not carry.**
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CopyNote {
-    pub message: MessageId,
-    /// Shown in the message's place: its text was not copied.
-    pub instead: Option<String>,
-    /// Shown under the message's own text.
-    pub under: Option<String>,
-}
-
-/// What the surface holds of a saved copy: the host's words, and what the
-/// last refused send came to, for the host to take.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CopyState {
-    copy: SavedCopy,
-    settled: Option<CopyDraft>,
-}
-
-impl CopyState {
-    /// What is drawn for `message` instead of its own text, when its host
-    /// said something of it.
-    pub(crate) fn shown_instead(&self, message: MessageId, markdown: &str) -> Option<String> {
-        let note = self
-            .copy
-            .notes
-            .iter()
-            .find(|note| note.message == message)?;
-        match (&note.instead, &note.under) {
-            (Some(instead), _) => Some(instead.clone()),
-            (None, Some(under)) if markdown.trim().is_empty() => Some(under.clone()),
-            // Its own paragraph under the message's text.
-            (None, Some(under)) => Some([markdown, under.as_str()].join("\n\n")),
-            (None, None) => None,
-        }
-    }
-}
-
-impl ChatSurface {
-    /// **Say that this conversation is shown from a saved copy**, or that it
-    /// no longer is (`None`). `true` when anything the surface draws
-    /// changed. What was typed is never touched: a hold keeps the draft,
-    /// and lifting it leaves the draft where it is.
-    pub fn set_saved_copy(&mut self, copy: Option<SavedCopy>) -> bool {
-        let before = self.saved_copy.as_ref().map(|state| &state.copy);
-        if before == copy.as_ref() {
-            return false;
-        }
-        let notes = before.map(|copy| &copy.notes) != copy.as_ref().map(|copy| &copy.notes);
-        let settled = self.saved_copy.as_ref().and_then(|state| state.settled);
-        self.saved_copy = copy.map(|copy| CopyState { copy, settled });
-        if notes {
-            // A message's text is laid out once and kept.
-            self.messages_dirty = true;
-        }
-        true
-    }
-
-    /// What the host said of the saved copy, while it shows one.
-    pub fn saved_copy(&self) -> Option<&SavedCopy> {
-        self.saved_copy.as_ref().map(|state| &state.copy)
-    }
-
-    /// **What the last refused send came to**, for the host: taken once.
-    /// [`CopyDraft::Sent`] is the host's cue that the copy is behind what
-    /// was sent, and that it is worth reading again when it can be.
-    pub fn take_copy_outcome(&mut self) -> Option<CopyDraft> {
-        self.saved_copy.as_mut()?.settled.take()
-    }
-
-    /// **A page link led to a page this computer does not hold**: the host
-    /// found that out and says so here, in the saved copy's own sentence.
-    /// `false` when the surface shows no saved copy or the host gave no
-    /// sentence, and nothing is said.
-    pub fn say_page_missing(&mut self) -> bool {
-        let Some(words) = self
-            .saved_copy()
-            .map(|copy| copy.page_missing.clone())
-            .filter(|words| !words.is_empty())
-        else {
-            return false;
-        };
-        self.status = Some(words);
-        true
-    }
-
-    /// Whether a saved copy holds every send: its computer is not reachable.
-    pub(crate) fn copy_holds_send(&self) -> bool {
-        self.saved_copy().is_some_and(|copy| copy.held.is_some())
-    }
-
-    /// The composer's placeholder while a saved copy holds every send.
-    pub(crate) fn copy_placeholder(&self) -> Option<&str> {
-        self.saved_copy()?.held.as_deref()
-    }
-
-    /// The line over the composer while a message is on its way to the
-    /// computer the copy came from: sent, and no reply begun.
-    pub(crate) fn copy_line(&self) -> Option<&str> {
-        let copy = self.saved_copy()?;
-        (self.pending_user.is_some() && self.attempt.is_none() && !copy.sending.is_empty())
-            .then_some(copy.sending.as_str())
-    }
-
-    /// **The outcome a saved copy's host names for `failure`**: the one
-    /// whose code and detail both match, else the one for the code alone.
-    pub(crate) fn copy_outcome(&self, failure: &koru_ai_wire::Failure) -> Option<&CopyOutcome> {
-        let outcomes = &self.saved_copy()?.outcomes;
-        let detailed = outcomes.iter().find(|outcome| {
-            outcome.code == failure.code
-                && outcome.detail.as_ref().is_some_and(|(key, value)| {
-                    failure.details.get(key).and_then(|held| held.as_str()) == Some(value.as_str())
-                })
-        });
-        detailed.or_else(|| {
-            outcomes
-                .iter()
-                .find(|outcome| outcome.code == failure.code && outcome.detail.is_none())
-        })
-    }
-
-    /// **A send was refused, and the saved copy's host names the refusal.**
-    /// The sentence is the host's. [`CopyDraft::Kept`] gives the message
-    /// back to the composer, as any refused send does; [`CopyDraft::Sent`]
-    /// does not, and leaves it in the composer's history. `false` when the
-    /// host names no outcome for it: the surface's own reading stands.
-    pub(crate) fn copy_send_failed(&mut self, failure: &koru_ai_wire::Failure) -> bool {
-        let Some((draft, words)) = self
-            .copy_outcome(failure)
-            .map(|outcome| (outcome.draft, outcome.words.clone()))
-        else {
-            return false;
-        };
-        match draft {
-            CopyDraft::Kept => self.give_back_sent(None),
-            CopyDraft::Sent => {
-                // What `give_back_sent` clears, without the composer: the
-                // message is not typed again for the person.
-                self.sent_message = None;
-                self.waiting = false;
-                self.attempt = None;
-                self.pending_assistant_message_id = None;
-                self.pending_user = None;
-                self.answering = false;
-                self.pending_user_tiles.clear();
-                self.pulse = None;
-                self.messages_dirty = true;
-            }
-        }
-        self.status = Some(words);
-        if let Some(state) = &mut self.saved_copy {
-            state.settled = Some(draft);
-        }
-        true
     }
 }
 

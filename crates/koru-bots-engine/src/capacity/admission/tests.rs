@@ -364,6 +364,12 @@ fn people_precede_routines_and_only_resumable_side_sessions_yield_early() {
     f.send(routine, 1);
     f.db.connection
         .execute(
+            "UPDATE messages SET sender='routine' WHERE thread=?1",
+            [routine.thread.to_string()],
+        )
+        .unwrap();
+    f.db.connection
+        .execute(
             "UPDATE threads SET kind='routine' WHERE id=?1",
             [routine.thread.to_string()],
         )

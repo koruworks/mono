@@ -8,8 +8,7 @@
 use std::collections::BTreeMap;
 
 pub use koru_ai_core::bots::{BotCommand, BotResponse};
-mod bot_tools;
-pub use bot_tools::*;
+pub mod bot_routines;
 pub mod bot_threads;
 use koru_ai_core::{
     AiError, AiEvent, AiProviderId, AiSearchPage, AiSurface, AiUsage, AttemptStatus, Chat, ChatId,
@@ -166,138 +165,6 @@ pub mod bot_team_codes {
     pub const TEAM_REVISION_CONFLICT: &str = "team_revision_conflict";
     /// Every code of this module.
     pub const ALL: [&str; 2] = [TEAM_PAUSED, TEAM_REVISION_CONFLICT];
-}
-
-/// Refusals of a command or a read that names a Bot another of the person's
-/// computers runs (M8, P8.3), answered by the computer that keeps a copy of
-/// it. A client shows its own localized sentence for a code and never the
-/// message. Additive: the codes of every other Bot command are unchanged,
-/// and the AI wire version is not moved by them.
-pub mod bot_linked_codes {
-    /// This change can only be made on the computer that runs the Bot.
-    /// Never retryable from here.
-    pub const EXECUTING_COMPUTER_ONLY: &str = "executing_computer_only";
-    /// The computer that runs the Bot cannot be reached, or the outcome of
-    /// what was sent is not known yet. `details.delivery` says which:
-    /// `not_sent` (nothing left this computer; keep the draft, try again
-    /// when that computer is reachable), `not_confirmed` (it was sent and
-    /// no answer came; it is sent again by itself when that computer is
-    /// reachable, never by the caller) or `unknown` (that computer cannot
-    /// say whether it took effect, and it is never sent again: look at the
-    /// conversation). Retryable only for `not_sent`.
-    pub const BOT_OWNER_UNREACHABLE: &str = "bot_owner_unreachable";
-    /// That computer and this one share no version of the protocol, or it
-    /// does not offer what was asked. One of the two needs an update.
-    pub const BOT_OWNER_UNSUPPORTED: &str = "bot_owner_unsupported";
-    /// A request id this computer already sent to that computer was used
-    /// again after it was answered. Nothing is sent a second time, and the
-    /// first answer is not kept to be given again; `details.outcome` says
-    /// how it ended (`completed`, `accepted` or `refused`, then with
-    /// `details.failure_code`). A new intent takes a new request id.
-    pub const BOT_REQUEST_ALREADY_ANSWERED: &str = "bot_request_already_answered";
-    /// The `details.delivery` values of [`BOT_OWNER_UNREACHABLE`].
-    pub const DELIVERY_NOT_SENT: &str = "not_sent";
-    pub const DELIVERY_NOT_CONFIRMED: &str = "not_confirmed";
-    pub const DELIVERY_UNKNOWN: &str = "unknown";
-    /// Every code of this module.
-    pub const ALL: [&str; 4] = [
-        EXECUTING_COMPUTER_ONLY,
-        BOT_OWNER_UNREACHABLE,
-        BOT_OWNER_UNSUPPORTED,
-        BOT_REQUEST_ALREADY_ANSWERED,
-    ];
-}
-
-/// Refusals of one Bot asking another, and of reading what it was handed
-/// back (M6). Each is answered with nothing written unless it says otherwise.
-/// A client shows its own localized sentence for a code and never the message.
-/// `details.index` names the item of the call a refusal is about, where one
-/// is. Additive: the codes of every other Bot command are unchanged, and the
-/// AI wire version is not moved by them.
-pub mod bot_child_codes {
-    /// The asking Bot's "May ask other bots" is off.
-    pub const ASK_NOT_ALLOWED: &str = "ask_not_allowed";
-    /// The recipient does not exist, belongs to another person, another home
-    /// workspace or another computer, or is archived or in Trash. One code:
-    /// nothing tells these apart. `details { index }`.
-    pub const RECIPIENT_UNAVAILABLE: &str = "recipient_unavailable";
-    /// `details { index }`.
-    pub const RECIPIENT_PAUSED: &str = "recipient_paused";
-    /// The recipient has 50 queued requests. `details { index }`.
-    pub const RECIPIENT_FULL: &str = "recipient_full";
-    /// The recipient's working folder overlaps the asking Bot's.
-    /// `details { index }`.
-    pub const RECIPIENT_FOLDER_OVERLAP: &str = "recipient_folder_overlap";
-    /// `details { index }`.
-    pub const SELF_ASK: &str = "self_ask";
-    /// This Run would make more than three requests. `details { used }`.
-    pub const RECIPIENT_LIMIT: &str = "recipient_limit";
-    /// The recipient already waits, directly or through others, on the
-    /// asking Bot. `details { index }`.
-    pub const WOULD_WAIT_ON_ITSELF: &str = "would_wait_on_itself";
-    /// The computer cannot hold another wait now, or a save of this Run is
-    /// still in flight.
-    pub const CHILD_CAPACITY: &str = "child_capacity";
-    /// Under two minutes are left of this Run's active time.
-    pub const CHILD_BUDGET_LOW: &str = "child_budget_low";
-    /// A named page is not readable by this Bot or by the recipient.
-    /// `details { index, document_id }`.
-    pub const PAGE_UNAVAILABLE: &str = "page_unavailable";
-    /// The key was used with a different list.
-    pub const ASK_KEY_CONFLICT: &str = "ask_key_conflict";
-    /// This Run has an open child wait. `details { child_request_ids }`.
-    pub const CHILD_WAIT_IN_PROGRESS: &str = "child_wait_in_progress";
-    /// The ask may have been recorded. Retry with the same key, never a new
-    /// one. Retryable.
-    pub const CHILD_STATUS_UNKNOWN: &str = "child_status_unknown";
-    /// The id is not one of this Run's requests, or the page is not one of
-    /// its result pages.
-    pub const REQUEST_NOT_FOUND: &str = "request_not_found";
-    /// The request is still open, or did not complete.
-    pub const RESULT_NOT_READY: &str = "result_not_ready";
-    /// This Bot's own read authority refuses the page.
-    /// `details { document_id }`. No content.
-    pub const RESULT_NOT_READABLE: &str = "result_not_readable";
-    /// The pinned version cannot be handed over. `details { document_id,
-    /// reason }`, with a reason from [`super::bot_child_result_reasons`].
-    /// Never the latest version.
-    pub const RESULT_VERSION_UNAVAILABLE: &str = "result_version_unavailable";
-
-    /// Every code of this module, for a client that lists them.
-    pub const ALL: [&str; 18] = [
-        ASK_NOT_ALLOWED,
-        RECIPIENT_UNAVAILABLE,
-        RECIPIENT_PAUSED,
-        RECIPIENT_FULL,
-        RECIPIENT_FOLDER_OVERLAP,
-        SELF_ASK,
-        RECIPIENT_LIMIT,
-        WOULD_WAIT_ON_ITSELF,
-        CHILD_CAPACITY,
-        CHILD_BUDGET_LOW,
-        PAGE_UNAVAILABLE,
-        ASK_KEY_CONFLICT,
-        CHILD_WAIT_IN_PROGRESS,
-        CHILD_STATUS_UNKNOWN,
-        REQUEST_NOT_FOUND,
-        RESULT_NOT_READY,
-        RESULT_NOT_READABLE,
-        RESULT_VERSION_UNAVAILABLE,
-    ];
-}
-
-/// Why `result_version_unavailable`: `details.reason`.
-pub mod bot_child_result_reasons {
-    /// The version row is not in the Store.
-    pub const MISSING: &str = "missing";
-    /// The stored bytes do not match the version's checksum.
-    pub const CORRUPT: &str = "corrupt";
-    /// The result was saved without a version id.
-    pub const NOT_PINNED: &str = "not_pinned";
-    /// The snapshot is above the read bound.
-    pub const TOO_LARGE: &str = "too_large";
-
-    pub const ALL: [&str; 4] = [MISSING, CORRUPT, NOT_PINNED, TOO_LARGE];
 }
 
 /// **Why a local agent cannot run, as far as its readiness check knows**
@@ -509,6 +376,12 @@ pub struct MessageSources {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChatTranscript {
     pub chat: Chat,
+    /// The retained pending or streaming attempt for this chat's pending
+    /// assistant message, including before any text or tool activity exists.
+    /// Its model is the accepted turn's; `chat.current_model` is the next
+    /// turn's choice. Absent on terminal history and older server responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_attempt: Option<InferenceAttempt>,
     pub tool_policy: ChatToolPolicy,
     #[serde(default)]
     pub tool_activities: Vec<ToolActivity>,
@@ -1394,38 +1267,7 @@ pub struct CancelModelPullResponse {
 
 #[cfg(test)]
 mod tests {
-    /// Cohort `m6_child_codes`: the stable codes of one Bot asking another.
-    /// M8: the team pause codes are the owner's, are stable literals, and
-    /// do not move the wire version. Neither is retryable by itself: a
-    /// paused team stays paused until a person resumes it, and a revision
-    /// conflict needs a fresh read first.
-    /// M8, P8.3: the codes a computer answers for a Bot another computer
-    /// runs are stable literals, apart from every other code of this crate,
-    /// and do not move the wire version.
-    #[test]
-    fn m8_routing_linked_codes_are_distinct_and_stable() {
-        assert_eq!(crate::AI_WIRE_VERSION, 1);
-        assert_eq!(
-            crate::bot_linked_codes::ALL,
-            [
-                "executing_computer_only",
-                "bot_owner_unreachable",
-                "bot_owner_unsupported",
-                "bot_request_already_answered"
-            ]
-        );
-        assert_eq!(
-            [
-                crate::bot_linked_codes::DELIVERY_NOT_SENT,
-                crate::bot_linked_codes::DELIVERY_NOT_CONFIRMED,
-                crate::bot_linked_codes::DELIVERY_UNKNOWN
-            ],
-            ["not_sent", "not_confirmed", "unknown"]
-        );
-        for code in crate::bot_linked_codes::ALL {
-            assert!(!crate::bot_team_codes::ALL.contains(&code), "{code}");
-        }
-    }
+    mod active_attempt;
 
     #[test]
     fn m8_team_codes_are_distinct_stable_and_match_the_owners_refusals() {
@@ -1450,94 +1292,6 @@ mod tests {
                 code.len() <= 64 && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
                 "{code}"
             );
-            assert!(!crate::bot_child_codes::ALL.contains(&code), "{code}");
-        }
-    }
-
-    /// Additive: no existing code moved and the wire version is unchanged.
-    #[test]
-    fn m6_child_codes_are_distinct_stable_and_match_the_owners_refusals() {
-        use koru_ai_core::bots::BotChildAskRefusal as Refusal;
-        assert_eq!(crate::AI_WIRE_VERSION, 1);
-        let all = crate::bot_child_codes::ALL;
-        let distinct: std::collections::BTreeSet<&str> = all.iter().copied().collect();
-        assert_eq!(distinct.len(), all.len());
-        for code in all
-            .iter()
-            .chain(crate::bot_child_result_reasons::ALL.iter())
-        {
-            assert!(
-                !code.is_empty()
-                    && code.len() <= 64
-                    && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
-                "{code}"
-            );
-        }
-        // The literals, so a rename is a visible change.
-        assert_eq!(
-            all,
-            [
-                "ask_not_allowed",
-                "recipient_unavailable",
-                "recipient_paused",
-                "recipient_full",
-                "recipient_folder_overlap",
-                "self_ask",
-                "recipient_limit",
-                "would_wait_on_itself",
-                "child_capacity",
-                "child_budget_low",
-                "page_unavailable",
-                "ask_key_conflict",
-                "child_wait_in_progress",
-                "child_status_unknown",
-                "request_not_found",
-                "result_not_ready",
-                "result_not_readable",
-                "result_version_unavailable",
-            ]
-        );
-        assert_eq!(
-            crate::bot_child_result_reasons::ALL,
-            ["missing", "corrupt", "not_pinned", "too_large"]
-        );
-        // The refusals the AI owner gives by itself answer these codes.
-        for (refusal, code) in [
-            (
-                Refusal::AskNotAllowed,
-                crate::bot_child_codes::ASK_NOT_ALLOWED,
-            ),
-            (
-                Refusal::RecipientUnavailable { index: 0 },
-                crate::bot_child_codes::RECIPIENT_UNAVAILABLE,
-            ),
-            (
-                Refusal::RecipientPaused { index: 0 },
-                crate::bot_child_codes::RECIPIENT_PAUSED,
-            ),
-            (
-                Refusal::SelfAsk { index: 0 },
-                crate::bot_child_codes::SELF_ASK,
-            ),
-            (
-                Refusal::AskKeyConflict,
-                crate::bot_child_codes::ASK_KEY_CONFLICT,
-            ),
-        ] {
-            assert_eq!(refusal.code(), code);
-        }
-        // None collides with a code another Bot command already answers.
-        for existing in [
-            "invalid_request",
-            "not_found",
-            "wrong_owner",
-            "request_conflict",
-            "revision_conflict",
-            "bot_operation_pending",
-            "connection_unavailable",
-            "decision_in_progress",
-        ] {
-            assert!(!distinct.contains(existing), "{existing}");
         }
     }
 
@@ -1546,6 +1300,7 @@ mod tests {
     fn transcript() -> ChatTranscript {
         let chat_id = ChatId::new();
         ChatTranscript {
+            active_attempt: None,
             chat: Chat {
                 id: chat_id,
                 title: "Compatibility fixture".into(),

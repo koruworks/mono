@@ -52,7 +52,9 @@ impl Fixture {
                     return seq;
                 }
                 // Its read of the team pause (M8) rides beside the list.
-                Command::Activity { .. } | Command::TeamPause { .. } => continue,
+                Command::Activity { .. }
+                | Command::TeamPause { .. }
+                | Command::ListChats { .. } => continue,
                 _ => panic!("a roster only lists"),
             }
         }
@@ -66,7 +68,9 @@ impl Fixture {
                     assert_eq!(workspace, self.home, "about the window's workspace");
                     return seq;
                 }
-                Command::List { .. } | Command::TeamPause { .. } => continue,
+                Command::List { .. } | Command::TeamPause { .. } | Command::ListChats { .. } => {
+                    continue;
+                }
                 _ => panic!("a roster only lists and reads activity"),
             }
         }
@@ -78,7 +82,10 @@ impl Fixture {
     fn nothing_asked(&self) {
         while let Ok(command) = self.commands.try_recv() {
             assert!(
-                matches!(command, Command::TeamPause { .. }),
+                matches!(
+                    command,
+                    Command::TeamPause { .. } | Command::ListChats { .. }
+                ),
                 "no request was sent"
             );
         }
@@ -103,16 +110,6 @@ impl Fixture {
                 seq,
                 workspace: self.home,
                 result: creations,
-            })
-            .expect("the roster's end is open");
-        // And its third (M8): the person's other computers, none — what a
-        // Koru that keeps no copy answers.
-        self.answers
-            .send(Answer::Linked {
-                seq: 0,
-                listing: Some(seq),
-                workspace: self.home,
-                result: Ok(Vec::new()),
             })
             .expect("the roster's end is open");
         let changed = self.roster.maintain();
@@ -361,14 +358,46 @@ fn a_stale_answer_is_ignored() {
     assert!(!f.roster.maintain(), "another workspace's reply");
     assert!(f.answer(second, Ok(vec![fresh.clone()])));
     assert_eq!(f.ids(), vec![fresh.id]);
-    // The listing is followed by its activity read (S10); answered, nothing
-    // more is owed.
-    let activity = f.activity_asked();
+    // The listing is followed by activity and conversation metadata reads.
+    // Both must answer before the roster has no outstanding navigation work.
+    let mut activity = None;
+    let mut conversations = None;
+    for command in f.commands.try_iter() {
+        match command {
+            Command::Activity { seq, workspace } => {
+                assert_eq!(workspace, f.home);
+                activity = Some(seq);
+            }
+            Command::ListChats {
+                seq,
+                bot,
+                cursor,
+                limit,
+            } => {
+                assert_eq!(bot, fresh.id);
+                assert!(cursor.is_none());
+                assert_eq!(limit, 100);
+                conversations = Some(seq);
+            }
+            Command::TeamPause { .. } => {}
+            _ => panic!("only the shown roster's reads are owed"),
+        }
+    }
     f.answers
         .send(Answer::Activity {
-            seq: activity,
+            seq: activity.expect("the activity read"),
             workspace: f.home,
             result: Ok(activity_page(Vec::new(), false)),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Chats {
+            seq: conversations.expect("the conversation metadata read"),
+            bot: fresh.id,
+            result: Ok(koru_ai_core::bots::BotChatPage {
+                chats: Vec::new(),
+                next_cursor: None,
+            }),
         })
         .unwrap();
     f.roster.maintain();
@@ -445,7 +474,10 @@ fn an_empty_roster_says_there_are_no_bots_yet() {
     assert!(frame.contains(EMPTY));
     assert!(!frame.contains(NOTICE));
     let targets: Vec<_> = frame.hits().into_iter().map(|hit| hit.key).collect();
-    assert_eq!(targets, [ARCHIVED_TOGGLE], "the filter alone");
+    assert!(
+        targets.is_empty(),
+        "global actions live in the heading menu"
+    );
     assert!(!frame.contains(CREATE), "no second New bot in the panel");
     assert!(
         !f.roster.keyboard_stops().contains(&CREATE),
@@ -520,28 +552,45 @@ fn accessibility_names_the_list_and_each_bot_in_order() {
     assert_eq!(list.role, Role::List);
     assert_eq!(list.key, Some(LIST));
     assert_eq!(names(&roots), vec!["Bots"]);
-    // The Bots, then the Archived filter's toggle (S14).
+    // Each Bot is followed by its main conversation, even when idle.
     assert_eq!(
         names(&list.children),
-        vec!["Scout", "Ledger, paused", "Show archived bots"]
+        vec![
+            "Scout",
+            "Main conversation",
+            "Ledger, paused",
+            "Main conversation"
+        ]
     );
     let keys: Vec<_> = list.children.iter().map(|node| node.key).collect();
     assert_eq!(
         keys,
         vec![
             Some(row_key(a.id)),
+            Some(activity_key(a.main_chat)),
             Some(row_key(b.id)),
-            Some(ARCHIVED_TOGGLE)
+            Some(activity_key(b.main_chat)),
         ]
     );
-    assert_eq!(list.children[2].role, Role::Button);
-    for item in &list.children[..2] {
+    for item in &list.children {
         assert_eq!(item.role, Role::ListItem);
         assert!(item.focusable);
+        assert!(item.actions.contains(&Action::Click));
+    }
+    for (index, bot) in [(0, a.id), (2, b.id)] {
+        let item = &list.children[index];
         assert_eq!(item.actions, vec![Action::Click, Action::Focus]);
+        assert!(
+            item.children
+                .iter()
+                .any(|child| { child.key == Some(more_key(bot)) && child.role == Role::Button }),
+            "each Bot exposes its own actions"
+        );
     }
     assert_eq!(list.children[0].selected, Some(true));
+    assert_eq!(list.children[2].selected, Some(false));
     assert_eq!(list.children[1].selected, Some(false));
+    assert_eq!(list.children[3].selected, Some(false));
     assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
 }
 
@@ -575,56 +624,31 @@ fn every_word_the_roster_draws_is_in_all_eight_languages() {
     }
 }
 
-/// **Focus enters on open** on the Bot last asked for, and the arrows,
-/// Home and End walk the rows by Bot; Enter asks for the Bot under the
-/// keyboard; Escape gives the keyboard back. A key the roster does not
-/// claim falls through.
 #[test]
-fn the_keyboard_walks_the_rows_and_asks_for_a_bot() {
+fn the_keyboard_walks_bots_menus_and_idle_conversations() {
     let mut f = fixture();
-    let (a, b, c) = (f.bot("A"), f.bot("B"), f.bot("C"));
-    f.shown_with(vec![a.clone(), b.clone(), c.clone()]);
-    assert!(!f.roster.key(Press::Down), "nothing without the keyboard");
-    f.roster.ask_open(b.id);
-    f.roster.take_wants_open();
+    let (a, b) = (f.bot("A"), f.bot("B"));
+    f.shown_with(vec![a.clone(), b.clone()]);
+    let expected = [
+        row_key(a.id),
+        more_key(a.id),
+        activity_key(a.main_chat),
+        row_key(b.id),
+        more_key(b.id),
+        activity_key(b.main_chat),
+    ];
+    assert_eq!(f.roster.keyboard_stops(), expected);
     assert!(f.roster.focus_first());
-    assert_eq!(
-        f.roster.focus(),
-        Some(row_key(b.id)),
-        "on the Bot last asked for"
-    );
-    assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(row_key(c.id)));
-    // Past the last Bot: the Archived filter's toggle, the last control.
-    assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(ARCHIVED_TOGGLE));
-    assert!(f.roster.key(Press::Down));
-    assert_eq!(
-        f.roster.focus(),
-        Some(ARCHIVED_TOGGLE),
-        "the last control stays the last"
-    );
-    assert!(f.roster.key(Press::Home));
-    assert_eq!(f.roster.focus(), Some(row_key(a.id)));
-    assert!(f.roster.key(Press::End));
-    assert_eq!(f.roster.focus(), Some(ARCHIVED_TOGGLE));
-    assert!(f.roster.key(Press::Up));
-    assert!(f.roster.key(Press::Up));
-    assert_eq!(f.roster.focus(), Some(row_key(b.id)));
+    for key in expected {
+        assert_eq!(f.roster.focus(), Some(key));
+        assert!(frame_of(&f.roster).contains(key));
+        f.roster.key(Press::Down);
+    }
     assert!(f.roster.key(Press::Open));
-    assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), Some(b.id));
-    assert_eq!(f.roster.selected(), Some(b.id));
+    let (bot, chat) = f.roster.take_wants_open_chat().unwrap();
+    assert_eq!((bot.id, chat), (b.id, b.main_chat));
     assert!(f.roster.key(Press::Escape));
     assert!(!f.roster.has_keyboard());
-
-    use winit::keyboard::{Key as WKey, NamedKey};
-    assert_eq!(Press::of(&WKey::Named(NamedKey::Enter)), Some(Press::Open));
-    assert_eq!(
-        Press::of(&WKey::Named(NamedKey::Delete)),
-        None,
-        "no Delete yet"
-    );
-    assert_eq!(Press::of(&WKey::Character("a".into())), None);
 }
 
 /// A press on a row asks for that Bot, through the frame's own targets; a
@@ -639,6 +663,11 @@ fn a_press_on_a_row_asks_for_its_bot() {
     let (x, y) = row.centre();
     assert!(f.roster.mouse_move(area(), top(), x, y));
     assert!(f.roster.mouse_down(area(), top(), x, y));
+    assert!(
+        f.roster.take_wants_open().is_none(),
+        "a press may become a drag"
+    );
+    assert!(f.roster.mouse_up());
     assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), Some(b.id));
     assert_eq!(f.roster.selected(), Some(b.id));
     let below = area().y + area().h - 1.0;
@@ -647,6 +676,50 @@ fn a_press_on_a_row_asks_for_its_bot() {
         "still the roster's"
     );
     assert_eq!(f.roster.take_wants_open().map(|bot| bot.id), None);
+}
+
+#[test]
+fn dragging_reorders_without_opening_and_escape_restores_the_order() {
+    let mut f = fixture();
+    let (a, b, c) = (f.bot("A"), f.bot("B"), f.bot("C"));
+    f.shown_with(vec![a.clone(), b.clone(), c.clone()]);
+    let frame = frame_of(&f.roster);
+    let (x, y) = frame.node(row_key(a.id)).unwrap().rect.centre();
+    let (_, bottom) = frame.node(row_key(c.id)).unwrap().rect.centre();
+    f.roster.mouse_down(area(), top(), x, y);
+    f.roster.mouse_move(area(), top(), x, bottom);
+    assert_eq!(f.ids(), vec![b.id, c.id, a.id]);
+    assert!(f.roster.key(Press::Escape));
+    assert_eq!(f.ids(), vec![a.id, b.id, c.id]);
+    f.roster.mouse_down(area(), top(), x, y);
+    f.roster.mouse_move(area(), top(), x, bottom);
+    f.roster.mouse_up();
+    assert!(f.roster.take_wants_open().is_none());
+    f.roster.take(Ok(vec![a.clone(), b.clone(), c.clone()]));
+    assert_eq!(
+        f.ids(),
+        vec![b.id, c.id, a.id],
+        "a refresh retains the order"
+    );
+}
+
+#[test]
+fn a_row_menu_does_not_open_the_bot_and_unread_is_independent_of_activity() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
+    f.roster.press_key(more_key(scout.id));
+    assert_eq!(f.roster.take_menu().unwrap().0, Some(scout.id));
+    assert!(f.roster.take_wants_open().is_none());
+    assert!(!f.roster.has_unread(scout.id));
+    f.roster.set_unread([scout.id].into_iter().collect());
+    assert!(f.roster.has_unread(scout.id));
+    assert!(f.roster.activity().is_empty());
+    assert!(
+        f.roster
+            .accessible_name(&RosterBot::from(scout))
+            .contains(t(f.roster.lang, Words::ChatsStatusUnread))
+    );
 }
 
 /// **Another workspace is another roster**: its rows and card go at once,
@@ -698,7 +771,6 @@ fn activity_page(
         entries: entries
             .into_iter()
             .map(|(bot_id, chat_id, state)| BotActivity {
-                waiting: None,
                 bot_id,
                 chat_id,
                 state,
@@ -767,6 +839,13 @@ fn running_and_needs_you_conversations_sit_under_their_bot() {
         })
         .unwrap();
     assert!(f.roster.maintain());
+    assert!(f.roster.animating());
+    f.roster.set_reduced_motion(true);
+    assert!(!f.roster.animating());
+    f.roster.set_reduced_motion(false);
+    f.roster.shown = false;
+    assert!(!f.roster.animating());
+    f.roster.shown = true;
     let frame = frame_of(&f.roster);
     assert!(frame.contains(activity_key(scout.main_chat)));
     assert!(frame.contains(activity_key(other)));
@@ -1056,11 +1135,11 @@ fn an_unfinished_rows_state_has_the_rows_width_and_overlaps_nothing() {
                 rect(creation_state_key(stuck.request_id)),
                 rect(creation_retry_key(stuck.request_id)),
                 rect(creation_abandon_key(stuck.request_id)),
-                rect(ARCHIVED_TOGGLE),
+                rect(UNFINISHED_HEADING),
             )
         })
     };
-    let (state, retry, abandon, toggle) = rects(narrow);
+    let (state, retry, abandon, heading) = rects(narrow);
     assert!(
         state.w >= narrow.w * 0.75,
         "the state has the row's width: {state:?} in {narrow:?}"
@@ -1070,8 +1149,8 @@ fn an_unfinished_rows_state_has_the_rows_width_and_overlaps_nothing() {
         "under the name and its buttons: {state:?} {retry:?} {abandon:?}"
     );
     assert!(
-        toggle.y >= state.y + state.h - 0.5,
-        "Show archived bots starts below it: {toggle:?} {state:?}"
+        heading.y + heading.h <= retry.y + 0.5,
+        "the group's heading stays above its row: {heading:?} {retry:?}"
     );
     let (wide_state, ..) = rects(wide);
     assert!(
@@ -1687,6 +1766,7 @@ fn the_keyboard_walks_the_activity_sub_rows_and_enter_opens_one() {
     assert!(f.roster.set_focus(scout.id));
     assert!(f.roster.key(Press::Down));
     assert!(f.roster.key(Press::Down));
+    assert!(f.roster.key(Press::Down));
     assert_eq!(f.roster.focus(), Some(activity_key(other)));
     assert!(f.roster.key(Press::Open));
     let (bot, chat) = f.roster.take_wants_open_chat().expect("asked");
@@ -1773,10 +1853,11 @@ fn the_keyboard_walks_unfinished_and_archived_controls_and_enter_presses_them() 
     assert!(f.roster.focus_first());
     let walk = [
         row_key(scout.id),
+        more_key(scout.id),
+        activity_key(scout.main_chat),
         creation_retry_key(stuck.request_id),
         creation_abandon_key(stuck.request_id),
         creation_abandon_key(ended.request_id),
-        ARCHIVED_TOGGLE,
     ];
     assert_eq!(f.roster.keyboard_stops(), walk);
     for (at, key) in walk.iter().enumerate() {
@@ -1786,8 +1867,8 @@ fn the_keyboard_walks_unfinished_and_archived_controls_and_enter_presses_them() 
     // Every stop is drawn: the keyboard never lands on what is not there.
     let frame = frame_of(&f.roster);
     assert!(walk.iter().all(|key| frame.contains(*key)));
-    // Enter on the toggle opens the Archived filter, through its press.
-    assert!(f.roster.key(Press::Open));
+    // The heading menu opens the Archived filter.
+    assert!(f.roster.toggle_archived());
     assert!(f.roster.archived_open());
     f.roster.maintain();
     let seq = archived_asked(&f);
@@ -1810,11 +1891,13 @@ fn the_keyboard_walks_unfinished_and_archived_controls_and_enter_presses_them() 
     assert!(f.roster.maintain());
     assert_eq!(
         f.roster.focus(),
-        Some(ARCHIVED_TOGGLE),
-        "kept on the toggle"
+        Some(creation_abandon_key(ended.request_id)),
+        "kept on the last unfinished action"
     );
     assert!(f.roster.key(Press::Down));
     assert_eq!(f.roster.focus(), Some(archived_key(archived.id)));
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(more_key(archived.id)));
     assert!(f.roster.key(Press::Down));
     assert_eq!(f.roster.focus(), Some(unarchive_key(archived.id)));
     // Enter on Unarchive sends the Restore naming the Archive.
@@ -1833,6 +1916,8 @@ fn the_keyboard_walks_unfinished_and_archived_controls_and_enter_presses_them() 
     // Up from the archived row, back through the Unfinished controls; Enter
     // on Retry retries it by its request.
     f.roster.set_focus(scout.id);
+    assert!(f.roster.key(Press::Down));
+    assert!(f.roster.key(Press::Down));
     assert!(f.roster.key(Press::Down));
     assert_eq!(f.roster.focus(), Some(creation_retry_key(stuck.request_id)));
     assert!(f.roster.key(Press::Open));
@@ -1983,115 +2068,6 @@ fn an_archived_rows_unarchive_is_published_and_no_empty_group_is_drawn() {
     assert!(unarchive.actions.contains(&accesskit::Action::Click));
 }
 
-/// Cohort `m6_ui_roster_waiting` (contract 7.4): **a conversation waiting on
-/// other Bots says whom it waits for**, by name when the roster lists that
-/// Bot, by count for several, and in its paused forms; a Bot the roster does
-/// not list reads as *another bot*, never as an id.
-#[test]
-fn m6_ui_roster_waiting_says_whom_it_waits_for() {
-    use koru_ai_core::bots::BotActivityWaiting;
-    let scout = BotId::mint();
-    let name_of = |id: BotId| (id == scout).then(|| "Scout".to_owned());
-    let waiting = |on: Vec<BotId>, paused| BotActivityWaiting { on, paused };
-    let lang = Lang::En;
-    assert_eq!(
-        waiting_words(lang, Some(&waiting(vec![scout], false)), name_of),
-        "Waiting for Scout"
-    );
-    assert_eq!(
-        waiting_words(lang, Some(&waiting(vec![scout], true)), name_of),
-        "Paused, waiting for Scout"
-    );
-    assert_eq!(
-        waiting_words(
-            lang,
-            Some(&waiting(vec![scout, BotId::mint(), BotId::mint()], false)),
-            name_of
-        ),
-        "Waiting for 3 bots"
-    );
-    assert_eq!(
-        waiting_words(
-            lang,
-            Some(&waiting(vec![scout, BotId::mint()], true)),
-            name_of
-        ),
-        "Paused, waiting for 2 bots"
-    );
-    assert_eq!(
-        waiting_words(lang, Some(&waiting(vec![BotId::mint()], false)), name_of),
-        "Waiting for another bot"
-    );
-    assert_eq!(
-        waiting_words(lang, None, name_of),
-        "Waiting for another bot"
-    );
-}
-
-/// **Waiting ranks below Needs you and above Running** for a Bot's sub-rows
-/// (contract 7.4), drawn and walked by the keyboard in that order; the
-/// sub-row and the Bot's row say it in words, and a waiting Bot's face does
-/// not move — it is not working.
-#[test]
-fn m6_ui_roster_waiting_ranks_between_needs_you_and_running() {
-    use koru_ai_core::bots::BotActivityWaiting;
-    let planner = RosterBot::from(bot(BotId::mint(), WorkspaceId::new(), "Planner", false));
-    let scout = RosterBot::from(bot(BotId::mint(), WorkspaceId::new(), "Scout", false));
-    let mut roster = BotsRoster::new();
-    roster.set_lang(Lang::En);
-    roster.listed_for_test(vec![planner.clone(), scout.clone()]);
-    let entry = |state, waiting| BotActivity {
-        bot_id: planner.id,
-        chat_id: koru_ai_core::ChatId::new(),
-        state,
-        waiting,
-    };
-    let running = entry(BotActivityState::Running, None);
-    let waits = entry(
-        BotActivityState::Waiting,
-        Some(BotActivityWaiting {
-            on: vec![scout.id],
-            paused: false,
-        }),
-    );
-    let needs = entry(BotActivityState::NeedsYou, None);
-    roster.activity_read_for_test(
-        vec![running.clone(), waits.clone(), needs.clone()],
-        false,
-        std::time::Instant::now(),
-    );
-    let order: Vec<_> = roster
-        .activity_rows_of(planner.id)
-        .into_iter()
-        .map(|entry| entry.chat_id)
-        .collect();
-    assert_eq!(order, [needs.chat_id, waits.chat_id, running.chat_id]);
-    assert_eq!(
-        roster.state_words(&waits).as_deref(),
-        Some("Waiting for Scout")
-    );
-    assert!(
-        roster
-            .activity_name(&planner, &waits)
-            .ends_with(", Waiting for Scout")
-    );
-    assert_eq!(
-        roster.accessible_name(&planner),
-        "Planner, waiting for another bot"
-    );
-    assert_eq!(roster.accessible_name(&scout), "Scout");
-    assert_eq!(
-        roster.running_bots().collect::<Vec<_>>(),
-        [planner.id],
-        "only the running conversation moves the face"
-    );
-    // Drawn, the sub-rows stand in the same order the keyboard walks.
-    let frame = frame_of(&roster);
-    let y = |chat| frame.node(activity_key(chat)).expect("a sub-row").rect.y;
-    assert!(y(needs.chat_id) < y(waits.chat_id));
-    assert!(y(waits.chat_id) < y(running.chat_id));
-}
-
 // ------------------------------------------------ pause all Bots (M8)
 
 impl Fixture {
@@ -2100,7 +2076,9 @@ impl Fixture {
         loop {
             match self.commands.try_recv().expect("a team read was sent") {
                 Command::TeamPause { seq } => return seq,
-                Command::List { .. } | Command::Activity { .. } => continue,
+                Command::List { .. } | Command::Activity { .. } | Command::ListChats { .. } => {
+                    continue;
+                }
                 _ => panic!("a roster only lists, reads activity and the team pause"),
             }
         }
@@ -2123,7 +2101,10 @@ impl Fixture {
         loop {
             match self.commands.try_recv().expect("a team change was sent") {
                 Command::SetTeamPause { change } => return change,
-                Command::List { .. } | Command::Activity { .. } | Command::TeamPause { .. } => {
+                Command::List { .. }
+                | Command::Activity { .. }
+                | Command::TeamPause { .. }
+                | Command::ListChats { .. } => {
                     continue;
                 }
                 _ => panic!("not a team change"),
@@ -2174,19 +2155,22 @@ fn m8_ui_team_pause_the_roster_draws_the_control_and_never_an_unconfirmed_state(
 
     let seq = f.team_asked();
     f.team_read(seq, 0, false, true);
-    assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_some());
+    assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_none());
     assert!(frame_of(&f.roster).node(TEAM_LINE).is_none());
-    assert!(published(&f.roster).contains(&"Pause all Bots".to_owned()));
-    assert_eq!(f.roster.keyboard_stops().first(), Some(&TEAM_CONTROL));
+    assert_eq!(
+        f.roster.team().control().unwrap().words,
+        Words::BotsTeamPauseAll
+    );
+    assert_eq!(f.roster.keyboard_stops().first(), Some(&row_key(scout.id)));
     // The keyboard still enters on a Bot; the control is one Up away.
     assert!(f.roster.focus_first());
     assert_eq!(f.roster.focus(), Some(row_key(scout.id)));
     assert!(f.roster.key(Press::Up));
-    assert_eq!(f.roster.focus(), Some(TEAM_CONTROL));
+    assert_eq!(f.roster.focus(), Some(row_key(scout.id)));
 
     // Enter on it asks first, and sends nothing.
     while f.commands.try_recv().is_ok() {}
-    assert!(f.roster.key(Press::Open));
+    assert!(f.roster.press_team());
     assert!(f.roster.take_team_pause_ask());
     assert!(!f.roster.take_team_pause_ask(), "taken once");
     f.nothing_asked();
@@ -2198,7 +2182,10 @@ fn m8_ui_team_pause_the_roster_draws_the_control_and_never_an_unconfirmed_state(
     assert_eq!((change.paused, change.expected), (true, 0));
     assert_eq!(f.roster.team().state(), TeamState::Pausing);
     let labels = published(&f.roster);
-    assert!(labels.contains(&"Pausing…".to_owned()));
+    assert_eq!(
+        f.roster.team().control().unwrap().words,
+        Words::BotsTeamPausing
+    );
     assert!(labels.contains(&"Waiting for Koru on this computer to confirm.".to_owned()));
     assert!(!labels.contains(&"Pause all Bots".to_owned()));
     assert!(!labels.contains(&"Resume all Bots".to_owned()));
@@ -2234,7 +2221,10 @@ fn m8_ui_team_pause_the_roster_draws_the_control_and_never_an_unconfirmed_state(
     f.team_read(seq, 1, true, true);
     assert_eq!(f.roster.team().state(), TeamState::Paused);
     let labels = published(&f.roster);
-    assert!(labels.contains(&"Resume all Bots".to_owned()));
+    assert_eq!(
+        f.roster.team().control().unwrap().words,
+        Words::BotsTeamResumeAll
+    );
     assert!(labels.contains(&"All Bots are paused. Nothing new will start.".to_owned()));
     assert_eq!(
         f.roster.accessible_name(&RosterBot::from(scout.clone())),
@@ -2251,7 +2241,10 @@ fn m8_ui_team_pause_the_roster_draws_the_control_and_never_an_unconfirmed_state(
     assert!(!f.roster.take_team_pause_ask());
     let change = f.team_change();
     assert_eq!((change.paused, change.expected), (false, 1));
-    assert!(published(&f.roster).contains(&"Resuming…".to_owned()));
+    assert_eq!(
+        f.roster.team().control().unwrap().words,
+        Words::BotsTeamResuming
+    );
     f.answers
         .send(Answer::TeamPause {
             seq: 0,
@@ -2295,597 +2288,10 @@ fn m8_ui_team_pause_a_hidden_roster_reads_nothing() {
     assert!(f.roster.maintain());
     let seq = f.team_asked();
     f.team_read(seq, 1, true, true);
-    assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_some());
-    assert!(published(&f.roster).contains(&"Resume all Bots".to_owned()));
-    assert_eq!(f.roster.keyboard_stops().first(), Some(&TEAM_CONTROL));
-}
-
-// ------------------------------- the person's other computers (M8)
-
-use crate::bots::linked::tests::computer;
-use crate::bots::linked::{Computer, Names};
-use koru_ai_core::bots::{DeviceId, LinkedOwnerState};
-
-impl Fixture {
-    /// Answer the listing's third answer — the person's other computers and
-    /// their Bots here — as the link's thread does. `true` when what the
-    /// roster draws changed.
-    fn linked(&mut self, computers: Vec<Computer>) -> bool {
-        self.answers
-            .send(Answer::Linked {
-                seq: 0,
-                listing: Some(self.roster.seq),
-                workspace: self.home,
-                result: Ok(computers),
-            })
-            .expect("the roster's end is open");
-        let changed = self.roster.maintain();
-        let _ = frame_of(&self.roster);
-        changed
-    }
-
-    /// A Bot `device` runs, whose home is the roster's workspace.
-    fn remote(&self, device: DeviceId, name: &str) -> Bot {
-        let mut bot = self.bot(name);
-        bot.owner_device = device;
-        bot
-    }
-
-    /// The read of the other computers' states the roster's clock just
-    /// sent: its sequence. Anything else in the queue is passed over.
-    fn linked_asked(&self) -> Option<u64> {
-        std::iter::from_fn(|| self.commands.try_recv().ok()).find_map(|command| match command {
-            Command::Linked { seq, workspace } => {
-                assert_eq!(workspace, self.home, "about the window's workspace");
-                Some(seq)
-            }
-            _ => None,
-        })
-    }
-
-    /// Every label the roster publishes, flattened, in order.
-    fn published(&self) -> Vec<String> {
-        fn walk(node: &koru_workspace_host::accessibility::SemanticNode, out: &mut Vec<String>) {
-            out.push(node.label.clone().unwrap_or_default());
-            for child in &node.children {
-                walk(child, out);
-            }
-        }
-        let mut out = Vec::new();
-        for node in &crate::panes::explore::accessibility::roster_tree(&self.roster) {
-            walk(node, &mut out);
-        }
-        out
-    }
-}
-
-/// **With no linked Bots the roster is exactly today's roster.** A Koru
-/// that keeps no copy answers the linked read with no computer (a Koru with
-/// no linked computer, or a build whose gateway keeps
-/// `LINKED_BOT_CONTROL_AVAILABLE` `false`); the roster then draws, lays
-/// out, publishes and walks precisely what it did before that answer
-/// existed, sends nothing more, and keeps no clock. The same when that read
-/// is refused or lost.
-#[test]
-fn m8_ui_linked_roster_no_linked_bots_is_todays_roster() {
-    let mut f = fixture();
-    let (scout, otter) = (f.bot("Scout"), f.bot("Otter"));
-    f.roster.set_shown(true);
-    assert!(f.roster.maintain());
-    let seq = f.asked();
-    // The listing as it was answered before M8: the Bots, then the
-    // unfinished creations. Nothing about other computers yet.
-    f.answers
-        .send(Answer::Listed {
-            seq,
-            workspace: f.home,
-            result: Ok(vec![scout.clone(), otter.clone()]),
-        })
-        .unwrap();
-    f.answers
-        .send(Answer::Creations {
-            seq,
-            workspace: f.home,
-            result: Ok(Listing::all(Vec::new())),
-        })
-        .unwrap();
-    assert!(f.roster.maintain());
-    while f.commands.try_recv().is_ok() {}
-
-    let picture = |roster: &BotsRoster| {
-        let frame = frame_of(roster);
-        let rects: Vec<_> = [
-            LIST,
-            ARCHIVED_TOGGLE,
-            row_key(scout.id),
-            row_key(otter.id),
-            runs_here_key(scout.id),
-        ]
-        .into_iter()
-        .map(|key| frame.node(key).map(|node| node.rect))
-        .collect();
-        (
-            crate::panes::explore::accessibility::roster_tree(roster),
-            roster.keyboard_stops(),
-            rects,
-            format!("{:?}", roster.notice()),
-        )
-    };
-    let before = picture(&f.roster);
-    let asked_before = f.roster.work().commands;
-
-    for answer in [
-        Ok(Vec::new()),
-        Err(Failure::lost()),
-        Err(Failure::Refused("forbidden".into())),
-    ] {
-        f.answers
-            .send(Answer::Linked {
-                seq: 0,
-                listing: Some(seq),
-                workspace: f.home,
-                result: answer,
-            })
-            .unwrap();
-        assert!(!f.roster.maintain(), "nothing to draw again");
-        assert!(f.roster.linked().is_empty());
-        assert_eq!(picture(&f.roster), before, "today's roster, to the pixel");
-        assert_eq!(f.roster.work().commands, asked_before, "nothing more asked");
-        assert!(
-            f.commands.try_recv().is_err(),
-            "and no read of other computers is sent"
-        );
-    }
-    // No clock of its own: only what the roster already owed (its activity
-    // read) keeps the window awake, and once that answers, nothing does.
-    assert!(!f.roster.linked().awaiting());
-    assert_eq!(f.roster.linked_deadline(), None, "never a reason to wake");
-    assert!(!f.roster.linked.due_for_test(), "no clock to come due");
-    // No group, no heading, no sentence of another computer's anywhere.
-    let frame = frame_of(&f.roster);
-    assert!(
-        format!("{:?}", f.published())
-            .to_lowercase()
-            .find("on another computer")
-            .is_none()
-    );
-    assert_eq!(f.roster.rows().count(), 2);
-    assert!(f.roster.bots().iter().all(|bot| bot.owner.is_none()));
-    assert!(frame.node(runs_here_key(otter.id)).is_some());
-}
-
-/// **The roster groups Bots by computer** (contract 6.3): this computer's
-/// first, as always, then one group per other computer — *On {computer}*
-/// and how current its copy is — with that computer's Bots under it and the
-/// count of those it does not copy. A remote row opens its Bot's tab like
-/// any row and names the computer that runs it.
-#[test]
-fn m8_ui_linked_roster_groups_bots_by_computer() {
-    let mut f = fixture();
-    let scout = f.bot("Scout");
-    f.shown_with(vec![scout.clone()]);
-    let (desk, laptop) = (DeviceId::new(), DeviceId::new());
-    assert!(
-        !f.roster
-            .set_computer_names(Names::new([(desk, "Desk".to_owned())])),
-        "no group yet: nothing to draw again"
-    );
-    let (otter, wren, finch) = (
-        f.remote(desk, "Otter"),
-        f.remote(desk, "Wren"),
-        f.remote(laptop, "Finch"),
-    );
-    let mut far = computer(
-        laptop,
-        LinkedOwnerState::Stale,
-        Some(1_000),
-        vec![finch.clone()],
-    );
-    far.withheld = 3;
-    assert!(f.linked(vec![
-        computer(
-            desk,
-            LinkedOwnerState::Current,
-            Some(5),
-            vec![otter.clone(), wren.clone()],
-        ),
-        far,
-    ]));
-    assert_eq!(f.roster.linked().computers().count(), 2);
-
-    // What each heading says.
-    let groups: Vec<String> = f
-        .roster
-        .linked()
-        .computers()
-        .map(|computer| f.roster.linked_group_name(computer))
-        .collect();
-    assert_eq!(groups[0], "On Desk, Connected");
-    assert!(
-        groups[1].starts_with("On another computer, Last updated "),
-        "a computer the window cannot name: {}",
-        groups[1]
-    );
-
-    // Where everything stands: this computer's Bot, then each group's
-    // heading over its own Bots, then the Archived filter.
-    let frame = frame_of(&f.roster);
-    let y = |key: Key| {
-        frame
-            .node(key)
-            .unwrap_or_else(|| panic!("{key:?} is drawn"))
-            .rect
-            .y
-    };
-    let order = [
-        row_key(scout.id),
-        linked_key(desk, LINKED_HEADING_PART),
-        row_key(otter.id),
-        row_key(wren.id),
-        linked_key(laptop, LINKED_HEADING_PART),
-        linked_key(laptop, LINKED_WITHHELD_PART),
-        row_key(finch.id),
-        ARCHIVED_TOGGLE,
-    ];
-    for pair in order.windows(2) {
-        assert!(y(pair[0]) < y(pair[1]), "{:?} above {:?}", pair[0], pair[1]);
-    }
-    assert!(frame.node(linked_key(desk, LINKED_STATE_PART)).is_some());
-    assert!(
-        frame.node(linked_key(desk, LINKED_WITHHELD_PART)).is_none(),
-        "Desk copies all its Bots"
-    );
-    assert!(
-        frame.node(linked_key(desk, LINKED_UPDATE_PART)).is_none(),
-        "and needs no update"
-    );
-    assert!(
-        frame.node(linked_key(desk, LINKED_REFRESH_PART)).is_none(),
-        "no refresh the host did not offer"
-    );
-    // *Runs on this computer* is this computer's Bots' mark only.
-    assert!(frame.node(runs_here_key(scout.id)).is_some());
-    assert!(frame.node(runs_here_key(otter.id)).is_none());
-
-    // As an assistive technology hears it.
-    let published = f.published();
-    for words in [
-        "Scout",
-        "On Desk, Connected",
-        "Otter",
-        "Wren",
-        "Finch",
-        "3 Bots on another computer are in a workspace kept on that computer only. Their \
-         history is not available here.",
-    ] {
-        assert!(
-            published.iter().any(|label| label == words),
-            "{words}: {published:?}"
-        );
-    }
-
-    // A name the window learns later is the heading's at once.
-    assert!(f.roster.set_computer_names(Names::new([
-        (desk, "Desk".to_owned()),
-        (laptop, "Laptop".to_owned()),
-    ])));
-    let _ = frame_of(&f.roster);
-    assert!(
-        f.published()
-            .iter()
-            .any(|label| { label.starts_with("On Laptop, Last updated ") })
-    );
-
-    // A press on a remote row asks for its tab, as any row's does.
-    let rect = frame_of(&f.roster)
-        .node(row_key(otter.id))
-        .expect("Otter's row")
-        .rect;
-    assert!(
-        f.roster
-            .mouse_down(area(), top(), rect.x + rect.w * 0.5, rect.y + rect.h * 0.5)
-    );
-    let opened = f.roster.take_wants_open().expect("its tab is asked for");
-    assert_eq!(opened.id, otter.id);
-    assert_eq!(opened.owner, Some(desk), "the tab is a saved copy's");
-    assert_eq!(f.roster.selected(), Some(otter.id));
+    assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_none());
     assert_eq!(
-        f.roster.bot_for_chat(otter.main_chat).map(|bot| bot.id),
-        Some(otter.id),
-        "and a link to its conversation finds its Bot"
+        f.roster.team().control().unwrap().words,
+        Words::BotsTeamResumeAll
     );
-
-    // This computer's own rows are what they were.
-    assert_eq!(f.ids(), [scout.id]);
-    assert!(f.roster.bots().iter().all(|bot| bot.owner.is_none()));
-
-    // *New bot* on a linked desktop is today's *New bot* (contract 6.4):
-    // the same one request to the window, which creates on this computer.
-    // No group offers a create of its own, and none is asked for another
-    // computer.
-    assert!(!f.roster.take_wants_create());
-    assert!(f.roster.ask_create());
-    assert!(f.roster.take_wants_create());
-    assert!(!f.roster.take_wants_create(), "asked once");
-    assert!(
-        !f.published()
-            .iter()
-            .any(|label| label == t(Lang::En, Words::BotsCreate)),
-        "no second create under another computer's heading"
-    );
-}
-
-/// **A computer's Bots it does not copy are said under its heading, with
-/// or without Bots of its own here** (contract 6.3, D22), and so is a Koru
-/// that needs an update or from which nothing came yet. A computer with
-/// nothing to say in this workspace has no group at all.
-#[test]
-fn m8_ui_withheld_bots_and_what_cannot_be_shown_stand_under_the_heading() {
-    let mut f = fixture();
-    f.shown_with(Vec::new());
-    assert!(frame_of(&f.roster).node(EMPTY).is_some(), "no Bot anywhere");
-    let (kept, old, fresh, quiet) = (
-        DeviceId::new(),
-        DeviceId::new(),
-        DeviceId::new(),
-        DeviceId::new(),
-    );
-    f.roster.set_computer_names(Names::new([
-        (kept, "Desk".to_owned()),
-        (old, "Attic".to_owned()),
-        (fresh, "Den".to_owned()),
-        (quiet, "Shed".to_owned()),
-    ]));
-    let mut withholding = computer(kept, LinkedOwnerState::Current, None, Vec::new());
-    withholding.withheld = 1;
-    assert!(f.linked(vec![
-        withholding,
-        computer(old, LinkedOwnerState::Unsupported, Some(4), Vec::new()),
-        computer(fresh, LinkedOwnerState::Never, None, Vec::new()),
-        // Connected, and all its Bots live in other workspaces.
-        computer(quiet, LinkedOwnerState::Current, None, Vec::new()),
-    ]));
-    let frame = frame_of(&f.roster);
-    assert!(
-        frame.node(EMPTY).is_none(),
-        "*No bots yet* is not said over another computer's groups"
-    );
-    assert!(frame.node(linked_key(kept, LINKED_WITHHELD_PART)).is_some());
-    assert!(frame.node(linked_key(old, LINKED_UPDATE_PART)).is_some());
-    assert!(frame.node(linked_key(fresh, LINKED_HEADING_PART)).is_some());
-    assert!(
-        frame.node(linked_key(quiet, LINKED_HEADING_PART)).is_none(),
-        "nothing to say here: no group"
-    );
-    let published = f.published();
-    for words in [
-        "On Desk, Connected",
-        "1 Bot on Desk is in a workspace kept on that computer only. Its history is not \
-         available here.",
-        "On Attic, Needs an update",
-        "Koru on Attic needs an update to show its Bots here.",
-        "On Den, Nothing received yet",
-    ] {
-        assert!(
-            published.iter().any(|label| label == words),
-            "{words}: {published:?}"
-        );
-    }
-    assert!(!published.iter().any(|label| label.contains("Shed")));
-    // No name of a withheld Bot exists to say: only the count.
-    assert_eq!(f.roster.rows().count(), 0);
-}
-
-/// ***Paused with the team* on a remote row is that computer's own pause**,
-/// as it last sent it — never this computer's, and never the other way
-/// round. A Bot paused on its own says *Paused*.
-#[test]
-fn m8_ui_linked_roster_a_remote_row_says_its_own_computers_team_pause() {
-    use koru_ai_core::bots::{TeamPauseStage, TeamPauseView};
-    let mut f = fixture();
-    let scout = f.bot("Scout");
-    f.shown_with(vec![scout.clone()]);
-    let desk = DeviceId::new();
-    let otter = f.remote(desk, "Otter");
-    let mut napping = f.remote(desk, "Wren");
-    napping.paused = true;
-    let mut paused = computer(
-        desk,
-        LinkedOwnerState::Current,
-        None,
-        vec![otter.clone(), napping.clone()],
-    );
-    paused.team = Some(TeamPauseView {
-        owner_device: desk,
-        paused: true,
-        revision: 2,
-        stage: TeamPauseStage::Acknowledged,
-        pending_since_ms: None,
-    });
-    assert!(f.linked(vec![paused]));
-    let name = |id| {
-        let row = f.roster.row(id).expect("listed").clone();
-        f.roster.accessible_name(&row)
-    };
-    assert_eq!(name(otter.id), "Otter, paused with the team");
-    assert_eq!(name(napping.id), "Wren, paused");
-    assert_eq!(
-        name(scout.id),
-        "Scout",
-        "this computer's team is not paused"
-    );
-    assert!(!f.roster.team().holds_bots());
-}
-
-/// **The keyboard walks another computer's rows as it walks this
-/// computer's** (contract 9.3: tab order and focus return): Down from the
-/// last local Bot reaches the first remote one, Enter opens it, and
-/// *Refresh this copy* is a stop of its own only while the host offers it
-/// and its computer is connected. When what the keyboard was on leaves —
-/// the refresh a computer out of reach no longer offers, a Bot a copy no
-/// longer lists — the keyboard stays in the roster, on its first control.
-#[test]
-fn m8_ui_linked_keyboard_walks_remote_rows_and_stays_in_the_roster() {
-    let mut f = fixture();
-    let scout = f.bot("Scout");
-    f.shown_with(vec![scout.clone()]);
-    let desk = DeviceId::new();
-    let (otter, wren) = (f.remote(desk, "Otter"), f.remote(desk, "Wren"));
-    let group = |state| computer(desk, state, Some(1), vec![otter.clone(), wren.clone()]);
-    assert!(f.linked(vec![group(LinkedOwnerState::Current)]));
-    assert_eq!(
-        f.roster.keyboard_stops(),
-        [
-            row_key(scout.id),
-            row_key(otter.id),
-            row_key(wren.id),
-            ARCHIVED_TOGGLE,
-        ],
-        "in the order they are drawn"
-    );
-
-    assert!(f.roster.focus_first());
-    assert_eq!(f.roster.focus(), Some(row_key(scout.id)));
-    assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(row_key(otter.id)));
-    assert!(f.roster.key(Press::Open));
-    let opened = f.roster.take_wants_open().expect("Enter opens it");
-    assert_eq!((opened.id, opened.owner), (otter.id, Some(desk)));
-    assert!(f.roster.key(Press::Down));
-    assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(ARCHIVED_TOGGLE));
-    assert!(f.roster.key(Press::Up));
-    assert_eq!(f.roster.focus(), Some(row_key(wren.id)));
-
-    // The host offers a refresh: a stop of its own, before the group's Bots.
-    let refresh = linked_key(desk, LINKED_REFRESH_PART);
-    assert!(f.roster.offer_linked_refresh(true));
-    let _ = frame_of(&f.roster);
-    assert_eq!(
-        f.roster.keyboard_stops(),
-        [
-            row_key(scout.id),
-            refresh,
-            row_key(otter.id),
-            row_key(wren.id),
-            ARCHIVED_TOGGLE,
-        ]
-    );
-    assert!(f.roster.key(Press::Up));
-    assert!(f.roster.key(Press::Up));
-    assert_eq!(f.roster.focus(), Some(refresh));
-    assert!(f.roster.key(Press::Open));
-    assert_eq!(f.roster.take_linked_refresh(), Some(desk));
-    assert_eq!(f.roster.take_linked_refresh(), None, "asked once");
-    assert_eq!(f.roster.focus(), Some(refresh), "the keyboard stays on it");
-
-    // Out of reach: the refresh is drawn and cannot be pressed, and the
-    // keyboard is no longer on it.
-    assert!(f.linked(vec![group(LinkedOwnerState::Stale)]));
-    let frame = frame_of(&f.roster);
-    assert!(frame.node(refresh).is_some(), "still said");
-    assert!(!f.roster.keyboard_stops().contains(&refresh));
-    assert_eq!(
-        f.roster.focus(),
-        Some(row_key(scout.id)),
-        "back on the roster's first control, not lost"
-    );
-    assert!(!f.roster.press_linked(refresh));
-    assert_eq!(f.roster.take_linked_refresh(), None);
-
-    // The copy no longer lists the Bot the keyboard was on.
-    assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(row_key(otter.id)));
-    assert!(f.roster.ask_open(otter.id));
-    let _ = f.roster.take_wants_open();
-    assert!(f.linked(Vec::new()));
-    assert_eq!(f.roster.focus(), Some(row_key(scout.id)));
-    assert_eq!(
-        f.roster.selected(),
-        None,
-        "a Bot that left lets go of the card"
-    );
-    assert!(f.roster.has_keyboard());
-    assert!(f.roster.key(Press::Escape));
-    assert!(!f.roster.has_keyboard());
-}
-
-/// **The other computers' states are read again while one is listed and
-/// the roster is shown** — a computer that goes out of reach stops saying
-/// *Connected* by itself — and never otherwise: not with no computer
-/// listed, not while hidden.
-#[test]
-fn m8_ui_linked_roster_reads_states_again_only_while_shown_and_listed() {
-    let mut f = fixture();
-    let scout = f.bot("Scout");
-    f.shown_with(vec![scout]);
-    while f.commands.try_recv().is_ok() {}
-    assert!(!f.roster.linked.due_for_test(), "no computer: no clock");
-
-    let desk = DeviceId::new();
-    let otter = f.remote(desk, "Otter");
-    let group = |state, last| computer(desk, state, last, vec![otter.clone()]);
-    assert!(f.linked(vec![group(LinkedOwnerState::Current, Some(1))]));
-    while f.commands.try_recv().is_ok() {}
-    assert!(!f.roster.maintain(), "not before its time");
-    assert_eq!(f.linked_asked(), None);
-    assert!(
-        f.roster.linked_deadline().is_some(),
-        "one wake at its clock"
-    );
-    assert!(
-        !f.roster.linked().awaiting(),
-        "and no waking until then for its sake"
-    );
-
-    assert!(f.roster.linked.due_for_test());
-    assert!(f.roster.maintain());
-    let seq = f.linked_asked().expect("read again");
-    assert!(!f.roster.maintain(), "one read at a time");
-    assert_eq!(f.linked_asked(), None);
-    f.answers
-        .send(Answer::Linked {
-            seq,
-            listing: None,
-            workspace: f.home,
-            result: Ok(vec![group(LinkedOwnerState::Stale, Some(1))]),
-        })
-        .unwrap();
-    assert!(f.roster.maintain());
-    let said = f
-        .roster
-        .linked()
-        .computers()
-        .map(|computer| f.roster.linked_state_words(computer))
-        .next()
-        .expect("still listed");
-    assert!(said.starts_with("Last updated "), "{said}");
-
-    // An answer for another workspace is not this roster's.
-    assert!(f.roster.linked.due_for_test());
-    assert!(f.roster.maintain());
-    let seq = f.linked_asked().expect("read again");
-    f.answers
-        .send(Answer::Linked {
-            seq,
-            listing: None,
-            workspace: WorkspaceId::new(),
-            result: Ok(Vec::new()),
-        })
-        .unwrap();
-    assert!(!f.roster.maintain());
-    assert_eq!(f.roster.linked().computers().count(), 1);
-
-    // Hidden: no clock, no read; what is listed stays for the next showing.
-    f.roster.set_shown(false);
-    assert!(!f.roster.linked.due_for_test());
-    assert!(!f.roster.maintain());
-    assert_eq!(f.linked_asked(), None);
-    assert!(!f.roster.awaiting());
-    assert_eq!(f.roster.linked_deadline(), None, "no wake while hidden");
-    assert_eq!(f.roster.linked().computers().count(), 1);
-
-    // Another workspace: its groups are not this one's.
-    f.roster.set_workspace(Some(WorkspaceId::new()));
-    assert!(f.roster.linked().is_empty());
+    assert!(f.roster.keyboard_stops().is_empty());
 }

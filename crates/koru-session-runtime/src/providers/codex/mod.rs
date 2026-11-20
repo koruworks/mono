@@ -618,6 +618,10 @@ impl CodexControl {
 }
 
 impl AgentControl for CodexControl {
+    fn submission_known_unsent(&self, turn_id: AgentTurnId) -> bool {
+        // The retained turn is inserted before turn/start, including failures.
+        !self.turns.contains_key(&turn_id)
+    }
     fn start(&mut self, start: AgentStart) -> Result<AgentCapabilities, ProviderFailure> {
         if let Some(capabilities) = &self.capabilities {
             return if self.session_id == Some(start.session_id) {

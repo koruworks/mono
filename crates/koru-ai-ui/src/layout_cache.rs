@@ -14,6 +14,7 @@ use super::{
 };
 
 pub(crate) struct MessageLayout {
+    pub bot_prose: bool,
     pub id: Option<MessageId>,
     pub top: f32,
     pub role: ChatRole,
@@ -32,6 +33,26 @@ pub(crate) struct MessageLayout {
     /// Pictures, files, and folders sent with a message, drawn as one-line
     /// pills under its text with widths measured during layout.
     pub attachments: Vec<Tile>,
+}
+
+impl MessageLayout {
+    pub(crate) fn padding(&self) -> f32 {
+        if self.folded_empty_answer() {
+            0.0
+        } else if self.bot_prose {
+            crate::bot_presentation::PROSE_PAD
+        } else {
+            crate::message_padding(self.role)
+        }
+    }
+
+    pub(crate) fn folded_empty_answer(&self) -> bool {
+        self.role == ChatRole::Assistant
+            && self.state.is_terminal()
+            && self.display.trim().is_empty()
+            && self.blocks.is_empty()
+            && self.attachments.is_empty()
+    }
 }
 
 pub(crate) struct BlockLayout {
@@ -120,7 +141,17 @@ pub(crate) fn reconcile(
     engine: &mut TextEngine,
     old: Vec<MessageLayout>,
     inputs: Vec<MessageInput>,
+    render: impl FnMut(&mut TextEngine, MessageBlockId, &str, f32) -> BlockLayout,
+) -> (Vec<MessageLayout>, RebuildStats) {
+    reconcile_with_faces(engine, old, inputs, render, &HashMap::new())
+}
+
+pub(crate) fn reconcile_with_faces(
+    engine: &mut TextEngine,
+    old: Vec<MessageLayout>,
+    inputs: Vec<MessageInput>,
     mut render: impl FnMut(&mut TextEngine, MessageBlockId, &str, f32) -> BlockLayout,
+    faces: &HashMap<uuid::Uuid, u8>,
 ) -> (Vec<MessageLayout>, RebuildStats) {
     let mut old = old
         .into_iter()
@@ -173,9 +204,16 @@ pub(crate) fn reconcile(
         let layout = if input.state == MessageState::Pending && !input.blocks.is_empty() {
             crate::chat_text_layout(engine, "", input.wrap_width)
         } else {
-            display_layout(engine, &input.display, &input.links, input.wrap_width)
+            display_layout_with_faces(
+                engine,
+                &input.display,
+                &input.links,
+                input.wrap_width,
+                faces,
+            )
         };
         output.push(MessageLayout {
+            bot_prose: false,
             id: Some(input.id),
             top: 0.0,
             role: input.role,
@@ -198,11 +236,12 @@ pub(crate) fn reconcile(
 /// A message's own text, wrapped, with any links in the link color — the
 /// token a chip was sent as reads as the document's title
 /// (`crate::doc_links::titled`).
-pub(crate) fn display_layout(
+pub(crate) fn display_layout_with_faces(
     engine: &mut TextEngine,
     display: &str,
     links: &[koru_markdown::LinkSpan],
     wrap_width: f32,
+    faces: &HashMap<uuid::Uuid, u8>,
 ) -> Layout<Brush> {
     // A quote the person sent (D88) is set behind the reply's blockquote bar
     // (`crate::quote_pills::quote_bars`) and drawn in the dim ink, so what
@@ -228,7 +267,16 @@ pub(crate) fn display_layout(
         })
         .chain(links.iter().map(|link| koru_draw::text::RangeStyle {
             range: link.range.clone(),
-            color: Some(theme::p().accent),
+            color: Some(match koru_link::parse(&link.url) {
+                Ok(koru_link::KoruLink::Bot { bot, .. }) => {
+                    let face = faces.get(&bot).copied().unwrap_or(0);
+                    theme::p().accents[koru_draw::face::ROWS
+                        [face as usize % koru_draw::face::ROWS.len()]
+                    .accent as usize]
+                        .ink
+                }
+                _ => theme::p().accent,
+            }),
             strikethrough: false,
         }))
         .collect();

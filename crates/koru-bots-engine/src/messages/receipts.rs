@@ -94,7 +94,9 @@ impl Database {
     /// Tombstones are retained for the authenticated sender's whole lifetime.
     pub fn prune_receipt_answers(&self, now: i64) -> Result<usize, Error> {
         Ok(self.connection.execute(
-            "UPDATE receipts SET answer=NULL WHERE rowid IN (SELECT rowid FROM receipts WHERE answer IS NOT NULL AND accepted_at_ms<=?1 ORDER BY accepted_at_ms LIMIT 64)",
+            // Two internal owner facts (startup candidate and delivered marker)
+            // last for the owner's lifetime. Ordinary request answers still expire.
+            "UPDATE receipts SET answer=NULL WHERE rowid IN (SELECT rowid FROM receipts WHERE answer IS NOT NULL AND sender NOT LIKE 'routine-startup:%' AND accepted_at_ms<=?1 ORDER BY accepted_at_ms LIMIT 64)",
             [now.saturating_sub(RETENTION_MS)],
         )?)
     }

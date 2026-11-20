@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Explicit process/disk proof. Ordinary cargo test prints SKIP. Invocation:
-//! cargo test -p koru-bots-engine --features active --test engine_process --
+//! cargo test -p koru-bots-engine --test engine_process --
 //!   --run --root <new-absolute-disposable-directory>
 
 use std::path::{Path, PathBuf};
@@ -31,26 +31,10 @@ fn main() {
         }],
     );
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args
-        .first()
-        .is_none_or(|arg| !matches!(arg.as_str(), "--run" | "--check-retired-root"))
-    {
-        println!("SKIP engine process proof: requires --run --root and feature active");
+    if args.first().is_none_or(|arg| arg.as_str() != "--run") {
+        println!("SKIP engine process proof: requires --run --root");
         return;
     }
-    if args.first().map(String::as_str) == Some("--check-retired-root") {
-        assert_eq!(args.len(), 2);
-        assert!(
-            !koru_bots_engine::ENABLED,
-            "this check requires the legacy build"
-        );
-        let root = PathBuf::from(&args[1]);
-        assert!(root.is_absolute() && root.join("bots/engine-owned").is_file());
-        assert!(!koru_bots_engine::legacy_allowed(&root).unwrap());
-        println!("PASS legacy build refuses the engine-owned root");
-        return;
-    }
-    assert!(koru_bots_engine::ENABLED, "requires feature active");
     assert_eq!(args.len(), 3);
     assert_eq!(args[0], "--run");
     assert_eq!(args[1], "--root");
@@ -74,20 +58,20 @@ fn main() {
     ));
     assert!(root.join("bots/engine-owned").is_file());
     handle.stop();
-    assert_eq!(koru_bots_engine::inspect(&root).unwrap().schema_version, 1);
+    assert_eq!(koru_bots_engine::inspect(&root).unwrap().schema_version, 2);
     println!("PASS engine starts, authenticates control, answers status and marks root");
 
     prove_interrupted_recovery(&root);
 
     let connection = rusqlite::Connection::open(root.join("bots/engine.db")).unwrap();
-    connection.execute_batch("PRAGMA user_version=2;").unwrap();
+    connection.execute_batch("PRAGMA user_version=3;").unwrap();
     drop(connection);
     let (newer, _) = launch(&root);
     wait(&newer, State::Exhausted);
     assert!(newer.current().is_none());
     newer.stop();
     let report = koru_bots_engine::inspect(&root).unwrap();
-    assert_eq!(report.schema_version, 2);
+    assert_eq!(report.schema_version, 3);
     assert_eq!(
         report.status_error,
         Some(koru_bots_engine::Error::SchemaTooNew)
@@ -99,6 +83,7 @@ fn prove_interrupted_recovery(root: &Path) {
     use koru_bots_engine::{
         Database,
         messages::{Envelope, Person, Resume},
+        person,
     };
     use uuid::Uuid;
     let bot = Uuid::new_v4();
@@ -116,6 +101,27 @@ fn prove_interrupted_recovery(root: &Path) {
     let person = Person {
         sender: "fixture".into(),
         owner: "fixture".into(),
+    };
+    let set_team_pause = |db: &mut Database, paused: bool, revision: u64, now: i64| {
+        let reply = person::handle(
+            db,
+            &Default::default(),
+            &mut Default::default(),
+            person::Request {
+                owner: person.owner.clone(),
+                sender: person.sender.clone(),
+                command: person::Command::Change {
+                    id: Uuid::new_v4(),
+                    action: person::Change::Team { revision, paused },
+                },
+            },
+            now,
+        )
+        .unwrap();
+        let receipt: koru_bots_engine::messages::Receipt<person::Team> =
+            serde_json::from_value(reply.0).unwrap();
+        assert_eq!(receipt.answer.paused, paused);
+        assert_eq!(receipt.answer.revision, revision + 1);
     };
     let envelope = Envelope {
         id: Uuid::new_v4(),
@@ -140,6 +146,10 @@ fn prove_interrupted_recovery(root: &Path) {
     )
     .unwrap()
     .unwrap();
+    // Recovery must restore the durable work without admitting a fresh Bot
+    // worker: this executable intentionally registers only the engine role.
+    // Team pause leaves the running turn intact for startup to interrupt.
+    set_team_pause(&mut db, true, 0, 3);
     drop(db);
     let (handle, bootstrap) = launch(root);
     wait(&handle, State::Ready);
@@ -149,6 +159,9 @@ fn prove_interrupted_recovery(root: &Path) {
     );
     handle.stop();
     let mut db = Database::open(root).unwrap();
+    // Resume through the same revision-checked contract only after the engine
+    // process has stopped, so the following manual claim cannot race it.
+    set_team_pause(&mut db, false, 1, 4);
     let continued = db
         .claim_messages(
             bot,
@@ -157,7 +170,7 @@ fn prove_interrupted_recovery(root: &Path) {
             Uuid::new_v4(),
             Resume::Rebuilt,
             8192,
-            3,
+            5,
         )
         .unwrap()
         .unwrap();

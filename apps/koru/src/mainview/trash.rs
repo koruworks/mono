@@ -79,6 +79,8 @@ pub(super) enum ConfirmSubject {
     /// would be a second thing that could be out of date by the time somebody
     /// answers.
     VoiceConsent,
+    /// The first enabled Routine's opt-in device startup offer.
+    RoutineStartup,
     ClearPersonalDictionary,
     /// A project in the Agents tree. Not a document at all: a yes sends the
     /// typed delete verb to the session host, which is the project registry's
@@ -135,7 +137,6 @@ pub(super) enum ConfirmSubject {
     /// Unfinished row, by the creation's request — and deletes nothing; a
     /// no sends nothing. The keyboard goes back to the tab's *Abandon*.
     AbandonBotCreation(AbandonFrom),
-    AbandonBotMemory(crate::bots::view::memory::Ask),
     /// **Pause all Bots?** (Bots M8). A yes is sent by the roster, which
     /// asked; a no sends nothing. Nothing is deleted and nothing running is
     /// stopped.
@@ -812,8 +813,7 @@ impl MainView {
         let Some((_, subject)) = self.confirm.take() else {
             return false;
         };
-        // **The voice step is answered either way**, which is what makes it
-        // different from every other subject here: the shell is holding a
+        // **The voice step is answered either way**: the shell is holding a
         // catalog entry until somebody says yes or no, and a Cancel that only
         // closed the dialog would leave it holding one forever — and the next
         // press would be ignored as *already offering*.
@@ -821,15 +821,15 @@ impl MainView {
             self.ask_pane(koru_workspace_host::PaneRequest::VoiceConsent(confirmed));
             return true;
         }
+        if subject == ConfirmSubject::RoutineStartup {
+            self.answer_routine_startup(confirmed);
+            return true;
+        }
         // **A Bot's question is answered by its tab**, either way: a yes
         // sends, a no sends nothing, and the keyboard goes back to the
         // control that asked (S14).
         if let ConfirmSubject::AbandonBotCreation(from) = &subject {
             self.settle_abandon_creation(*from, confirmed);
-            return true;
-        }
-        if let ConfirmSubject::AbandonBotMemory(ask) = &subject {
-            self.settle_bot_memory_ask(ask, confirmed);
             return true;
         }
         if subject == ConfirmSubject::PauseAllBots {
@@ -934,7 +934,7 @@ impl MainView {
             }
             // Answered above, before the cancel path — it is the one subject
             // whose *no* is as much of an answer as its *yes*.
-            ConfirmSubject::VoiceConsent => {}
+            ConfirmSubject::VoiceConsent | ConfirmSubject::RoutineStartup => {}
             ConfirmSubject::ClearPersonalDictionary => {
                 koru_workspace_host::spelling::edit(
                     koru_workspace_host::spelling::SpellEdit::ClearPersonal,
@@ -948,7 +948,6 @@ impl MainView {
             // Answered above, by the Bot's tab.
             ConfirmSubject::BotLifecycle { .. }
             | ConfirmSubject::TrashBotConversation { .. }
-            | ConfirmSubject::AbandonBotMemory(_)
             | ConfirmSubject::PauseAllBots
             | ConfirmSubject::AbandonBotCreation(_) => {}
         }

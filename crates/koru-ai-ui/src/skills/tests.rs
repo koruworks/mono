@@ -20,6 +20,7 @@ fn transcript(provider: &str, folder: Option<&str>) -> ChatTranscript {
     let chat_id = koru_ai_core::ChatId::new();
     let now = Timestamp::from_millis(1);
     ChatTranscript {
+        active_attempt: None,
         chat: Chat {
             id: chat_id,
             title: "Agent chat".into(),

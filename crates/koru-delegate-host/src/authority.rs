@@ -23,6 +23,9 @@
 //! generation, never by asking for the same token again (ADR-348). Nothing
 //! in this file logs a token, a title or a path.
 
+mod projection;
+pub(crate) use projection::AuthorityProjection;
+
 use std::collections::HashMap;
 
 use koru_api_client::Client;
@@ -33,9 +36,6 @@ use koru_delegate_core::{
     AgentTurnId, ArtifactTitle, ArtifactVersionId, DeviceId, ResultReference, RunAttemptId, RunId,
     WorkspaceId,
 };
-mod projection;
-pub(crate) use projection::AuthorityProjection;
-
 use koru_delegate_runtime::{
     ArtifactRegistrations, McpEndpoints, McpLaunch, Port, PortError, PortResult,
 };
@@ -64,47 +64,6 @@ fn allowlist() -> McpToolAllowlist {
             .map(|name| name.parse().expect("a run tool name is a valid MCP name")),
     )
     .expect("six names are under the allowlist bound")
-}
-
-/// The Bot endpoint's native document, own-Memory and own-Routine setup tools, and the three
-/// tools that ask another Bot (M6, opened by the product owner on 2026-11-17 with the gateway's
-/// `CHILD_REQUESTS_AVAILABLE`). Keep this exact vocabulary aligned with the gateway's catalog
-/// test; it grants no page access. A name here only lets an agent call a tool the gateway
-/// lists: which of the last three a Run is offered (none for a child Run, no ask tool while
-/// "May ask other bots" is off) is the gateway's listing, and every call is checked there.
-const BOT_RUN_TOOLS: [&str; 16] = [
-    "search_documents",
-    "read_document",
-    "create_document",
-    "edit_document",
-    "list_memory",
-    "read_memory",
-    "remember_memory",
-    "correct_memory",
-    "forget_memory",
-    "create_routine",
-    "read_routine_creation",
-    "retry_routine_creation",
-    "list_routines",
-    "list_askable_bots",
-    "ask_bot",
-    "read_bot_request",
-];
-
-fn launch_tools(
-    authority: &koru_delegate_core::RunToolAuthority,
-    ordinary: &McpToolAllowlist,
-) -> McpToolAllowlist {
-    if authority.bot_subject().is_some() {
-        McpToolAllowlist::new(
-            BOT_RUN_TOOLS
-                .into_iter()
-                .map(|name| name.parse().expect("native tool name")),
-        )
-        .expect("sixteen Bot tools")
-    } else {
-        ordinary.clone()
-    }
 }
 
 fn refusal(operation: &'static str, failure: &koru_artifact_wire::Failure) -> PortError {
@@ -149,36 +108,14 @@ impl McpEndpoints for GatewayAuthority {
         &mut self,
         run: RunId,
         generation: koru_delegate_core::AttemptGeneration,
-        authority: koru_delegate_core::RunToolAuthority,
     ) -> PortResult<()> {
-        self.projection
-            .publish(run, generation, authority)
-            .map_err(|e| PortError::new(Port::Mcp, e.code, "Run classification"))
+        self.projection.publish(run, generation).map_err(|failure| {
+            PortError::new(Port::Mcp, failure.code, "publish exact Run authority")
+        })
     }
-    fn publish_decision_wait(
-        &mut self,
-        run: RunId,
-        wait: Option<(
-            koru_delegate_core::decisions::DecisionId,
-            koru_delegate_core::decisions::DecisionPhase,
-        )>,
-    ) -> PortResult<()> {
-        self.projection
-            .publish_wait(run, wait)
-            .map_err(|e| PortError::new(Port::Mcp, e.code, "Run decision wait"))
-    }
-    fn publish_child_wait(
-        &mut self,
-        run: RunId,
-        wait: Option<koru_delegate_runtime::ChildWaitMark>,
-    ) -> PortResult<()> {
-        self.projection
-            .publish_child_wait(run, wait)
-            .map_err(|e| PortError::new(Port::Mcp, e.code, "Run child wait"))
-    }
+
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let run = launch.run;
-        let tools = launch_tools(&launch.authority, &self.tools);
         let run_workspace = RunWorkspace::new(launch.run_workspace)
             .map_err(|error| PortError::new(Port::Mcp, error.code(), "the run's working folder"))?;
         let artifacts = self.client.artifacts();
@@ -205,8 +142,9 @@ impl McpEndpoints for GatewayAuthority {
                 .map_err(|failure| refusal("advance a run generation", &failure))?,
             Err(failure) => return Err(refusal("issue a run authority", &failure)),
         };
+        self.publish_authority(run, launch.generation)?;
         let endpoint = self.endpoint(run, issued.url);
-        let delegation = DelegationLaunch {
+        Ok(DelegationLaunch {
             model: None,
             mcp_endpoint: endpoint
                 .parse()
@@ -214,13 +152,9 @@ impl McpEndpoints for GatewayAuthority {
             credential: Some(issued.token.parse().map_err(|_| {
                 PortError::new(Port::Mcp, "invalid_credential", "the endpoint bearer")
             })?),
-            tools,
+            tools: self.tools.clone(),
             resume: None,
-        };
-        // Nothing after publication can fail locally; failed construction does
-        // not remove an unrelated newer generation's classification.
-        self.publish_authority(run, launch.generation, launch.authority)?;
-        Ok(delegation)
+        })
     }
 
     /// Where the run worked, from the durable record — the only place this
@@ -241,7 +175,7 @@ impl McpEndpoints for GatewayAuthority {
     /// store, and a delete that silently left it there would be a delete
     /// that did not happen.
     fn forget(&mut self, run: RunId) -> PortResult<()> {
-        self.projection.remove(run, None);
+        self.projection.remove(run);
         self.client
             .artifacts()
             .forget_run_authority(run)
@@ -250,7 +184,7 @@ impl McpEndpoints for GatewayAuthority {
     }
 
     fn revoke(&mut self, run: RunId) {
-        self.projection.remove(run, None);
+        self.projection.remove(run);
         if let Err(failure) = self.client.artifacts().revoke_run_authority(run) {
             // Best effort, and said so in the port's doc comment: a
             // revocation that did not land leaves an authority whose run is
@@ -265,9 +199,6 @@ impl McpEndpoints for GatewayAuthority {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 /// What a run has registered, and what this device has already told the
 /// orchestrator about.

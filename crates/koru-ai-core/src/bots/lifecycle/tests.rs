@@ -196,25 +196,6 @@ fn lifecycle_commands_are_strict_and_name_their_kind() {
             Some(BotLifecycleKind::RestoreChat),
         ),
         (
-            BotCommand::PurgeBot {
-                request_id,
-                bot_id,
-                expected_revision: 1,
-                source_request_id,
-            },
-            Some(BotLifecycleKind::PurgeBot),
-        ),
-        (
-            BotCommand::PurgeChat {
-                request_id,
-                bot_id,
-                chat_id,
-                expected_revision: 1,
-                source_request_id,
-            },
-            Some(BotLifecycleKind::PurgeChat),
-        ),
-        (
             BotCommand::ReadLifecycleOperation { request_id, bot_id },
             None,
         ),

@@ -45,7 +45,10 @@ pub(super) fn conversations(
 ) -> Result<Value, Error> {
     let count = limit(count)?;
     messages::authorize_bot(c, who, bot)?;
-    let keys = c.prepare("SELECT t.id FROM threads t JOIN participants p ON p.thread=t.id WHERE t.bot=?1 AND t.lifecycle='active' AND p.kind='person' AND p.participant=?2 AND (?3 IS NULL OR (t.kind='main')<?4 OR ((t.kind='main')=?4 AND (t.updated_at_ms<?5 OR (t.updated_at_ms=?5 AND t.id>?3)))) ORDER BY (t.kind='main') DESC,t.updated_at_ms DESC,t.id LIMIT ?6")?
+    // Creating or editing a Routine reserves its session, but does not yet
+    // create a conversation to read. Use the indexed message existence check
+    // before pagination; timestamps also change on rename and are not evidence.
+    let keys = c.prepare("SELECT t.id FROM threads t JOIN participants p ON p.thread=t.id WHERE t.bot=?1 AND t.lifecycle='active' AND p.kind='person' AND p.participant=?2 AND (t.kind<>'routine' OR EXISTS(SELECT 1 FROM messages m WHERE m.thread=t.id)) AND (?3 IS NULL OR (t.kind='main')<?4 OR ((t.kind='main')=?4 AND (t.updated_at_ms<?5 OR (t.updated_at_ms=?5 AND t.id>?3)))) ORDER BY (t.kind='main') DESC,t.updated_at_ms DESC,t.id LIMIT ?6")?
         .query_map(params![bot.to_string(), who.sender, after.as_ref().map(|v| v.thread.to_string()), after.as_ref().map(|v| v.main), after.as_ref().map(|v| v.updated_at_ms), count+1], |r| r.get(0))?
         .collect::<Result<Vec<String>,_>>()?;
     let (items, more) = threads(c, who, keys, count)?;

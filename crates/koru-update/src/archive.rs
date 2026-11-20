@@ -715,6 +715,24 @@ mod tests {
         }
     }
 
+    #[test]
+    fn session_instructions_are_required_only_by_the_current_publisher() {
+        let current = unsigned_koru();
+        current.validate(WindowsIdentity::NotStaged).unwrap();
+        let path = crate::exe::in_data("docs/prompts/session.md");
+        assert!(current.files.contains(&path));
+
+        let mut older = current.clone();
+        older.files.retain(|file| file != &path);
+        assert!(older.validate(WindowsIdentity::NotStaged).is_err());
+        // This is the exact validation called by load_incoming after decoding.
+        // Keep both directions compatible without a filesystem fixture.
+        older.validate_paths().unwrap();
+        current.validate_paths().unwrap();
+        assert_eq!(current.schema_version, older.schema_version);
+        assert_eq!(current.inventory_version, older.inventory_version);
+    }
+
     /// The trap ADR-258 exists for: the updater performing a swap was built
     /// with an older inventory table than the package it is installing. Build
     /// 74 refused build 75 over `inventory_version: 4` (2026-08-31); installs

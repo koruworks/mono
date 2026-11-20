@@ -33,15 +33,6 @@ use crate::platform;
 /// orchestrator's thread; nothing here runs on a thread that answers a
 /// person.
 pub trait ScopeRoots {
-    /// Trusted host seam. Production always checks the existing canonical
-    /// directory; tests may inject a pure identity without touching disk.
-    fn bot_folder(
-        &self,
-        folder: &koru_delegate_core::BotWorkingFolder,
-    ) -> Result<ResolvedScope, ScopeRefusal> {
-        ResolvedScope::of_directory(Path::new(folder.as_str()))
-    }
-
     /// The absolute directory a session project launches in.
     fn project_root(&self, project: ProjectId) -> RootLookup;
 
@@ -81,7 +72,7 @@ pub enum ScopeRefusal {
     UnknownProject,
     ProjectHasNoRoot,
     NoTemporaryDirectory,
-    /// Bot execution never takes the ordinary manual warn-and-proceed path.
+    /// Scope recovery cannot yet prove that the working folder is free.
     Busy,
     /// The relative folder resolved somewhere the project's root does not
     /// contain — a `..` chain, an absolute spelling, a junction out.
@@ -241,8 +232,7 @@ impl ResolvedScope {
     ) -> Result<Self, ScopeRefusal> {
         match scope {
             WorkspaceScope::None => Err(ScopeRefusal::NotAdmissible),
-            // A lost mount must never become an empty replacement working folder.
-            WorkspaceScope::BotFolder { folder } => roots.bot_folder(folder),
+            WorkspaceScope::BotFolder { .. } => Err(ScopeRefusal::NotAdmissible),
             WorkspaceScope::ProjectRoot { project } => resolved(&project_root(roots, *project)?),
             WorkspaceScope::ProjectFolder { project, folder } => {
                 let root = resolved(&project_root(roots, *project)?)?;

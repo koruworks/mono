@@ -202,6 +202,17 @@ fn a_long_name_is_truncated_to_its_box() {
     assert_eq!(node.lines(), Some(1));
 }
 
+#[test]
+fn a_middle_truncated_path_uses_one_line_and_retains_its_full_accessible_name() {
+    let path = "D:/projects/long-workspace-folder/bots/scout/workspace";
+    let tree = text(path).named("Path").truncate_middle().name_text(path);
+    let frame = lay(&tree, Rect::new(0.0, 0.0, 180.0, 40.0), FrameCx::root());
+    let node = frame.named("Path").next().unwrap();
+    assert_eq!(node.lines(), Some(1));
+    assert!(node.text.as_ref().unwrap().width() <= node.rect.w + 0.01);
+    assert_eq!(node.label, Some(Name::Text(path.into())));
+}
+
 /// **`clip` cuts at a word, without an ellipsis** — how the Profiles page
 /// has always cut a long name (ELEMENTS-PLAN P5) — where `truncate` elides.
 #[test]

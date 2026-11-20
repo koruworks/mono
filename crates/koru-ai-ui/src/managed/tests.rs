@@ -4,6 +4,48 @@ use koru_ai_core::bots::{BotChatLabel, BotChatPurpose, BotConversation, BotId};
 use koru_ai_core::{AiProviderId, Chat, ModelSelection, ReasoningChoice};
 
 #[test]
+fn native_notice_is_bounded_exact_turn_scoped_and_not_reply_prose() {
+    let mut state = State::new(&mut opened(), Instant::now());
+    let boot = Uuid::new_v4();
+    let make = |state: &State, cursor| {
+        let mut entry = event(state, cursor, None);
+        entry.observation.event = wire::AgentEvent::Notice {
+            turn_id: entry.observation.turn.id.to_string().parse().unwrap(),
+            text: "n".repeat(3000),
+        };
+        entry
+    };
+    let mut stale = make(&state, 1);
+    stale.observation.turn.session = Uuid::new_v4();
+    state.observe(Feed {
+        boot,
+        cursor: 1,
+        gap: false,
+        entries: vec![stale],
+    });
+    assert!(state.notice.is_none());
+    let exact = make(&state, 2);
+    state.observe(Feed {
+        boot,
+        cursor: 2,
+        gap: false,
+        entries: vec![exact.clone()],
+    });
+    assert_eq!(state.notice.take().unwrap().len(), 2048);
+    assert!(state.live.values().all(|live| live.text.is_empty()));
+    state.observe(Feed {
+        boot,
+        cursor: 2,
+        gap: false,
+        entries: vec![exact],
+    });
+    assert!(
+        state.notice.is_none(),
+        "observed cursors never repeat the diagnostic"
+    );
+}
+
+#[test]
 fn saved_attachment_tiles_keep_the_accepted_message_and_order_on_refresh() {
     let mut state = State::new(&mut opened(), Instant::now());
     let mut saved = message(1, Uuid::new_v4());
@@ -68,6 +110,7 @@ pub(crate) fn opened() -> Opened {
                     purpose: BotChatPurpose::Main,
                 },
             },
+            revision: 7,
             settings_revision: 1,
             paused: false,
             team_paused: false,
@@ -118,7 +161,7 @@ pub(crate) fn message(sequence: u64, id: Uuid) -> wire::Message {
     wire::Message {
         id,
         sequence,
-        sender: format!("bot:{}", Uuid::new_v4()),
+        sender: Uuid::new_v4().to_string(),
         kind: "words".into(),
         content: wire::Content {
             body: "Saved reply".into(),
@@ -189,6 +232,66 @@ fn repeated_events_and_foreign_turns_cannot_duplicate_or_pollute_live_reply() {
         entries: vec![stale],
     });
     assert_eq!(state.live.values().next().unwrap().text, "hello");
+    assert_eq!(
+        state.live.values().next().unwrap().progress,
+        crate::bot_presentation::Progress::Typing
+    );
+}
+
+#[test]
+fn native_activity_stops_typing_at_tools_and_forgets_it_after_a_feed_gap() {
+    use crate::bot_presentation::Progress;
+    let mut state = State::new(&mut opened(), Instant::now());
+    let boot = Uuid::new_v4();
+    let entries = vec![event(&state, 1, None), event(&state, 2, Some("hello"))];
+    state.observe(Feed {
+        boot,
+        cursor: 2,
+        gap: false,
+        entries,
+    });
+    assert_eq!(
+        state.live.values().next().unwrap().progress,
+        Progress::Typing
+    );
+    let mut tool = event(&state, 3, None);
+    tool.observation.event = wire::AgentEvent::ToolStarted {
+        turn_id: tool.observation.turn.id.to_string().parse().unwrap(),
+        tool_call_id: Uuid::new_v4().to_string().parse().unwrap(),
+        label: "WebFetch".into(),
+        input: None,
+    };
+    state.observe(Feed {
+        boot,
+        cursor: 3,
+        gap: false,
+        entries: vec![tool],
+    });
+    assert_eq!(
+        state.live.values().next().unwrap().progress,
+        Progress::Thinking
+    );
+    let entries = vec![event(&state, 4, Some("answer"))];
+    state.observe(Feed {
+        boot,
+        cursor: 4,
+        gap: false,
+        entries,
+    });
+    assert_eq!(
+        state.live.values().next().unwrap().progress,
+        Progress::Typing
+    );
+    state.observe(Feed {
+        boot,
+        cursor: 5,
+        gap: true,
+        entries: vec![],
+    });
+    assert_eq!(
+        state.live.values().next().unwrap().progress,
+        Progress::Thinking
+    );
 }
 
 #[test]

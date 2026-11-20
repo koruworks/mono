@@ -69,6 +69,7 @@ use super::MainView;
 use super::tab::TabView;
 use crate::panes::explore::accessibility::Context as ExploreContext;
 
+mod bot_work;
 mod chrome;
 mod commands;
 pub(crate) mod document;
@@ -281,6 +282,7 @@ impl MainView {
         // document passes both before they arrive. See `reminders.rs`.
         out.extend(self.reminder_semantics(cx));
         out.push(self.content_semantics(cx, scope));
+        out.extend(self.bot_work_anchor_semantics(cx));
         out.extend(commands::semantics(self, cx));
         // Named and empty, so that "the keyboard is in the AI composer" can be
         // published as somewhere that exists. Describing what is in it is
@@ -385,6 +387,9 @@ impl MainView {
         if let Some(focus) = self.bot_context_accessible_focus(&cx) {
             return Some(focus);
         }
+        if let Some(focus) = self.bot_work_focus(&cx) {
+            return Some(focus);
+        }
         if let TabView::Bot(view) = &self.tabs().active_tab().view
             && let Some(key) = view.focus()
         {
@@ -473,6 +478,9 @@ impl MainView {
 
     /// Everything the window publishes **except** the document body.
     fn revise_chrome(&self, rev: &mut Revision) {
+        if let Some(surface) = self.bot_work_surface() {
+            rev.u64(surface.bot_work_revision());
+        }
         self.revise_bot_context(rev);
         // A focus-only F6/arrow move still needs a native focus update. The
         // host publishes only after this fingerprint changes.
@@ -642,7 +650,7 @@ impl MainView {
             self.drain_trash_all(ws);
             return true;
         }
-        if self.media_viewer_action(target, action) {
+        if self.bot_work_action(target, action) || self.media_viewer_action(target, action) {
             return true;
         }
         if menus::action(self, target, action) {

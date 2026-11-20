@@ -162,7 +162,10 @@ impl RunsDb {
         let stamp = publication_change_stamp(self.conn())?;
         let mut query = self.conn().prepare(
             "SELECT rowid,event_id,run_id FROM pending_publications INDEXED BY pending_publications_open_run
-             WHERE acknowledged_at_ms IS NULL ORDER BY run_id DESC LIMIT 1",
+             WHERE acknowledged_at_ms IS NULL AND EXISTS(SELECT 1 FROM run_intents i
+                 WHERE i.run_id=pending_publications.run_id AND CASE WHEN json_valid(i.payload_json)
+                   THEN json_extract(i.payload_json, '$.scope.kind') IN ('none','temporary','project_root','project_folder') ELSE 0 END)
+             ORDER BY run_id DESC LIMIT 1",
         ).map_err(|e| LedgerError::sql("anchor pending publication Runs", e))?;
         let mut rows = query
             .query([])
@@ -181,17 +184,6 @@ impl RunsDb {
         after: Option<PendingPublicationRunCursor>,
         through: PendingPublicationRunCursor,
         before_or_at: Option<PendingPublicationRunCursor>,
-    ) -> Result<PendingPublicationRunSeek, LedgerError> {
-        self.next_pending_publication_run_for_mode(after, through, before_or_at, true)
-    }
-
-    /// The retirement filter applies before the bounded seek selects a Run.
-    pub fn next_pending_publication_run_for_mode(
-        &self,
-        after: Option<PendingPublicationRunCursor>,
-        through: PendingPublicationRunCursor,
-        before_or_at: Option<PendingPublicationRunCursor>,
-        legacy_bots: bool,
     ) -> Result<PendingPublicationRunSeek, LedgerError> {
         let stamp = publication_change_stamp(self.conn())?;
         if !cursor_present(self, through, stamp)?
@@ -228,15 +220,15 @@ impl RunsDb {
              WHERE acknowledged_at_ms IS NULL
                AND run_id>(SELECT run_id FROM pending_publications WHERE rowid=?1)
                AND run_id<=(SELECT run_id FROM pending_publications WHERE rowid=?2)
-               AND (?3 OR EXISTS (SELECT 1 FROM run_intents i WHERE i.run_id=pending_publications.run_id
-                   AND json_extract(i.payload_json, '$.scope.kind') <> 'bot_folder'))
+               AND EXISTS (SELECT 1 FROM run_intents i WHERE i.run_id=pending_publications.run_id
+                   AND CASE WHEN json_valid(i.payload_json) THEN json_extract(i.payload_json, '$.scope.kind') IN ('none','temporary','project_root','project_folder') ELSE 0 END)
              ORDER BY run_id LIMIT 1"
         } else {
             "SELECT rowid,event_id,run_id FROM pending_publications INDEXED BY pending_publications_open_run
              WHERE acknowledged_at_ms IS NULL
                AND run_id<=(SELECT run_id FROM pending_publications WHERE rowid=?2)
-               AND (?3 OR EXISTS (SELECT 1 FROM run_intents i WHERE i.run_id=pending_publications.run_id
-                   AND json_extract(i.payload_json, '$.scope.kind') <> 'bot_folder'))
+               AND EXISTS (SELECT 1 FROM run_intents i WHERE i.run_id=pending_publications.run_id
+                   AND CASE WHEN json_valid(i.payload_json) THEN json_extract(i.payload_json, '$.scope.kind') IN ('none','temporary','project_root','project_folder') ELSE 0 END)
              ORDER BY run_id LIMIT 1"
         };
         let mut statement = self
@@ -244,7 +236,7 @@ impl RunsDb {
             .prepare(query)
             .map_err(|e| LedgerError::sql("seek pending publication Run", e))?;
         let mut rows = statement
-            .query(params![after.map(|c| c.rowid), through.rowid, legacy_bots])
+            .query(params![after.map(|c| c.rowid), through.rowid])
             .map_err(|e| LedgerError::sql("seek pending publication Run", e))?;
         match rows
             .next()
@@ -263,7 +255,7 @@ impl RunsDb {
 
     /// Exact per-Run FIFO used by the bounded cross-Run drain. This is not a
     /// claim that old cross-Run rowid FIFO survives keyset scheduling.
-    pub fn decision_open_publications_for(
+    pub fn bounded_open_publications_for(
         &self,
         run: RunId,
         limit: usize,
@@ -288,7 +280,7 @@ impl RunsDb {
             .query(params![run.to_storage(), limit as i64])
             .map_err(|e| LedgerError::sql("read bounded per-Run publications", e))?;
         let mut result = Vec::new();
-        let mut remaining_bytes = koru_delegate_core::decisions::DECISION_FRAME_BYTES;
+        let mut remaining_bytes = 4 * 1024 * 1024;
         while let Some(row) = cursor
             .next()
             .map_err(|e| LedgerError::sql("read bounded per-Run publications", e))?
@@ -405,17 +397,6 @@ impl RunsDb {
         run: Option<RunId>,
         limit: usize,
     ) -> Result<Vec<OpenPublication>, LedgerError> {
-        self.open_publications_for_mode(run, limit, true)
-    }
-
-    /// Retirement gate: filter before LIMIT so an old Bot's retained backlog
-    /// cannot starve ordinary publications. No Bot record is acknowledged.
-    pub fn open_publications_for_mode(
-        &self,
-        run: Option<RunId>,
-        limit: usize,
-        legacy_bots: bool,
-    ) -> Result<Vec<OpenPublication>, LedgerError> {
         let mut statement = self
             .conn()
             .prepare(
@@ -423,11 +404,11 @@ impl RunsDb {
                    FROM pending_publications
                   WHERE acknowledged_at_ms IS NULL
                     AND (?2 IS NULL OR run_id = ?2)
-                    AND (?3 OR EXISTS (
+                    AND EXISTS (
                         SELECT 1 FROM run_intents i
                         WHERE i.run_id = pending_publications.run_id
-                        AND json_extract(i.payload_json, '$.scope.kind') <> 'bot_folder'
-                    ))
+                        AND CASE WHEN json_valid(i.payload_json) THEN json_extract(i.payload_json, '$.scope.kind') IN ('none','temporary','project_root','project_folder') ELSE 0 END
+                    )
                   ORDER BY rowid
                   LIMIT ?1",
             )
@@ -436,8 +417,7 @@ impl RunsDb {
             .query_map(
                 params![
                     i64::try_from(limit).unwrap_or(i64::MAX),
-                    run.map(|id| id.to_string()),
-                    legacy_bots
+                    run.map(|id| id.to_string())
                 ],
                 |row| {
                     Ok((
@@ -578,50 +558,6 @@ fn insert_on(
     Ok(())
 }
 
-/// New exact projection owner. Ordinary enqueue's historical identity-only
-/// replay is intentionally unchanged. The caller passes only retained typed
-/// target facts serialized by their shared owning codec.
-pub(crate) fn enqueue_exact_on(
-    tx: &rusqlite::Transaction<'_>,
-    event: EventId,
-    run: RunId,
-    kind: PublicationKind,
-    body: &str,
-    now: i64,
-) -> Result<(), crate::BotLedgerError> {
-    if verify_exact_on(tx, event, run, kind, body)? {
-        return Ok(());
-    }
-    insert_on(tx, event, run, kind, body, now)?;
-    Ok(())
-}
-
-pub(crate) fn verify_exact_on(
-    conn: &rusqlite::Connection,
-    event: EventId,
-    run: RunId,
-    kind: PublicationKind,
-    body: &str,
-) -> Result<bool, crate::BotLedgerError> {
-    let retained = conn.query_row(
-        "SELECT CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END,
-                CASE WHEN typeof(kind)='text' AND length(CAST(kind AS BLOB))<=32 THEN kind END,
-                CASE WHEN typeof(body_json)='text' AND length(CAST(body_json AS BLOB)) BETWEEN 1 AND 4194304 THEN body_json END
-         FROM pending_publications WHERE event_id=?1",
-        [event.to_string()], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)),
-    ).optional().map_err(|e| LedgerError::sql("read exact retained publication", e))?;
-    if let Some((stored_run, stored_kind, stored_body)) = retained {
-        if stored_run != run.to_storage()
-            || stored_kind != publication_token(kind)
-            || stored_body != body
-        {
-            return Err(crate::BotLedgerError::Conflict);
-        }
-        return Ok(true);
-    }
-    Ok(false)
-}
-
 fn pending_candidate(
     row: &rusqlite::Row<'_>,
     ledger_epoch: uuid::Uuid,
@@ -706,9 +642,6 @@ fn attempts_of(value: i64) -> Result<u32, LedgerError> {
         column: "attempts",
     })
 }
-
-mod decision_runs;
-pub use decision_runs::DECISION_PROJECTION_RUN_PAGE;
 
 #[cfg(test)]
 mod tests;

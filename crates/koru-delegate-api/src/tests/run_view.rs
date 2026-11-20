@@ -3,7 +3,7 @@
 //! Golden bytes of the Run view family (`RunView`, `RunExecution`,
 //! `TimelineWindow`, `TimelineItem`).
 //!
-//! `GET /v1/runs/{run}`, the private Bot `Read` and the Bots API's
+//! `GET /v1/runs/{run}`, the delegated API's
 //! `read_run` all answer these bytes, and the Run viewer and the phone read
 //! them. Written while the types lived in this crate's `wire` and kept
 //! unchanged when they moved into `koru-delegate-core` (re-exported here

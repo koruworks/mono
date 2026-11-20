@@ -21,17 +21,30 @@ use koru_session_protocol::{
 };
 
 use super::*;
-mod admission_read;
-mod child_composition;
-mod decision_composition;
-mod decision_resume;
-mod decisions;
-mod engine_retirement;
-mod native_lookup;
-mod private;
-pub(crate) mod routine;
-mod routine_route;
-mod team_pause;
+
+#[test]
+fn stale_pump_messages_cannot_replace_current_attempt_observation() {
+    let (mut actor, _, _) = actor();
+    let run = RunId::mint();
+    let epoch = uuid::Uuid::new_v4();
+    actor.pumps.insert(
+        run,
+        Pump {
+            stop: Arc::new(AtomicBool::new(false)),
+            epoch,
+        },
+    );
+    let stale = uuid::Uuid::new_v4();
+    actor.handle(Command::Update {
+        run,
+        epoch: stale,
+        update: SessionUpdate::Closed { error: None },
+    });
+    actor.handle(Command::PumpEnded { run, epoch: stale });
+    assert_eq!(actor.pumps[&run].epoch, epoch);
+    actor.handle(Command::PumpEnded { run, epoch });
+    assert!(!actor.pumps.contains_key(&run));
+}
 
 struct NeverDocuments;
 impl RunDocuments for NeverDocuments {
@@ -160,17 +173,6 @@ impl koru_delegate_scope::ScopeRoots for NeverRoots {
 }
 struct NeverMcp;
 impl McpEndpoints for NeverMcp {
-    fn publish_decision_wait(
-        &mut self,
-        _: RunId,
-        _: Option<(
-            koru_delegate_core::decisions::DecisionId,
-            koru_delegate_core::decisions::DecisionPhase,
-        )>,
-    ) -> PortResult<()> {
-        // These actor tests open no decision wait, so nothing is published.
-        Ok(())
-    }
     fn launch(&mut self, _: McpLaunch<'_>) -> PortResult<koru_session_protocol::DelegationLaunch> {
         unreachable!()
     }
@@ -198,16 +200,8 @@ impl Sleep for NoSleep {
 }
 
 fn actor() -> (Actor, mpsc::Sender<Command>, mpsc::Receiver<Command>) {
-    actor_with_store(Box::new(
-        RunsDb::open(std::path::Path::new(":memory:")).unwrap(),
-    ))
-}
-
-pub(crate) fn actor_with_store(
-    store: Box<dyn koru_delegate_runtime::RunStore>,
-) -> (Actor, mpsc::Sender<Command>, mpsc::Receiver<Command>) {
     let ports = koru_delegate_runtime::Ports {
-        store,
+        store: Box::new(RunsDb::open(std::path::Path::new(":memory:")).unwrap()),
         documents: Box::new(NeverDocuments),
         sessions: Box::new(NeverSessions),
         capture: Box::new(NeverCapture),
@@ -251,7 +245,7 @@ fn create(run: RunId) -> CreateRunRequest {
 #[test]
 fn a_live_schedule_admission_defers_create_and_resume_in_arrival_order() {
     let (mut actor, _commands, _inbox) = actor();
-    actor.schedule_admission = Some(ScheduleLease::Ordinary(RunId::mint()));
+    actor.schedule_admission = Some(RunId::mint());
     let (create_reply, _create_answer) = mpsc::sync_channel(1);
     let (resume_reply, _resume_answer) = mpsc::sync_channel(1);
     actor.handle(Command::Create {
@@ -272,7 +266,7 @@ fn a_live_schedule_admission_defers_create_and_resume_in_arrival_order() {
 fn stopped_scheduler_ack_releases_a_retained_postclaim_lease() {
     let (mut actor, commands, inbox) = actor();
     let admission = RunId::mint();
-    actor.schedule_admission = Some(ScheduleLease::Ordinary(admission));
+    actor.schedule_admission = Some(admission);
     actor.attach_scheduler(crate::scheduler::test_control(commands));
     let (stop, stopped) = mpsc::channel();
     stop.send("test stop").unwrap();
@@ -284,8 +278,8 @@ fn stopped_scheduler_ack_releases_a_retained_postclaim_lease() {
 fn a_failed_postclaim_finish_can_retry_without_reopening_a_preclaim_lease() {
     let (mut actor, _commands, _inbox) = actor();
     let run = RunId::mint();
-    let scope = ScopeIdentity::fixture_canonical(std::path::Path::new("C:/ordinary-fixture"));
-    actor.schedule_admission = Some(ScheduleLease::Ordinary(run));
+    let scope = ScopeIdentity::of_directory(std::path::Path::new(".")).unwrap();
+    actor.schedule_admission = Some(run);
     assert!(actor.may_finish_schedule(run));
 
     actor.record_schedule_finish(run, WorkspaceScope::Temporary, scope.clone(), false);
@@ -502,304 +496,3 @@ fn resolved_restart_scopes_overlap_across_project_names() {
         &temporary
     ));
 }
-
-fn bot_submission() -> koru_delegate_core::BotSubmission {
-    use koru_delegate_core::*;
-    let c = create(RunId::mint());
-    let owner = BotOwner {
-        device: DeviceId::new(),
-        user_scope: serde_json::from_value(serde_json::json!(uuid::Uuid::new_v4())).unwrap(),
-    };
-    let request = DelegationRequest {
-        run: c.run,
-        requested_by: c.requested_by,
-        objective: c.objective,
-        agent: c.agent,
-        requested_model: c.requested_model,
-        scope: WorkspaceScope::BotFolder {
-            folder: BotWorkingFolder::new("C:/private/bot".into()).unwrap(),
-        },
-        context: vec![],
-        grants: BTreeSet::from([c.workspace]),
-        executing_device: owner.device,
-        origin: RunOrigin::Manual,
-    };
-    BotSubmission {
-        provenance: BotProvenance {
-            parent: None,
-            routine: None,
-            owner,
-            bot: BotId::mint(),
-            submission: BotRequestId::mint(),
-            chat_id: uuid::Uuid::new_v4(),
-            ai_attempt_id: None,
-            assistant_message_id: None,
-            config_revision: 1,
-            policy_revision: 1,
-            continued_from: None,
-        },
-        policy: CapturedBotPolicy {
-            workspace: c.workspace,
-            destination: c.workspace,
-            access: BotAccess::Default,
-            selected_pages: Default::default(),
-            connections: Default::default(),
-        },
-        workspace: c.workspace,
-        request,
-        input: PendingInput {
-            idempotency_key: IdempotencyKey::mint(),
-            text: "task".into(),
-            attachment_ids: vec![],
-            references: vec![],
-            mode: None,
-            fast: None,
-            reasoning: None,
-            skills: vec![],
-            model: None,
-        },
-    }
-}
-#[test]
-fn bot_admission_blocks_every_ordinary_run_route_before_document_or_session_access() {
-    let (mut actor, _, _) = actor();
-    let s = bot_submission();
-    let run = s.request.run;
-    actor
-        .orchestrator
-        .ports_mut()
-        .store
-        .bots()
-        .unwrap()
-        .admit_bot(&s)
-        .unwrap();
-    let (reply, answer) = mpsc::sync_channel(1);
-    let commands = vec![
-        Command::Run {
-            run,
-            window: TimelineQuery {
-                workspace: None,
-                from: 0,
-                len: 20,
-            },
-            reply: reply.clone(),
-        },
-        Command::Cancel {
-            run,
-            reply: reply.clone(),
-        },
-        Command::Resume {
-            run,
-            confirm: true,
-            reply: reply.clone(),
-        },
-        Command::Trash {
-            run,
-            artifacts: ArtifactDisposition::Keep,
-            reply: reply.clone(),
-        },
-        Command::Restore {
-            run,
-            reply: reply.clone(),
-        },
-        Command::Purge {
-            run,
-            reply: reply.clone(),
-        },
-        Command::Create {
-            request: create(run),
-            reply: reply.clone(),
-        },
-    ];
-    for command in commands {
-        let purge = matches!(command, Command::Purge { .. });
-        actor.handle(command);
-        let Response::Failure(failure) = answer.recv().unwrap() else {
-            panic!("Bot ordinary route must refuse")
-        };
-        assert_eq!(
-            failure.code,
-            if purge {
-                "bot_retained_state"
-            } else {
-                "bot_private_route_required"
-            }
-        );
-        assert!(!failure.retryable);
-        if purge {
-            assert_eq!(
-                failure.message,
-                "This Bot Run retains task and recovery state and cannot be permanently deleted."
-            );
-        }
-    }
-    let (sink, events) = mpsc::sync_channel(1);
-    actor.handle(Command::Stream {
-        run,
-        workspace: Some(s.workspace),
-        after: None,
-        sink,
-    });
-    assert!(matches!(events.recv().unwrap(), RunStreamItem::Closed));
-    assert!(actor.watchers.is_empty());
-}
-#[test]
-fn bot_roster_is_removed_before_ordinary_list_metadata_and_counts() {
-    let (mut actor, _, _) = actor();
-    let s = bot_submission();
-    let mut header = RunHeader::from_request(s.request.clone(), 1);
-    header.bot = Some(s.provenance);
-    let listed = actor.listing(vec![koru_delegate_runtime::ListedRun {
-        header,
-        document: DocumentId::new(),
-        trashed_at_ms: None,
-    }]);
-    assert!(
-        listed.runs.is_empty()
-            && listed.trashed.is_empty()
-            && listed.documents.is_empty()
-            && listed.sessions.is_empty()
-    );
-}
-#[test]
-fn bot_queue_continuation_advances_past_paused_candidates_one_mailbox_turn_at_a_time() {
-    use koru_delegate_core::*;
-    let (mut actor, _, inbox) = actor();
-    let first = bot_submission();
-    actor.device = first.provenance.owner.device;
-    for n in 0..4 {
-        let mut s = first.clone();
-        s.request.run = RunId::mint();
-        s.provenance.submission = BotRequestId::mint();
-        s.provenance.bot = BotId::mint();
-        let ledger = actor.orchestrator.ports_mut().store.bots().unwrap();
-        ledger.admit_bot(&s).unwrap();
-        ledger
-            .apply_bot_barrier(&BotAdmissionBarrier {
-                owner: s.provenance.owner,
-                bot: s.provenance.bot,
-                request: BotRequestId::mint(),
-                epoch: 2,
-                paused: true,
-            })
-            .unwrap();
-        assert_eq!(n + 1, ledger.queued_bots(0, 10).unwrap().len());
-    }
-    actor.wake_bots();
-    for expected in 1..=4 {
-        actor.handle(inbox.recv().unwrap());
-        assert_eq!(actor.bot_queue_cursor, expected);
-        assert!(actor.bot_drain_pending);
-    }
-    actor.handle(inbox.recv().unwrap());
-    assert!(!actor.bot_drain_pending);
-    assert!(
-        inbox.try_recv().is_err(),
-        "a completed sweep must become idle"
-    );
-}
-#[test]
-fn bot_actor_rechecks_trusted_device_before_any_persistence_or_provider_use() {
-    let (mut actor, _, _) = actor();
-    let s = bot_submission();
-    actor.device = DeviceId::new();
-    let result = actor.bot_command(koru_delegate_api::bots::BotCommand::Submit { submission: s });
-    assert!(matches!(result,Err(failure) if failure.code=="bot_owner_mismatch"));
-}
-
-#[test]
-fn boot_acknowledgements_coalesce_an_extra_sweep_without_rewinding_current_cursor() {
-    use koru_delegate_api::bots::{BotCommand, BotReply};
-    use koru_delegate_core::*;
-    let (mut actor, _, inbox) = actor();
-    let first = bot_submission();
-    let owner = first.provenance.owner;
-    actor.device = owner.device;
-    for _ in 0..4 {
-        let mut s = first.clone();
-        s.request.run = RunId::mint();
-        s.provenance.submission = BotRequestId::mint();
-        actor
-            .orchestrator
-            .ports_mut()
-            .store
-            .bots()
-            .unwrap()
-            .admit_bot(&s)
-            .unwrap();
-    }
-    let BotReply::Hello { hello } = actor
-        .bot_command(BotCommand::Hello {
-            owner,
-            scan: BotBootScan::Probe {},
-        })
-        .unwrap()
-    else {
-        panic!("Hello required")
-    };
-    let command = BotCommand::SynchronizeBootBot {
-        boot: hello.boot,
-        barrier: BotAdmissionBarrier {
-            owner,
-            bot: first.provenance.bot,
-            request: BotRequestId::mint(),
-            epoch: 1,
-            paused: true,
-        },
-        policy: BotPolicyBarrier {
-            key: BotPolicyBarrierKey {
-                owner,
-                bot: first.provenance.bot,
-                request: BotRequestId::mint().into(),
-            },
-            config_revision: 1,
-            policy_revision: 1,
-            policy: first.policy,
-            effects_allowed: false,
-        },
-    };
-    actor.wake_bots();
-    actor.handle(inbox.recv().unwrap());
-    assert_eq!(actor.bot_queue_cursor, 1);
-    for _ in 0..3 {
-        assert!(
-            matches!(actor.bot_command(command.clone()).unwrap(), BotReply::BootSynchronized { receipt } if receipt.state == BotBootState::Ready)
-        );
-        assert_eq!(actor.bot_queue_cursor, 1);
-    }
-    for expected in 2..=4 {
-        actor.handle(inbox.recv().unwrap());
-        assert_eq!(actor.bot_queue_cursor, expected);
-    }
-    actor.handle(inbox.recv().unwrap());
-    assert!(actor.bot_drain_pending);
-    assert_eq!(actor.bot_queue_cursor, 0);
-    for expected in 1..=4 {
-        actor.handle(inbox.recv().unwrap());
-        assert_eq!(actor.bot_queue_cursor, expected);
-    }
-    actor.handle(inbox.recv().unwrap());
-    assert!(!actor.bot_drain_pending);
-    assert!(inbox.try_recv().is_err());
-}
-#[test]
-fn a_named_initial_input_refusal_reaches_the_ai_as_non_retryable_and_no_answer_stays_retryable() {
-    use koru_delegate_runtime::{Port, PortError};
-    for refusal in koru_delegate_core::BotInputRefusal::ALL {
-        let failure = bots::bot_failure(RunError::Port(PortError::new(
-            Port::Sessions,
-            refusal.code(),
-            "The session refused the initial input (input_too_large).",
-        )));
-        assert_eq!(failure.code, refusal.code());
-        assert!(!failure.retryable);
-    }
-    // A session code the owner did not name stays the generic retryable port.
-    for code in ["input_too_large", "disconnected", "timed_out"] {
-        let failure = bots::bot_failure(RunError::Port(PortError::new(Port::Sessions, code, "x")));
-        assert_eq!(failure.code, "port");
-        assert!(failure.retryable);
-    }
-}
-
-mod bot_delivery;

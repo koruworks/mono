@@ -88,6 +88,60 @@ fn session_tab_count(v: &MainView) -> usize {
         .count()
 }
 
+#[test]
+fn managed_notice_requires_current_owner_and_a_valid_sequenced_batch() {
+    use koru_session_protocol::{AgentEvent, AgentTurnId, SequencedAgentEvent, StreamSequence};
+    let (mut v, _workspace) = container();
+    let _commands = with_backend(&mut v);
+    let id = SessionId::mint();
+    let tab = open_bound(&mut v, id);
+    v.session_attaching = Some(tab);
+    v.handle_session_event(BackendEvent::Attached {
+        session_id: id,
+        mode: SessionMode::Managed {
+            provider: "codex".parse().unwrap(),
+        },
+        epoch: 1,
+    });
+    let turn = AgentTurnId::mint();
+    let batch = |owner, epoch, sequence, event| BackendEvent::ManagedBatch {
+        session_id: owner,
+        epoch,
+        earlier_truncated: false,
+        events: vec![SequencedAgentEvent {
+            session_id: owner,
+            sequence: StreamSequence::new(sequence).unwrap(),
+            event,
+        }],
+    };
+    let notice = |text: &str| AgentEvent::Notice {
+        turn_id: turn,
+        text: text.into(),
+    };
+    session_tab(&mut v).1.surface.notice = Some("Before".into());
+    assert!(!v.handle_session_event(batch(id, 2, 1, notice("stale"))));
+    assert!(!v.handle_session_event(batch(SessionId::mint(), 1, 1, notice("foreign"))));
+    assert_eq!(
+        session_tab(&mut v).1.surface.notice.as_deref(),
+        Some("Before")
+    );
+    assert!(v.handle_session_event(batch(id, 1, 1, notice("Fallback instructions"))));
+    assert_eq!(
+        session_tab(&mut v).1.surface.notice.as_deref(),
+        Some("Fallback instructions")
+    );
+    v.handle_session_event(batch(id, 1, 2, AgentEvent::TurnStarted { turn_id: turn }));
+    assert_eq!(
+        session_tab(&mut v).1.surface.notice.as_deref(),
+        Some("Fallback instructions")
+    );
+    v.handle_session_event(batch(id, 1, 4, notice("must not surface through a gap")));
+    assert_ne!(
+        session_tab(&mut v).1.surface.notice.as_deref(),
+        Some("must not surface through a gap")
+    );
+}
+
 /// Open a session tab and bind it to `id`, as a completed launch leaves one.
 fn open_bound(v: &mut MainView, id: SessionId) -> u64 {
     assert!(

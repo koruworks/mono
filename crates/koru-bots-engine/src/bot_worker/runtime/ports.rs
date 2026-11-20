@@ -22,6 +22,7 @@ use uuid::Uuid;
 mod tests;
 
 pub(super) struct Port {
+    instructions: koru_delegate_preamble::session::Configuration,
     paths: Arc<super::paths::Paths>,
     pub client: Client,
     pub reservation: Reservation,
@@ -49,6 +50,7 @@ impl Port {
         paths: Arc<super::paths::Paths>,
     ) -> Self {
         Self {
+            instructions: Default::default(),
             paths,
             client,
             reservation,
@@ -59,6 +61,13 @@ impl Port {
             database,
             state: Mutex::new(State::default()),
         }
+    }
+    pub fn with_instructions(
+        mut self,
+        configuration: koru_delegate_preamble::session::Configuration,
+    ) -> Self {
+        self.instructions = configuration;
+        self
     }
     pub fn turn(&self) -> Option<Turn> {
         self.state.lock().ok().and_then(|s| s.turn)
@@ -84,6 +93,9 @@ impl Drop for Port {
     }
 }
 impl sessions::Port for Port {
+    fn instructions(&self) -> koru_delegate_preamble::Resolved {
+        self.instructions.resolve()
+    }
     fn input(&self, delivery: &Delivery) -> Result<workspace::input::Prepared, Error> {
         if delivery
             .context

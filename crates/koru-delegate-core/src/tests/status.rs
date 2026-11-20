@@ -10,59 +10,6 @@
 
 use super::*;
 
-#[test]
-fn only_vouched_bot_context_can_interrupt_a_created_run_without_fake_start() {
-    let event = RunEvent::Interrupt {
-        prior_attempt: PriorAttempt::Unknown,
-    };
-    assert!(transition(&RunStatus::Created, &event).is_err());
-    assert_eq!(
-        crate::transition_bot(&RunStatus::Created, &event).unwrap(),
-        RunStatus::Interrupted {
-            prior_attempt: PriorAttempt::Unknown
-        }
-    );
-    assert!(
-        crate::transition_bot(
-            &RunStatus::Created,
-            &RunEvent::Interrupt {
-                prior_attempt: PriorAttempt::Ended
-            }
-        )
-        .is_err()
-    );
-    // Every other pair is identical, except the one event only the Bot owner
-    // may apply (M6): a running Bot Run can be marked as waiting for another
-    // Bot. The Bot entry adds that event's rows and exactly one more.
-    let mut differing = Vec::new();
-    let mut waiting = Vec::new();
-    for state in every_state() {
-        for event in every_event() {
-            if transition(&state, &event) != crate::transition_bot(&state, &event) {
-                if event == RunEvent::WaitingForBot {
-                    waiting.push(state.clone());
-                } else {
-                    differing.push((state.clone(), event));
-                }
-            }
-        }
-    }
-    assert_eq!(differing, vec![(RunStatus::Created, event)]);
-    assert!(!waiting.is_empty());
-    assert!(
-        waiting
-            .iter()
-            .all(|state| matches!(state, RunStatus::Running { .. }))
-    );
-    assert_eq!(
-        waiting.len(),
-        every_state()
-            .iter()
-            .filter(|state| matches!(state, RunStatus::Running { .. }))
-            .count()
-    );
-}
-
 use Attention::*;
 use CancelReason::{Run, TakeoverBoundary};
 use ControlState::{HandoverPending, Human, Orchestrator};
@@ -155,12 +102,9 @@ fn every_event() -> Vec<RunEvent> {
             originator: ByHuman,
             reason: TakeoverBoundary,
         },
-        E::BotResponseDelivered,
         E::ApprovalRequired,
         E::ApprovalResolved,
         E::WaitingForInput,
-        // M6: refused for every ordinary Run, so the table has no row for it.
-        E::WaitingForBot,
         E::ChildSessionDetected,
         E::ChildSessionTerminated,
         E::HandoverRequested,
@@ -179,11 +123,9 @@ fn every_event() -> Vec<RunEvent> {
             | E::TurnCompleted { .. }
             | E::TurnFailed { .. }
             | E::TurnCancelled { .. }
-            | E::BotResponseDelivered
             | E::ApprovalRequired
             | E::ApprovalResolved
             | E::WaitingForInput
-            | E::WaitingForBot
             | E::ChildSessionDetected
             | E::ChildSessionTerminated
             | E::HandoverRequested
@@ -285,7 +227,7 @@ fn orchestrator_turn_end_rows(cleared: &[Attention], control: ControlState) -> V
         HandoverPending { .. } => running(cleared, hp(true)),
         Human { .. } => running(cleared, human(true)),
     };
-    let mut rows = vec![
+    let rows = vec![
         (
             E::TurnCompleted {
                 originator: ByOrchestrator,
@@ -315,9 +257,6 @@ fn orchestrator_turn_end_rows(cleared: &[Attention], control: ControlState) -> V
             S::Cancelled,
         ),
     ];
-    if control == Orchestrator {
-        rows.push((E::BotResponseDelivered, S::Completed));
-    }
     rows
 }
 

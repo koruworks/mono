@@ -13,26 +13,7 @@ fn spelled(path: &str) -> ScopeIdentity {
 }
 
 #[test]
-fn bot_admission_does_not_take_the_manual_busy_override() {
-    let mut claims = ScopeClaims::new();
-    admit(&mut claims, 1, 11, REPO, StartOrigin::Manual);
-    assert_eq!(
-        admit(
-            &mut claims,
-            2,
-            22,
-            REPO,
-            StartOrigin::Bot {
-                bot: koru_delegate_core::BotId::from_uuid(v4(3)),
-            }
-        ),
-        Admission::Refused(ScopeRefusal::Busy)
-    );
-    assert_eq!(claims.len(), 1);
-}
-
-#[test]
-fn bot_folder_requires_the_explicit_trusted_start_discriminator_before_io() {
+fn retired_bot_folder_is_refused_before_io() {
     struct NoIo;
     impl ScopeRoots for NoIo {
         fn project_root(&self, _: ProjectId) -> RootLookup {
@@ -51,16 +32,8 @@ fn bot_folder_requires_the_explicit_trusted_start_discriminator_before_io() {
         Admission::Refused(ScopeRefusal::NotAdmissible)
     );
     assert_eq!(
-        claims.admit(
-            run_id(1),
-            attempt_id(2),
-            &WorkspaceScope::Temporary,
-            &NoIo,
-            StartOrigin::Bot {
-                bot: koru_delegate_core::BotId::from_uuid(v4(3)),
-            }
-        ),
-        Admission::Refused(ScopeRefusal::NotAdmissible)
+        ResolvedScope::resolve(&scope, run_id(1), &NoIo).unwrap_err(),
+        ScopeRefusal::NotAdmissible
     );
 }
 

@@ -186,7 +186,8 @@ explicitly, refuses to package without it, and copies it only after building
 `koru-mcp`, so every release serves the latest checked-out contract rather than
 a string embedded in the executable.
 
-The current tool surface is:
+The current full catalog contains 28 tools: 25 ordinary tools and three view tools for MCP Apps hosts.
+The tool surface is:
 
 - `get_documentation`, `list_workspaces`, `list_documents`, `search_documents`,
   `list_tasks`, `read_document`, `list_files`, `search_files`, `get_file`, and
@@ -199,8 +200,6 @@ The current tool surface is:
   `compare_document_versions`, and `restore_document_version` for history; and
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
   Koru AI chats; and
-- `list_bots`, `start_bot_task`, `read_bot_task`, and `stop_bot_task` for local
-  external assistants asking a Bot to work in its shared conversation; and
 - `show_document`, which shows a person a document in an interactive view,
   for hosts that render MCP Apps, with `read_image` and `watch_document`,
   which that view draws a document's images from and hears of a change
@@ -272,7 +271,7 @@ line it reads from a stdio server — see the ADR for what was measured.
 ### Toolsets
 
 Every agent reads the whole reply into its context when a session starts,
-about 5,400 tokens, whether it then touches one document or none. So the
+whether it then touches one document or none. So the
 tools are grouped into **toolsets**, and a bridge started with
 `--toolsets docs,tasks` lists only those and `core`
 (`crates/koru-mcp-server/src/toolsets.rs`). **Without the flag every toolset
@@ -287,9 +286,8 @@ group (maintainers, 2026-11-02).
 | `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
 | `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
 | `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
-| `bots` | `list_bots`, `start_bot_task`, `read_bot_task`, `stop_bot_task` | 2,783 | 696 | 3,100 |
 | the view tools — listed with `docs`, in no toolset | `show_document`, `read_image`, `watch_document` | 1,511 | 378 | 1,650 |
-| every toolset on | the whole reply, envelope included | 28,744 | 7,186 | 30,300 |
+| every toolset on | the whole reply, envelope included | 25,961 | 6,491 | 27,200 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
@@ -298,12 +296,12 @@ adds about 45 bytes of envelope. Tokens are bytes over four. Measured
 `the_published_tool_list_is_compact_and_within_its_budget`. Raising one is a
 decision recorded here.
 
-The `bots` and whole-reply rows were measured on 2026-11-13 when the four external task tools
-were added (M2); its 3,100-byte budget includes about 11% headroom and is added
-to the total. `start_bot_task` advertises potential destructive and open-world
-work because it delegates to the Bot's configured agent runtime. Those hints
-describe the operation; they grant no additional authority. List, read and
-Stop remain closed-world operations.
+The external Bot task tools and `bots` toolset were retired on 2026-11-20.
+Their `bots.read`, `bots.run` and `bots.configure` scopes are no longer part of
+the public capability surface. Native first-party Bot conversations and
+Routines remain separate APIs. The complete 28-tool reply measured 25,961 bytes
+on 2026-11-20 and passed the compactness budget test. The older per-toolset
+measurements above remain historical values, not a new measurement of each group.
 
 **The view tools have a budget line of their own** (2026-11-11), and the
 total grew by it, from 25,550 to 27,200. They are in no router, so in no
@@ -1507,69 +1505,6 @@ remain visible with their state. Each message body is capped at 16 KiB on a
 UTF-8 boundary and reports `truncated: true` when shortened; the result also
 reports the complete terminal-message count.
 
-## Bot task tools
-
-`list_bots`, `start_bot_task`, `read_bot_task`, and `stop_bot_task` let a local
-connected assistant ask a Bot to work in its main conversation. They belong to
-the `bots` toolset. Koru AI contexts, hosted MCP connections, and a Bot's native
-Run endpoint cannot call them. The conversation and Stop control in Koru use
-the same attempt and executor as the external request.
-
-List with `workspace` and `limit` (1 to 100); follow `next_cursor`. Start with
-`workspace`, `bot_id`, a fresh UUID v4 `request_id`, `text`, and optional
-`document_ids` (at most sixteen). The accepted response returns `attempt_id`.
-An accepted task continues if the caller disconnects. If submission is
-uncertain, retry **the identical request and UUID**: the durable conversation
-receipt prevents duplicate work; changed input under that UUID conflicts.
-Never automatically generate a replacement UUID after a timeout.
-
-Read and Stop name the same `workspace`, `bot_id`, `request_id`, and accepted
-`attempt_id`. Read returns truthful attempt status, the actual terminal
-assistant answer (including partial text on failure or interruption), and
-confirmed saved-page references. An answer without a saved page is a result.
-Pending answers are `null`; results can separately be `preparing` or
-`unavailable` while the execution owner has no readable Run. Poll the same
-request later. Follow `next_cursor` to recover all terminal text and references:
-each page carries at most 16 KiB of answer text and twenty references, and its
-entire escaped JSON fits 128 KiB. References contain base64 confirmed versions;
-use ordinary `read_document` with its own permission to read the saved content.
-No execution session, provider payload, reasoning, or tool output is returned.
-
-The bridge requests `bots.read`, `bots.run`, and `store.read_documents` on a
-separate connection. The first two scopes are explicit opt-ins, never default
-gateway permissions; neither grants `bots.manage` or `ai.chat`. Direct API
-callers need `store.read_documents` only when selecting document IDs. Current
-Bot owner, home-workspace, lifecycle, and selected-document authority are still
-checked by the shared engine. New work on a paused Bot refuses. Exact retries
-return the original receipt where the shared lifecycle permits; archived
-mutations refuse, archived history remains readable, and Trash hides it. A
-trashed main conversation is a refusal, never a replacement conversation.
-
-**When the person has paused all Bots, `start_bot_task` is refused** with the
-code `team_paused`, `details.reason: "team_paused"` and the message "The
-person has paused all Bots." It is not retryable: nothing was accepted, no
-conversation message was written, and sending the same request again is
-refused the same way until the person resumes. Tell the person rather than
-retrying. `list_bots`, `read_bot_task` and `stop_bot_task` keep working under
-the pause, and work that was already running continues. Pausing and resuming
-all Bots are the person's controls in Koru: no tool here does either, and
-`bots.read` and `bots.run` do not reach the route that does. A single Bot the
-person paused on its own still refuses with `wrong_owner`, as before.
-
-Configured Knowledge is captured by the shared task path alongside Role and the
-explicit task pages. Its separate sixteen-page bound does not reduce the task's
-sixteen-page selection bound; the distinct union is at most 33 pages. Knowledge
-provides context without adding selected-page write grants. New tasks use current
-captured versions; exact submission retries keep the originals. These tools do
-not expose Library management or Memory creation.
-
-This local authentication boundary is the OS user. Caller-selected product
-labels are audit text, not separate authenticated app identities. All clients
-of the same engine-established owner share the request UUID namespace; reuse
-of a UUID for a different Bot also conflicts. A client must retain its receipt
-and request UUID; guessed UI-origin or unrelated attempt IDs do not grant reads
-or control.
-
 ## Preconditions, history, and durability
 
 Every mutation is checked against what was read, applied atomically, durable
@@ -2036,136 +1971,78 @@ authority; missing projection data refuses availability. Current authorization
 must be checked again under the same Store lock as the effect. No workspace-wide
 listing is needed for this targeted validation.
 
-### Internal Memory edit preparation
+## Native Bot tools
 
-The Bot-native `remember_memory`, `correct_memory` and `forget_memory` tools use
-a separate trusted Rust constructor,
-`LocalBackend::prepare_memory_write`, accepts a bounded flat recipe produced
-off the AI writer from verified exact history, plus an owner-validated allocation
-view. It never accepts provider-supplied operations or broadens the ordinary
-native catalog. Current binding/authority and an effect lease remain required
-from the caller; the constructor alone grants neither.
+Bot conversations run in the native engine. Their provider tools are bound to
+an authenticated worker, turn generation, Bot and conversation at arrival;
+provider arguments cannot substitute another caller. These tools are separate
+from the public bridge catalog and from the ordinary Run artifact endpoint.
+There is no legacy Bot runtime selector or per-Run Bot tool server.
 
-The generated edit creates one H2 fact with a plain detail paragraph and a
-fixed `Source Run` document pill. Correction preserves the fact ID and replaces
-its entire detail/source subtree. Forget moves the complete fact into ordinary
-Trash. This private path calls core Trash; generic MCP `remove` retains its
-existing semantics. New summary/detail each reject line breaks instead of
-flattening them; use the ordinary editor for multiline content. Generated node
-IDs must be absent from the complete current document, including hidden Trash.
+### Memory and workspace pages
 
-Recipe and operation bytes are counted before full serialization. The Memory
-branch checks its 16MiB encoded current-snapshot cap before import (the existing
-snapshot transport still returns a Vec). It preserves the allocated exact VV
-bytes while hashing semantic VV entries in a separate Memory domain. Its fixed
-internal request title is `Memory`, independent of page renames; actual Store
-evidence uses the current page title. The single source Run reference is supplied
-by the trusted owner, not looked up through generic document grants. Profile and
-conditional revision checks still apply. Ordinary native Result behavior and
-hosted `actor/1` attribution remain unchanged.
+Role, Knowledge and Memory are ordinary workspace pages in the Bot's Library.
+Memory is selected or cleared in the Bot's Library using the existing page
+picker; its page opens in the ordinary editor. Binding or clearing Memory is an
+exact-revision, idempotent native change that preserves the current Role and
+Knowledge, including retries. There is no fact browser, lazy Memory-page
+creation protocol or special fact-operation tool family. Reading and editing
+pages uses the shared native workspace operations and their current authority.
 
-The gateway validates strict arguments before allocation, reconciles
-retained receipts before fresh authority, and uses the private AI phases for
-exact history, allocation-backed lazy Ensure and final authority/Profile proof.
-Only an exact Prepared Execute intent enters the shared Store executor and
-confirmation path. Cancellation cannot abandon an acquired lease; uncertain
-lease or settlement replies recover the known operation without reexecution.
-The Bot launch allowlist and gateway catalog expose the same thirteen native tools,
-including `list_memory` and `read_memory`, and the tools of "Asking another Bot"
-below where the gateway lists them. Ordinary Runs retain their artifact
-catalog. The Memory tools cannot widen generic document permissions; their
-saved receipts do not become Run results. Actual provider/client and desktop
-acceptance remain separate from the in-memory composition evidence.
+### Conversation history and collaboration
 
-The additional own-Bot tools are `create_routine`, `read_routine_creation`,
-`retry_routine_creation` and `list_routines`. Their closed arguments cannot select
-Bot, owner, model, folder, grants or execution authority. The authenticated current
-Run and its retained submission determine the Bot. Creation is initially Paused,
-copies a separate grant, and neither enables work nor creates a Run result.
-Use the current revision from listing and preserve the exact request ID/body on
-replay. Read retained creation status before Retry and supply its observed token;
-`can_retry` is a conservative hint, not permission. Listing observations and local
-conversation references do not establish execution authority. Complete JSON-RPC
-frames, including the exact ID, are bounded at4MiB. If acceptance is unknown, read
-the original identity rather than allocating a replacement. Accepted recovery may
-finish after the originating Run or caller ends.
+The engine's own tool schemas live in
+[`own_tools.rs`](../koru-bots-engine/src/own_tools.rs). Arguments are closed;
+unknown fields are refused.
 
-A Bot's saved receipt from `create_document` or `edit_document` carries
-`version_id`, the immutable Store version that save produced (M6). It is left
-out only for a result registered before versions were kept. It names what the
-save wrote; it is not an argument any tool accepts.
-
-### Asking another Bot
-
-Three more Bot Run tools let one Bot ask another Bot of the same person, home
-workspace and computer, and read what it saved: `list_askable_bots`, `ask_bot`
-and `read_bot_request`. **They are behind `CHILD_REQUESTS_AVAILABLE`, which is
-`true`** since 2026-11-17, when the product owner opened it for the P6.5
-acceptance run. In a build where it is `false` they are not listed, the
-endpoint's instructions do not name them, and a call answers `unknown_tool`
-before any owner is asked.
-
-They are listed only to a Bot Run that is not itself a child request (depth
-one). The two ask tools also need the Bot's "May ask other bots" switch and a
-Run with a reply of its own in the Bot's conversation: a task a person sent
-there, or a Routine's Run. A task started through the public API or by an
-external assistant has no such reply, cannot hold a wait, and is not offered
-them. `read_bot_request` needs neither. With all three listed the catalog has
-sixteen tools and the instructions say so; with only `read_bot_request`,
-fourteen. The Bot launch allowlist names all sixteen; it lists nothing by
-itself.
-
-**Listing is not authorization.** A coding agent lists its tools when its
-session starts, before the Run's first input is answered, and may keep that
-list for the session, so the two ask tools are listed from what is known then
-and do not wait for the Run's turn. Every call of `ask_bot` and
-`list_askable_bots` is checked in full when it is made, and the request is
-attributed to the Run's current turn. A call that arrives before that turn is
-bound answers `turn_not_started`: nothing was sent, and the same call (for
-`ask_bot`, the same `ask_key` and identical requests) passes a moment later.
-
-**A person can ask for it by name.** A person writing to a Bot can mention another Bot with `@`; the message the agent then reads shows `@Name` and ends with one sentence per mentioned Bot saying the person asks this Bot to ask it, with its `bot_id`, using `ask_bot` (`koru_ai_core::render_bot_prompt_text`). That sentence is a hint and nothing more: Koru starts no ask itself, the agent makes the call, and every check above applies to it unchanged.
-
-| Tool | Input | Output |
+| Tool | Arguments | Result and behavior |
 | --- | --- | --- |
-| `list_askable_bots` | `{}` | `{ bots: [ { bot_id, name } ] }`, at most 64. A paused Bot is listed; asking it is refused. |
-| `ask_bot` | `{ ask_key, requests: [ { bot_id, task, documents } ] }`: one to three requests, each a different Bot, at most 16 pages each; `ask_key` a canonical v4 UUID the model mints for the call | `{ status: "child_pending", message, requests: [ { child_request_id, bot_id } ] (input order), requests_used, budget_ms: 900000 }` |
-| `read_bot_request` | `{ child_request_id, document_id? }` | Without a page: `{ child_request_id, bot_id, state: open \| settled, child: queued \| running \| finished, outcome?, pages: [ { document_id, title, kind, availability: pinned \| not_pinned } ] (at most 20), pages_more, no_page_saved }`. With a page: `{ child_request_id, document_id, version_id, title, content, truncated }`. |
+| `read_older_messages` | `{ after? }`, a nonnegative sequence, default `0` | `{ messages }`, an ordered page from the bound conversation. Use the last sequence as `after` to continue. |
+| `list_bots` | `{ after? }`, a Bot UUID cursor or `null` | `{ items: [{ id, name }], next }`, at most 64 active Bots with the same owner and workspace, excluding the caller. Listing is discovery, not permission to send. |
+| `message_bot` | `{ id, to, source_message, body, thread?, deadline_ms? }` | `{ status: "accepted", message, thread, sequence }`, a durable message receipt. Required identities are UUIDs; `body` is nonempty. Omit `thread` to open a side conversation; if supplied it must be the caller's own conversation. |
 
-**An ask is all or nothing.** If any request is refused none is admitted, and
-the failure names the item by `details.index`. **The answer is held**: after
-the requests are admitted the gateway reads them until the asking Run's wait
-has left `hold_requested`, for at most ten seconds, so a model that ends its
-turn at once does not cancel what it asked. Normally the Run is stopped while
-the call is held and the answer is never seen; the task continues as a new
-turn of the same Run when every request is settled, with only ids and outcome
-tokens in its input. An unknown outcome is `child_status_unknown`: retry with
-the same `ask_key` and identical requests, never a new key.
+`source_message` must identify work offered to the current turn. Current
+collaboration access, the caller's *May ask other bots* setting, and bounded
+conversation accounting are checked by the engine. Reuse `id` and identical
+arguments after an uncertain reply. Acceptance does not mean the recipient has
+answered.
 
-**While a Run waits on other Bots** it keeps every read, `read_bot_request`,
-and the exact retry of its own ask. Every other mutation answers
-`child_wait_in_progress` with `details.child_request_ids`: a new page or edit,
-a Memory write, a Routine Create or Retry, the private read, and `ask_bot`
-under another key. An edit that would have asked a person's decision asks
-none. A Run waiting on a decision cannot ask another Bot
-(`decision_in_progress`). A child Run never asks a private-operation question.
+`message_bot` returns without waiting. A side conversation's answer continues
+the originating conversation; the UI groups actual delivery and reply receipts
+under the originating turn and can show the exact returned message. Tell the
+person briefly whom you are asking and why, then acknowledge acceptance once.
+When replies arrive, use their contents and identify any outstanding replies.
+Do not claim completion from a tool's acceptance receipt or repeat the UI's
+progress lines.
 
-**A result is a pinned page, read with the asking Bot's own access.** Only a
-request that reads `completed` has results: one entry per page the child Run
-saved, at the version its last save in that Run produced. The model names the
-page; the version id comes from the child Run's own record and is never an
-argument. The page is read under the asking Bot's current read check, the one
-`read_document` passes, and rendered as `read_document` renders. The live page
-is never returned in its place: `result_version_unavailable` with
-`details.reason` `missing`, `corrupt`, `not_pinned` or `too_large`;
-`result_not_readable` when the asking Bot may not read the page now (in Trash,
-for example); `result_not_ready` before the request completed. A rendered page
-above 1 MiB keeps a prefix of its nodes and says `truncated: true`. Titles and
-content appear only in the asking Bot's tool answer, never in a log or event.
+A person's `@Bot` mention carries a structured Bot identity. The engine checks
+collaboration access and routes that message to the named participants; it does
+not append an instruction to invoke a retired ask tool. Opening a side
+conversation is observation and does not itself join it or start work.
 
-Other codes: `ask_not_allowed`, `turn_not_started`, `recipient_unavailable`,
-`recipient_paused`,
-`recipient_full`, `recipient_folder_overlap`, `self_ask`, `would_wait_on_itself`
-and `page_unavailable` (each with `details.index`; the last with
-`details.document_id` too), `recipient_limit` (`details.used`),
-`child_capacity`, `child_budget_low`, `ask_key_conflict`, `request_not_found`.
+### Routines
+
+The native Routine schemas live in
+[`routines/tools.rs`](../koru-bots-engine/src/routines/tools.rs). A recurrence is
+`{ type: "floating", cron }` or `{ type: "zoned", cron, zone }`, using a
+five-field cron and, for a zoned rule, an IANA time zone.
+
+| Tool | Arguments | Result and behavior |
+| --- | --- | --- |
+| `list_routines` | `{ after? }`, a Routine UUID cursor or `null` | `{ bot_revision, items, next }`, with exact definition revisions, timing and on/off state. |
+| `create_routine` | `{ id, expected_bot_revision, name, objective, recurrence }` | `{ routine }`. Creates an enabled Routine for the bound Bot with default narrow access. Read `expected_bot_revision` from `list_routines`. |
+| `edit_routine` | `{ id, routine, revision, name, objective, recurrence }` | `{ routine }`. Changes the definition under its exact revision, preserving on/off state and the separate access grant. |
+| `run_routine` | `{ id, routine, revision }` | The durable queued or skipped occurrence receipt, not a completed result. Keeps the existing on/off setting and access. |
+
+Mutation identities are UUIDs and revisions are positive integers. Reuse the
+same `id` and exact arguments after uncertainty. Providers cannot choose another
+Bot, owner, model, working folder or access grant. New Routines start on; later
+pause/enable and access changes are the person's controls. Explain the task and
+timing so the person can review them. Do not broaden access or restart an
+existing paused Routine through another tool.
+
+Queued Routine work waits for capacity. Acknowledge its actual receipt and
+finish the main turn; do not perform the Routine objective there or poll while
+holding capacity. Results appear in the Routine's existing conversation and
+occurrence cards. Ordinary delegated Runs retain their separate artifact tools
+and result semantics described above.

@@ -5,16 +5,15 @@
 //!
 //! **Not the desktop bridge.** `koru-mcp` carries every local workspace and
 //! twenty-odd document tools; this endpoint carries six artifact tools for
-//! positively classified ordinary Runs or four scoped native tools for Bots.
+//! positively classified ordinary Runs. Bots use the engine's tool door.
 //! Its authority comes from the bearer and private execution owner, never
 //! provider-supplied identity. The only thing it knows about its
 //! caller is the run authority record the bearer resolves to — never a run
 //! id, an actor or a workspace the call names. Provenance derives from
 //! that record; the grant set is read from it and frozen for the attempt;
 //! a revocation or a fresh attempt is a row in `artifacts.db` that the
-//! next call reads, so a delegate worker that crashed leaves a surviving
-//! provider still publishing, and a restarted gateway answers the same
-//! token.
+//! next call reads. The delegate owner must also confirm the current
+//! generation on every request; an unavailable owner refuses tool access.
 //!
 //! **The transport is Streamable HTTP, stateless, JSON responses.** The
 //! shape Codex's `mcp_servers.<name>.url` expects (`docs/features/terminal/providers/codex.md`),
@@ -31,8 +30,7 @@
 //! (the protocol test here uses one) sees exactly what it expects.
 //!
 //! The pieces: [`transport`] parses and answers JSON-RPC; [`tools`] is the
-//! six ordinary definitions and their dispatch; [`native`] composes the shared
-//! native document semantics with owner policy/effect fencing; [`staging`] is the register path
+//! six ordinary definitions and their dispatch; [`staging`] is the register path
 //! rule over `<run-workspace>/.artifacts/<RunId>/`; [`blobs`] is the bytes'
 //! round trip through the Store.
 
@@ -50,7 +48,6 @@ use crate::GatewayState;
 // `artifacts/run_folder.rs`. The transport and the tool definitions stay
 // private: those are the run endpoint's, and nothing else has a run bearer.
 pub(crate) mod blobs;
-mod native;
 pub(crate) mod staging;
 mod tools;
 mod transport;
@@ -62,7 +59,7 @@ pub const ENDPOINT_PATH: &str = "/v1/runs/{run}/mcp";
 pub fn router() -> Router<Arc<GatewayState>> {
     Router::new().route(
         ENDPOINT_PATH,
-        any(transport::handle).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)),
+        any(transport::handle).layer(axum::extract::DefaultBodyLimit::max(64 * 1024)),
     )
 }
 
@@ -117,7 +114,7 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
     let operation = json!({
         "operationId": "runs_mcp",
         "summary": "A delegated run's MCP endpoint (Streamable HTTP, stateless)",
-        "description": "The endpoint a delegated provider is handed. Authenticated by the Run bearer and positively classified by the private execution owner; unknown authority never falls back to ordinary tools. One JSON-RPC message per POST, answered as application/json; a notification is 202; GET and DELETE are 405. Ordinary Runs expose create, create_version, get, read, search, attach_to_run, with definitions in x-mcp-tools. Bots expose only search_documents, read_document, create_document, edit_document; tools/list returns their shared narrowed schemas. Native writes require operation_id and report Saved only after durable Store verification and Run registration. The request limit is 64 KiB for ordinary Runs and 4 MiB for Bots.",
+        "description": "The endpoint a delegated provider is handed. Authenticated by the Run bearer and positively classified by the private execution owner; unknown authority never falls back to ordinary tools. One JSON-RPC message per POST, answered as application/json; a notification is 202; GET and DELETE are 405. Ordinary Runs expose create, create_version, get, read, search, attach_to_run, with definitions in x-mcp-tools. Bots use their engine-owned tool endpoint. The request limit is 64 KiB.",
         "security": [{"runBearer": []}],
         "x-mcp-tools": tools,
         "requestBody": {

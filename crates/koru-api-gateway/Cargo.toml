@@ -37,17 +37,9 @@ koru-api-gateway-core = { path = "../koru-api-gateway-core" }
 koru-autostart = { path = "../koru-autostart" }
 koru-api-wire = { path = "../koru-api-wire" }
 koru-channel = { path = "../koru-channel" }
-# Bot client protocol 1 (M8): the frame and the hello the Bot ingress adapter
-# reads, and the refusals it writes.
-koru-bot-client-wire = { path = "../koru-bot-client-wire" }
 koru-network-bridge = { path = "../koru-network-bridge" }
-# `TransportSession`: what the bridge hands over, routed here by its token.
-koru-network-edge = { path = "../koru-network-edge" }
 koru-ipc = { path = "../koru-ipc", features = ["tokio"] }
 koru-store-server = { path = "../../apps/koru-store-server" }
-# This computer's time zone, for a Bot Routine it owns (P4.3, D5): the same
-# detection the delegate's scheduler runs, read again on every Routine read.
-koru-time-zone = { path = "../koru-time-zone" }
 koru-session-protocol = { path = "../koru-session-protocol" }
 # The settings authority. This process hosts it: it resolves the locations and
 # hands it down once, before serving.
@@ -57,9 +49,6 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-# Existing owner edges, opt-in fixtures only when compiling this crate's tests.
-koru-ai-server = { path = "../../apps/koru-ai-server", features = ["fixtures"] }
-koru-api-gateway-core = { path = "../koru-api-gateway-core", features = ["fixtures"] }
 # **What is left is what the colocated tests need**, which is much less than
 # before: the six integration suites that lived in `tests/` moved to
 # `apps/koru-agent/tests/` with the executable they spawned, in Plan 7 of the
@@ -70,11 +59,4 @@ koru-api-gateway-core = { path = "../koru-api-gateway-core", features = ["fixtur
 # worker, and that worker constructs the configured telemetry sink without being
 # asked to; `cfg(test)` in this crate cannot reach a dependency's build.
 koru-events-server = { path = "../../apps/koru-events-server", features = ["no-sink"] }
-# The Bot ingress tests build a device principal and feed the admission port
-# the authorization snapshot the Agent would send.
-koru-device = { path = "../koru-device" }
-koru-sync-control = { path = "../koru-sync-control" }
-# The token the device network labels a Bot stream with, held equal to the
-# protocol's own.
-koru-network-iroh = { path = "../koru-network-iroh" }
 tempfile.workspace = true

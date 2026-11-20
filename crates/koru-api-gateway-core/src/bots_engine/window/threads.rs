@@ -46,6 +46,25 @@ impl Gateway {
                     replayed: result.replayed,
                 }
             }
+            wire::Command::Rename {
+                id,
+                thread,
+                revision,
+                title,
+            } => {
+                let result: Receipt<Value> = convert(execute(Command::Change {
+                    id,
+                    action: Change::RenameThread {
+                        thread: thread.as_uuid(),
+                        revision,
+                        title,
+                    },
+                })?)?;
+                wire::Response::Changed {
+                    request: id,
+                    replayed: result.replayed,
+                }
+            }
             wire::Command::Branch {
                 id,
                 thread,
@@ -119,6 +138,7 @@ impl Gateway {
                 wire::Response::Read {
                     snapshot: wire::Snapshot {
                         conversation: Self::conversation_view(&bot, &view.thread, profile)?,
+                        revision: view.thread.revision,
                         settings_revision: view.thread.settings.revision,
                         paused: bot.paused,
                         team_paused: team.paused,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! A Schedule's immutable Bot identity, never an execution grant.
+//! Retained Schedule identity used only to recognize and exclude old Bot data.
 
 use koru_delegate_core::{BotId, BotOwner, BotRequestId, DeviceId, WorkspaceId};
 use serde::{Deserialize, Serialize};
@@ -16,21 +16,6 @@ pub struct RoutineAssociation {
 }
 
 impl RoutineAssociation {
-    pub fn new(
-        owner: BotOwner,
-        bot: BotId,
-        home: WorkspaceId,
-        creation_request: BotRequestId,
-    ) -> Option<Self> {
-        let association = Self {
-            owner,
-            bot,
-            home,
-            creation_request,
-        };
-        association.valid().then_some(association)
-    }
-
     /// Recheck typed values as well as wire values: `from_uuid` is intentionally
     /// available for fixtures and previously validated storage throughout core.
     /// Store-owned scope/workspace IDs retain their existing UUID domain.

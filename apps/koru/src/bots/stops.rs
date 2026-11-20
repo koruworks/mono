@@ -122,7 +122,7 @@ pub(crate) fn work_now(scope: Scope, facts: Facts<'_>) -> WorkNow {
                 // A reply that waits on other Bots (M6) is still a Run, and
                 // an Archive or a Trash stops it — and cancels the requests
                 // it made (contract 6.4) — so it asks as running work does.
-                BotActivityState::Running | BotActivityState::Waiting => running = true,
+                BotActivityState::Running => running = true,
                 BotActivityState::NeedsYou => needs_you = true,
             }
         }

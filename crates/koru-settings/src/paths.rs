@@ -147,6 +147,15 @@ impl SettingsPaths {
         &self.preferences
     }
 
+    /// The shared session instructions override, beside roaming preferences.
+    /// This is path arithmetic only: it neither reads nor creates a file, and
+    /// an explicit root keeps its override inside that root's settings folder.
+    pub fn session_instructions_file(&self) -> PathBuf {
+        self.preferences
+            .with_file_name("prompts")
+            .join("session.md")
+    }
+
     pub fn terminal_file(&self) -> &Path {
         &self.terminal
     }

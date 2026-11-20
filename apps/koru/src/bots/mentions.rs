@@ -3,23 +3,19 @@
 //! **The Bots a Bot's conversation lets the person mention.**
 //!
 //! Typing `@` in a Bot's conversation lists, above the pages, the Bots that
-//! Bot may ask. Picking one puts a chip in the message; sending it tells the
-//! Bot's agent the person wants that Bot asked. **A mention is a hint.** The
-//! agent makes the call (`ask_bot`) and every check on that call applies as
-//! it always did: this module decides only what the picker offers, never
-//! what is allowed.
+//! Bot may message. Picking one puts a chip in the message; the native
+//! engine reads the mention's Bot identity and routes the person's message
+//! to that participant after checking collaboration access. This module
+//! decides only what the picker offers, never what is allowed.
 //!
 //! ## Who is offered
 //!
-//! The set the service itself answers to an agent that lists whom it may ask
-//! (`list_askable_bots`): the person's own Bots **with the same home
+//! The person's own Bots **with the same home
 //! workspace, run by this computer, active, and not the Bot itself**. A
 //! paused Bot is listed and marked *Paused*, because asking it is refused
 //! until it is resumed. **None at all** when this Bot's *May ask other bots*
-//! is off, when asking is closed in this build, while the tab has not read
-//! its Bot (it does not know the setting), for an archived or trashed Bot,
-//! and for a Bot another computer runs (its askable Bots are that
-//! computer's, which this one does not list).
+//! is off, while the tab has not read its Bot (it does not know the setting),
+//! or for an archived or trashed Bot.
 //!
 //! ## Where the list comes from, and how it stays fresh
 //!
@@ -72,7 +68,7 @@ impl From<&RosterBot> for Listed {
             paused: row.paused,
             home: row.home,
             archived: row.archived,
-            owner: row.owner,
+            owner: None,
         }
     }
 }

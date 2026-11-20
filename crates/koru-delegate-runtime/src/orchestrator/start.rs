@@ -52,13 +52,9 @@ impl Orchestrator {
                 });
             }
         }
-        self.validate_bot_start_origin(run, &origin)?;
         let authored = self.header(run)?.scope;
         match self.plan_scope(run, &authored) {
             Ok(scope) => self.start_resolved(run, scope, origin),
-            Err(_) if matches!(authored, WorkspaceScope::BotFolder { .. }) => {
-                Err(super::bots::refused("bot_folder_unavailable"))
-            }
             Err(_) => self.fail_scope_start(run),
         }
     }
@@ -81,7 +77,6 @@ impl Orchestrator {
                 });
             }
         }
-        self.validate_bot_start_origin(run, &origin)?;
         let header = self.header(run)?;
         if !self.claims.holders_of(&scope.identity).is_empty() {
             return Err(crate::PortError::new(
@@ -113,15 +108,11 @@ impl Orchestrator {
                 });
             }
         }
-        self.validate_bot_start_origin(run, &origin)?;
         let authored = self.header(run)?.scope;
         if self
             .verify_resolved_scope(run, &authored, &mut scope)
             .is_err()
         {
-            if matches!(authored, WorkspaceScope::BotFolder { .. }) {
-                return Err(super::bots::refused("bot_folder_unavailable"));
-            }
             return self.fail_scope_start(run);
         }
         self.begin_attempt(run, origin, RunEvent::Start, None, Some(scope))
@@ -153,17 +144,14 @@ impl Orchestrator {
             )
             .into());
         }
-        let actual = match authored {
-            WorkspaceScope::BotFolder { folder } => self.ports.roots.bot_folder(folder),
-            _ => koru_delegate_scope::ResolvedScope::of_directory(&scope.directory),
-        }
-        .map_err(|_| {
-            crate::PortError::new(
-                crate::Port::Scope,
-                "claimed_scope_resolve",
-                "the claimed scope could not be resolved",
-            )
-        })?;
+        let actual =
+            koru_delegate_scope::ResolvedScope::of_directory(&scope.directory).map_err(|_| {
+                crate::PortError::new(
+                    crate::Port::Scope,
+                    "claimed_scope_resolve",
+                    "the claimed scope could not be resolved",
+                )
+            })?;
         if actual.identity != scope.identity {
             return Err(crate::PortError::new(
                 crate::Port::Scope,
@@ -188,66 +176,12 @@ impl Orchestrator {
         resolved_scope: Option<ResolvedScope>,
     ) -> Result<Started, RunError> {
         self.ensure_scope_recovery()?;
-        let header = self.header(run)?;
-        match (&header.bot, origin) {
-            (Some(bot), StartOrigin::Bot { bot: expected }) if bot.bot == expected => {
-                let record = self
-                    .bot_ledger()?
-                    .bot_admission(run)?
-                    .ok_or_else(|| super::bots::refused("bot_admission_required"))?;
-                if record.state != koru_delegate_core::BotAdmissionState::Reserved
-                    || record.submission.provenance != *bot
-                    || self.ports.store.current_attempt(run)?.is_some()
-                {
-                    return Err(super::bots::refused("bot_fenced"));
-                }
-                // Public start variants share this last attempt boundary. A
-                // retained reservation alone is never a current-boot grant.
-                if !self.bot_boot_ack_current(
-                    bot.owner,
-                    bot.bot,
-                    bot.config_revision,
-                    bot.policy_revision,
-                )? {
-                    return Err(super::bots::refused("bot_boot_pending"));
-                }
-                // No barrier at all, the Bot's own pause, a paused team and
-                // a team this delegate run was not told about all refuse.
-                let (barrier, held) = self.bot_gate(bot.owner, bot.bot)?;
-                if barrier.is_none() || held.is_held() {
-                    return Err(super::bots::refused("bot_boot_pending"));
-                }
-            }
-            (None, StartOrigin::Bot { .. }) | (Some(_), _) => {
-                return Err(super::bots::refused("bot_admission_required"));
-            }
-            _ => {}
-        }
         if !self.ports.sessions.supports_delegation() {
             return Err(RunError::NotDelegatable);
         }
-        let routine_policy = if header.bot.is_some() {
-            self.bot_execution_policy(run)?
-        } else {
-            None
-        };
-        let row = if header.bot.is_some() {
-            self.bot_ledger()?
-                .open_bot_attempt(run, routine_policy.as_ref())?
-        } else {
-            self.ports.store.open_attempt(run)?
-        };
-        if header.bot.is_some() {
-            self.bot_ledger()?.activate_bot(
-                run,
-                row.attempt,
-                row.generation,
-                routine_policy.as_ref(),
-            )?;
-        }
+        let row = self.ports.store.open_attempt(run)?;
         let key = IdempotencyKey::mint();
-        let mut attempt = Attempt::new(row.attempt, row.generation);
-        attempt.is_bot = header.bot.is_some();
+        let attempt = Attempt::new(row.attempt, row.generation);
         let (attempt_id, generation) = (attempt.id, attempt.generation);
         self.open(run)?.attempt = Some(attempt);
         self.apply(run, &entry)?;
@@ -272,7 +206,7 @@ impl Orchestrator {
             )?;
         }
 
-        let header = self.open(run)?.doc.document()?.header()?;
+        let header = self.open(run)?.doc.document().header()?;
 
         // Admission (P1.5, D34).
         let (admission, resolved_directory) = match resolved_scope {
@@ -363,32 +297,31 @@ impl Orchestrator {
 
         // The preamble, with the run's line appended (P1.12), then the
         // objective: the first submission.
-        let first_submission = if header.bot.is_some() {
-            String::new()
-        } else {
-            let preamble = self.ports.preamble.resolve();
-            if let Some(notice) = preamble.notice {
-                tracing::warn!(
-                    target: "koru::delegate",
-                    source = ?preamble.source,
-                    notice = ?notice,
-                    "the edited preamble could not be used; the bundled copy was"
-                );
-            }
-            match &resume {
-                Some(plan) => compose_resume_submission(
-                    &preamble.text,
-                    run,
-                    &directory,
-                    header.objective.as_str(),
-                    plan,
-                ),
-                None => compose_first_submission(
-                    &preamble.text,
-                    run,
-                    &directory,
-                    header.objective.as_str(),
-                ),
+        let orientation = self.session_instructions(run, format!("attempt:{attempt_id}"))?;
+        let preamble = self.ports.preamble.resolve();
+        if let Some(notice) = preamble.notice {
+            tracing::warn!(
+                target: "koru::delegate",
+                source = ?preamble.source,
+                notice = ?notice,
+                "the edited preamble could not be used; the bundled copy was"
+            );
+        }
+        let instructions = koru_delegate_preamble::session::compose(
+            &orientation.text,
+            &preamble.text,
+            "Session mode: delegated artifact job. The artifact instructions govern how results are delivered; the conversation is not the result. Use only the tools actually offered by the run's endpoint.",
+        );
+        let first_submission = match &resume {
+            Some(plan) => compose_resume_submission(
+                &instructions,
+                run,
+                &directory,
+                header.objective.as_str(),
+                plan,
+            ),
+            None => {
+                compose_first_submission(&instructions, run, &directory, header.objective.as_str())
             }
         };
 
@@ -409,19 +342,7 @@ impl Orchestrator {
         // nothing ever starts holding a credential the gateway does not
         // know about — and a refusal fails the start rather than launching
         // a provider whose every tool call would answer 401.
-        let tool_authority = match self.resolve_run_tool_authority(
-            run,
-            generation,
-            header.executing_device().ok_or(RunError::UnknownRun)?,
-        ) {
-            Ok(authority) => authority,
-            Err(_) => return self.start_failed(run, FailureStage::Authority),
-        };
-        if header.bot.is_some() && self.bot_execution_policy(run).is_err() {
-            return self.start_failed(run, FailureStage::Authority);
-        }
         let mut delegation = match self.ports.mcp.launch(McpLaunch {
-            authority: tool_authority,
             run,
             generation,
             workspace,
@@ -455,11 +376,7 @@ impl Orchestrator {
             },
             None => None,
         };
-        if header.bot.is_some() && self.bot_execution_policy(run).is_err() {
-            return self.start_failed(run, FailureStage::Authority);
-        }
         let created = match self.ports.sessions.create_delegated(SessionLaunch {
-            is_bot: header.bot.is_some(),
             key,
             profile: header.agent.clone(),
             project: header.scope.project(),
@@ -542,22 +459,6 @@ impl Orchestrator {
                 );
             }
         };
-        if header.bot.is_some() {
-            // AI supplies assembled conversation context transiently only after
-            // observation. Never auto-submit the persisted current-task intent.
-            self.open(run)?
-                .attempt
-                .as_mut()
-                .expect("opened above")
-                .holds_lease = true;
-            return Ok(Started {
-                run,
-                attempt: attempt_id,
-                generation,
-                status: self.status(run)?,
-                events: Some(events),
-            });
-        }
         let turn = match self
             .ports
             .sessions
@@ -677,9 +578,6 @@ impl Orchestrator {
         phase: AttemptPhase,
         terminate: bool,
     ) -> Result<(), RunError> {
-        if self.header(run)?.bot.is_some() {
-            return self.bot_end_attempt(run, phase, terminate);
-        }
         let state = self.open(run)?;
         let Some(attempt) = state.attempt.take() else {
             return Ok(());
@@ -725,7 +623,7 @@ pub(crate) fn scope_directory(
 ) -> Result<PathBuf, ScopeRefusal> {
     match scope {
         WorkspaceScope::None => Err(ScopeRefusal::NotAdmissible),
-        WorkspaceScope::BotFolder { folder } => Ok(PathBuf::from(folder.as_str())),
+        WorkspaceScope::BotFolder { .. } => Err(ScopeRefusal::NotAdmissible),
         WorkspaceScope::ProjectRoot { project } => match roots.project_root(*project) {
             RootLookup::Directory(root) => Ok(root),
             RootLookup::NoRoot => Err(ScopeRefusal::ProjectHasNoRoot),

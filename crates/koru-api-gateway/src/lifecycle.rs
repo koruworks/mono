@@ -384,7 +384,6 @@ pub async fn start(config: GatewayConfig) -> Result<Gateway, String> {
         // The session forwarder holds the Bot ingress adapter for as long as
         // it routes, and the composition already installed the AI worker's
         // owner server in it (M8), so this handle has no use here.
-        bot_ingress: _,
     } = composition::open(&config, &store_root, bridge, sessions)?;
 
     // **The Store is open from here, so a refusal below joins it rather than

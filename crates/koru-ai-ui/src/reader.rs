@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::time::{Duration, Instant};
 mod managed;
+mod observation;
 
 use koru_ai_core::{
     AiProviderId, AttemptStatus, ChatId, InferenceAttemptId, ProfileId, ToolActivity,
@@ -91,6 +92,10 @@ pub(crate) enum Command {
     ListChats(Option<ProfileId>),
     Create(CreateChatRequest),
     Read(ChatId),
+    /// Observe an admitted reply reopened without its original event stream.
+    ObserveAttempt(ChatId, InferenceAttemptId, u64),
+    /// Release a reopened reply's read worker without cancelling provider work.
+    StopObserving(ChatId, InferenceAttemptId, u64),
     Rename(ChatId, RenameChatRequest),
     /// Pin the chat, or unpin it (AI schema 12).
     Pin(ChatId, koru_ai_wire::PinChatRequest),
@@ -165,6 +170,8 @@ impl Command {
             Self::ListChats(_) => "list_chats",
             Self::Create(_) => "create",
             Self::Read(_) => "read",
+            Self::ObserveAttempt(..) => "observe_attempt",
+            Self::StopObserving(..) => "stop_observing",
             Self::Rename(_, _) => "rename",
             Self::Pin(_, _) => "pin",
             Self::UpdateModel(_, _) => "update_model",
@@ -246,6 +253,16 @@ pub(crate) enum Update {
     /// The window's profile's chats, listed again.
     Listed(Vec<koru_ai_core::Chat>),
     Transcript(ChatTranscript),
+    /// Fences receipts from an observer retired before the same reply reopened.
+    Observation {
+        generation: u64,
+        attempt: InferenceAttemptId,
+        update: Box<Update>,
+    },
+    Observed {
+        attempt: InferenceAttemptId,
+        transcript: ChatTranscript,
+    },
     Renamed(koru_ai_core::Chat),
     /// A chat pinned or unpinned, in place like a rename.
     Pinned(koru_ai_core::Chat),
@@ -450,7 +467,6 @@ fn run(
 ) {
     tracing::info!(target: "koru_ai::ui", "AI UI client thread started");
     let owned = scopes == Scopes::Owned;
-    let mut backend = managed::Backend::default();
     let mut client = scopes.connect(root.as_deref());
     if let Err(ref message) = client {
         tracing::warn!(
@@ -470,7 +486,12 @@ fn run(
     // surface's `Reader` is gone (its commands end this loop); a response
     // stream's recovery thread holds it weakly and stops then.
     let alive = std::sync::Arc::new(());
+    let mut observation = observation::Observation::default();
     while let Ok(command) = commands.recv() {
+        observation.select(&command);
+        if matches!(command, Command::StopObserving(..)) {
+            continue;
+        }
         if let Some(update) = refused_answer(refused.as_ref(), &command) {
             if updates.send(update).is_err() {
                 return;
@@ -526,10 +547,14 @@ fn run(
             }
         };
 
-        if owned && managed::handle(client, &updates, &alive, &mut backend, &command) {
+        if owned && managed::handle(client, &updates, &alive, &command) {
             continue;
         }
         match command {
+            Command::StopObserving(..) => unreachable!("handled without a connection"),
+            Command::ObserveAttempt(chat, attempt, generation) => {
+                observation.start(client, &updates, chat, attempt, generation);
+            }
             Command::Engine { thread, command } => {
                 let _ = updates.send(Update::EngineFailed {
                     thread,
@@ -858,13 +883,16 @@ fn run(
                 });
             }
             Command::Send(request) => match client.ai().send_turn(&request) {
-                Ok(stream) => stream_attempt(
-                    client.clone(),
-                    request.chat_id,
-                    stream,
-                    &updates,
-                    std::sync::Arc::downgrade(&alive),
-                ),
+                Ok(stream) => {
+                    observation.stop();
+                    stream_attempt(
+                        client.clone(),
+                        request.chat_id,
+                        stream,
+                        &updates,
+                        std::sync::Arc::downgrade(&alive),
+                    );
+                }
                 // The surface gives the message back (chat-attachments §10).
                 Err(failure) => {
                     let _ = updates.send(Update::SendFailed(failure));
@@ -886,18 +914,22 @@ fn run(
                 send_result(
                     &updates,
                     client.ai().branch_chat(chat, &request).map(|response| {
+                        observation.stop();
                         Update::Created(decorate_transcript(&client, response.transcript))
                     }),
                 );
             }
             Command::Retry(chat, request) => match client.ai().retry_turn(chat, &request) {
-                Ok(stream) => stream_attempt(
-                    client.clone(),
-                    chat,
-                    stream,
-                    &updates,
-                    std::sync::Arc::downgrade(&alive),
-                ),
+                Ok(stream) => {
+                    observation.stop();
+                    stream_attempt(
+                        client.clone(),
+                        chat,
+                        stream,
+                        &updates,
+                        std::sync::Arc::downgrade(&alive),
+                    );
+                }
                 Err(failure) => {
                     let _ = updates.send(Update::Failure(failure.message));
                 }

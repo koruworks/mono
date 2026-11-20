@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! The controls as a model: no window, no link, no clock but the one given.
 use super::*;
-use koru_delegate_core::{DeviceId, RoutineControlOutcome, RunId};
+use koru_delegate_core::{DeviceId, RoutineControlOutcome};
+mod native;
 
 const MINUTE: i64 = 60_000;
 
@@ -129,7 +130,18 @@ fn detail(
         panic!("a detail read is owed")
     };
     assert_eq!(schedule, item.schedule_id);
-    assert!(routines.detail_answer(seq, bot, schedule, Ok(detail_of(bot, item, lines))));
+    assert!(routines.native_detail_answer(
+        seq,
+        bot,
+        schedule,
+        Ok(koru_api_client::bot_routines::Snapshot {
+            detail: detail_of(bot, item, lines),
+            thread: ChatId::new(),
+            selected_pages: vec![],
+            occurrences: vec![],
+            next: None,
+        })
+    ));
 }
 fn sent(command: Option<Command>) -> (u64, BotCommand) {
     match command {
@@ -158,107 +170,6 @@ fn confirmed(
         },
     }
 }
-fn row_state(routines: &Routines, schedule: ScheduleId) -> (u32, bool, RoutineNextObservation) {
-    let item = routines.row(schedule).unwrap();
-    match &item.live {
-        BotRoutineLiveObservation::Current {
-            definition_revision,
-            state,
-            next,
-            ..
-        } => (
-            *definition_revision,
-            matches!(state, ScheduleState::Active { .. }),
-            next.clone(),
-        ),
-        _ => panic!("a live row"),
-    }
-}
-
-#[test]
-fn routine_control_enable_is_pending_until_the_owner_confirms_it() {
-    let paused = item(false);
-    let id = paused.schedule_id;
-    let (mut routines, bot) = shown(vec![paused]);
-    let (seq, command) = sent(routines.toggle_routine(id));
-    assert!(matches!(
-        command,
-        BotCommand::SetRoutineLifecycle {
-            schedule_id,
-            expected_definition_revision: 2,
-            action: BotRoutineLifecycleAction::Enable,
-            ..
-        } if schedule_id == id
-    ));
-    // Pending: said as on its way, and the row still shows what was read.
-    assert_eq!(routines.controls_data().doing(id), Some(Doing::TurningOn));
-    assert_eq!(row_state(&routines, id).1, false);
-    // A pending control is not pressable, and neither is any other.
-    assert!(routines.toggle_routine(id).is_none());
-    assert!(routines.test_routine(id).is_none());
-    // The owner's answer is the state shown, with its revision and next time.
-    assert!(routines.control_answer(
-        seq,
-        bot,
-        id,
-        Ok(confirmed(id, BotRoutineControlAction::Enable, true, 3)),
-        0,
-    ));
-    assert_eq!(routines.controls_data().pending, None);
-    assert_eq!(
-        row_state(&routines, id),
-        (
-            3,
-            true,
-            RoutineNextObservation::Exact { at_ms: 42 * MINUTE }
-        )
-    );
-}
-
-#[test]
-fn routine_control_pause_whose_answer_is_lost_says_checking_and_reads_again() {
-    let on = item(true);
-    let id = on.schedule_id;
-    let (mut routines, bot) = shown(vec![on.clone()]);
-    let (seq, command) = sent(routines.toggle_routine(id));
-    assert!(matches!(
-        command,
-        BotCommand::SetRoutineLifecycle {
-            action: BotRoutineLifecycleAction::Pause,
-            ..
-        }
-    ));
-    assert_eq!(routines.controls_data().doing(id), Some(Doing::Pausing));
-    assert!(routines.control_answer(seq, bot, id, Err(Refusal::unanswered()), 0));
-    // Never shown as paused: nobody confirmed it.
-    assert_eq!(row_state(&routines, id).1, true);
-    assert_eq!(routines.controls_data().checking, Some(id));
-    // No control is offered on stale detail.
-    assert!(routines.toggle_routine(id).is_none());
-    // The list is read again, and what it reads is what is shown.
-    let mut read = on;
-    read.live = BotRoutineLiveObservation::Current {
-        name: ScheduleName::new("Morning reading").unwrap(),
-        definition_revision: 3,
-        state: state(false),
-        next: RoutineNextObservation::Inactive {},
-    };
-    list(&mut routines, bot, vec![read]);
-    assert_eq!(routines.controls_data().checking, None);
-    assert_eq!(row_state(&routines, id).0, 3);
-    assert_eq!(row_state(&routines, id).1, false);
-    // `routine_control_unknown` is the same: the owner did not hear back.
-    let (seq, _) = sent(routines.toggle_routine(id));
-    assert!(routines.control_answer(
-        seq,
-        bot,
-        id,
-        Err(Refusal::code("routine_control_unknown")),
-        0
-    ));
-    assert_eq!(routines.controls_data().checking, Some(id));
-}
-
 #[test]
 fn routine_control_every_refusal_has_a_sentence_and_no_code_is_shown() {
     let shared = [
@@ -315,212 +226,6 @@ fn routine_control_every_refusal_has_a_sentence_and_no_code_is_shown() {
             Words::BotsRoutineErrAccessApplying
         ]
     );
-}
-
-#[test]
-fn routine_control_refusals_are_said_on_the_row_and_change_no_state() {
-    let paused = item(false);
-    let id = paused.schedule_id;
-    let (mut routines, bot) = shown(vec![paused]);
-    let (seq, _) = sent(routines.toggle_routine(id));
-    assert!(routines.control_answer(
-        seq,
-        bot,
-        id,
-        Err(Refusal::not_ready(&["bot_paused", "access_unavailable"])),
-        0,
-    ));
-    assert_eq!(
-        routines.controls_data().notes(id),
-        [
-            Words::BotsRoutineErrBotPaused,
-            Words::BotsRoutineErrAccessUnreadable
-        ]
-    );
-    assert_eq!(row_state(&routines, id).1, false);
-    // Already in the asked state: no sentence, the read state is shown.
-    let (seq, _) = sent(routines.toggle_routine(id));
-    assert!(routines.control_answer(
-        seq,
-        bot,
-        id,
-        Err(Refusal::code("routine_state_conflict")),
-        0
-    ));
-    assert!(routines.controls_data().notes(id).is_empty());
-    assert!(routines.loading());
-}
-
-#[test]
-fn routine_control_stale_answer_after_the_selection_changed_is_dropped() {
-    let paused = item(false);
-    let id = paused.schedule_id;
-    let (mut routines, bot) = shown(vec![paused.clone()]);
-    let (seq, _) = sent(routines.toggle_routine(id));
-    // An answer for another control, another Routine or another Bot is not
-    // this one's.
-    let answer = || Ok(confirmed(id, BotRoutineControlAction::Enable, true, 3));
-    assert!(!routines.control_answer(seq + 1, bot, id, answer(), 0));
-    assert!(!routines.control_answer(seq, BotId::mint(), id, answer(), 0));
-    assert!(!routines.control_answer(seq, bot, ScheduleId::mint(), answer(), 0));
-    assert_eq!(routines.controls_data().doing(id), Some(Doing::TurningOn));
-    // Another Bot shown in the pane: the old answer changes nothing.
-    let other = BotId::mint();
-    routines.show(Some(other), true);
-    assert!(!routines.control_answer(seq, bot, id, answer(), 0));
-    assert_eq!(routines.controls_data(), Data::default());
-}
-
-#[test]
-fn routine_control_hiding_the_pane_cancels_observation_and_adds_no_watch() {
-    let paused = item(false);
-    let id = paused.schedule_id;
-    let (mut routines, bot) = shown(vec![paused]);
-    // A Test that waits for the next minute has a deadline while shown.
-    let (seq, _) = sent(routines.test_routine(id));
-    assert!(routines.control_answer(
-        seq,
-        bot,
-        id,
-        Err(Refusal::code("routine_test_minute_ending")),
-        55_000,
-    ));
-    assert_eq!(routines.control_deadline(), Some(MINUTE));
-    let (seq, _) = sent(routines.toggle_routine(id));
-    // Hidden: nothing pending, no deadline, no tick, and nothing to send.
-    routines.show(Some(bot), false);
-    assert_eq!(routines.controls_data(), Data::default());
-    assert_eq!(routines.control_deadline(), None);
-    assert!(!routines.control_tick(10 * MINUTE));
-    assert!(routines.read().is_none());
-    assert!(routines.toggle_routine(id).is_none());
-    // Its answer arrives late and is ignored.
-    assert!(!routines.control_answer(
-        seq,
-        bot,
-        id,
-        Ok(confirmed(id, BotRoutineControlAction::Enable, true, 3)),
-        0,
-    ));
-    // Shown again, the list is read: that is what says what is true.
-    routines.show(Some(bot), true);
-    assert!(matches!(
-        routines.read(),
-        Some(Command::ReadRoutines { .. })
-    ));
-}
-
-#[test]
-fn routine_control_test_is_offered_only_while_paused_and_its_wait_is_not_an_error() {
-    let on = item(true);
-    let paused = item(false);
-    let (on_id, id) = (on.schedule_id, paused.schedule_id);
-    let (mut routines, bot) = shown(vec![on, paused]);
-    assert!(!routines.testable(on_id));
-    assert!(routines.test_routine(on_id).is_none());
-    assert!(routines.testable(id));
-    let (seq, command) = sent(routines.test_routine(id));
-    assert!(matches!(
-        command,
-        BotCommand::TestRoutine {
-            schedule_id,
-            expected_definition_revision: 2,
-            ..
-        } if schedule_id == id
-    ));
-    assert_eq!(routines.controls_data().doing(id), Some(Doing::Testing));
-    // Too late in the minute: a wait with a known end, no error line.
-    assert!(routines.control_answer(
-        seq,
-        bot,
-        id,
-        Err(Refusal::code("routine_test_minute_ending")),
-        3 * MINUTE + 55_000,
-    ));
-    let data = routines.controls_data();
-    assert_eq!(data.test_wait, Some((id, 4 * MINUTE)));
-    assert!(data.notes(id).is_empty());
-    assert!(routines.test_routine(id).is_none());
-    // The wait ends by the clock; no Test is started by it.
-    assert!(!routines.control_tick(4 * MINUTE - 1));
-    assert!(routines.control_tick(4 * MINUTE));
-    assert_eq!(routines.controls_data().test_wait, None);
-    assert_eq!(routines.controls_data().pending, None);
-    // The other Test refusals are sentences.
-    for (code, words) in [
-        (
-            "routine_test_minute_taken",
-            Words::BotsRoutineErrMinuteTaken,
-        ),
-        ("routine_test_busy", Words::BotsRoutineErrTestBusy),
-        ("routine_must_be_paused", Words::BotsRoutineErrPauseToTest),
-    ] {
-        let (seq, _) = sent(routines.test_routine(id));
-        assert!(routines.control_answer(seq, bot, id, Err(Refusal::code(code)), 0));
-        assert_eq!(routines.controls_data().notes(id), [words]);
-    }
-}
-
-#[test]
-fn routine_control_test_result_is_read_from_the_history() {
-    let paused = item(false);
-    let id = paused.schedule_id;
-    let minute = 7 * MINUTE;
-    let accepted = |routines: &mut Routines, bot| {
-        let (seq, _) = sent(routines.test_routine(id));
-        assert!(routines.control_answer(
-            seq,
-            bot,
-            id,
-            Ok(BotResponse::RoutineTest {
-                test: BotRoutineTest {
-                    schedule_id: id,
-                    occurrence_ms: minute,
-                },
-            }),
-            minute + 1_000,
-        ));
-    };
-    // Accepted: the Routine's history is opened and read. The Routine is
-    // still paused: a Test turns nothing on.
-    let (mut routines, bot) = shown(vec![paused.clone()]);
-    accepted(&mut routines, bot);
-    assert_eq!(routines.expanded, Some(id));
-    assert_eq!(row_state(&routines, id).1, false);
-    let line = RoutineOccurrenceLine {
-        occurrence_ms: minute,
-        outcome: RoutineOccurrenceOutcome::Ran,
-        test: true,
-        recorded_at_ms: minute + 2_000,
-        conversation: Some(BotRoutineLocalConversation {
-            occurrence_ms: minute,
-            run_id: RunId::mint(),
-            chat_id: uuid::Uuid::new_v4(),
-            attempt_id: uuid::Uuid::new_v4(),
-            conversation: BotRoutineConversationVisibility::Available,
-        }),
-    };
-    detail(&mut routines, bot, &paused, vec![line.clone()]);
-    // Its line is there: nothing more to wait for, and it can be opened.
-    assert_eq!(routines.control_deadline(), None);
-    assert!(routines.controls_data().notes(id).is_empty());
-    let chat = ChatId::parse(&line.conversation.unwrap().chat_id.to_string()).unwrap();
-    assert!(routines.can_open(chat));
-
-    // No line by the end of the minute: one more read, then the quiet line.
-    let (mut routines, bot) = shown(vec![paused.clone()]);
-    accepted(&mut routines, bot);
-    detail(&mut routines, bot, &paused, vec![]);
-    let due = routines.control_deadline().unwrap();
-    assert!(due >= minute + MINUTE);
-    assert!(!routines.control_tick(due - 1));
-    assert!(routines.control_tick(due));
-    detail(&mut routines, bot, &paused, vec![]);
-    assert_eq!(
-        routines.controls_data().notes(id),
-        [Words::BotsRoutineTestNotStarted]
-    );
-    assert_eq!(routines.control_deadline(), None);
 }
 
 #[test]

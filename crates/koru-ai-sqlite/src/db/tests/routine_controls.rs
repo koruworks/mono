@@ -409,8 +409,10 @@ fn migration_fresh_database_reaches_ai23_with_an_empty_grant_table() {
     }
     assert_eq!(
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
-            .get::<_, u32>(0))
-            .unwrap(),
+            .get::<_, u32>(
+            0
+        ))
+        .unwrap(),
         0
     );
 }
@@ -466,8 +468,10 @@ fn foreign_keys_held_without_fixture_rows(c: &Connection) {
     );
     assert_eq!(
         c.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r
-            .get::<_, u32>(0))
-            .unwrap(),
+            .get::<_, u32>(
+            0
+        ))
+        .unwrap(),
         0
     );
     assert!(
@@ -493,7 +497,11 @@ fn migration_ai23_new_kind_grant_table_and_routine_member_enforce_their_checks()
     let receipt = |request: &str, stage: &str, expected: &str, outcome: &str, extra: &str| {
         format!(
             "INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,expected_revision,outcome_json,created_at_ms,updated_at_ms{}) VALUES('scope','{request}','bot','retained','update_routine_access','{stage}',{expected},{outcome},1,2{})",
-            if extra.is_empty() { "" } else { ",planned_run_id" },
+            if extra.is_empty() {
+                ""
+            } else {
+                ",planned_run_id"
+            },
             extra
         )
     };
@@ -580,8 +588,14 @@ fn migration_ai23_new_kind_grant_table_and_routine_member_enforce_their_checks()
         false,
         &grant("schedule-bound", "edit", "2", "'{}'", "zeroblob(31)"),
     );
-    c.execute_batch(&grant("schedule-bound", "edit", "2", "'{}'", "zeroblob(32)"))
-        .unwrap();
+    c.execute_batch(&grant(
+        "schedule-bound",
+        "edit",
+        "2",
+        "'{}'",
+        "zeroblob(32)",
+    ))
+    .unwrap();
     case(
         "one row per Routine",
         false,

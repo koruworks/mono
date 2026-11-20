@@ -9,6 +9,7 @@ use koru_i18n::Key as Words;
 use std::rc::Rc;
 pub(crate) mod control;
 pub(crate) mod detail;
+mod startup;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReadFailure {
@@ -49,6 +50,8 @@ pub(crate) fn listed(reply: Result<BotResponse, Said>) -> Result<BotRoutineListP
 
 #[derive(Default)]
 pub(crate) struct Routines {
+    pub startup_offer: bool,
+    startup: startup::Startup,
     pub detail: detail::Detail,
     /// The owner controls of the Routines shown (P4.3 piece 4).
     pub(crate) controls: control::Controls,
@@ -90,6 +93,9 @@ impl Routines {
             return false;
         }
         self.visible = visible;
+        if visible {
+            self.startup.reopen();
+        }
         // **Hidden is cancelled**: what was pending is dropped, its answer
         // is ignored, and nothing waits on a clock. Shown again, the list is
         // read and says what is true.
@@ -244,17 +250,16 @@ impl Routines {
                     && !self.loading()
                     && self.row_holds(chat)))
     }
-    pub fn detail_answer(
+    pub fn native_detail_answer(
         &mut self,
         seq: u64,
         bot: BotId,
         schedule: koru_delegate_core::ScheduleId,
-        result: Result<BotRoutineDetail, ReadFailure>,
+        result: Result<koru_api_client::bot_routines::Snapshot, ReadFailure>,
     ) -> bool {
-        if !self.detail.answer(seq, bot, schedule, result) {
+        if !self.detail.native_answer(seq, bot, schedule, result) {
             return false;
         }
-        self.settle_test(self.detail.held.is_some());
         self.opening = None;
         self.opened = None;
         self.changed();

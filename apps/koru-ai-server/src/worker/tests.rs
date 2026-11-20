@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+mod active_attempt;
 mod engine_retirement;
 
 use std::sync::Arc;
@@ -4005,7 +4006,8 @@ fn an_agent_readiness_row_is_said_as_its_finest_known_reason() {
         (S::Version, D::Timeout, reason::CHECK_TIMED_OUT),
         (S::Spawn, D::Spawn, reason::FAILED_TO_START),
         (S::Version, D::UnexpectedExit, reason::FAILED_TO_START),
-        (S::Initialize, D::UnexpectedExit, reason::CHECK_FAILED),
+        (S::Initialize, D::UnexpectedExit, reason::FAILED_TO_START),
+        (S::Read, D::UnexpectedExit, reason::FAILED_TO_START),
         (
             S::Initialize,
             D::RuntimeUnavailable,

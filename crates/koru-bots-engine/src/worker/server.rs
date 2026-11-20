@@ -12,6 +12,7 @@ mod context;
 mod recovery;
 
 enum ActorCommand {
+    ClockChanged,
     Hello(mpsc::SyncSender<Reply>),
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
@@ -102,7 +103,12 @@ pub(super) fn serve(
     let mut admission = crate::capacity::Admission::new(launcher.capacity());
     let mut dispatch = true;
     let mut retry_dispatch = None;
+    let mut routine_clock = crate::routines::clock::Clock::new();
     loop {
+        match routine_clock.poll(&mut database, now_ms(), std::time::Instant::now()) {
+            Ok(changed) => dispatch |= changed,
+            Err(_) => routine_clock.retry(std::time::Instant::now()),
+        }
         dispatch |= recovery.poll(&mut database, std::time::Instant::now());
         contexts.poll(&admission);
         pending.extend(launcher.events());
@@ -142,6 +148,7 @@ pub(super) fn serve(
                 }
             }
             dispatch = true;
+            routine_clock.changed();
         }
         for request in worker_commands.try_iter().take(16) {
             let who = request.worker;
@@ -149,19 +156,26 @@ pub(super) fn serve(
                 crate::carrier::Command::Context { reservation } => Some(*reservation),
                 _ => None,
             };
-            dispatch |= !matches!(
-                request.command,
-                crate::carrier::Command::Poll
-                    | crate::carrier::Command::Context { .. }
-                    | crate::carrier::Command::Configuration { .. }
-                    | crate::carrier::Command::Head { .. }
-                    | crate::carrier::Command::Catalog { .. }
-                    | crate::carrier::Command::Bind { .. }
-                    | crate::carrier::Command::OwnTool { .. }
-                    | crate::carrier::Command::Event { .. }
-                    | crate::carrier::Command::OfferSteer { .. }
-                    | crate::carrier::Command::Answers { .. }
-            );
+            let changes = matches!(&request.command,
+                crate::carrier::Command::OwnTool { tool, .. }
+                    if matches!(tool.as_str(), "message_bot" | "create_routine" | "edit_routine" | "run_routine"))
+                || !matches!(
+                    request.command,
+                    crate::carrier::Command::Poll
+                        | crate::carrier::Command::Context { .. }
+                        | crate::carrier::Command::Configuration { .. }
+                        | crate::carrier::Command::Head { .. }
+                        | crate::carrier::Command::Catalog { .. }
+                        | crate::carrier::Command::Bind { .. }
+                        | crate::carrier::Command::OwnTool { .. }
+                        | crate::carrier::Command::Event { .. }
+                        | crate::carrier::Command::OfferSteer { .. }
+                        | crate::carrier::Command::Answers { .. }
+                );
+            dispatch |= changes;
+            if changes {
+                routine_clock.changed();
+            }
             let response = crate::carrier::handle(
                 &mut database,
                 &mut admission,
@@ -209,6 +223,7 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::ClockChanged => routine_clock.wake(),
             ActorCommand::RefreshCapacity(reply) => launcher.refresh_capacity(reply),
             ActorCommand::Creation(request, reply) => {
                 let result = crate::creation::handle(&mut database, request, now_ms());
@@ -227,6 +242,7 @@ pub(super) fn serve(
                 let _ = reply.try_send(result.map(Reply::Person).unwrap_or_else(Reply::Refused));
                 if changes {
                     dispatch = true;
+                    routine_clock.changed();
                     recovery.changed();
                     // Bounded maintenance on normal work, never timer writes.
                     let _ = database.prune_receipt_answers(now_ms());
@@ -241,6 +257,7 @@ pub(super) fn serve(
                 let result = crate::operations::control::handle(&mut database, command, now_ms());
                 let _ = reply.try_send(Reply::Operation(result));
                 dispatch = true;
+                routine_clock.changed();
                 recovery.changed();
             }
             ActorCommand::SessionCatalog(secret, reply) => {
@@ -428,6 +445,13 @@ fn handle(
                     answer
                         .recv_timeout(TIMEOUT)
                         .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
+            Command::ClockChanged => {
+                if actor.try_send(ActorCommand::ClockChanged).is_ok() {
+                    Reply::Queued
+                } else {
+                    Reply::Refused(Error::EngineUnavailable)
                 }
             }
             Command::Hello | Command::Status | Command::Capacity | Command::RefreshCapacity => {

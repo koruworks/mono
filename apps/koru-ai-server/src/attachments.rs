@@ -878,18 +878,6 @@ pub(crate) struct Cleanup {
 }
 
 impl Cleanup {
-    #[cfg(test)]
-    pub(crate) fn recording() -> (Self, Receiver<CleanupJob>) {
-        let (sender, receiver) = channel();
-        (
-            Self {
-                sender: Some(sender),
-                thread: None,
-            },
-            receiver,
-        )
-    }
-
     pub(crate) fn spawn(store: AttachmentStore) -> Result<Self, String> {
         let (sender, receiver) = channel();
         let thread = std::thread::Builder::new()

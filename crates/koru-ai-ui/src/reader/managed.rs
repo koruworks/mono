@@ -3,14 +3,7 @@
 use super::*;
 use crate::managed::{Feed, Opened, Poll, Refreshed};
 use koru_ai_wire::bot_threads::{Command as C, Response as R};
-
-#[derive(Default, PartialEq, Eq)]
-pub(super) enum Backend {
-    #[default]
-    Unknown,
-    Legacy,
-    Engine,
-}
+mod rename;
 
 fn malformed() -> koru_ai_wire::Failure {
     koru_ai_wire::Failure {
@@ -108,22 +101,12 @@ pub(super) fn handle(
     client: &koru_api_client::Client,
     updates: &SyncSender<Update>,
     alive: &std::sync::Arc<()>,
-    backend: &mut Backend,
     command: &Command,
 ) -> bool {
     match command {
-        Command::Boot(Some(thread), _) | Command::Read(thread) if *backend != Backend::Legacy => {
+        Command::Boot(Some(thread), _) | Command::Read(thread) => {
             let snapshot = match read(client, *thread) {
-                Ok(snapshot) => {
-                    *backend = Backend::Engine;
-                    snapshot
-                }
-                Err(failure)
-                    if *backend == Backend::Unknown && failure.code == "engine_disabled" =>
-                {
-                    *backend = Backend::Legacy;
-                    return false;
-                }
+                Ok(snapshot) => snapshot,
                 Err(_) => {
                     let _ = updates.send(Update::Unavailable {
                         chat: Some(*thread),
@@ -175,7 +158,17 @@ pub(super) fn handle(
             let _ = updates.send(update);
             true
         }
-        Command::Engine { thread, command } if *backend == Backend::Engine => {
+        Command::Rename(thread, request) => {
+            let update = match rename::run(*thread, &request.title, |command| {
+                client.ai().bot_thread(&command)
+            }) {
+                Ok(chat) => Update::Renamed(chat),
+                Err(failure) => Update::RenameFailed(*thread, failure),
+            };
+            let _ = updates.send(update);
+            true
+        }
+        Command::Engine { thread, command } => {
             let update = match client.ai().bot_thread(command) {
                 Ok(reply) => Update::EngineReply {
                     thread: *thread,
@@ -190,7 +183,7 @@ pub(super) fn handle(
             let _ = updates.send(update);
             true
         }
-        Command::EnginePoll(poll) if *backend == Backend::Engine => {
+        Command::EnginePoll(poll) => {
             let poll = Poll {
                 navigation_after: poll.navigation_after,
                 attention_after: poll.attention_after.clone(),
@@ -232,13 +225,20 @@ pub(super) fn handle(
             true
         }
         // A command whose ownership was not translated is never sent to the
-        // ordinary AI repository after the engine has claimed this surface.
-        Command::Send(_)
+        // ordinary AI repository: every owned conversation belongs to the engine.
+        Command::Boot(None, _)
+        | Command::Create(_)
+        | Command::ListChats(_)
+        | Command::Usage(_)
+        | Command::ClearHistory(_)
+        | Command::ClearUsage(_)
+        | Command::Send(_)
+        | Command::ObserveAttempt(..)
+        | Command::StopObserving(..)
         | Command::Cancel(_)
         | Command::Steer(..)
         | Command::Retry(..)
         | Command::Branch(..)
-        | Command::Rename(..)
         | Command::Pin(..)
         | Command::UpdateModel(..)
         | Command::UpdateAgentSettings(..)
@@ -252,9 +252,7 @@ pub(super) fn handle(
         | Command::DenyTool(_)
         | Command::DecideTool(..)
         | Command::AnswerQuestions(..)
-        | Command::Export(..)
-            if *backend == Backend::Engine =>
-        {
+        | Command::Export(..) => {
             let failure = koru_ai_wire::Failure {
                 code: "not_supported".into(),
                 message: "The conversation owner does not offer this action.".into(),

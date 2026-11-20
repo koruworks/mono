@@ -57,7 +57,7 @@ impl ChatSurface {
             self.messages_dirty = true;
             self.start_new_chat();
         }
-        if self.reader.is_some() {
+        if self.reader.is_some() && self.owned.is_none() {
             self.send_command(Command::ListChats(profile));
         }
         true
@@ -407,6 +407,7 @@ mod tests {
 
     fn transcript_of(chat: Chat) -> koru_ai_wire::ChatTranscript {
         koru_ai_wire::ChatTranscript {
+            active_attempt: None,
             tool_policy: koru_ai_core::ChatToolPolicy {
                 chat_id: chat.id,
                 mode: koru_ai_core::ToolMode::Manual,

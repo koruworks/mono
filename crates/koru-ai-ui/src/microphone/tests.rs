@@ -81,34 +81,29 @@ fn checked(surface: &ChatSurface) -> Vec<bool> {
         .collect()
 }
 
-/// **The chevron expands right of the fixed microphone** on hover, and only
-/// there: not before the pointer comes, not while the composer records, and
-/// not where the host offers no choice. Its slot is kept either way.
+/// The chevron stays beside the fixed microphone without requiring hover.
+/// Recording and hosts that offer no device choice still hide it.
 #[test]
-fn the_chevron_expands_right_of_the_microphone_on_hover() {
+fn the_chevron_stays_visible_right_of_the_microphone() {
     let mut surface = surface();
     let mic = surface.mic_button().unwrap();
     let slot = surface.mic_chooser_slot().unwrap();
-    assert!(mic.x + mic.w < slot.x, "right of the microphone");
+    assert_eq!(mic.x + mic.w, slot.x, "right of the microphone");
     assert_eq!((slot.y, slot.h), (mic.y, mic.h));
-    near(
-        slot.w,
-        koru_ui::icon_button::Metrics::COMPACT.control_width(),
-        "the compact icon button's width",
-    );
+    near(slot.w, crate::BUTTON_H, "the full-height button's width");
     let toolbar = surface.composer_toolbar_rect();
     assert!(toolbar.x + toolbar.w <= mic.x, "the toolbar gives way");
 
-    assert!(surface.mic_chooser_button().is_none(), "not before a hover");
+    assert_eq!(surface.mic_chooser_button(), Some(slot), "before hover");
     let (x, y) = centre(mic);
-    assert!(surface.mouse_move(x, y), "a redraw shows it");
+    surface.mouse_move(x, y);
     assert_eq!(surface.mic_chooser_button(), Some(slot));
     assert_eq!(surface.mic_button(), Some(mic), "hover keeps the mic fixed");
     let (x, y) = centre(slot);
     surface.mouse_move(x, y);
     assert_eq!(surface.mic_chooser_button(), Some(slot), "still on it");
-    assert!(surface.mouse_move(10.0, 10.0), "a redraw takes it away");
-    assert!(surface.mic_chooser_button().is_none());
+    surface.mouse_move(10.0, 10.0);
+    assert_eq!(surface.mic_chooser_button(), Some(slot), "after hover");
 
     // Recording: the footer is the recording row, and there is no chevron.
     let (x, y) = centre(mic);
@@ -435,7 +430,10 @@ fn the_level_bar_heads_the_panel_and_shows_the_pushed_level() {
     );
     near(
         bar.x + bar.w,
-        first.x + first.w - elements::ROW_INSET.token.px(Profile::Desktop),
+        first.x + first.w
+            - elements::ROW_INSET
+                .token
+                .px(koru_draw::theme::Profile::Desktop),
         "to the row's end inset",
     );
     assert!(

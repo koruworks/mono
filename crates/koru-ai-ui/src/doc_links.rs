@@ -67,6 +67,35 @@ pub(crate) fn mentions_named(
 /// Nonbreaking space reserves an icon's width in a sent message's text.
 pub(crate) const CHIP_LEAD: &str = "\u{00a0}\u{00a0}\u{00a0}\u{00a0}";
 
+/// Keep the Bot target while refreshing its displayed name.
+pub(crate) fn mentions_linked(
+    markdown: &str,
+    names: &HashMap<uuid::Uuid, String>,
+    unnamed: &str,
+) -> String {
+    let mut text = String::with_capacity(markdown.len());
+    let mut at = 0;
+    for token in koru_link::wrapped(markdown) {
+        let koru_link::KoruLink::Bot { bot, name } = token.link else {
+            continue;
+        };
+        text.push_str(&markdown[at..token.range.start]);
+        let name = names
+            .get(&bot)
+            .map(String::as_str)
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(if name.trim().is_empty() {
+                unnamed
+            } else {
+                &name
+            });
+        text.push_str(&format!("[[{}]]", koru_link::bot_link(bot, name)));
+        at = token.range.end;
+    }
+    text.push_str(&markdown[at..]);
+    text
+}
+
 /// Every document a message's chips name, in order, each once.
 pub(crate) fn documents(markdown: &str) -> Vec<DocumentId> {
     let mut out: Vec<DocumentId> = Vec::new();
@@ -102,6 +131,9 @@ pub(crate) fn titled_for_message(
     titled_with_lead(markdown, titles, fallback, CHIP_LEAD)
 }
 
+pub(crate) const BOT_CHIP_LEAD: &str = "\u{00a0}\u{00a0}\u{00a0}\u{00a0}\u{00a0}\u{00a0}";
+const BOT_CHIP_TAIL: &str = "\u{00a0}\u{00a0}";
+
 fn titled_with_lead(
     markdown: &str,
     titles: &HashMap<DocumentId, String>,
@@ -116,21 +148,32 @@ fn titled_with_lead(
     let mut links = Vec::new();
     let mut at = 0;
     for token in found {
-        let koru_link::KoruLink::Document { document, node } = token.link else {
-            continue;
+        let bot_chip = !lead.is_empty() && matches!(&token.link, koru_link::KoruLink::Bot { .. });
+        let (title, url) = match token.link {
+            koru_link::KoruLink::Document { document, node } => (
+                titles
+                    .get(&DocumentId::from_uuid(document))
+                    .map(String::as_str)
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(fallback)
+                    .to_owned(),
+                koru_link::document_link(document, node),
+            ),
+            koru_link::KoruLink::Bot { bot, name } => {
+                (name.clone(), koru_link::bot_link(bot, &name))
+            }
+            _ => continue,
         };
         text.push_str(&markdown[at..token.range.start]);
-        let title = titles
-            .get(&DocumentId::from_uuid(document))
-            .map(String::as_str)
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or(fallback);
         let start = text.len();
-        text.push_str(lead);
-        text.push_str(title);
+        text.push_str(if bot_chip { BOT_CHIP_LEAD } else { lead });
+        text.push_str(&title);
+        if bot_chip {
+            text.push_str(BOT_CHIP_TAIL);
+        }
         links.push(LinkSpan {
             range: start..text.len(),
-            url: koru_link::document_link(document, node),
+            url,
         });
         at = token.range.end;
     }
@@ -141,6 +184,23 @@ fn titled_with_lead(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bot_mentions_retain_their_target_and_refresh_the_visible_name() {
+        let bot = uuid::Uuid::new_v4();
+        let source = format!("Ask [[{}]]", koru_link::bot_link(bot, "Old name"));
+        let named = mentions_linked(&source, &HashMap::from([(bot, "Scout".into())]), "Bot");
+        let (text, links) = titled_for_message(&named, &HashMap::new(), "Document");
+        assert_eq!(text, format!("Ask {BOT_CHIP_LEAD}Scout{BOT_CHIP_TAIL}"));
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            koru_link::parse(&links[0].url).unwrap(),
+            koru_link::KoruLink::Bot {
+                bot,
+                name: "Scout".into()
+            }
+        );
+    }
 
     #[test]
     fn a_chip_reads_as_its_title_and_links_to_its_document() {

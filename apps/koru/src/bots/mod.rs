@@ -34,7 +34,6 @@
 //!   while another view is showing; being shown again asks once.
 
 pub(crate) mod catalog;
-pub(crate) mod children;
 pub(crate) mod creation;
 pub(crate) mod empty;
 pub(crate) mod faces;
@@ -43,8 +42,6 @@ pub(crate) mod labels;
 pub(crate) mod library;
 pub(crate) mod lifecycle;
 pub(crate) mod link;
-pub(crate) mod linked;
-pub(crate) mod memory;
 pub(crate) mod mentions;
 pub(crate) mod onboard;
 pub(crate) mod roster;

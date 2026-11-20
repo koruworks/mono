@@ -1344,10 +1344,22 @@ impl MainView {
                     }
                 }
                 if !events.is_empty() {
+                    let notice = events.iter().rev().find_map(|event| match &event.event {
+                        koru_session_protocol::AgentEvent::Notice { text, .. }
+                            if !text.is_empty() =>
+                        {
+                            // Provider notices are bounded UI diagnostics, never
+                            // an unbounded transcript or a new assistant reply.
+                            Some(text.chars().take(2048).collect::<String>())
+                        }
+                        _ => None,
+                    });
                     if view.surface.managed.apply_batch(events).is_err() {
                         view.surface.notice =
                             Some(t(lang, I18nKey::TerminalManagedTranscriptGap).into());
                         view.surface.record_stream_gap();
+                    } else if let Some(notice) = notice {
+                        view.surface.notice = Some(notice);
                     }
                     view.surface.delta_received = Some(std::time::Instant::now());
                 }

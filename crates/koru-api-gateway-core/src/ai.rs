@@ -38,7 +38,6 @@ use koru_ai_wire::{
 use schemars::{Schema, SchemaGenerator};
 
 use crate::{GatewayPrincipal, GatewayState};
-mod bot_tools;
 
 type SchemaFor = fn(&mut SchemaGenerator) -> Schema;
 pub const SSE_CAPACITY: usize = 32;
@@ -98,64 +97,12 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &[],
     },
     AiRoute {
-        operation_id: "ai_list_bots",
-        method: "POST",
-        path: "/v1/ai/bots/list",
-        scope: AiScope::ReadBots,
-        summary: "Authorized local Bot task operation: list_bots",
-        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
-        handler: || post(bot_tools::list_bots),
-        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ListBotsRequest>()),
-        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ListBotsResponse>()),
-        stream: false,
-        path_parameters: &[],
-    },
-    AiRoute {
-        operation_id: "ai_start_bot_task",
-        method: "POST",
-        path: "/v1/ai/bots/tasks/start",
-        scope: AiScope::RunBots,
-        summary: "Authorized local Bot task operation: start_bot_task",
-        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
-        handler: || post(bot_tools::start_bot_task),
-        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::StartBotTaskRequest>()),
-        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::SendTurnAccepted>()),
-        stream: false,
-        path_parameters: &[],
-    },
-    AiRoute {
-        operation_id: "ai_read_bot_task",
-        method: "POST",
-        path: "/v1/ai/bots/tasks/read",
-        scope: AiScope::ReadBots,
-        summary: "Authorized local Bot task operation: read_bot_task",
-        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
-        handler: || post(bot_tools::read_bot_task),
-        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ReadBotTaskRequest>()),
-        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::ReadBotTaskResponse>()),
-        stream: false,
-        path_parameters: &[],
-    },
-    AiRoute {
-        operation_id: "ai_stop_bot_task",
-        method: "POST",
-        path: "/v1/ai/bots/tasks/stop",
-        scope: AiScope::RunBots,
-        summary: "Authorized local Bot task operation: stop_bot_task",
-        returns: "A bounded owner-authorized projection; no configuration or execution handles.",
-        handler: || post(bot_tools::stop_bot_task),
-        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::StopBotTaskRequest>()),
-        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::CancelAttemptResponse>()),
-        stream: false,
-        path_parameters: &[],
-    },
-    AiRoute {
         operation_id: "ai_bot_command",
         method: "POST",
         path: "/v1/ai/bots",
         scope: AiScope::ManageBots,
-        summary: "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation, list current Routine observations or read one Routine's timing and local conversations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task",
-        returns: "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, selected Routine detail with current timing, configured destination, partial blockers and a replaceable local conversation page, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
+        summary: "Create or configure an engine-owned Bot, manage its Library and Routines, pause, archive, trash or restore it, and list its conversations and activity",
+        returns: "Native engine configuration, revision-checked receipts, Library page bindings, Routine observations and controls, conversation references or lifecycle progress. New Routines are enabled by default. Library pages provide context without granting edit permission. Conversation history and messages use the Bot thread API; ordinary AI chats and Runs do not execute Bot work.",
         handler: || post(bot_command),
         request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotCommand>()),
         response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::BotResponse>()),
@@ -817,6 +764,23 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &["chat", "attachment"],
     },
     AiRoute {
+        operation_id: "bots_routine_command",
+        method: "POST",
+        path: "/v1/ai/bots/routines",
+        scope: AiScope::ManageBots,
+        summary: "Read native Routine history or control a Routine",
+        returns: "Exact occurrence identities and durable Run now or enable receipts. No legacy Run identity is created.",
+        handler: || {
+            post(crate::bots_engine::routine_command).layer(DefaultBodyLimit::max(
+                koru_bots_engine::person::MAX_COMMAND_BYTES,
+            ))
+        },
+        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::bot_routines::Command>()),
+        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::bot_routines::Response>()),
+        stream: false,
+        path_parameters: &[],
+    },
+    AiRoute {
         operation_id: "bots_thread_command",
         method: "POST",
         path: "/v1/ai/bots/threads",
@@ -1150,14 +1114,7 @@ async fn bot_command(
         Ok(request) => request,
         Err(response) => return response,
     };
-    if koru_bots_engine::ENABLED {
-        return crate::bots_engine::window_command(state, principal, request).await;
-    }
-    let (client, context) = match admitted(&state, principal, AiScope::ManageBots) {
-        Ok(values) => values,
-        Err(response) => return response,
-    };
-    answer(call(move || client.bots(context, request)).await)
+    crate::bots_engine::window_command(state, principal, request).await
 }
 
 async fn create_chat(

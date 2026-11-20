@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Bounded navigation/output projection; no duplicate operation or file facts.
 use super::*;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::json;
 
 pub(super) fn read(
@@ -24,6 +24,10 @@ pub(super) fn read(
     let more = rows.len() > 64;
     let mut items = vec![];
     let mut next = None;
+    // Fan-out can produce many dispatches per card. Bound the entire page's
+    // returned prose as well as each individual preview; exhausted excerpts
+    // retain their identity and continuation link with `truncated: true`.
+    let mut reply_bytes_left = 256 * 1024;
     for (key, sequence, message, kind, target, reference) in rows.into_iter().take(64) {
         next = Some(id(key.clone())?);
         let mut card = json!({"id":key,"sequence":sequence,"message":message,"kind":kind,"title":"","thread":null,"bot":null,"bot_name":"","workspace":null,"document":null,"messages":0,"outputs":0,"state":""});
@@ -53,6 +57,64 @@ pub(super) fn read(
                 [target.id.to_string()],
                 |r| r.get::<_, u64>(0)
             )?);
+            // The navigation reference alone names the thread's starter, not
+            // the Bot being asked. Preserve the actual recipients and causal
+            // turn so the UI can group a fan-out without guessing from prose.
+            let dispatches = c.prepare("SELECT a.origin_turn,a.message,a.recipient,b.name,o.state,o.answered_by,r.payload,origin.reply_message FROM bot_dispatches a JOIN messages m ON m.id=a.message JOIN bots b ON b.id=a.recipient JOIN obligations o ON o.message=a.message AND o.bot=a.recipient LEFT JOIN turns origin ON origin.id=a.origin_turn AND origin.thread=a.origin_thread LEFT JOIN messages r ON r.id=o.answered_by AND r.thread=m.thread AND r.sender=a.recipient AND r.kind='words' AND r.state='published' AND o.state='answered' WHERE a.origin_thread=?1 AND m.thread=?2 ORDER BY m.sequence,a.recipient LIMIT 64")?
+                .query_map(params![thread.to_string(),target.id.to_string()], |r| {
+                    Ok((json!({"group":r.get::<_,String>(0)?,"message":r.get::<_,String>(1)?,"recipient":r.get::<_,String>(2)?,"name":r.get::<_,String>(3)?,"state":r.get::<_,String>(4)?,"reply":r.get::<_,Option<String>>(5)?,"origin_reply":r.get::<_,Option<String>>(7)?}), r.get::<_,Option<Vec<u8>>>(6)?))
+                })?.collect::<Result<Vec<_>,_>>()?;
+            let dispatches = dispatches
+                .into_iter()
+                .map(|(mut dispatch, payload)| {
+                    if let Some(payload) = payload {
+                        let content: crate::messages::Content = decode(&payload)?;
+                        let message = koru_ai_core::MessageId::from_uuid(id(dispatch["reply"]
+                            .as_str()
+                            .ok_or(Error::StorageUnavailable)?
+                            .to_owned())?);
+                        if let Some(mut preview) =
+                            koru_ai_core::bots::BotReplyPreview::new(message, &content.body)
+                        {
+                            if preview.markdown.len() > reply_bytes_left {
+                                let mut end = reply_bytes_left;
+                                while !preview.markdown.is_char_boundary(end) {
+                                    end -= 1;
+                                }
+                                preview.markdown.truncate(end);
+                                preview.truncated = true;
+                            }
+                            reply_bytes_left -= preview.markdown.len();
+                            dispatch["preview"] = json!(preview);
+                        }
+                    }
+                    Ok(dispatch)
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            card["dispatches"] = json!(dispatches);
+            // One completed occurrence, not the accumulated count of every
+            // firing in this persistent Routine thread. The card id is the
+            // durable publication link, so later replies cannot replace it.
+            let routine:Option<(String,String,i64,bool,String,Vec<u8>)>=c.query_row("SELECT s.id,r.id,r.occurrence_ms,r.manual,m.id,m.payload FROM routine_occurrences r JOIN routines s ON s.id=r.routine JOIN messages m ON m.id=r.reply AND m.thread=s.thread AND m.sender=s.bot AND m.kind='words' AND m.state='published' WHERE r.card=?1 AND s.thread=?2 AND r.state='answered'",params![key,target.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
+            if let Some((routine, occurrence, at_ms, manual, reply, payload)) = routine {
+                let content: crate::messages::Content = decode(&payload)?;
+                let mut preview = koru_ai_core::bots::BotReplyPreview::new(
+                    koru_ai_core::MessageId::from_uuid(id(reply.clone())?),
+                    &content.body,
+                );
+                if let Some(preview) = &mut preview {
+                    if preview.markdown.len() > reply_bytes_left {
+                        let mut end = reply_bytes_left;
+                        while !preview.markdown.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        preview.markdown.truncate(end);
+                        preview.truncated = true;
+                    }
+                    reply_bytes_left -= preview.markdown.len();
+                }
+                card["routine"] = json!({"routine":routine,"occurrence":occurrence,"at_ms":at_ms,"manual":manual,"reply":reply,"preview":preview});
+            }
         } else if let Some(reference) = reference {
             let reference: Value = decode(&reference)?;
             card["workspace"] = reference.get("workspace").cloned().unwrap_or(Value::Null);

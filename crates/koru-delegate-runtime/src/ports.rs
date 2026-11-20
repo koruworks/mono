@@ -25,16 +25,11 @@ use std::{
     time::Duration,
 };
 
-use koru_delegate_core::decisions::{DecisionPreparedProjection, DecisionTransitionId};
 use koru_delegate_core::{
     AgentTurnId, ArtifactDisposition, AttemptGeneration, DelegationRequest, DocumentId, EventId,
     HostInstanceId, IdempotencyKey, ProjectId, ProviderKind, ProviderSessionKey, PublicationKind,
     ResultReference, RunAttemptId, RunContextItem, RunHeader, RunId, SessionId, SessionProfileKey,
     WorkspaceId,
-};
-pub use koru_delegate_document::{
-    AppliedRunProjection, DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage,
-    RunProjectionIntent,
 };
 use koru_delegate_document::{
     RunDocument, RunDocumentError, ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument,
@@ -164,13 +159,6 @@ pub type PortResult<T> = Result<T, PortError>;
 /// test. The method set is the ledger's own; the port exists so the
 /// orchestrator can be driven with no file.
 pub trait RunStore: ScheduleLedger {
-    /// Bounded keyset selection over the three approved open-projection
-    /// partial indexes: at most `limit` (<= 16) distinct Runs after `after`.
-    fn decision_projection_runs(
-        &self,
-        after: Option<RunId>,
-        limit: usize,
-    ) -> Result<Vec<RunId>, LedgerError>;
     fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError>;
@@ -180,26 +168,12 @@ pub trait RunStore: ScheduleLedger {
         through: koru_delegate_sqlite::PendingPublicationRunCursor,
         before_or_at: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
     ) -> Result<koru_delegate_sqlite::PendingPublicationRunSeek, LedgerError>;
-    fn decision_open_publications_for(
+    fn bounded_open_publications_for(
         &self,
         run: RunId,
         limit: usize,
     ) -> Result<Vec<OpenPublication>, LedgerError>;
-    /// Native intent/effect evidence on the same sole-writer connection.
-    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
-        None
-    }
-    /// The same ledger connection's Bot domain. Ordinary fakes may omit it;
-    /// Bot callers must return unavailable and never fall back to CreateRun.
-    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
-        None
-    }
-    /// The same ledger connection's private-operation half (M5). A store
-    /// that does not compose it answers `None`, and every private command
-    /// then refuses with `bot_private_unavailable`.
-    fn private_effects(&mut self) -> Option<&mut dyn PrivateEffectLedger> {
-        None
-    }
+
     /// Validate an existing RunId without creating an intent. Used before
     /// scope preflight so an exact satisfied retry keeps its §7.1 answer.
     fn validate_intent(
@@ -285,116 +259,9 @@ pub trait RunStore: ScheduleLedger {
     ) -> Result<WriteOutcome, LedgerError>;
 }
 
-mod children;
-mod private;
-mod publication;
-mod routines;
-pub use children::*;
-pub use private::*;
-pub use publication::*;
-pub use routines::*;
-
 /// The local half of schedule execution. The authority token is minted only
 /// after reading the synced document, so the ledger cannot be asked to claim
 /// from an unowned or retired schedule through this production seam.
-pub trait RoutineLedger: Send {
-    fn routine_firing(
-        &self,
-        slot: &koru_delegate_core::RoutineSlot,
-    ) -> Result<Option<koru_delegate_sqlite::SlotClaim>, koru_delegate_sqlite::BotLedgerError>;
-    fn routine_route(
-        &self,
-        schedule: koru_delegate_core::ScheduleId,
-    ) -> Result<
-        Option<koru_delegate_core::RoutineRouteIdentity>,
-        koru_delegate_sqlite::BotLedgerError,
-    >;
-    fn held_routine_page(
-        &self,
-        after: Option<koru_delegate_sqlite::RoutineHeldCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineHeldCursor,
-            koru_delegate_sqlite::RoutineRecoveryEntry,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    >;
-    fn queued_routine_page(
-        &self,
-        after: Option<koru_delegate_sqlite::RoutineQueuedCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineQueuedCursor,
-            Option<koru_delegate_sqlite::RoutineRecoveryEntry>,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    >;
-    fn routine_slots_page(
-        &self,
-        route: &koru_delegate_core::RoutineRouteIdentity,
-        after: Option<koru_delegate_sqlite::RoutineSlotCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineSlotCursor,
-            koru_delegate_sqlite::RoutineOccurrenceFact,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    >;
-    fn record_expired_routine(
-        &mut self,
-        authority: koru_delegate_document::RoutineExpiryAuthority,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    >;
-    fn claim_bot_routine(
-        &mut self,
-        authority: ScheduleClaimAuthority,
-        admission: &koru_delegate_core::BotAdmissionBarrier,
-        fresh: &koru_delegate_core::FreshBotPolicyProof,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    >;
-    /// The owner Test's claim. It takes its own authority type, so nothing
-    /// minted for the due or the expiry path can reach it, and a Test
-    /// authority cannot reach [`Self::claim_bot_routine`]. Not on the wire.
-    fn claim_bot_routine_test(
-        &mut self,
-        authority: koru_delegate_document::RoutineTestAuthority,
-        admission: &koru_delegate_core::BotAdmissionBarrier,
-        fresh: &koru_delegate_core::FreshBotPolicyProof,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    >;
-    /// The Bot's current admission barrier, read from the ledger inside one
-    /// owner command. `None` is positive absence: the AI owner has never
-    /// synchronized this Bot. It is not readiness. Not on the wire.
-    fn bot_admission_barrier(
-        &self,
-        owner: koru_delegate_core::BotOwner,
-        bot: koru_delegate_core::BotId,
-    ) -> Result<Option<koru_delegate_core::BotAdmissionBarrier>, koru_delegate_sqlite::BotLedgerError>;
-    fn read_routine_claim(
-        &self,
-        slot: &koru_delegate_core::RoutineSlot,
-    ) -> Result<koru_delegate_core::RoutineClaimObservation, koru_delegate_sqlite::BotLedgerError>;
-    fn acknowledge_routine_link(
-        &mut self,
-        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
-    ) -> Result<koru_delegate_core::RoutineClaimRecord, koru_delegate_sqlite::BotLedgerError>;
-}
-
 pub trait ScheduleLedger: Send {
     fn claim_run(
         &mut self,
@@ -455,20 +322,15 @@ pub struct ScheduleEventRef {
     pub document: DocumentId,
 }
 
-/// What a definition revision is, as an event: the fact the mutation's owner
-/// names, carried through `prepare_definition` into the stored prepared
-/// event. It is not derived from the resulting lifecycle alone: editing a
-/// paused Routine leaves it paused and is still `Updated` (P4.3 section
-/// 4.11); only a transition into Paused is `Paused`.
+/// A definition transition classified exhaustively from the committed
+/// lifecycle. There is no production edit/resume endpoint yet; keeping the
+/// active arm typed means adding one cannot silently omit its event.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ScheduleDefinitionEvent {
     Updated,
     Paused(koru_delegate_schedule::SchedulePauseReason),
 }
 
-/// The event of a mutation whose only effect is its resulting lifecycle (a
-/// schedule made active or paused). A mutation that keeps the lifecycle, such
-/// as an edit, names `Updated` itself.
 pub fn schedule_definition_event(
     definition: &koru_delegate_schedule::ScheduleDefinition,
 ) -> ScheduleDefinitionEvent {
@@ -542,14 +404,10 @@ pub trait ScheduleEvents: Send {
         header: &koru_delegate_schedule::ScheduleHeader,
     ) -> PortResult<PreparedScheduleEvent>;
 
-    /// Prepare the event of one definition revision. `event` is the fact the
-    /// mutation's owner names; `Paused` must agree with the definition's own
-    /// pause reason.
     fn prepare_definition(
         &mut self,
         schedule: ScheduleEventRef,
         definition: &koru_delegate_schedule::ScheduleDefinition,
-        event: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent>;
 
     fn prepare_occurrence(
@@ -613,7 +471,6 @@ impl ScheduleEvents for NoScheduleEvents {
         &mut self,
         _schedule: ScheduleEventRef,
         _definition: &koru_delegate_schedule::ScheduleDefinition,
-        _event: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent> {
         Ok(PreparedScheduleEvent {
             event: koru_delegate_core::EventId::mint(),
@@ -652,26 +509,16 @@ impl ScheduleEvents for NoScheduleEvents {
 /// One open Run document on this device: read it in place, and commit one
 /// fact at a time durably.
 ///
-/// `commit` applies and sends the write. The actual host receives its durable
-/// acknowledgement separately; callers use `settle` and `durable` where the
-/// answer requires it. Decision projections additionally qualify the exact VV.
+/// `commit` runs the write against the document and returns only once the
+/// host has made it durable — the store's acknowledgement in the real
+/// adapter, nothing in the fake. Every step, usage fact and status change
+/// goes through it, which is what §17.1's *commit first* means in code.
 pub trait RunDocumentHandle: Send {
     fn document(&self) -> &RunDocument;
     fn commit(
         &mut self,
         write: &mut dyn FnMut(&RunDocument) -> Result<(), RunDocumentError>,
     ) -> PortResult<()>;
-    /// Specialized, unexposed decision path. No success default: the owning
-    /// adapter must settle the causal base before preparing on private staging.
-    fn prepare_decision_projection(
-        &mut self,
-        intent: &RunProjectionIntent,
-    ) -> PortResult<DecisionPreparedProjection>;
-    fn apply_prepared_projection(
-        &mut self,
-        prepared: &DecisionPreparedProjection,
-    ) -> PortResult<AppliedRunProjection>;
-    fn discard_prepared_projection(&mut self, transition: DecisionTransitionId) -> PortResult<()>;
     /// Take in whatever the host has already been sent for this document
     /// and answer whether anything arrived. **Never waits**: a reader that
     /// blocks here is a reader that stalls the one thread the worker
@@ -697,15 +544,6 @@ pub trait RunDocumentHandle: Send {
 
 /// The Run documents of a workspace, through the Store.
 pub trait RunDocuments {
-    /// Freeze a cold-open specification without opening a canonical connection.
-    /// A host without this seam refuses; it never opens on the actor as fallback.
-    fn publication_open(
-        &mut self,
-        _workspace: WorkspaceId,
-        _document: DocumentId,
-    ) -> PortResult<Box<dyn RunDocumentOpen>> {
-        Err(publication_pending())
-    }
     /// §7.1 step 3: commit the Run document with its header, atomically and
     /// idempotently by run id — a retry after a lost answer finds the one
     /// it made. This is the moment a run exists.
@@ -806,40 +644,14 @@ pub trait ScheduleChangeWatch: Send {
 
 pub trait ScheduleDocumentHandle: Send {
     fn document(&self) -> &ScheduleDocument;
-    /// Expiry-only live authority. The implementation must bind its actual
-    /// physical Store DocumentId to the current associated header ScheduleId.
-    fn expired_routine_authority(
-        &self,
-        device: koru_delegate_core::DeviceId,
-        plan: koru_delegate_document::RoutineExpiryPlan,
-    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>>;
     /// Bind a single-use claim to this handle's real Store workspace. The
     /// caller supplies only the occurrence plan; it cannot pair the document
     /// with an arbitrary workspace or later substitute another slot/request.
-    /// For BotRoutine, implementations must also bind the physical Store
-    /// DocumentId to the candidate ScheduleId. Header identity alone cannot
-    /// prove the canonical physical location of a copied Schedule document.
     fn claim_authority(
         &self,
         device: koru_delegate_core::DeviceId,
         plan: ScheduleClaimPlan,
     ) -> PortResult<Option<ScheduleClaimAuthority>>;
-    /// The owner Test's live authority for one prepared occurrence of a
-    /// Routine that is exactly Paused(Manual). Like the two above, an
-    /// implementation must bind its real Store workspace and its physical
-    /// DocumentId to the prepared ScheduleId. A handle that does not serve
-    /// owner Tests refuses: no handle mints this by default.
-    fn test_claim_authority(
-        &self,
-        _device: koru_delegate_core::DeviceId,
-        _prepared: koru_delegate_core::RoutinePrepared,
-    ) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
-        Err(PortError::new(
-            Port::Schedules,
-            "routine_test_authority_unavailable",
-            "this Schedule handle does not serve an owner Test",
-        ))
-    }
     fn commit(
         &mut self,
         write: &mut dyn FnMut(&ScheduleDocument) -> Result<(), ScheduleDocumentError>,
@@ -1002,9 +814,6 @@ pub trait ScheduleClock: Send {
 
 /// What a delegated creation asks the host for.
 pub struct SessionLaunch {
-    /// Derived by the execution owner from validated immutable Run provenance.
-    /// This internal hint selects negotiated composer capabilities, not authority.
-    pub is_bot: bool,
     pub key: IdempotencyKey,
     pub profile: SessionProfileKey,
     pub project: Option<ProjectId>,
@@ -1033,11 +842,6 @@ pub enum SessionUpdate {
         actual: StreamSequence,
     },
     Session(SequencedSessionEvent),
-    /// Explicit Session-stream loss, distinct from the Agent stream's fence.
-    SessionGap {
-        expected: StreamSequence,
-        actual: StreamSequence,
-    },
     /// The stream ended: the session is gone, or the host is.
     Closed {
         error: Option<SessionFailure>,
@@ -1055,19 +859,6 @@ pub trait SessionEvents: Send {
 /// reason, and the streams. The port keeps the controller lease it holds
 /// per session; the orchestrator never sees a token.
 pub trait Sessions {
-    /// Decision-window stream: bounded merge, independent retained frontiers,
-    /// and explicit gap observations. An unqualified adapter refuses.
-    fn subscribe_decision(
-        &mut self,
-        _session: SessionId,
-        _after: &koru_delegate_core::decisions::DecisionSourceFrontiers,
-    ) -> PortResult<Box<dyn SessionEvents>> {
-        Err(PortError::new(
-            Port::Sessions,
-            "decision_stream_unavailable",
-            "the session adapter does not support decision source ownership",
-        ))
-    }
     fn supports_delegation(&self) -> bool;
     /// Whether this exact authored profile is ready for unattended
     /// delegation according to the session host's cached provider verdict.
@@ -1082,105 +873,6 @@ pub trait Sessions {
     /// Give the lease up for a handover (§7.4).
     fn release_control(&mut self, session: SessionId) -> PortResult<()>;
     fn submit(&mut self, session: SessionId, text: String) -> PortResult<AgentTurnId>;
-    /// Exact typed Bot input. The controller remains inside this port.
-    fn bot_submit(
-        &mut self,
-        _session: SessionId,
-        _input: koru_delegate_core::PendingInput,
-    ) -> PortResult<AgentTurnId> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Typed Bot input is unsupported.",
-        ))
-    }
-    /// Protocol25 conditional steering; never starts a new turn.
-    fn bot_steer(
-        &mut self,
-        _session: SessionId,
-        _turn: AgentTurnId,
-        _input: koru_delegate_core::PendingInput,
-    ) -> PortResult<AgentTurnId> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Conditional steering is unsupported.",
-        ))
-    }
-    /// The caller supplies the stable idempotency key: for a decision-owned
-    /// native answer it is the exact key C's native answer journal retained,
-    /// so a lost reply retries the same request rather than a second answer.
-    fn bot_answer_approval(
-        &mut self,
-        _session: SessionId,
-        _key: IdempotencyKey,
-        _approval: koru_delegate_core::ApprovalId,
-        _decision: koru_delegate_core::ApprovalDecision,
-        _choice: Option<koru_delegate_core::ApprovalChoiceId>,
-    ) -> PortResult<()> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Native approval answers are unsupported.",
-        ))
-    }
-    fn bot_answer_questions(
-        &mut self,
-        _session: SessionId,
-        _request: koru_delegate_core::QuestionRequestId,
-        _answers: Vec<koru_delegate_core::QuestionAnswer>,
-    ) -> PortResult<()> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Native question answers are unsupported.",
-        ))
-    }
-    fn bot_ingest_attachment(
-        &mut self,
-        _session: SessionId,
-        _id: koru_delegate_core::AttachmentId,
-        _source: koru_delegate_core::AttachmentSource,
-        _data: String,
-    ) -> PortResult<koru_delegate_core::Attachment> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Session attachment staging is unsupported.",
-        ))
-    }
-    fn bot_skip_questions(
-        &mut self,
-        _session: SessionId,
-        _request: koru_delegate_core::QuestionRequestId,
-    ) -> PortResult<()> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Native question skips are unsupported.",
-        ))
-    }
-    fn bot_remove_attachment(
-        &mut self,
-        _session: SessionId,
-        _id: koru_delegate_core::AttachmentId,
-    ) -> PortResult<koru_delegate_core::Attachment> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Session attachment removal is unsupported.",
-        ))
-    }
-    fn bot_attachments(
-        &mut self,
-        _session: SessionId,
-    ) -> PortResult<Vec<koru_delegate_core::Attachment>> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Session attachment listing is unsupported.",
-        ))
-    }
     fn cancel_turn(
         &mut self,
         session: SessionId,
@@ -1188,15 +880,6 @@ pub trait Sessions {
         reason: CancelReason,
     ) -> PortResult<()>;
     fn terminate(&mut self, session: SessionId) -> PortResult<()>;
-    /// Automatic completion may terminate only under a current controller lease.
-    /// Never fall back to delegated/user-Stop authority or seize a human lease.
-    fn terminate_owned(&mut self, _session: SessionId) -> PortResult<()> {
-        Err(PortError::new(
-            Port::Sessions,
-            "bot_control_unsupported",
-            "Owned termination is unsupported.",
-        ))
-    }
     /// The adapter's resume seam (§7.6): the token an adapter that declared
     /// native resume minted for `session`, so a fresh creation can continue
     /// the provider session. `None` is every other adapter — Codex declares
@@ -1357,36 +1040,6 @@ pub struct PublishFailure {
 /// it (§7.1, §17.2).
 pub trait RunEvents {
     fn publish(&mut self, event: EventId, fact: &RunFact) -> Result<(), PublishFailure>;
-    /// `delegate.private_operation.settled` (M5): one private effect reached
-    /// a final stage. Called after the ledger committed that stage, under the
-    /// id [`PrivateOperationSettled::event_id`] derives from the effect, so
-    /// every retry carries the same id and the journal keeps one row. It does
-    /// not ride the pending-publication queue: the fact is rebuilt from the
-    /// retained row whenever that row is observed again. A host without a bus
-    /// keeps nothing.
-    fn publish_private_settled(
-        &mut self,
-        event: EventId,
-        fact: &PrivateOperationSettled,
-    ) -> Result<(), PublishFailure> {
-        let _ = (event, fact);
-        Ok(())
-    }
-    /// `delegate.child.requested` and `delegate.child.changed` (M6): one
-    /// committed revision of one child request. Called after the ledger
-    /// committed that revision, under the id [`ChildRequestFact::event_id`]
-    /// derives from the request and the revision, so every retry carries the
-    /// same id and the journal keeps one row. Like the private settlement it
-    /// does not ride the pending-publication queue. A host without a bus
-    /// keeps nothing.
-    fn publish_child_request(
-        &mut self,
-        event: EventId,
-        fact: &ChildRequestFact,
-    ) -> Result<(), PublishFailure> {
-        let _ = (event, fact);
-        Ok(())
-    }
 }
 
 // ------------------------------------------------------------- the preamble
@@ -1394,6 +1047,9 @@ pub trait RunEvents {
 /// P1.12's `resolve`, bound to the installation by the host.
 pub trait Preamble {
     fn resolve(&mut self) -> koru_delegate_preamble::Resolved;
+    fn orientation(&mut self) -> koru_delegate_preamble::Resolved {
+        koru_delegate_preamble::session::bundled()
+    }
 }
 
 // ------------------------------------------------------------- the endpoint
@@ -1404,7 +1060,6 @@ pub trait Preamble {
 /// adapter — a second arithmetic for the working folder is a second answer
 /// to which paths a registration may name.
 pub struct McpLaunch<'a> {
-    pub authority: koru_delegate_core::RunToolAuthority,
     pub run: RunId,
     /// The attempt this token is for. A generation that moved is what makes
     /// the previous attempt's token answer `stale_generation`.
@@ -1423,46 +1078,9 @@ pub struct McpLaunch<'a> {
 /// The stable per-run MCP endpoint, its bearer and its tool allowlist
 /// (§7.3), filled by P1.11's run authority.
 pub trait McpEndpoints {
-    /// Publish immutable discovery metadata before a provider can synchronously
-    /// discover its tools. This grants no live effect authority.
-    fn publish_authority(
-        &mut self,
-        _run: RunId,
-        _generation: AttemptGeneration,
-        _authority: koru_delegate_core::RunToolAuthority,
-    ) -> PortResult<()> {
+    /// Publish only after an ordinary Run was positively opened on this device.
+    fn publish_authority(&mut self, _run: RunId, _generation: AttemptGeneration) -> PortResult<()> {
         Ok(())
-    }
-
-    /// Publish (`Some`) or clear (`None`) the Run's open decision wait as the
-    /// ledger holds it (O147), so a Bot Run classifies as `BotDecisionWait`
-    /// while it waits. No default: an adapter that dropped this would leave
-    /// a waiting Bot unfenced.
-    #[allow(clippy::type_complexity)]
-    fn publish_decision_wait(
-        &mut self,
-        run: RunId,
-        wait: Option<(
-            koru_delegate_core::decisions::DecisionId,
-            koru_delegate_core::decisions::DecisionPhase,
-        )>,
-    ) -> PortResult<()>;
-
-    /// Publish (`Some`) or clear (`None`) the Run's open child wait (M6), so
-    /// a Bot Run classifies as `BotChildWait` from its ask until its
-    /// successor's continuation input is acknowledged. Clearing nothing is
-    /// always possible. An adapter that cannot publish a wait refuses, so a
-    /// waiting parent is never silently left unfenced.
-    fn publish_child_wait(&mut self, run: RunId, wait: Option<ChildWaitMark>) -> PortResult<()> {
-        let _ = run;
-        match wait {
-            None => Ok(()),
-            Some(_) => Err(PortError::new(
-                Port::Mcp,
-                "run_authority_unavailable",
-                "this host cannot publish a child wait",
-            )),
-        }
     }
 
     /// Issue this attempt's authority — or advance the generation, when the

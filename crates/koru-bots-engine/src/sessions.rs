@@ -41,6 +41,11 @@ pub struct SessionGrant {
 /// it must not return work while a barrier or unresolved write blocks it.
 /// None of these methods is exposed directly to provider JSON.
 pub trait Port: Send + Sync + 'static {
+    /// Capture once on the session thread. Test and unconfigured hosts remain
+    /// entirely in memory; production overrides this with root-scoped files.
+    fn instructions(&self) -> koru_delegate_preamble::Resolved {
+        koru_delegate_preamble::session::bundled()
+    }
     fn context(&self, thread: Uuid) -> Result<Context, Error>;
     /// A new mint command for each attempt, including failed-resume fallback.
     /// The engine selects the session incarnation. Secrets stay in this return

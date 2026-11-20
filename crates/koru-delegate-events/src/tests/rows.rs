@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Every builder produces what the registry declares, and the registry
-//! declares nothing under `delegate.` that has no builder.
+//! Every current builder produces what the registry declares. Retired rows
+//! remain registered so already stored journal envelopes still validate.
 
 use koru_events::{REGISTRY, TelemetryPolicy, validate};
 
@@ -25,14 +25,22 @@ fn every_row_validates_against_the_registry() {
 }
 
 /// The charter in one assertion: the set of names the builders produce is
-/// exactly the set of `delegate.*` rows, each once. A row added to the
-/// registry without a builder, or a builder without a row, fails here.
+/// exactly the current `delegate.*` rows, each once. The three retired Bot
+/// rows retain their stored vocabulary but cannot be constructed here.
 #[test]
 fn every_delegate_row_has_exactly_one_builder() {
     let registered: BTreeSet<&str> = REGISTRY
         .iter()
         .map(|spec| spec.name)
         .filter(|name| name.starts_with("delegate."))
+        .filter(|name| {
+            !matches!(
+                *name,
+                "delegate.private_operation.settled"
+                    | "delegate.child.requested"
+                    | "delegate.child.changed"
+            )
+        })
         .collect();
     let built: Vec<&str> = every_row().into_iter().map(|(name, _)| name).collect();
     let built_set: BTreeSet<&str> = built.iter().copied().collect();
@@ -40,8 +48,8 @@ fn every_delegate_row_has_exactly_one_builder() {
     assert_eq!(built_set, registered);
     assert_eq!(
         registered.len(),
-        35,
-        "the roadmap's rows, M5's settled private operation and M6's two child-request rows, exactly"
+        32,
+        "the ordinary Run and Schedule rows, exactly"
     );
 }
 

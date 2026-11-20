@@ -351,20 +351,24 @@ pub const RELEASE_AUXILIARY: &[&str] = if cfg!(target_os = "macos") {
 ///
 /// **The path is the contract, not just the name.** Each has one runtime
 /// reader that looks for exactly this relative path: `koru-mcp-server`'s
-/// `MODEL_DOCUMENT_PATH` for the model contract, and
-/// `koru_delegate_preamble::RELATIVE_PATH` for the delegated-agent preamble
-/// — the file a person may edit (ADR-339), which resolves to the compiled-in
-/// copy when this one is missing. So the package keeps this `docs/` layout
+/// `MODEL_DOCUMENT_PATH` for the model contract, and the two
+/// `koru-delegate-preamble` paths for artifact and common session instructions.
+/// A missing instruction file resolves to its compiled-in copy. The package
+/// keeps this `docs/` layout
 /// rather than flattening it. The sources are elsewhere in the repository —
 /// beside the crate that reads each one — and `koru-release` copies each
 /// source to its path here (`RELEASE_DOCUMENT_SOURCES` in
 /// `crates/koru-release/src/package.rs`).
 ///
-/// Required of every package, on every platform, since generation 9. Nothing
-/// had shipped when the list gained its second entry, so no published
-/// package is invalidated by it; the list is append-only from the first
-/// release on.
-pub const RELEASE_DOCUMENTS: &[&str] = &["docs/mcp/README.md", "docs/prompts/delegated-agent.md"];
+/// Required by the current publisher on every platform. The installed updater
+/// validates incoming inventories structurally, so adding session instructions
+/// needs no manifest or inventory-version change. Their per-user override is
+/// outside the installation and is never replaced by an update.
+pub const RELEASE_DOCUMENTS: &[&str] = &[
+    "docs/mcp/README.md",
+    "docs/prompts/delegated-agent.md",
+    "docs/prompts/session.md",
+];
 
 /// **The license notices every package carries**, as paths under the
 /// package's data root ([`in_data`]): Koru's own license (MPL-2.0), the
@@ -520,7 +524,11 @@ mod tests {
     fn the_runtime_documents_are_named_and_live_under_docs() {
         assert_eq!(
             RELEASE_DOCUMENTS,
-            &["docs/mcp/README.md", "docs/prompts/delegated-agent.md"]
+            &[
+                "docs/mcp/README.md",
+                "docs/prompts/delegated-agent.md",
+                "docs/prompts/session.md",
+            ]
         );
         assert!(
             RELEASE_DOCUMENTS

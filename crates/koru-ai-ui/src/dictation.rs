@@ -375,7 +375,7 @@ impl ChatSurface {
         let send = self.send_button();
         let gap = Space::S2.px(Profile::Desktop);
         let choice_width = if self.dictation.microphone.offered {
-            Metrics::COMPACT.control_width() + Space::S0_5.px(Profile::Desktop)
+            crate::BUTTON_H
         } else {
             0.0
         };
@@ -496,7 +496,8 @@ impl ChatSurface {
             },
             Metrics {
                 icon_size: COMPOSER_ICON_SIZE,
-                ..Metrics::STANDARD
+                radius: mic.h * 0.5,
+                ..Metrics::INLINE
             },
         );
     }

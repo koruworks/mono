@@ -171,6 +171,10 @@ impl ChatSurface {
 
     /// A selection gesture ended: the pill shows if it left text selected.
     pub(crate) fn show_add_pill(&mut self) {
+        if self.observing_bot_thread() {
+            self.add_pill.hide();
+            return;
+        }
         let selected = self.selected_response_text().is_some();
         if selected {
             self.add_pill.shown = true;
@@ -452,6 +456,7 @@ impl ChatSurface {
         let chat_id = ChatId::new();
         let message_id = MessageId::new();
         self.transcript = Some(koru_ai_wire::ChatTranscript {
+            active_attempt: None,
             sources: Vec::new(),
             chat: Chat {
                 id: chat_id,

@@ -59,6 +59,8 @@ pub(super) struct Entry {
     /// A place's glyph; a document's own emoji is `emoji`.
     pub glyph: char,
     pub emoji: Option<String>,
+    /// The Bot's current face and name, shared with its tab-strip identity.
+    pub face: Option<(u8, String)>,
     pub current: bool,
     pub status: Option<StatusMark>,
 }
@@ -356,28 +358,38 @@ impl QuickSwitch {
                 scene::fill(canvas, root, p.hover_tint, &shape);
             }
             let icon_x = r.x + INSET;
-            match &entry.emoji {
-                Some(emoji) => {
-                    let glyph = engine.simple_layout(emoji, theme::role::row());
-                    scene::draw_layout_first_line(
-                        canvas,
-                        root,
-                        &glyph,
-                        icon_x,
-                        r.y + (r.h - scene::first_line_height(&glyph)) * 0.5,
-                        None,
-                    );
-                }
-                None => {
-                    let glyph = engine.icon_layout(entry.glyph, ICON);
-                    scene::draw_layout(
-                        canvas,
-                        root,
-                        &glyph,
-                        icon_x,
-                        r.y + (r.h - glyph.height()) * 0.5,
-                        Some(p.text_dim),
-                    );
+            if let Some((face, name)) = &entry.face {
+                koru_draw::face::Face::new(*face, name).draw_in(
+                    canvas,
+                    root,
+                    engine,
+                    Rect::new(icon_x, r.y + (r.h - ICON) * 0.5, ICON, ICON),
+                    p,
+                );
+            } else {
+                match &entry.emoji {
+                    Some(emoji) => {
+                        let glyph = engine.simple_layout(emoji, theme::role::row());
+                        scene::draw_layout_first_line(
+                            canvas,
+                            root,
+                            &glyph,
+                            icon_x,
+                            r.y + (r.h - scene::first_line_height(&glyph)) * 0.5,
+                            None,
+                        );
+                    }
+                    None => {
+                        let glyph = engine.icon_layout(entry.glyph, ICON);
+                        scene::draw_layout(
+                            canvas,
+                            root,
+                            &glyph,
+                            icon_x,
+                            r.y + (r.h - glyph.height()) * 0.5,
+                            Some(p.text_dim),
+                        );
+                    }
                 }
             }
 
@@ -496,6 +508,7 @@ mod tests {
                 label: format!("Tab {tab}"),
                 glyph: icons::DOCUMENT,
                 emoji: None,
+                face: None,
                 current: tab == 0,
                 status: None,
             })

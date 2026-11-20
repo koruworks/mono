@@ -36,7 +36,31 @@ fn scheduled_agent(now_ms: i64) -> Agent {
         now_ms.to_string(),
     )
     .expect("seed the fixture clock");
-    Agent::with_root(Some("complete"), root)
+    let mut agent = Agent::with_root(Some("complete"), root);
+    // Agent IPC and the gateway can serve while the delegate is still
+    // initializing its ledger. Both roots need the delegate's own greeting
+    // before reading its device identity or waking the scheduler.
+    let deadline = std::time::Instant::now() + PROCESS_DEADLINE;
+    loop {
+        if let Some(status) = agent.child.try_wait().expect("inspect the fixture Agent") {
+            panic!("the fixture Agent exited before delegate readiness: {status}");
+        }
+        match agent.delegate().hello() {
+            Ok(_) => return agent,
+            Err(failure) => {
+                assert!(
+                    failure.code == "delegate_unavailable" && failure.retryable,
+                    "delegate readiness failed: {failure:?}"
+                );
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the rooted delegate did not become ready: {failure:?}\n{}",
+                    agent.delegate_log()
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+    }
 }
 
 fn set_clock(agent: &Agent, now_ms: i64) {

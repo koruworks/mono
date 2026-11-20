@@ -187,7 +187,7 @@ impl Database {
                 answer,
             };
             size += bytes(&delivery)?.len();
-            if size > koru_bot_client_wire::MAX_FRAME_BYTES / 2 {
+            if size > crate::limits::MAX_PAYLOAD_BYTES / 2 {
                 break;
             }
             result.push(delivery);

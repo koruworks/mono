@@ -5537,6 +5537,8 @@ name = "koru-ai-provider-agent"
 version = "0.0.3"
 dependencies = [
  "koru-ai-core",
+ "koru-delegate-preamble",
+ "koru-i18n",
  "koru-ipc",
  "koru-session-client",
  "koru-session-profiles",
@@ -5603,31 +5605,22 @@ dependencies = [
  "bytes",
  "image",
  "koru-ai-api",
- "koru-ai-client",
  "koru-ai-core",
  "koru-ai-provider",
  "koru-ai-provider-agent",
  "koru-ai-sqlite",
  "koru-ai-wire",
- "koru-bot-client-wire",
- "koru-bots-engine",
- "koru-connections",
  "koru-core",
- "koru-delegate-api",
- "koru-delegate-core",
- "koru-delegate-document",
- "koru-device",
+ "koru-delegate-preamble",
  "koru-env",
- "koru-events",
  "koru-export",
  "koru-export-markdown",
+ "koru-i18n",
  "koru-import-markdown",
  "koru-ipc",
  "koru-link",
  "koru-log",
  "koru-mcp-server",
- "koru-network-edge",
- "koru-oauth-credentials",
  "koru-session-protocol",
  "koru-store-core",
  "koru-store-server",
@@ -5636,7 +5629,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tokio",
  "tracing",
  "url",
  "uuid",
@@ -5648,7 +5640,6 @@ name = "koru-ai-sqlite"
 version = "0.0.3"
 dependencies = [
  "koru-ai-core",
- "koru-delegate-core",
  "koru-sqlite",
  "rusqlite",
  "serde_json",
@@ -5770,22 +5761,16 @@ dependencies = [
  "koru-artifact-api",
  "koru-artifact-sqlite",
  "koru-autostart",
- "koru-bot-client-wire",
  "koru-bots-engine",
  "koru-channel",
  "koru-delegate-api",
- "koru-device",
  "koru-env",
  "koru-events-server",
  "koru-ipc",
  "koru-network-bridge",
- "koru-network-edge",
- "koru-network-iroh",
  "koru-session-protocol",
  "koru-settings",
  "koru-store-server",
- "koru-sync-control",
- "koru-time-zone",
  "serde_json",
  "tempfile",
  "tokio",
@@ -5814,7 +5799,6 @@ dependencies = [
  "koru-artifact-wire",
  "koru-bots-engine",
  "koru-channel",
- "koru-connections",
  "koru-core",
  "koru-delegate-api",
  "koru-delegate-core",
@@ -5998,17 +5982,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "koru-bot-client-wire"
-version = "0.0.3"
-dependencies = [
- "koru-ai-core",
- "koru-ai-wire",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
 name = "koru-bots-engine"
 version = "0.0.3"
 dependencies = [
@@ -6016,16 +5989,19 @@ dependencies = [
  "blake3",
  "koru-agent-worker",
  "koru-ai-core",
- "koru-bot-client-wire",
  "koru-channel",
  "koru-delegate-core",
+ "koru-delegate-preamble",
+ "koru-i18n",
  "koru-ipc",
+ "koru-recurrence",
  "koru-session-profiles",
  "koru-session-protocol",
  "koru-session-runtime",
  "koru-settings",
  "koru-sqlite",
  "koru-store-core",
+ "koru-time-zone",
  "rmcp",
  "rusqlite",
  "schemars 1.2.2",
@@ -6147,7 +6123,6 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "koru-ai-core",
- "koru-ai-sqlite",
  "koru-delegate-core",
  "koru-oauth-credentials",
  "sha2 0.10.9",
@@ -6181,7 +6156,6 @@ dependencies = [
 name = "koru-delegate-api"
 version = "0.0.3"
 dependencies = [
- "blake3",
  "koru-delegate-core",
  "koru-delegate-schedule",
  "koru-ipc",
@@ -6258,7 +6232,6 @@ dependencies = [
  "koru-agent-worker",
  "koru-api-client",
  "koru-artifact-wire",
- "koru-bots-engine",
  "koru-channel",
  "koru-delegate-api",
  "koru-delegate-context",
@@ -6301,7 +6274,6 @@ dependencies = [
 name = "koru-delegate-runtime"
 version = "0.0.3"
 dependencies = [
- "blake3",
  "koru-core",
  "koru-delegate-core",
  "koru-delegate-document",
@@ -6342,15 +6314,12 @@ dependencies = [
 name = "koru-delegate-sqlite"
 version = "0.0.3"
 dependencies = [
- "blake3",
  "koru-channel",
  "koru-delegate-core",
  "koru-sqlite",
  "rusqlite",
- "serde",
  "serde_json",
  "tempfile",
- "tracing",
  "uuid",
 ]
 
@@ -7378,6 +7347,7 @@ dependencies = [
  "koru-agent-worker",
  "koru-api-client",
  "koru-channel",
+ "koru-delegate-preamble",
  "koru-events",
  "koru-ipc",
  "koru-log",
@@ -7388,6 +7358,7 @@ dependencies = [
  "koru-session-protocol",
  "koru-session-runtime",
  "koru-session-wire",
+ "koru-settings",
  "serde",
  "serde_json",
  "tempfile",
@@ -7441,8 +7412,10 @@ dependencies = [
  "agent-client-protocol-schema",
  "base64 0.22.1",
  "blake3",
+ "koru-delegate-preamble",
  "koru-env",
  "koru-events",
+ "koru-i18n",
  "koru-session-observability",
  "koru-session-profiles",
  "koru-session-protocol",

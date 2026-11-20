@@ -22,9 +22,8 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
     BOT_CHAT_PAGE_LIMIT, BOT_CREATION_PAGE_LIMIT, Bot, BotActivityPage, BotChatCursor,
-    BotChatLabel, BotChatPage, BotChildOrigin, BotChildRequestCard, BotCommand, BotCreation,
-    BotCreationCursor, BotId, BotLifecycle, BotRequestId, BotResponse, BotTrashedChat,
-    BotTrashedChatCursor,
+    BotChatLabel, BotChatPage, BotCommand, BotCreation, BotCreationCursor, BotId, BotLifecycle,
+    BotRequestId, BotResponse, BotTrashedChat, BotTrashedChatCursor,
 };
 use koru_store_core::ids::WorkspaceId;
 
@@ -39,8 +38,17 @@ const ANSWER_CAPACITY: usize = 8;
 pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 
 pub(crate) enum Command {
-    /// **One owner control of a Bot Routine** (P4.3): `SetRoutineLifecycle`,
-    /// `TestRoutine`, `EditRoutine` or `UpdateRoutineAccess`, each carrying
+    RoutineStartup {
+        bot: BotId,
+        request: uuid::Uuid,
+    },
+    NativeRoutineControl {
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        command: koru_api_client::bot_routines::Command,
+    },
+    /// One native adapter control: `EditRoutine` or `UpdateRoutineAccess`, carrying
     /// the revision the pane read. Answered by `seq`, so an answer can only
     /// settle the control it is about.
     RoutineControl {
@@ -53,7 +61,7 @@ pub(crate) enum Command {
         seq: u64,
         bot: BotId,
         schedule: koru_delegate_core::ScheduleId,
-        before: Option<i64>,
+        native_before: Option<koru_api_client::bot_routines::Cursor>,
     },
     ReadRoutines {
         seq: u64,
@@ -65,7 +73,6 @@ pub(crate) enum Command {
         bot: BotId,
         chat: ChatId,
     },
-    Memory(super::memory::Request),
     /// The Bots whose home is `workspace`, as the service lists them — and,
     /// as a second answer, its unfinished creations (S8).
     List {
@@ -114,12 +121,12 @@ pub(crate) enum Command {
         seq: u64,
         workspace: WorkspaceId,
     },
-    /// **Whether every Bot is paused** (M8): `ReadTeamPause`, for the
+    /// **Whether every Bot is paused**: `ReadTeamPause`, for the
     /// roster's control. Answered by `seq`.
     TeamPause {
         seq: u64,
     },
-    /// **Pause or resume every Bot** (M8): `PauseTeam` or `ResumeTeam` at
+    /// **Pause or resume every Bot**: `PauseTeam` or `ResumeTeam` at
     /// the revision the roster read. Answered by its request.
     SetTeamPause {
         change: super::team_pause::Change,
@@ -140,42 +147,27 @@ pub(crate) enum Command {
         seq: u64,
         workspace: WorkspaceId,
     },
-    /// **The requests a conversation made of other Bots** (M6, contract
-    /// 7.1): `ListChildRequests`, the request cards of `chat`.
-    ChildRequests {
-        seq: u64,
-        bot: BotId,
-        chat: ChatId,
-    },
-    /// **Who asked for a conversation** (M6): `ReadChildOrigin`, the origin
-    /// line of a child conversation, `None` for any other.
-    ChildOrigin {
-        seq: u64,
-        bot: BotId,
-        chat: ChatId,
-    },
-    /// **The person's other computers and their Bots in `workspace`** (M8,
-    /// P8.3): `ListLinkedOwners`, then `ListLinkedBots` for each, for the
-    /// roster's groups. A Koru that keeps no copy answers none. The roster
-    /// sends it only on its clock, while a linked computer is listed; the
-    /// first read rides a [`Command::List`] as its third answer.
-    Linked {
-        seq: u64,
-        workspace: WorkspaceId,
-    },
-    /// **One computer's copy, for a remote Bot's page** (M8, P8.3):
-    /// `ListLinkedBots` for `owner` and the Bot's home, read for how
-    /// current the copy is and whether it still lists `bot`.
-    LinkedOwner {
-        seq: u64,
-        bot: BotId,
-        owner: koru_ai_core::bots::DeviceId,
-        workspace: WorkspaceId,
-    },
 }
 
 #[derive(Debug)]
 pub(crate) enum Answer {
+    RoutineStartup {
+        bot: BotId,
+        request: uuid::Uuid,
+        result: Result<koru_api_client::bot_routines::Response, super::routines::control::Refusal>,
+    },
+    NativeRoutineControl {
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        result: Result<koru_api_client::bot_routines::Response, super::routines::control::Refusal>,
+    },
+    NativeRoutineDetail {
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        result: Result<koru_api_client::bot_routines::Snapshot, super::routines::ReadFailure>,
+    },
     /// What the owner said to a [`Command::RoutineControl`]: its reply, or
     /// the refusal with the reasons it named (`details.reasons`).
     RoutineControl {
@@ -183,13 +175,6 @@ pub(crate) enum Answer {
         bot: BotId,
         schedule: koru_delegate_core::ScheduleId,
         result: Result<BotResponse, super::routines::control::Refusal>,
-    },
-    RoutineDetail {
-        seq: u64,
-        bot: BotId,
-        schedule: koru_delegate_core::ScheduleId,
-        result:
-            Result<koru_ai_core::bots::routines::BotRoutineDetail, super::routines::ReadFailure>,
     },
     Routines {
         seq: u64,
@@ -202,10 +187,6 @@ pub(crate) enum Answer {
         bot: BotId,
         chat: ChatId,
         result: Result<Option<BotChatLabel>, Failure>,
-    },
-    Memory {
-        request: super::memory::Request,
-        result: Result<BotResponse, Failure>,
     },
     Library {
         seq: u64,
@@ -283,47 +264,6 @@ pub(crate) enum Answer {
         seq: u64,
         workspace: WorkspaceId,
         result: Result<Listing<BotCreation>, Failure>,
-    },
-    /// What a [`Command::ChildRequests`] answered.
-    ChildRequests {
-        seq: u64,
-        bot: BotId,
-        chat: ChatId,
-        result: Result<Vec<BotChildRequestCard>, Failure>,
-    },
-    /// What a [`Command::ChildOrigin`] answered.
-    ChildOrigin {
-        seq: u64,
-        bot: BotId,
-        chat: ChatId,
-        result: Result<Option<BotChildOrigin>, Failure>,
-    },
-    /// **The linked computers and their Bots** (M8, P8.3): a
-    /// [`Command::List`]'s third answer (`listing` is that listing's
-    /// sequence, and `seq` is 0), or what a [`Command::Linked`] answered
-    /// (`listing` is `None`).
-    Linked {
-        seq: u64,
-        listing: Option<u64>,
-        workspace: WorkspaceId,
-        result: Result<Vec<super::linked::Computer>, Failure>,
-    },
-    /// What a [`Command::LinkedOwner`] answered: the copy's state and when
-    /// it was last up to date, or `None` when that computer's copy does not
-    /// list the Bot.
-    LinkedOwner {
-        seq: u64,
-        bot: BotId,
-        result: Result<Option<(koru_ai_core::bots::LinkedOwnerState, Option<i64>)>, Failure>,
-    },
-    /// **How far a refused [`Command::Write`] got on its way to another
-    /// computer** (M8, P8.3): the refusal's `details.delivery`, sent just
-    /// before that write's [`Answer::Wrote`] on the same channel, as
-    /// [`Answer::Reason`] is. A surface that does not care ignores it.
-    Delivery {
-        bot: BotId,
-        request: BotRequestId,
-        delivery: String,
     },
 }
 
@@ -598,6 +538,78 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
     let mut client: Option<koru_api_client::Client> = None;
     while let Ok(command) = commands.recv() {
         match command {
+            Command::RoutineStartup { bot, request } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => connected
+                        .ai()
+                        .bot_routine(&koru_api_client::bot_routines::Command::ClaimStartup {
+                            id: request,
+                            bot,
+                        })
+                        .map_err(|failure| super::routines::control::Refusal {
+                            reasons: refusal_reasons(&failure.details),
+                            failure: Failure::of(said(failure.code, failure.retryable)),
+                        }),
+                    None => Err(super::routines::control::Refusal::unanswered()),
+                };
+                if result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.failure == Failure::Unanswered)
+                {
+                    client = None;
+                }
+                if answers
+                    .send(Answer::RoutineStartup {
+                        bot,
+                        request,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Command::NativeRoutineControl {
+                seq,
+                bot,
+                schedule,
+                command,
+            } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => connected.ai().bot_routine(&command).map_err(|failure| {
+                        super::routines::control::Refusal {
+                            reasons: refusal_reasons(&failure.details),
+                            failure: Failure::of(said(failure.code, failure.retryable)),
+                        }
+                    }),
+                    None => Err(super::routines::control::Refusal::unanswered()),
+                };
+                if result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.failure == Failure::Unanswered)
+                {
+                    client = None;
+                }
+                if answers
+                    .send(Answer::NativeRoutineControl {
+                        seq,
+                        bot,
+                        schedule,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             Command::RoutineControl {
                 seq,
                 bot,
@@ -643,7 +655,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 seq,
                 bot,
                 schedule,
-                before,
+                native_before,
             } => {
                 let connection_failure = if client.is_none() {
                     match connect_checked(root.as_deref()) {
@@ -656,29 +668,42 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 } else {
                     None
                 };
+
                 let result = if let Some(failure) = connection_failure {
                     Err(failure)
                 } else {
-                    match &client {
-                        Some(connected) => super::routines::detail::detailed(
+                    client
+                        .as_ref()
+                        .ok_or(super::routines::ReadFailure::Other(Failure::Unanswered))
+                        .and_then(|connected| {
                             connected
                                 .ai()
-                                .bots(&BotCommand::ReadRoutineDetail {
-                                    bot_id: bot,
-                                    schedule_id: schedule,
-                                    before_occurrence_ms: before,
-                                    history_limit: 16,
+                                .bot_routine(&koru_api_client::bot_routines::Command::History {
+                                    bot,
+                                    routine: schedule.as_uuid(),
+                                    before: native_before,
                                 })
-                                .map_err(|e| said(e.code, e.retryable)),
-                        ),
-                        None => Err(super::routines::ReadFailure::Other(Failure::Unanswered)),
-                    }
+                                .map_err(|e| {
+                                    super::routines::ReadFailure::Other(Failure::of(said(
+                                        e.code,
+                                        e.retryable,
+                                    )))
+                                })
+                                .and_then(|response| match response {
+                                    koru_api_client::bot_routines::Response::History {
+                                        snapshot,
+                                    } => Ok(snapshot),
+                                    _ => Err(super::routines::ReadFailure::Other(
+                                        Failure::Unanswered,
+                                    )),
+                                })
+                        })
                 };
                 if result.is_err() {
                     client = None;
                 }
                 if answers
-                    .send(Answer::RoutineDetail {
+                    .send(Answer::NativeRoutineDetail {
                         seq,
                         bot,
                         schedule,
@@ -688,6 +713,7 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 {
                     return;
                 }
+                continue;
             }
             Command::ReadRoutines { seq, bot, after } => {
                 let connection_failure = if client.is_none() {
@@ -751,24 +777,6 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     })
                     .is_err()
                 {
-                    return;
-                }
-            }
-            Command::Memory(request) => {
-                if client.is_none() {
-                    client = connect(root.as_deref());
-                }
-                let result = match &client {
-                    Some(connected) => connected
-                        .ai()
-                        .bots(&request.command)
-                        .map_err(|error| Failure::of(said(error.code, error.retryable))),
-                    None => Err(Failure::Unanswered),
-                };
-                if result.is_err() {
-                    client = None;
-                }
-                if answers.send(Answer::Memory { request, result }).is_err() {
                     return;
                 }
             }
@@ -841,117 +849,6 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 {
                     return;
                 }
-                // **And the person's other computers' Bots** (M8, P8.3):
-                // the same request's third answer. A Koru that keeps no
-                // copy answers none, and the roster then draws no group.
-                if client.is_none() {
-                    client = connect(root.as_deref());
-                }
-                let result = match &client {
-                    Some(connected) => super::linked::read(workspace, |command| {
-                        connected
-                            .ai()
-                            .bots(&command)
-                            .map_err(|failure| said(failure.code, failure.retryable))
-                    }),
-                    None => Err(Failure::Unanswered),
-                };
-                if let Err(failure) = &result {
-                    tracing::info!(
-                        target: "koru::bots",
-                        failure = failure_code(failure),
-                        "The Bots of the person's other computers could not be listed"
-                    );
-                    // A refusal is an answer: only a lost one drops the
-                    // client, so a listing that answered keeps its
-                    // connection whatever this read came to.
-                    if *failure == Failure::Unanswered {
-                        client = None;
-                    }
-                }
-                if answers
-                    .send(Answer::Linked {
-                        seq: 0,
-                        listing: Some(seq),
-                        workspace,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Command::Linked { seq, workspace } => {
-                if client.is_none() {
-                    client = connect(root.as_deref());
-                }
-                let result = match &client {
-                    Some(connected) => super::linked::read(workspace, |command| {
-                        connected
-                            .ai()
-                            .bots(&command)
-                            .map_err(|failure| said(failure.code, failure.retryable))
-                    }),
-                    None => Err(Failure::Unanswered),
-                };
-                if let Err(failure) = &result {
-                    tracing::info!(
-                        target: "koru::bots",
-                        failure = failure_code(failure),
-                        "The Bots of the person's other computers could not be listed"
-                    );
-                    if *failure == Failure::Unanswered {
-                        client = None;
-                    }
-                }
-                if answers
-                    .send(Answer::Linked {
-                        seq,
-                        listing: None,
-                        workspace,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Command::LinkedOwner {
-                seq,
-                bot,
-                owner,
-                workspace,
-            } => {
-                if client.is_none() {
-                    client = connect(root.as_deref());
-                }
-                let result = match &client {
-                    Some(connected) => {
-                        super::linked::read_owner(owner, workspace, bot, |command| {
-                            connected
-                                .ai()
-                                .bots(&command)
-                                .map_err(|failure| said(failure.code, failure.retryable))
-                        })
-                    }
-                    None => Err(Failure::Unanswered),
-                };
-                if let Err(failure) = &result {
-                    tracing::info!(
-                        target: "koru::bots",
-                        failure = failure_code(failure),
-                        "The copy of another computer's Bots could not be read"
-                    );
-                    if *failure == Failure::Unanswered {
-                        client = None;
-                    }
-                }
-                if answers
-                    .send(Answer::LinkedOwner { seq, bot, result })
-                    .is_err()
-                {
-                    return;
-                }
             }
             Command::Read { seq, bot } => {
                 if client.is_none() {
@@ -1011,28 +908,13 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     client = connect(root.as_deref());
                 }
                 let mut reason = None;
-                let mut delivery = None;
                 let result = match &client {
                     Some(connected) => wrote(connected.ai().bots(&command).map_err(|failure| {
                         reason = refusal_reason(&failure.details);
-                        delivery = refusal_delivery(&failure.details);
                         said(failure.code, failure.retryable)
                     })),
                     None => Err(Failure::Unanswered),
                 };
-                // How far a command for another computer got (M8), before
-                // the refusal it belongs to.
-                if let (Some(delivery), Err(Failure::Refused(_))) = (delivery, &result)
-                    && answers
-                        .send(Answer::Delivery {
-                            bot,
-                            request,
-                            delivery,
-                        })
-                        .is_err()
-                {
-                    return;
-                }
                 if let (Some(reason), Err(Failure::Refused(_))) = (reason, &result)
                     && answers
                         .send(Answer::Reason {
@@ -1311,114 +1193,10 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
-            Command::ChildRequests { seq, bot, chat } => {
-                if client.is_none() {
-                    client = connect(root.as_deref());
-                }
-                let result = match &client {
-                    Some(connected) => child_requests(
-                        connected
-                            .ai()
-                            .bots(&BotCommand::ListChildRequests {
-                                bot_id: bot,
-                                chat_id: chat,
-                            })
-                            .map_err(|failure| said(failure.code, failure.retryable)),
-                    ),
-                    None => Err(Failure::Unanswered),
-                };
-                if let Err(failure) = &result {
-                    tracing::info!(
-                        target: "koru::bots",
-                        failure = failure_code(failure),
-                        "A conversation's requests to other Bots could not be read"
-                    );
-                    // `bot_unavailable` is the delegate not answering the
-                    // worker: an answer, not a broken connection.
-                    if *failure == Failure::Unanswered {
-                        client = None;
-                    }
-                }
-                if answers
-                    .send(Answer::ChildRequests {
-                        seq,
-                        bot,
-                        chat,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            Command::ChildOrigin { seq, bot, chat } => {
-                if client.is_none() {
-                    client = connect(root.as_deref());
-                }
-                let result = match &client {
-                    Some(connected) => child_origin(
-                        connected
-                            .ai()
-                            .bots(&BotCommand::ReadChildOrigin {
-                                bot_id: bot,
-                                chat_id: chat,
-                            })
-                            .map_err(|failure| said(failure.code, failure.retryable)),
-                    ),
-                    None => Err(Failure::Unanswered),
-                };
-                if let Err(failure) = &result {
-                    tracing::info!(
-                        target: "koru::bots",
-                        failure = failure_code(failure),
-                        "Who asked for a Bot conversation could not be read"
-                    );
-                    if *failure == Failure::Unanswered {
-                        client = None;
-                    }
-                }
-                if answers
-                    .send(Answer::ChildOrigin {
-                        seq,
-                        bot,
-                        chat,
-                        result,
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
         }
     }
 }
 
-/// A `ListChildRequests` reply: the cards, or why not — never cards made up
-/// from an answer to some other question.
-pub(crate) fn child_requests(
-    reply: Result<BotResponse, Said>,
-) -> Result<Vec<BotChildRequestCard>, Failure> {
-    match reply {
-        Ok(BotResponse::ChildRequests { requests }) => Ok(requests),
-        Ok(_) => Err(Failure::Unanswered),
-        Err(said) => Err(Failure::of(said)),
-    }
-}
-
-/// A `ReadChildOrigin` reply: the origin, `None` for a conversation no
-/// request started, or why not.
-pub(crate) fn child_origin(
-    reply: Result<BotResponse, Said>,
-) -> Result<Option<BotChildOrigin>, Failure> {
-    match reply {
-        Ok(BotResponse::ChildOrigin { origin }) => Ok(origin),
-        Ok(_) => Err(Failure::Unanswered),
-        Err(said) => Err(Failure::of(said)),
-    }
-}
-
-/// A `ListBotChats` reply: the page, or why not — never a page made up from
-/// an answer to some other question.
 pub(crate) fn chats(reply: Result<BotResponse, Said>) -> Result<BotChatPage, Failure> {
     match reply {
         Ok(BotResponse::Chats { page }) => Ok(page),
@@ -1578,22 +1356,7 @@ pub(crate) fn refusal_reason(
         .map(str::to_owned)
 }
 
-/// **A refusal's `details.delivery`**, when it carries one: how far a
-/// command for another computer got (`koru_ai_wire::bot_linked_codes`):
-/// `not_sent`, `not_confirmed` or `unknown`.
-pub(crate) fn refusal_delivery(
-    details: &std::collections::BTreeMap<String, serde_json::Value>,
-) -> Option<String> {
-    details
-        .get(super::linked::DELIVERY)
-        .and_then(serde_json::Value::as_str)
-        .filter(|delivery| !delivery.is_empty())
-        .map(str::to_owned)
-}
-
-/// **A refusal's `details.reasons`**: the stable words for why a Routine is
-/// not ready (`koru_ai_wire::bot_routine_not_ready_reasons`), in the order
-/// the owner reports them. Empty when it named none.
+/// Bounded readiness reasons returned alongside a refusal.
 pub(crate) fn refusal_reasons(
     details: &std::collections::BTreeMap<String, serde_json::Value>,
 ) -> Vec<String> {

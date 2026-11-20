@@ -92,18 +92,22 @@ fn a_run_written_by_a_newer_build_opens_read_only() {
 /// This build's own run is writable, and the version it stamps is the one
 /// the gate compares against.
 #[test]
-fn a_bot_format_header_is_writable_but_an_ordinary_one_is_malformed() {
+fn retired_bot_formats_decode_but_refuse_writes() {
     for format in [
         RUN_BOT_PREVIOUS_DOCUMENT_SCHEMA_VERSION,
-        RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION,
+        RUN_BOT_DOCUMENT_SCHEMA_VERSION,
     ] {
-        let mut header = bots::bot_header();
+        let mut header = super::retirement::bot_header();
         header.status = RunStatus::running();
-        let bot = RunDocument::create(&header).unwrap();
+        assert!(RunDocument::create(&header).is_err());
+        let bot = super::retirement::retained_run(&header);
         bot.doc().get_map("run").insert("schema", format).unwrap();
         bot.doc().commit();
         assert!(bot.compatibility().writable());
         assert_eq!(bot.header().unwrap().bot, header.bot);
+        let version = bot.doc().oplog_vv();
+        assert!(bot.set_status(&RunStatus::Completed).is_err());
+        assert_eq!(bot.doc().oplog_vv(), version);
         let ordinary = a_run_with(1);
         ordinary
             .doc()

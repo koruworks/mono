@@ -40,7 +40,7 @@ impl Orchestrator {
         request: &DelegationRequest,
         workspace: WorkspaceId,
     ) -> Result<CreateIntentStatus, CreateError> {
-        refuse_untrusted_bot_folder(request)?;
+        refuse_retired_bot_folder(request)?;
         let Some(record) = self.ports.store.validate_intent(request, workspace)? else {
             return Ok(CreateIntentStatus::Absent);
         };
@@ -73,7 +73,7 @@ impl Orchestrator {
         request: DelegationRequest,
         workspace: WorkspaceId,
     ) -> Result<Created, CreateError> {
-        refuse_untrusted_bot_folder(&request)?;
+        refuse_retired_bot_folder(&request)?;
         let run = request.run;
         // Step 1. Durable before anything else, and idempotent by run id.
         self.ports.store.record_intent(&request, workspace)?;
@@ -156,54 +156,6 @@ impl Orchestrator {
         workspace: WorkspaceId,
     ) -> Result<Created, CreateError> {
         let run = request.run;
-        let bot = if matches!(
-            request.scope,
-            koru_delegate_core::WorkspaceScope::BotFolder { .. }
-        ) {
-            let admission = self
-                .ports
-                .store
-                .bots()
-                .ok_or_else(|| {
-                    crate::PortError::new(
-                        crate::Port::Store,
-                        "bot_execution_unavailable",
-                        "Bot admission is unavailable.",
-                    )
-                })?
-                .bot_admission(run)
-                .map_err(|_| {
-                    crate::PortError::new(
-                        crate::Port::Store,
-                        "bot_admission_unreadable",
-                        "Bot admission could not be read.",
-                    )
-                })?
-                .filter(|record| {
-                    record
-                        .submission
-                        .valid_for_version(u32::from(record.submission_version))
-                        && record.submission.request == request
-                        && record.submission.workspace == workspace
-                })
-                .ok_or_else(|| {
-                    crate::PortError::new(
-                        crate::Port::Store,
-                        "bot_admission_required",
-                        "A matching durable Bot admission is required.",
-                    )
-                })?;
-            self.linked_routine_admission(&admission).map_err(|_| {
-                crate::PortError::new(
-                    crate::Port::Store,
-                    "bot_routine_link_required",
-                    "Routine linkage is unavailable.",
-                )
-            })?;
-            Some(admission.submission.provenance)
-        } else {
-            None
-        };
         // Step 2. The pins are the identity the run keeps forever (UC2).
         let captured = match self.ports.capture.capture(run, &request.context, workspace) {
             Ok(captured) => captured,
@@ -242,7 +194,6 @@ impl Orchestrator {
         };
         let now = self.ports.clock.now_ms();
         let mut header = RunHeader::from_request(request, now);
-        header.bot = bot;
         header.context = captured.pins;
         // Step 3. Idempotent by run id in the port; a retry after a lost
         // answer finds the document it made.
@@ -284,15 +235,15 @@ impl Orchestrator {
     }
 }
 
-fn refuse_untrusted_bot_folder(request: &DelegationRequest) -> Result<(), CreateError> {
+fn refuse_retired_bot_folder(request: &DelegationRequest) -> Result<(), CreateError> {
     if matches!(
         request.scope,
         koru_delegate_core::WorkspaceScope::BotFolder { .. }
     ) {
         return Err(CreateError::Port(crate::PortError::new(
             crate::Port::Store,
-            "bot_admission_required",
-            "Bot work requires trusted admission",
+            "retired_bot_scope",
+            "Legacy Bot working scopes are retired",
         )));
     }
     Ok(())

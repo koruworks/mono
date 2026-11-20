@@ -490,7 +490,10 @@ impl Frame {
                         ),
                         // One line, centred on its line box in the height it
                         // was given.
-                        TextMode::Single | TextMode::Truncate | TextMode::Clip => {
+                        TextMode::Single
+                        | TextMode::Truncate
+                        | TextMode::TruncateMiddle
+                        | TextMode::Clip => {
                             let y = if t.ink_centred {
                                 scene::centre_y_in(layout, inner)
                             } else {

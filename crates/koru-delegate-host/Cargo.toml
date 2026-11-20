@@ -24,7 +24,6 @@ path = "src/lib.rs"
 test-support = []
 
 [dependencies]
-koru-bots-engine = { path = "../koru-bots-engine" }
 blake3.workspace = true
 # The bounded bootstrap reader and the parent-death watcher.
 koru-agent-worker = { path = "../koru-agent-worker" }
@@ -73,8 +72,6 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-# The decision-chain builder for the scripted host composition test.
-koru-delegate-runtime = { path = "../koru-delegate-runtime", features = ["test-support"] }
 koru-delegate-scope = { path = "../koru-delegate-scope", features = ["fixtures"] }
 koru-session-client = { path = "../koru-session-client", features = ["test-transport"] }
 tempfile = { workspace = true }

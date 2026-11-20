@@ -7,7 +7,6 @@ use koru_delegate_core::PublicationKind;
 
 use super::*;
 use crate::fixtures::{BODY_SENTINEL, Root, created_run, event};
-mod decision_seek;
 mod engine_retirement;
 
 fn body(n: u8) -> String {

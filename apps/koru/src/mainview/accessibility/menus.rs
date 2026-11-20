@@ -168,6 +168,11 @@ impl MainView {
         }
         // The media viewer is projected in full too: its name, a picture's
         // size, the zoom and its buttons, rather than an empty dialog.
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::BotWork)
+            && let Some(node) = self.bot_work_semantics(cx)
+        {
+            return node;
+        }
         if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::MediaViewer)
             && let Some(semantics) = self.media_viewer_semantics(cx)
         {
@@ -231,6 +236,11 @@ impl MainView {
             && let Some(occurrence) = self.reminder_focus(cx)
         {
             return occurrence;
+        }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::BotWork)
+            && let Some(focus) = self.bot_work_focus(cx)
+        {
+            return focus;
         }
         cx.surface(SHELL, blocker_part(blockers))
     }
@@ -475,6 +485,7 @@ fn modal_keyword(kind: koru_workspace_host::routing::ModalKind) -> &'static str 
         K::PlaceChooser => "place-chooser",
         K::Launcher => "launcher",
         K::MediaViewer => "media-viewer",
+        K::BotWork => "bot-work",
     }
 }
 
@@ -525,6 +536,11 @@ pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
     // reach past it either.
     if view.blockers() == Blockers::Modal(koru_workspace_host::routing::ModalKind::MediaViewer)
         && super::viewer::action_of(target).is_some()
+    {
+        return true;
+    }
+    if view.blockers() == Blockers::Modal(koru_workspace_host::routing::ModalKind::BotWork)
+        && view.bot_work_is_target(target)
     {
         return true;
     }

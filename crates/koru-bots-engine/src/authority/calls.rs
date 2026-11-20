@@ -44,7 +44,7 @@ impl Call {
     /// Parse once, rejecting duplicate keys at every nesting level. Forward
     /// arguments() itself; reparsing another copy could change the descriptor.
     pub fn parse(door_call: Uuid, tool: String, raw: &[u8]) -> Result<Self, Error> {
-        if raw.len() > koru_bot_client_wire::MAX_FRAME_BYTES {
+        if raw.len() > crate::limits::MAX_PAYLOAD_BYTES {
             return Err(Error::InvalidRequest);
         }
         let arguments: arguments::Unique =
@@ -129,15 +129,11 @@ pub(super) fn open(
     identity: &Identity,
     turn: Option<Uuid>,
 ) -> Result<Resolution, Error> {
-    let row:Option<(String,u64,Vec<u8>,Vec<u8>,String)>=connection.query_row(
-        "SELECT t.id,t.generation,t.grant,b.access,h.kind FROM turns t JOIN bots b ON b.id=t.bot JOIN threads h ON h.id=t.thread WHERE t.bot=?1 AND t.thread=?2 AND t.session=?3 AND t.worker_incarnation=?4 AND t.state='running' AND t.stopped=0 AND (?5 IS NULL OR t.id=?5)",
-        params![identity.bot.to_string(),identity.thread.to_string(),identity.session.to_string(),identity.worker.to_string(),turn.map(|id|id.to_string())],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
-    let (turn, generation, captured, current, kind) = row.ok_or(Error::NoTurn)?;
-    // Routine policy's fresh restriction arrives with M3. Never widen it to
-    // the Bot's main-thread grant in the meantime.
-    if kind == "routine" {
-        return Err(Error::NotAllowed);
-    }
+    let row:Option<(String,u64,Vec<u8>)>=connection.query_row(
+        "SELECT t.id,t.generation,t.grant FROM turns t WHERE t.bot=?1 AND t.thread=?2 AND t.session=?3 AND t.worker_incarnation=?4 AND t.state='running' AND t.stopped=0 AND (?5 IS NULL OR t.id=?5)",
+        params![identity.bot.to_string(),identity.thread.to_string(),identity.session.to_string(),identity.worker.to_string(),turn.map(|id|id.to_string())],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let (turn, generation, captured) = row.ok_or(Error::NoTurn)?;
+    let current = crate::routines::grant(connection, identity.bot, identity.thread)?;
     Ok(Resolution {
         scope: identity.scope.clone(),
         bot: identity.bot,

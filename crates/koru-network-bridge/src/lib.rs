@@ -72,11 +72,11 @@ impl fmt::Debug for SessionLifecycleAuthority {
     }
 }
 
-/// Separate per-Agent-run capability for the AI owner's private Bot commands.
+/// Separate per-Agent-run capability for ordinary Run authority lookup.
 /// It is neither bridge ingress nor session lifecycle authority.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BotDelegateAuthority(String);
-impl BotDelegateAuthority {
+pub struct RunAuthorityCredential(String);
+impl RunAuthorityCredential {
     pub fn new(value: String) -> Self {
         Self(value)
     }
@@ -84,9 +84,9 @@ impl BotDelegateAuthority {
         &self.0
     }
 }
-impl fmt::Debug for BotDelegateAuthority {
+impl fmt::Debug for RunAuthorityCredential {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("BotDelegateAuthority([REDACTED])")
+        formatter.write_str("RunAuthorityCredential([REDACTED])")
     }
 }
 
@@ -97,9 +97,9 @@ pub struct LaunchBootstrap {
     #[serde(default)]
     pub device_id: Option<String>,
     #[serde(default)]
-    pub bot_delegate: Option<BotDelegateAuthority>,
+    pub run_authority: Option<RunAuthorityCredential>,
     /// Separate engine/gateway control capability. Never handed to providers
-    /// or Bot workers, and absent when the engine feature is disabled.
+    /// or Bot workers; absent only in an unsupervised gateway.
     #[serde(default)]
     pub bots_engine: Option<BotEngineAuthority>,
     pub launch_id: String,
@@ -249,7 +249,7 @@ mod tests {
     fn bootstrap() -> LaunchBootstrap {
         LaunchBootstrap {
             device_id: None,
-            bot_delegate: None,
+            run_authority: None,
             bots_engine: None,
             launch_id: uuid::Uuid::new_v4().to_string(),
             bridge_version: BRIDGE_VERSION,

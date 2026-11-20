@@ -9,6 +9,8 @@ description = "A local coding agent as a Koru AI chat provider: one managed sess
 
 [dependencies]
 koru-ai-core = { path = "../koru-ai-core" }
+koru-delegate-preamble = { path = "../koru-delegate-preamble" }
+koru-i18n = { path = "../koru-i18n" }
 koru-ipc = { path = "../koru-ipc" }
 koru-session-client = { path = "../koru-session-client" }
 koru-session-profiles = { path = "../koru-session-profiles" }

@@ -38,7 +38,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -178,7 +178,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -318,7 +318,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -458,7 +458,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -598,7 +598,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -745,7 +745,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -892,7 +892,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -1032,7 +1032,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -1172,7 +1172,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -1312,7 +1312,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -1452,7 +1452,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -1599,7 +1599,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -1746,7 +1746,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -1886,7 +1886,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -2026,7 +2026,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -2166,7 +2166,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -2306,7 +2306,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -2453,7 +2453,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -2600,7 +2600,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -2740,7 +2740,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -2880,7 +2880,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -3020,7 +3020,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Arbeitsbere
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Travel an der Leiste anheften" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "Neuer Arbeitsbereich" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Importieren…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -3160,7 +3160,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -3307,7 +3307,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "تثبيت Travel في الشريط" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "مساحة عمل جديدة" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "استيراد…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#333333@1.000 width=1
@@ -3454,7 +3454,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -3599,7 +3599,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -3745,7 +3745,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000004#pin "Pin Travel to the rail" 282.000 269.000 20.000 30.000 position=12 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 303.000 250.000 30.000 position=13 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 337.000 250.000 30.000 position=14 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 247.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 287.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 247.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 247.000 color=#E0E0E0@1.000 width=1
@@ -4140,7 +4140,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#pin "Pin Workspace 39 to the rail" 282.000 1493.000 20.000 30.000 position=120 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 556.000 250.000 30.000 position=121 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 590.000 250.000 30.000 position=122 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 500.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 500.000 color=#E0E0E0@1.000 width=1
@@ -4646,7 +4646,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#pin "Pin Workspace 39 to the rail" 282.000 1493.000 20.000 30.000 position=120 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 556.000 250.000 30.000 position=121 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 590.000 250.000 30.000 position=122 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 500.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 500.000 color=#333333@1.000 width=1
@@ -5152,7 +5152,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#pin "Pin Workspace 39 to the rail" 282.000 522.000 20.000 30.000 position=120 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 556.000 250.000 30.000 position=121 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 590.000 250.000 30.000 position=122 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 500.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 500.000 color=#E0E0E0@1.000 width=1
@@ -5655,7 +5655,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#manage "Manage work
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000028#pin "Pin Workspace 39 to the rail" 282.000 522.000 20.000 30.000 position=120 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#new-workspace "New workspace" 56.000 556.000 250.000 30.000 position=121 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#workspace-import "Import…" 56.000 590.000 250.000 30.000 position=122 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 126.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 109.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 126.000 258.000 500.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 126.000 258.000 500.000 color=#333333@1.000 width=1

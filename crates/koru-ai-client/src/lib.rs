@@ -27,74 +27,14 @@ use koru_ai_wire::{
     UpdateOllamaSettingsRequest, UpdateOpenAiSettingsRequest, UsageResponse,
 };
 
-mod routing;
-pub use routing::{LinkedBots, LinkedSubject, RoutingPort, executing_computer_only};
-
 #[derive(Clone)]
 pub struct Client {
     server: Arc<dyn AiServerPort>,
-    /// The Bots other computers of this person run, when this client was
-    /// built over a mirror ([`Client::routed`]).
-    linked: Option<Arc<dyn LinkedBots>>,
 }
 
 impl Client {
-    pub fn bots(
-        &self,
-        context: RequestContext,
-        request: koru_ai_wire::BotCommand,
-    ) -> Result<koru_ai_wire::BotResponse> {
-        self.server.bots(context, request)
-    }
     pub fn new(server: Arc<dyn AiServerPort>) -> Self {
-        Self {
-            server,
-            linked: None,
-        }
-    }
-
-    /// The local AI worker with the Bots other computers of this person run
-    /// beside it (M8): a call that names one of those is answered from this
-    /// computer's copy or sent to the computer that runs it, and every other
-    /// call reaches `local` unchanged ([`RoutingPort`]).
-    pub fn routed(local: Arc<dyn AiServerPort>, linked: Arc<dyn LinkedBots>) -> Self {
-        Self {
-            server: Arc::new(RoutingPort::new(local, Arc::clone(&linked))),
-            linked: Some(linked),
-        }
-    }
-
-    /// Pause (`pause`) or resume every Bot of one linked computer (M8, D4).
-    ///
-    /// **This is not a command of the public Bot contract.** The public
-    /// team commands name no computer and act on this computer's own team;
-    /// this reaches another computer's. It is sent only while that computer
-    /// is connected and is never kept for later
-    /// (`bot_owner_unreachable`). A client that keeps no copy of other
-    /// computers' Bots answers `unsupported_capability`.
-    pub fn linked_team_pause(
-        &self,
-        context: RequestContext,
-        owner_device: koru_ai_core::bots::DeviceId,
-        pause: bool,
-        request_id: koru_ai_core::bots::BotRequestId,
-        expected_team_revision: u64,
-    ) -> Result<koru_ai_core::bots::TeamPauseView> {
-        match &self.linked {
-            Some(linked) => linked.team_pause(
-                context,
-                owner_device,
-                pause,
-                request_id,
-                expected_team_revision,
-            ),
-            None => Err(koru_ai_wire::Failure {
-                code: "unsupported_capability".into(),
-                message: "This computer keeps no copy of other computers' Bots.".into(),
-                retryable: false,
-                details: Default::default(),
-            }),
-        }
+        Self { server }
     }
 
     pub fn provider_settings(&self, context: RequestContext) -> Result<ProviderSettingsResponse> {

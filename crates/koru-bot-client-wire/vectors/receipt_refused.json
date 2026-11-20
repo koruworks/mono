@@ -1,1 +1,0 @@
-{"type":"receipt","request_id":"00000000-0000-4000-8000-000000000010","outcome":"refused","failure":{"code":"executing_computer_only","message":"This change is made on the computer that runs the Bot.","retryable":false},"replayed":false}

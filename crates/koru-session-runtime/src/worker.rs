@@ -32,6 +32,7 @@ mod agent_stream;
 mod control;
 mod delivery;
 mod managed;
+mod orientation;
 mod render;
 
 pub use agent_stream::AgentEventUpdate;
@@ -156,6 +157,9 @@ pub enum SessionLaunch {
         /// The creator draws an agent's questions (protocol v21, koru-ai
         /// D108); every other launch's agent declines them.
         questions: bool,
+        /// Captured off-thread by the host for a manual, nondelegated session.
+        /// Never forwarded as launch arguments or persisted in the wire model.
+        orientation: Option<koru_delegate_preamble::Resolved>,
     },
 }
 
@@ -204,8 +208,16 @@ impl SessionCreate {
             SessionLaunch::Raw(spawn) => {
                 self.working_directory == spawn.cwd && spawn.validate().is_ok()
             }
-            SessionLaunch::Managed { executable, .. } => {
-                self.working_directory.is_absolute() && !executable.is_empty()
+            SessionLaunch::Managed {
+                executable,
+                delegation,
+                orientation,
+                ..
+            } => {
+                self.working_directory.is_absolute()
+                    && !executable.is_empty()
+                    && (orientation.is_none()
+                        || (self.origin == SessionOrigin::Manual && delegation.is_none()))
             }
         };
         if self.display_name.is_empty() || self.display_name.chars().count() > 200 || !launch_valid
@@ -330,6 +342,7 @@ struct State {
     output_subscribers: Vec<OutputSubscriber>,
     idempotency: VecDeque<MutationRecord>,
     pending_inputs: BTreeMap<IdempotencyKey, PendingSubmission>,
+    orientation: orientation::Orientation,
     /// Bounded strict-only conflict markers; saturation closes new strict admission.
     failed_ordinary_steers: BTreeSet<IdempotencyKey>,
     attachments: BTreeMap<AttachmentId, Attachment>,
@@ -417,6 +430,7 @@ impl SessionOwner {
                 selection,
                 mcp_servers,
                 questions,
+                orientation,
             } => Self::start_managed(
                 create.clone(),
                 config,
@@ -426,6 +440,7 @@ impl SessionOwner {
                 selection.clone(),
                 mcp_servers.clone(),
                 *questions,
+                orientation.clone(),
                 started,
             ),
         }
@@ -497,6 +512,7 @@ impl SessionOwner {
                 output_subscribers: Vec::new(),
                 idempotency: VecDeque::with_capacity(IDEMPOTENCY_HISTORY),
                 pending_inputs: BTreeMap::new(),
+                orientation: orientation::Orientation::default(),
                 failed_ordinary_steers: BTreeSet::new(),
                 attachments: BTreeMap::new(),
             }),
@@ -569,6 +585,7 @@ impl SessionOwner {
         selection: Option<LaunchSelection>,
         mcp_servers: Vec<crate::providers::McpServerLaunch>,
         questions: bool,
+        orientation: Option<koru_delegate_preamble::Resolved>,
         started: Instant,
     ) -> Result<Self, SessionFailure> {
         let id = SessionId::mint();
@@ -638,6 +655,7 @@ impl SessionOwner {
             state: Mutex::new(State {
                 summary,
                 terminal: None,
+                orientation: orientation::Orientation::new(orientation),
                 event_sequence: counter(1),
                 output_sequence: counter(1),
                 agent_stream: AgentStreamState::new(counter(
@@ -1718,6 +1736,7 @@ impl Shared {
     fn apply_agent_event(&self, event: AgentEvent) {
         let mut state = self.lock();
         let event = stamp_cancel_reason(&mut state, event);
+        let orientation_notice = delivery::observe_orientation(&mut state, &event);
         let mut delivery_report = None;
         let approval_required = match &event {
             AgentEvent::ApprovalRequired { approval_id, .. } => Some(*approval_id),
@@ -1857,6 +1876,16 @@ impl Shared {
             delivery_report = None;
         }
         let sequence = state.agent_stream.publish(self.id, event, &self.stats);
+        if let Some((turn_id, notice)) = orientation_notice {
+            state.agent_stream.publish(
+                self.id,
+                AgentEvent::Notice {
+                    turn_id,
+                    text: notice.message(koru_i18n::Lang::En),
+                },
+                &self.stats,
+            );
+        }
         if let Some(approval_id) = approval_required {
             state.managed_attention = Some(ManagedAttention {
                 approval_id,

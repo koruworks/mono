@@ -2,24 +2,18 @@
 
 //! Retained Routine data and narrow owner creation projections. Execution
 //! authority and live Schedule reads belong to their independent owners.
-use super::{Bot, BotConfig, BotError, BotLibraryCapture, validate_config};
+use super::BotError;
 pub use koru_delegate_core::BotRoutineCloseReason;
 use koru_delegate_core::*;
-use koru_delegate_schedule::{
-    RoutineAssociation, ScheduleDefinition, ScheduleHeader, ScheduleLifecycle, ScheduleName,
-};
+use koru_delegate_schedule::ScheduleName;
 use serde::{Deserialize, Serialize};
 
-mod access;
 mod control;
 mod creation;
 mod detail;
 mod listing;
-mod occurrence;
 mod overview;
 mod owner;
-mod preparation;
-pub use access::*;
 pub use control::*;
 pub use creation::*;
 pub use detail::*;
@@ -32,29 +26,13 @@ pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
 pub use koru_delegate_schedule::ScheduleName as RoutineScheduleName;
 /// Existing state owner, reused by the owner controls' replies.
 pub use koru_delegate_schedule::ScheduleState as RoutineScheduleState;
-use koru_delegate_schedule::routine_wire as strict;
 pub use listing::*;
-pub use occurrence::*;
 pub use overview::*;
 pub use owner::*;
-pub use preparation::*;
-
-pub const BOT_ROUTINE_SCOPE: &str = "koru.bot.routine.v1";
-pub const BOT_ROUTINE_SEED_BYTES: usize = 4 * 1024 * 1024;
-pub const BOT_ROUTINE_SUBMISSION_BYTES: usize = 4 * 1024 * 1024;
-pub const BOT_ROUTINE_CAPTURE_BYTES: usize = 1024 * 1024;
-pub const BOT_ROUTINE_GRANT_BYTES: usize = 65536;
-pub const BOT_ROUTINE_RECEIPT_BYTES: usize = 16384;
-pub const BOT_ROUTINE_VV_BYTES: usize = 65536;
 
 fn revision(value: u64) -> bool {
     value > 0 && value <= i64::MAX as u64
 }
-fn v4(value: uuid::Uuid) -> bool {
-    value.get_version() == Some(uuid::Version::Random)
-        && value.get_variant() == uuid::Variant::RFC4122
-}
-
 /// Count exact serde bytes without allocating the complete encoded body.
 fn bounded<T: Serialize>(value: &T, limit: usize) -> Result<(), BotError> {
     struct Count(usize);

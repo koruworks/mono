@@ -18,17 +18,33 @@ use koru_delegate_runtime::{Clock, Preamble, ScheduleClock, Sleep};
 
 pub struct InstalledPreamble {
     installation_dir: std::path::PathBuf,
+    orientation_override: Option<std::path::PathBuf>,
 }
 
 impl InstalledPreamble {
     pub fn new(installation_dir: std::path::PathBuf) -> Self {
-        Self { installation_dir }
+        Self {
+            installation_dir,
+            orientation_override: None,
+        }
+    }
+
+    pub fn with_orientation_override(mut self, path: Option<std::path::PathBuf>) -> Self {
+        self.orientation_override = path;
+        self
     }
 }
 
 impl Preamble for InstalledPreamble {
     fn resolve(&mut self) -> koru_delegate_preamble::Resolved {
         koru_delegate_preamble::resolve(&self.installation_dir)
+    }
+
+    fn orientation(&mut self) -> koru_delegate_preamble::Resolved {
+        koru_delegate_preamble::session::resolve(
+            &self.installation_dir,
+            self.orientation_override.as_deref(),
+        )
     }
 }
 

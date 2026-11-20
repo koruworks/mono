@@ -53,7 +53,8 @@ use koru_delegate_core::ArtifactDisposition;
 // Version 20 adds the team pause: the `TeamBarrier` command and its reply,
 // and the refusals `bot_team_paused`, `bot_team_stale` and
 // `bot_team_conflict`.
-pub const WIRE_VERSION: u8 = 20;
+// Version 21 retires Bot commands and gives ordinary Run authority its own request.
+pub const WIRE_VERSION: u8 = 21;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,10 +69,11 @@ pub struct Caller {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub enum Request {
-    /// Separate Agent-run capability; Caller labels never authorize Bots.
-    Bot {
-        authority: crate::bots::BotDelegateAuthority,
-        command: crate::bots::BotCommand,
+    /// Private exact-attempt authority; Caller labels never authorize tools.
+    ResolveRunAuthority {
+        authority: crate::authority::RunAuthorityCredential,
+        run: RunId,
+        generation: koru_delegate_core::AttemptGeneration,
     },
     /// Who is serving: the readiness probe.
     Hello,
@@ -240,7 +242,7 @@ pub struct WorkerCounters {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "frame", rename_all = "snake_case")]
 pub enum Response {
-    Bot(crate::bots::BotReply),
+    RunAuthorityConfirmed {},
     Hello(Hello),
     Stopping,
     SchedulesWoken,

@@ -5,20 +5,8 @@
 
 use std::fmt;
 
-mod expiry;
-mod occurrence;
-mod overview;
-mod seed;
-mod test_claim;
-pub use expiry::{RoutineExpiryAuthority, RoutineExpiryPlan};
-pub use occurrence::RoutineOccurrenceLifecycle;
-pub use overview::{RoutineDetailProjection, RoutineOverview};
-pub use test_claim::RoutineTestAuthority;
-
 use koru_delegate_core::{
-    DelegationRequest, DeviceId, HandoffId, RoutineClaimFacts, RoutineDefinitionIdentity,
-    RoutinePrepared, RoutineRepresentativeMiss, RoutineSlot, RunContextItem, RunId, ScheduleId,
-    WorkspaceId,
+    DelegationRequest, DeviceId, HandoffId, RunContextItem, RunId, ScheduleId, WorkspaceId,
 };
 use koru_delegate_schedule::{
     DelegationTemplate, HandoffEvent, HandoffState, ScheduleDefinition, ScheduleFiring,
@@ -57,10 +45,6 @@ pub enum ScheduleWrite {
 /// its authoritative template.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ScheduleClaimPlan {
-    BotRoutine {
-        prepared: RoutinePrepared,
-        representative_miss: Option<RoutineRepresentativeMiss>,
-    },
     Run {
         occurrence_ms: i64,
         run: RunId,
@@ -75,11 +59,6 @@ pub enum ScheduleClaimPlan {
 }
 
 enum BoundScheduleClaim {
-    ExpiredRoutine(RoutineExpiryPlan),
-    BotRoutine {
-        prepared: RoutinePrepared,
-        representative_miss: Option<RoutineRepresentativeMiss>,
-    },
     Run {
         occurrence_ms: i64,
         request: DelegationRequest,
@@ -179,7 +158,7 @@ impl ScheduleClaimAuthority {
 
     pub fn into_run(self) -> Result<ScheduleRunClaim> {
         if self.definition.routine.is_some() {
-            return Err(ScheduleDocumentError::RoutineRequiresBotClaim);
+            return Err(ScheduleDocumentError::RetiredBotRoutine);
         }
         self.validate_current()?;
         match self.binding {
@@ -206,7 +185,7 @@ impl ScheduleClaimAuthority {
 
     pub fn into_skip(self) -> Result<ScheduleSkipClaim> {
         if self.definition.routine.is_some() {
-            return Err(ScheduleDocumentError::RoutineRequiresBotClaim);
+            return Err(ScheduleDocumentError::RetiredBotRoutine);
         }
         self.validate_current()?;
         match self.binding {
@@ -227,40 +206,6 @@ impl ScheduleClaimAuthority {
             _ => Err(ScheduleDocumentError::ClaimBindingMismatch),
         }
     }
-
-    /// Consume actual live authority. Document versions are not compared:
-    /// unrelated name/history changes do not alter the authority state above.
-    pub fn into_bot_routine(self) -> Result<RoutineClaimFacts> {
-        self.validate_current()?;
-        let association = self
-            .definition
-            .routine
-            .as_ref()
-            .ok_or(ScheduleDocumentError::ClaimBindingMismatch)?;
-        let BoundScheduleClaim::BotRoutine {
-            prepared,
-            representative_miss,
-        } = self.binding
-        else {
-            return Err(ScheduleDocumentError::ClaimBindingMismatch);
-        };
-        let slot = RoutineSlot {
-            owner: association.owner,
-            bot: association.bot,
-            schedule: self.schedule,
-            occurrence_ms: prepared.slot.occurrence_ms,
-        };
-        let definition = routine_identity(&self.definition, self.workspace, self.epoch)?;
-        RoutineClaimFacts::from_consumed_authority(
-            prepared,
-            slot,
-            definition,
-            self.workspace,
-            association.creation_request,
-            representative_miss,
-        )
-        .ok_or(ScheduleDocumentError::ClaimBindingMismatch)
-    }
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -280,9 +225,7 @@ pub enum ScheduleDocumentError {
     HandoffPending,
     LifecycleConflict,
     ClaimBindingMismatch,
-    RoutineAssociationChanged,
-    RoutineTemplateChanged,
-    RoutineRequiresBotClaim,
+    RetiredBotRoutine,
     StaleClaimAuthority,
     UnknownHandoff,
     HandoffConflict,
@@ -319,15 +262,7 @@ impl fmt::Display for ScheduleDocumentError {
                 f.write_str("schedule lifecycle cannot make the requested transition")
             }
             Self::ClaimBindingMismatch => f.write_str("schedule claim binding does not match"),
-            Self::RoutineAssociationChanged => {
-                f.write_str("a schedule's Bot association cannot be changed")
-            }
-            Self::RoutineTemplateChanged => {
-                f.write_str("a Bot routine inherits its execution settings and access")
-            }
-            Self::RoutineRequiresBotClaim => {
-                f.write_str("a Bot routine requires its Bot execution owner")
-            }
+            Self::RetiredBotRoutine => f.write_str("legacy Bot routines are retained read-only"),
             Self::StaleClaimAuthority => f.write_str("schedule claim authority is stale"),
             Self::UnknownHandoff => f.write_str("handoff request is unknown"),
             Self::HandoffConflict => f.write_str("handoff id already names another fact"),
@@ -382,25 +317,19 @@ impl ScheduleDocument {
         if header.definition.effective_at_ms < header.created_at_ms {
             return Err(ScheduleDocumentError::EffectiveTimeBeforeCreation);
         }
-        let schema = if let Some(routine) = &header.definition.routine {
-            if !routine.valid() || routine.owner.device != header.initial_owner {
-                return Err(ScheduleDocumentError::Malformed("routine"));
-            }
-            if !matches!(
-                header.definition.lifecycle,
-                ScheduleLifecycle::Paused { .. }
-            ) {
-                return Err(ScheduleDocumentError::LifecycleConflict);
-            }
-            BOT_SCHEDULE_DOCUMENT_SCHEMA_VERSION
-        } else {
-            ORDINARY_SCHEDULE_DOCUMENT_SCHEMA_VERSION
-        };
+        if header.definition.routine.is_some()
+            || matches!(
+                header.definition.template.scope,
+                koru_delegate_core::WorkspaceScope::BotFolder { .. }
+            )
+        {
+            return Err(ScheduleDocumentError::RetiredBotRoutine);
+        }
         let root = doc.get_map(ROOT);
         if root.get(K_SCHEMA).is_some() {
             return Err(ScheduleDocumentError::AlreadyInitialized);
         }
-        root.insert(K_SCHEMA, schema)?;
+        root.insert(K_SCHEMA, ORDINARY_SCHEDULE_DOCUMENT_SCHEMA_VERSION)?;
         root.insert(K_ID, encode(&header.schedule, K_ID)?)?;
         root.insert(K_CREATED, header.created_at_ms)?;
         root.insert(K_OWNER, encode(&header.initial_owner, K_OWNER)?)?;
@@ -444,7 +373,7 @@ impl ScheduleDocument {
         }
     }
     pub fn is_writable(&self) -> bool {
-        matches!(self.compatibility(), Compatibility::Writable) && self.header().is_ok()
+        self.writable().is_ok()
     }
     pub fn version(&self) -> VersionVector {
         self.doc.oplog_vv()
@@ -462,7 +391,18 @@ impl ScheduleDocument {
 
     fn writable(&self) -> Result<()> {
         match self.compatibility() {
-            Compatibility::Writable => self.header().map(|_| ()),
+            Compatibility::Writable => {
+                let header = self.header()?;
+                if header.definition.routine.is_some()
+                    || matches!(
+                        header.definition.template.scope,
+                        koru_delegate_core::WorkspaceScope::BotFolder { .. }
+                    )
+                {
+                    return Err(ScheduleDocumentError::RetiredBotRoutine);
+                }
+                Ok(())
+            }
             Compatibility::TooNew { found, understood } => {
                 Err(ScheduleDocumentError::ReadOnly { found, understood })
             }
@@ -588,10 +528,13 @@ impl ScheduleDocument {
             return Ok(false);
         }
         let header = self.header()?;
-        Ok(
-            matches!(header.definition.lifecycle, ScheduleLifecycle::Active)
-                && self.handoff_state()?.owner == device,
-        )
+        Ok(header.definition.routine.is_none()
+            && !matches!(
+                header.definition.template.scope,
+                koru_delegate_core::WorkspaceScope::BotFolder { .. }
+            )
+            && matches!(header.definition.lifecycle, ScheduleLifecycle::Active)
+            && self.handoff_state()?.owner == device)
     }
 
     pub fn claim_authority(
@@ -603,29 +546,14 @@ impl ScheduleDocument {
         self.writable()?;
         self.firings()?;
         let header = self.header()?;
-        if header.definition.routine.is_some()
-            && !matches!(plan, ScheduleClaimPlan::BotRoutine { .. })
-        {
-            return Err(ScheduleDocumentError::RoutineRequiresBotClaim);
+        if header.definition.routine.is_some() {
+            return Err(ScheduleDocumentError::RetiredBotRoutine);
         }
         if !self.may_claim(device)? {
             return Ok(None);
         }
         let handoff = self.handoff_state()?;
-        let binding = match plan {
-            ScheduleClaimPlan::BotRoutine {
-                prepared,
-                representative_miss,
-            } => bind_routine(
-                &header,
-                workspace,
-                device,
-                handoff.epoch,
-                prepared,
-                representative_miss,
-            )?,
-            ordinary => bind_plan(&header.definition.template, device, ordinary)?,
-        };
+        let binding = bind_plan(&header.definition.template, device, plan)?;
         Ok(Some(ScheduleClaimAuthority {
             doc: self.doc.clone(),
             compatibility: self.compatibility,
@@ -1025,77 +953,6 @@ fn decode_list<T: DeserializeOwned>(list: LoroList, part: &'static str) -> Resul
         .collect()
 }
 
-fn routine_identity(
-    definition: &ScheduleDefinition,
-    workspace: WorkspaceId,
-    epoch: Option<HandoffId>,
-) -> Result<RoutineDefinitionIdentity> {
-    Ok(RoutineDefinitionIdentity {
-        revision: definition.revision,
-        digest: koru_delegate_schedule::routine_definition_digest(definition, workspace, epoch)
-            .map_err(|_| ScheduleDocumentError::ClaimBindingMismatch)?,
-        owner_handoff: epoch,
-    })
-}
-
-fn bind_routine(
-    header: &ScheduleHeader,
-    workspace: WorkspaceId,
-    device: DeviceId,
-    epoch: Option<HandoffId>,
-    prepared: RoutinePrepared,
-    representative_miss: Option<RoutineRepresentativeMiss>,
-) -> Result<BoundScheduleClaim> {
-    let definition = &header.definition;
-    let association = definition
-        .routine
-        .as_ref()
-        .ok_or(ScheduleDocumentError::ClaimBindingMismatch)?;
-    let submission = &prepared.submission;
-    let slot = RoutineSlot {
-        owner: association.owner,
-        bot: association.bot,
-        schedule: header.schedule,
-        occurrence_ms: prepared.slot.occurrence_ms,
-    };
-    // The prepared union may also contain Role and Knowledge documents. Explicit
-    // task pointers must each be present; inert template execution settings are
-    // deliberately not copied over the independently captured Bot submission.
-    if !prepared.valid()
-        || prepared.slot != slot
-        || association.home != workspace
-        || association.owner.device != device
-        || submission.workspace != workspace
-        || prepared.definition != routine_identity(definition, workspace, epoch)?
-        || submission.request.objective != definition.template.objective
-        || koru_delegate_core::Objective::new(&submission.input.text).ok().as_ref()
-            != Some(&definition.template.objective)
-        || !submission.input.attachment_ids.is_empty()
-        || !submission.input.references.is_empty()
-        || !submission.input.skills.is_empty()
-        || submission.request.context.len() > 33
-        || definition.template.context.len() > 16
-        || !definition.template.context.iter().all(|pointer| {
-            matches!(pointer, koru_delegate_schedule::ScheduleContextPointer::Document { workspace: home, .. } if *home == workspace)
-                && submission.request.context.iter().any(|pin|
-                    context_matches(std::slice::from_ref(pointer), std::slice::from_ref(pin)))
-        })
-        || prepared.slot.occurrence_ms < definition.effective_at_ms
-        || representative_miss.is_some_and(|miss| {
-            miss.occurrence_ms < definition.effective_at_ms
-                || miss.occurrence_ms >= prepared.slot.occurrence_ms
-                || miss.planned_run == prepared.ids.run
-                || miss.planned_run.to_storage().parse::<RunId>().ok() != Some(miss.planned_run)
-        })
-    {
-        return Err(ScheduleDocumentError::ClaimBindingMismatch);
-    }
-    Ok(BoundScheduleClaim::BotRoutine {
-        prepared,
-        representative_miss,
-    })
-}
-
 fn bind_plan(
     template: &DelegationTemplate,
     owner: DeviceId,
@@ -1130,19 +987,14 @@ fn bind_plan(
 }
 
 fn preserve_routine(current: &ScheduleDefinition, offered: &ScheduleDefinition) -> Result<()> {
-    if current.routine != offered.routine {
-        return Err(ScheduleDocumentError::RoutineAssociationChanged);
-    }
-    if current.routine.is_some() {
-        let (before, after) = (&current.template, &offered.template);
-        if before.requested_by != after.requested_by
-            || before.agent != after.agent
-            || before.requested_model != after.requested_model
-            || before.scope != after.scope
-            || before.grants != after.grants
-        {
-            return Err(ScheduleDocumentError::RoutineTemplateChanged);
-        }
+    if current.routine.is_some()
+        || offered.routine.is_some()
+        || matches!(
+            offered.template.scope,
+            koru_delegate_core::WorkspaceScope::BotFolder { .. }
+        )
+    {
+        return Err(ScheduleDocumentError::RetiredBotRoutine);
     }
     Ok(())
 }

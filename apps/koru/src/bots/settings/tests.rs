@@ -835,3 +835,24 @@ fn m6_ui_may_ask_shows_what_the_owner_holds() {
     settings.know(bot);
     assert!(settings.may_ask_shown());
 }
+
+#[test]
+fn an_avatar_only_edit_preserves_the_name_and_uses_the_read_revision() {
+    let (mut settings, bot) = known();
+    let face = (bot.avatar() + 1) % koru_draw::face::FACE_COUNT;
+    settings.edit_avatar(face);
+    assert!(settings.can_save_name());
+    let (_, sent) = write(settings.save_name().expect("avatar-only save"));
+    let BotCommand::Update {
+        config,
+        expected_revision,
+        ..
+    } = sent
+    else {
+        panic!("configuration update")
+    };
+    assert_eq!(config.name, bot.config.name);
+    assert_eq!(config.avatar, Some(face));
+    assert_eq!(expected_revision, bot.revision);
+    assert_eq!(config.model, bot.config.model);
+}

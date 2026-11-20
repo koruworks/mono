@@ -2,14 +2,14 @@
 
 The Bots engine foundation has in-memory schema/diagnostic tests in
 `crates/koru-bots-engine/src/database/tests.rs`. Its process proof is opt-in:
-`cargo test -p koru-bots-engine --features active --test engine_process -- --run --root <new-absolute-directory>`.
+`cargo test -p koru-bots-engine --test engine_process -- --run --root <new-absolute-directory>`.
 It uses the production supervisor and worker composition on disposable data;
 ordinary suite invocation skips it. The Windows `bots_containment` integration
 test in `koru-agent-worker` uses the production supervisor and provider launcher
 with a stand-in provider, and proves descendant death plus ancestor survival
 after killing each supervisor in a fresh five-process chain.
 
-`cargo test -p koru-bots-engine --features active --test bot_process -- --run --root <new-absolute-directory>`
+`cargo test -p koru-bots-engine --test bot_process -- --run --root <new-absolute-directory>`
 proves the actual Windows engine/launcher/Bot worker registration and idle
 lifetime, registration timeout, wake during shutdown, and nested containment
 with a scripted provider. It opens new engine.db and bot.db files only under
@@ -644,65 +644,12 @@ These checks exercise the composition absent from the original zero-origin
 fixtures. They remain in-memory checks; live capture and native input results must
 still be recorded separately.
 
-### Scripted native Bot process acceptance
+### Native Bot process acceptance
 
-The `native_bots` child of the Agent's `delegate_worker_process` integration
-target returns before any I/O unless `KORU_LIVE_PROVIDER_SMOKE` is enabled.
-Its positive case uses a disposable root, the checked-in Codex app-server
-fixture, real session/delegate worker roles, and an in-process gateway with
-explicit vouched admission. A discovery-only fixture speaks the existing
-session wire protocol to the AI owner's model picker: Agent's test graph keeps
-`no-provider-probes` enabled. It advertises only `fixture-model`, counts actual
-discovery, and refuses every launch/control verb. The delegate and gateway
-bridge use the real sessions owner for the registered `agent-codex` runtime.
-The disposable delegate worker reuses the schedule-process suite's existing
-`test-support` clock/preflight fixture guards; it does not qualify production
-runtime readiness.
-The existing delegated-create helper currently records `Manual` session
-origin; this fixture checks managed execution, its exact Run/session fence and
-exclusion of Chat origin. It does not claim a `Delegated` origin marker.
-The stack composes one `NativeMutationGate` into both AI recovery and the
-gateway state, as gateway-process composition does, and waits for the AI
-worker's own startup recovery sweep to open it. Nothing marks it ready.
-Public Bot creation and shared chat submission
-exercise native page creation, exact-version editing, replay, retained history,
-AI delivery and cleanup. The scripted turn makes eight native calls, two of
-them deliberate refusals (a changed-payload create and a stale edit). The
-journey checks the trace names all eight in order and the transcript holds
-eight durable tool rows: six complete, two failed. Tool calls are tool rows,
-not message blocks; the reply's own markdown is its single paragraph block.
-The Send carries one 1x1 PNG uploaded through the public AI attachment API.
-The Codex adapter hands a native picture to `turn/start` as a `localImage`
-input item naming the session's stored copy; the fixture records only how many
-it received and how many of those files existed (`native:images:<n>`,
-`native:images-on-disk:<n>`), never a path. The journey asserts exactly one,
-that the Run's session attachment directory holds one file while the turn is
-open, and that the session host has removed that directory once the provider
-exits.
-For its whole run the journey also holds a gateway WebSocket joined to the
-workspace's manifest room, as a window's sync session is, and never rejoins
-it: a second Bot created with an authored Role page (`create_bot_with_role`)
-and the page the native tool creates must each be announced there. A page
-an owner creates inside the Store worker reaches an open window only through
-such an announcement (`with_store_announcing`).
-A separate supervised ordinary-client case checks
-the specific missing-scope refusal. This composition does not prove trusted
-first-party executable admission, production model discovery, GUI behavior or
-a live provider's behavior.
-
-Build with `cargo test -p koru-agent --test delegate_worker_process --no-run`.
-Both worker roles use that integration build's `CARGO_BIN_EXE_koru-agent`,
-including its test features such as events `no-sink`. Do not overwrite that
-image with a standalone production build before running these cases.
-
-With the guard enabled only in the invoking process, run each exact test name:
-
-```text
-cargo test -p koru-agent --test delegate_worker_process native_bots::scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in -- --exact --nocapture
-cargo test -p koru-agent --test delegate_worker_process native_bots::ordinary_supervised_client_cannot_manage_bots_when_opted_in -- --exact --nocapture
-```
-
-The guard also enables genuine provider tests elsewhere. An exact name and
-`--exact` are required here; a broad filter is not the scripted-only command.
-The Windows and Unix fixture scripts share the synthetic native sequence;
-passing one platform does not establish execution on the other.
+The old `delegate_worker_process::native_bots` fixture was retired with the
+AI/delegate Bot implementation. It does not exercise the native engine and is
+not a current acceptance command. Use the engine process and session proofs at
+the start of this guide, plus the disposable-root desktop acceptance checklist.
+Ordinary AI/delegate tests continue to cover ordinary chats and Runs. Retirement
+has no Cargo feature selector; do not add `--features active` or `--features
+bots-engine` to current commands.

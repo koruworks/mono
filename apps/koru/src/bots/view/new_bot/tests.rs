@@ -20,6 +20,10 @@ use crate::bots::link::{Answer, BotsLink, Command, Failure};
 /// A channel root that is only ever joined to, never opened.
 const CHANNEL_ROOT: &str = "C:\\koru-test-root";
 
+fn agent_key(index: usize) -> Key {
+    super::agent_key(&AiProviderId::parse(["agent-claude", "agent-codex"][index]).unwrap())
+}
+
 struct Fx {
     dialog: NewBotDialog,
     commands: Receiver<Command>,
@@ -193,6 +197,24 @@ impl Fx {
         self.dialog.mouse_up();
         self.well_formed();
         outcome
+    }
+
+    /// Reach a folder action through the same scroll path as the
+    /// wheel, then verify its visible center belongs to that action.
+    fn scroll_to_action(&mut self, key: Key) {
+        let extent = self
+            .dialog
+            .with_frame(|frame, _| frame.node(BODY).and_then(|node| node.scroll).unwrap().0);
+        self.dialog.scroll_by(extent);
+        let (x, y) = self.centre(key);
+        self.dialog.with_frame(|frame, _| {
+            assert_eq!(
+                frame.hit_at(x, y),
+                Some(key),
+                "the action is visible and clickable"
+            );
+        });
+        self.well_formed();
     }
 
     /// The one creation command the dialog just sent, by its draft.
@@ -454,18 +476,12 @@ fn the_folder_is_shown_and_a_chosen_one_is_sent() {
         managed.contains(&bot.to_storage()),
         "the Bot's own folder: {managed}"
     );
-    // Closed, the disclosure says both in one line.
+    // The folder and chooser are visible without a disclosure.
     let summary = fx.dialog.summary();
-    assert!(summary.contains("Claude"), "{summary}");
     assert!(summary.contains(&managed), "{summary}");
-    assert!(
-        fx.has(SUMMARY) && !fx.has(CHANGE_FOLDER),
-        "closed by default"
-    );
-
-    assert_eq!(fx.press(MORE), Outcome::Changed);
-    assert!(fx.has(CHANGE_FOLDER) && fx.has(FOLDER) && fx.has(AGENT_FIXED));
+    assert!(fx.has(CHANGE_FOLDER) && fx.has(FOLDER));
     assert!(!fx.has(MANAGED_FOLDER), "nothing chosen to take back");
+    fx.scroll_to_action(CHANGE_FOLDER);
     assert_eq!(fx.press(CHANGE_FOLDER), Outcome::Changed);
     assert_eq!(
         fx.dialog.take_folder_request(),
@@ -501,7 +517,6 @@ fn the_managed_folder_can_be_taken_back() {
         fx.dialog
             .folder_chosen(std::path::Path::new("D:\\work\\scout"))
     );
-    assert_eq!(fx.press(MORE), Outcome::Changed);
     assert_eq!(fx.press(MANAGED_FOLDER), Outcome::Changed);
     assert!(!fx.has(MANAGED_FOLDER));
     assert_eq!(fx.dialog.activate(CREATE), Outcome::Changed);
@@ -511,15 +526,15 @@ fn the_managed_folder_can_be_taken_back() {
     assert_eq!(folder, BotFolderChoice::Managed {});
 }
 
-/// **The agent is shown and can be switched, here or never**: under *More*
+/// **The agent is shown and can be switched directly**:
 /// every agent the person has not turned off is offered in their order,
 /// the first chosen; choosing another sends it, at its own automatic mode.
 #[test]
 fn the_agent_is_the_first_of_the_list_and_can_be_switched() {
     let mut fx = open();
     fx.dialog.type_name("Scout");
-    assert_eq!(fx.press(MORE), Outcome::Changed);
     assert!(fx.has(AGENTS));
+    assert!(fx.has(MANAGE_AGENTS));
     let (claude, codex) = (agent_key(0), agent_key(1));
     assert_eq!(fx.selected(claude), Some(true), "the first of the list");
     assert_eq!(fx.selected(codex), Some(false));
@@ -534,7 +549,7 @@ fn the_agent_is_the_first_of_the_list_and_can_be_switched() {
     assert_eq!(fx.press(codex), Outcome::Changed);
     fx.pump();
     assert_eq!(fx.selected(codex), Some(true));
-    assert!(fx.dialog.summary().contains("Codex"));
+    assert_eq!(fx.dialog.host.agent_label(), "Codex");
     assert_eq!(fx.dialog.activate(CREATE), Outcome::Changed);
     let BotCommand::CreateBotWithRole { config, .. } = fx.sent() else {
         panic!("a create");
@@ -545,6 +560,130 @@ fn the_agent_is_the_first_of_the_list_and_can_be_switched() {
         Some("auto-review"),
         "Codex's automatic mode"
     );
+}
+
+#[test]
+fn runtime_setup_keeps_the_draft_and_sends_nothing() {
+    let mut fx = open();
+    fx.dialog.type_name("Grok bot");
+    fx.dialog.pick(5);
+    fx.press(agent_key(1));
+    let bot = fx.dialog.draft_bot();
+    fx.dialog.set_focus(MANAGE_AGENTS);
+    assert_eq!(fx.key(NamedKey::Enter), Outcome::ManageAgents);
+    fx.nothing_sent();
+    let tab = fx.dialog.into_setup_tab();
+    let create = tab.create.as_ref().unwrap();
+    assert_eq!(Some(create.form.bot()), bot);
+    assert_eq!(create.form.draft().name, "Grok bot");
+    assert_eq!(create.form.draft().avatar, Some(5));
+    assert_eq!(tab.agent_provider().unwrap().as_str(), "agent-codex");
+    assert!(
+        create.first_bot,
+        "a setup visit preserves the dialog's defaults"
+    );
+}
+
+#[test]
+fn an_agent_create_refusal_has_one_message_and_a_settings_link() {
+    let mut fx = open();
+    fx.dialog.type_name("Scout");
+    assert_eq!(fx.dialog.activate(CREATE), Outcome::Changed);
+    fx.sent();
+    let form = fx.dialog.form().unwrap();
+    fx.answers
+        .send(Answer::Reason {
+            bot: form.bot(),
+            request: form.request(),
+            reason: "agent_failed_to_start".into(),
+        })
+        .unwrap();
+    fx.answer(Err(Failure::Refused("agent_models_failed".into())));
+    assert!(fx.has(AGENT_READINESS));
+    assert!(
+        !fx.has(NOTICE),
+        "the same refusal must not appear in the footer"
+    );
+    assert_eq!(
+        fx.dialog.agent_problem().as_deref(),
+        Some(
+            "Claude didn't start on this computer. Check that it opens on its own, then try again."
+        )
+    );
+    fx.dialog.set_focus(AGENT_SETTINGS);
+    assert_eq!(fx.key(NamedKey::Enter), Outcome::ManageAgents);
+    fx.nothing_sent();
+    assert_eq!(
+        fx.dialog.into_setup_tab().create.unwrap().form.draft().name,
+        "Scout"
+    );
+}
+
+#[test]
+fn provider_management_and_the_folder_fit_the_compact_dialog() {
+    let mut fx = open();
+    for width in [360.0, 1200.0] {
+        fx.dialog.set_viewport((width, 1000.0));
+        fx.dialog.with_frame(|frame, _| {
+            let label = frame.named("New bot agents label").next().unwrap().rect;
+            let manage = frame.node(MANAGE_AGENTS).unwrap().rect;
+            assert!((label.y + label.h / 2.0 - manage.y - manage.h / 2.0).abs() < 0.01);
+            assert!(manage.x >= label.x + label.w);
+            let group = frame.node(AGENTS).unwrap().rect;
+            assert!(manage.x + manage.w <= group.x + group.w + 0.01);
+            let folder = frame.node(FOLDER).unwrap();
+            assert_eq!(folder.lines(), Some(1));
+            assert_eq!(
+                folder.label,
+                Some(koru_draw::el::Name::Text(fx.dialog.summary()))
+            );
+            assert!(folder.rect.x + folder.rect.w <= group.x + group.w + 0.01);
+        });
+    }
+}
+
+#[test]
+fn runtime_choices_include_the_whole_catalog_and_wrap_inside_the_dialog() {
+    let mut fx = open();
+    let (link, commands, answers) = CatalogLink::test_pair();
+    fx.dialog.host.catalog = Box::new(Catalog::with_link(link));
+    fx.dialog.host.catalog.shown();
+    fx.dialog.pass(None, &fx.settings);
+    let catalog::Command::Agents { seq } = commands.try_recv().unwrap() else {
+        panic!("the agent catalog is requested first");
+    };
+    let agents: Vec<_> = (0..11)
+        .map(|i| agent(&format!("agent-test-{i}"), &format!("Runtime {i}")))
+        .collect();
+    answers
+        .send(catalog::Answer::Agents {
+            seq,
+            result: Ok(agents.clone()),
+        })
+        .unwrap();
+    fx.dialog.pass(None, &fx.settings);
+    assert_eq!(fx.dialog.agents().len(), 11);
+    for width in [360.0, 1200.0] {
+        fx.dialog.set_viewport((width, 1000.0));
+        fx.dialog.with_frame(|frame, _| {
+            assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+            let group = frame.node(AGENTS).unwrap().rect;
+            let mut tops = Vec::new();
+            for agent in &agents {
+                let rect = frame.node(super::agent_key(&agent.id)).unwrap().rect;
+                assert!(rect.x >= group.x && rect.x + rect.w <= group.x + group.w + 0.5);
+                assert!(rect.h > 0.0);
+                tops.push(rect.y);
+            }
+            assert!(tops.last().unwrap() > &tops[0], "choices wrap into rows");
+        });
+    }
+    assert!(
+        fx.dialog.choose_agent(10),
+        "the last runtime remains selectable"
+    );
+    assert_eq!(fx.dialog.host.agent_provider().unwrap(), agents[10].id);
+    fx.nothing_sent();
 }
 
 /// **Cloud is there and cannot be chosen**: drawn, named as not available
@@ -617,13 +756,24 @@ fn escape_cancel_and_close_create_nothing() {
 
 /// **Tab follows the order the controls are drawn in**, the grid as one
 /// stop, and wraps; Shift+Tab goes back. Create joins the walk once there
-/// is a name, and the controls under *More* once it is open.
+/// is a name; folder controls are always available.
 #[test]
 fn tab_follows_the_visual_order() {
     let mut fx = open();
     assert_eq!(
         fx.dialog.tab_stops(),
-        [CLOSE, NAME, face_key(0), OTHERS, THIS_DEVICE, MORE, CANCEL],
+        [
+            CLOSE,
+            NAME,
+            face_key(0),
+            OTHERS,
+            THIS_DEVICE,
+            MANAGE_AGENTS,
+            agent_key(0),
+            CHANGE_FOLDER,
+            FULL_FORM,
+            CANCEL
+        ],
         "Create is not a stop while it cannot act"
     );
     fx.dialog.type_name("Scout");
@@ -635,14 +785,17 @@ fn tab_follows_the_visual_order() {
             face_key(0),
             OTHERS,
             THIS_DEVICE,
-            MORE,
+            MANAGE_AGENTS,
+            agent_key(0),
+            CHANGE_FOLDER,
+            FULL_FORM,
             CANCEL,
             CREATE
         ]
     );
     // From the name field, forward through every stop and round again.
     let mut walked = vec![fx.dialog.focus()];
-    for _ in 0..8 {
+    for _ in 0..11 {
         assert_eq!(fx.key(NamedKey::Tab), Outcome::Changed);
         walked.push(fx.dialog.focus());
     }
@@ -653,7 +806,10 @@ fn tab_follows_the_visual_order() {
             face_key(0),
             OTHERS,
             THIS_DEVICE,
-            MORE,
+            MANAGE_AGENTS,
+            agent_key(0),
+            CHANGE_FOLDER,
+            FULL_FORM,
             CANCEL,
             CREATE,
             CLOSE,
@@ -662,25 +818,6 @@ fn tab_follows_the_visual_order() {
     );
     assert_eq!(fx.shift_tab(), Outcome::Changed);
     assert_eq!(fx.dialog.focus(), CLOSE, "and back");
-
-    assert_eq!(fx.press(MORE), Outcome::Changed);
-    assert_eq!(
-        fx.dialog.tab_stops(),
-        [
-            CLOSE,
-            NAME,
-            face_key(0),
-            OTHERS,
-            THIS_DEVICE,
-            MORE,
-            agent_key(0),
-            CHANGE_FOLDER,
-            FULL_FORM,
-            CANCEL,
-            CREATE
-        ],
-        "the agents are one stop, then the folder and the full form"
-    );
 }
 
 /// **The arrows move in the grid and pick as they move**; Home and End go
@@ -812,7 +949,7 @@ fn the_full_form_takes_the_draft_and_its_own_rules() {
     let mut fx = open();
     fx.dialog.type_name("Scout");
     fx.press(face_key(9));
-    assert_eq!(fx.press(MORE), Outcome::Changed);
+    fx.scroll_to_action(FULL_FORM);
     assert_eq!(fx.press(FULL_FORM), Outcome::OpenForm);
     fx.nothing_sent();
     let tab = fx.dialog.into_tab();
@@ -862,10 +999,10 @@ fn the_panel_fits_the_window_it_is_in() {
         "Create stays inside the panel: {create:?} in {panel:?}"
     );
     // The keyboard brings a control under the fold into view.
-    fx.dialog.set_focus(MORE);
+    fx.dialog.set_focus(CHANGE_FOLDER);
     let (more, body) = fx.dialog.with_frame(|frame, _| {
         (
-            frame.node(MORE).unwrap().rect,
+            frame.node(CHANGE_FOLDER).unwrap().rect,
             frame.node(BODY).unwrap().rect,
         )
     });
@@ -985,9 +1122,9 @@ fn every_new_word_is_in_all_eight_languages() {
         Words::BotsNewBotLocalNote,
         Words::BotsNewBotCloudNote,
         Words::BotsNewBotCreate,
-        Words::BotsNewBotMore,
-        Words::BotsNewBotLess,
-        Words::BotsNewBotUses,
+        Words::BotsChangeFolder,
+        Words::AiPickerManageAgents,
+        Words::SettingsTab,
         Words::BotsNewBotWorksIn,
         Words::BotsNewBotAgent,
         Words::BotsNewBotFullForm,

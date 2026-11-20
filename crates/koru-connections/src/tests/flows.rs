@@ -306,13 +306,11 @@ fn m5_connect_flow_the_token_is_in_the_planned_slot_before_the_row_and_cleared_i
 
 impl Harness {
     pub(super) fn connection_or_none(&self, id: ConnectionId) -> Option<Connection> {
-        self.store
-            .with(|r| r.connection_by_id(self.owner, id))
-            .unwrap()
+        self.store.with(|r| r.connection(self.owner, id)).unwrap()
     }
     pub(super) fn expire(&self, id: ConnectionId) -> Connection {
         self.store
-            .with(|r| r.connection_needs_sign_in(self.owner, id, 5))
+            .with(|r| r.needs_sign_in(self.owner, id, 5))
             .unwrap()
     }
     pub(super) fn sign_in_again(
@@ -754,7 +752,7 @@ fn m5_connect_flow_an_interrupted_connect_leaves_no_untracked_secret() {
     for (owner, request) in [(h.owner, again), (other, fresh)] {
         let receipt = h
             .store
-            .with(|r| r.connection_receipt(owner, request))
+            .with(|r| r.receipt(owner, request))
             .unwrap()
             .unwrap();
         assert_eq!(receipt.failure, Some(ConnectionFailure::Interrupted));

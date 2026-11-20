@@ -13,6 +13,7 @@ fn agent_transcript(provider: &str) -> ChatTranscript {
     let chat_id = ChatId::new();
     let now = Timestamp::from_millis(1);
     ChatTranscript {
+        active_attempt: None,
         chat: Chat {
             id: chat_id,
             title: "Agent chat".into(),
@@ -244,7 +245,12 @@ fn a_draft_widens_the_composer_and_holds_the_send_until_it_is_stored() {
     let draft = Draft::pasted(png(8, 4), std::time::SystemTime::now());
     surface.add_draft(chat, draft.clone());
     assert!(surface.has_strip());
-    assert_eq!(surface.composer_rect().h, plain + surface.strip_band());
+    // An attachment leaves the one-line inline composer: its chip band and
+    // a separate controls row both need room, with the editor between them.
+    assert_eq!(
+        surface.composer_rect().h,
+        plain + surface.strip_band() + crate::COMPOSER_TOOLBAR_H
+    );
     assert!(surface.composer_text_rect().y > surface.composer_hit_rect.y);
 
     // Enter while it is being stored: nothing goes, and the line says why.
@@ -666,6 +672,30 @@ fn a_sent_picture_opens_in_the_viewer() {
         ModifiersState::empty()
     ));
     assert!(!surface.viewer_open());
+}
+
+#[test]
+fn opening_bot_work_cancels_an_older_picture_decode() {
+    let (mut surface, reply, _) = crate::bot_presentation::tests::bot_surface();
+    let chat = surface.current_chat_id().unwrap();
+    let id = ChatAttachmentId::new();
+    surface.viewer_opening = Some((chat, id, "retained fixture.png".into()));
+    let width = surface.conversation_rect().w;
+    surface.rebuild_messages(width);
+    assert!(surface.open_bot_work(reply));
+    assert!(surface.viewer_opening.is_none());
+    surface.attachment_work.inject(Event::ViewerReady {
+        chat,
+        id,
+        picture: viewer_picture(300, 150),
+    });
+    surface.maintain_attachments();
+    assert!(!surface.viewer_open());
+    assert!(surface.bot_work_open());
+    assert!(
+        !surface.bot_work_release(),
+        "no modal press means no captured release"
+    );
 }
 
 #[test]

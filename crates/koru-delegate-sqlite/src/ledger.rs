@@ -126,42 +126,6 @@ impl RunsDb {
         self.crash.check(op, crate::Moment::AfterCommit)?;
         Ok(out)
     }
-
-    #[cfg(test)]
-    pub(crate) fn in_memory(clock: Box<dyn Clock>) -> Self {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        for migration in db::MIGRATIONS {
-            conn.execute_batch(migration.sql).unwrap();
-        }
-        Self {
-            conn,
-            clock,
-            publication_cursor_epoch: uuid::Uuid::new_v4(),
-            crash: crate::crash::CrashArm::default(),
-        }
-    }
-
-    /// Swap in another disposable in-memory connection, such as an actual
-    /// historical schema holding copied rows. Tests never open a file.
-    #[cfg(test)]
-    pub(crate) fn replace_connection_in_memory(&mut self, conn: Connection) {
-        self.conn = conn;
-    }
-
-    /// Exercise the production forward migration opener on a disposable memory fixture.
-    #[cfg(test)]
-    pub(crate) fn migrate_in_memory(&mut self) {
-        db::prepare(&mut self.conn).unwrap();
-    }
-
-    /// Simulate losing the writer's volatile crash state while retaining its
-    /// committed database. Tests never open a file or a real Store.
-    #[cfg(test)]
-    pub(crate) fn restart_in_memory(&mut self) {
-        self.crash = crate::crash::CrashArm::default();
-        self.publication_cursor_epoch = uuid::Uuid::new_v4();
-    }
 }
 
 /// Deliberately says nothing about the file: not its path, not a row.

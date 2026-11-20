@@ -120,18 +120,12 @@ fn m5_redaction_debug_of_every_type_that_can_hold_a_secret_or_content() {
     }
 }
 
-/// A journey through every flow against a database file in a directory of
-/// its own, then a search of every byte the journey left on disk and of
-/// everything the fakes recorded.
+/// A journey through every flow, checking the observations the service
+/// exposes to its ports. Persistence belongs to a future runtime adapter.
 #[test]
-fn m5_redaction_a_whole_journey_leaves_no_secret_and_no_content_at_rest() {
-    let directory = std::env::temp_dir().join(format!(
-        "koru-connections-test-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
+fn m5_redaction_a_whole_journey_exposes_no_secret_or_content() {
     let recorded = {
-        let h = Harness::over(Repository::open(&directory.join("ai.db")).unwrap());
+        let h = Harness::new();
         h.vendor.set_rotation(true);
         let work = h.connect("Work", SUBJECT_A, &["doc-1", "doc-2"]);
         // A granted read, a refresh with rotation, a refused read.
@@ -191,7 +185,6 @@ fn m5_redaction_a_whole_journey_leaves_no_secret_and_no_content_at_rest() {
             h.credentials.touched(),
             done,
         )
-        // The harness, and with it the database connection, closes here.
     };
     // What the fakes saw of the service: calls, codes, ids, sizes.
     for word in [
@@ -203,24 +196,6 @@ fn m5_redaction_a_whole_journey_leaves_no_secret_and_no_content_at_rest() {
     ] {
         assert!(!recorded.contains(word), "{word} in {recorded}");
     }
-    // Every byte left on disk.
-    let mut found_metadata = false;
-    for entry in std::fs::read_dir(&directory).unwrap() {
-        let path = entry.unwrap().path();
-        let bytes = std::fs::read(&path).unwrap();
-        let has = |word: &str| bytes.windows(word.len()).any(|w| w == word.as_bytes());
-        // No token, code or verifier, and nothing that was read.
-        assert!(!has("SECRET"), "a secret in {path:?}");
-        assert!(!has("MARK-CONTENT"), "read content in {path:?}");
-        // The private metadata the contract keeps in ai.db is there, which
-        // also shows this search can see stored text at all.
-        found_metadata |= has("MARK-TITLE-1") && has("MARK-LABEL-a@example.test");
-    }
-    assert!(
-        found_metadata,
-        "the label and the titles were not found in ai.db"
-    );
-    std::fs::remove_dir_all(&directory).unwrap();
 }
 
 #[test]

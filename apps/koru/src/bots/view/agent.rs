@@ -84,6 +84,7 @@ fn inputs<'a>(
             listing.footer(&draft.model.requested_model, draft.fast)
         });
     Inputs {
+        report: None,
         lang,
         agents: catalog.control_agents(settings),
         builtin: None,

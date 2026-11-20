@@ -16,12 +16,10 @@ use crate::*;
 // this crate reads is its own codec's.
 use crate::TimelineItem;
 
-mod bots;
 mod dependency;
 mod economics;
-mod format6;
 mod gate;
-mod projection;
+mod retirement;
 mod schedule;
 mod shape;
 mod subject;

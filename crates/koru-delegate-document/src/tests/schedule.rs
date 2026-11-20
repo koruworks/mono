@@ -5,8 +5,6 @@ use koru_delegate_schedule::*;
 use koru_recurrence::{CronExpression, RecurrenceRule};
 use loro::{LoroValue, ValueOrContainer, VersionVector};
 
-mod routine;
-
 fn definition(revision: u32) -> ScheduleDefinition {
     ScheduleDefinition {
         routine: None,
@@ -60,6 +58,50 @@ fn skip_plan(occurrence_ms: i64, run: RunId) -> ScheduleClaimPlan {
         outcome: ScheduleFiringOutcome::SkippedMissed,
         busy_holder: None,
     }
+}
+
+#[test]
+fn retained_routine_header_decodes_but_cannot_claim_or_mutate() {
+    let schedule = schedule();
+    let mut header = schedule.header().unwrap();
+    header.definition.routine = Some(RoutineAssociation {
+        owner: BotOwner {
+            user_scope: koru_store_core::UserScopeId::new(),
+            device: header.initial_owner,
+        },
+        bot: BotId::from_uuid(v4(40)),
+        home: WorkspaceId::from_uuid(v4(41)),
+        creation_request: BotRequestId::from_uuid(v4(42)),
+    });
+    assert!(ScheduleDocument::create(&header).is_err());
+    let root = schedule.doc().get_map("schedule");
+    root.insert("schema", BOT_SCHEDULE_DOCUMENT_SCHEMA_VERSION)
+        .unwrap();
+    root.insert(
+        "definition",
+        LoroValue::from(serde_json::to_value(&header.definition).unwrap()),
+    )
+    .unwrap();
+    schedule.doc().commit();
+    let before = schedule.version();
+    assert_eq!(schedule.header().unwrap(), header);
+    assert!(!schedule.is_writable());
+    assert!(!schedule.may_claim(header.initial_owner).unwrap());
+    assert!(
+        schedule
+            .claim_authority(
+                WorkspaceId::from_uuid(v4(41)),
+                header.initial_owner,
+                run_plan(2_000, RunId::from_uuid(v4(43)))
+            )
+            .is_err()
+    );
+    assert!(
+        schedule
+            .update_definition(header.initial_owner, &header.definition)
+            .is_err()
+    );
+    assert_eq!(schedule.version(), before);
 }
 
 #[test]

@@ -14,7 +14,7 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::{
     Repository, collect_rows, decode_failed, invariant_failed, nonnegative_u32, nonnegative_u64,
-    optional_id, required_id, required_u64, storage_failed,
+    optional_id, require_ordinary_chat, required_id, required_u64, storage_failed,
 };
 
 /// What removing a staged attachment found.
@@ -63,6 +63,7 @@ impl Repository {
 
     /// Record a staged attachment whose bytes are already published.
     pub fn stage_attachment(&mut self, record: &AttachmentRecord) -> Result<(), AiError> {
+        require_ordinary_chat(&self.connection, record.chat_id)?;
         if record.attachment.message_id.is_some() || record.attachment.ordinal.is_some() {
             return Err(invariant_failed());
         }
@@ -75,6 +76,9 @@ impl Repository {
         chat: ChatId,
         id: ChatAttachmentId,
     ) -> Result<RemovedAttachment, AiError> {
+        if self.is_retired_bot_chat(chat)? {
+            return Ok(RemovedAttachment::NotFound);
+        }
         let state: Option<(bool, bool)> = self
             .connection
             .query_row(
@@ -130,13 +134,14 @@ impl Repository {
         collect_rows(rows)
     }
 
-    /// Remove every staged attachment added before `cutoff`, and say how
-    /// many went. Their folders become orphans the sweep removes.
+    /// Remove ordinary staged attachments added before `cutoff`, and say how
+    /// many went. Retired Bot attachments remain stored with their chats.
     pub fn remove_staged_attachments_before(&mut self, cutoff: Timestamp) -> Result<u64, AiError> {
         self.connection
             .execute(
                 "DELETE FROM message_attachments
-                  WHERE message_id IS NULL AND created_at_ms < ?1",
+                  WHERE message_id IS NULL AND created_at_ms < ?1
+                    AND chat_id NOT IN (SELECT chat_id FROM bot_chats)",
                 [cutoff.millis()],
             )
             .map(|count| u64::try_from(count).unwrap_or(u64::MAX))

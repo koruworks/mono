@@ -116,6 +116,26 @@ fn on_agent(surface: &mut ChatSurface, id: &str, model: &str, reasoning: Reasoni
 }
 
 #[test]
+fn context_report_appears_only_after_the_session_starts() {
+    let mut surface = surface();
+    on_agent(
+        &mut surface,
+        "agent-claude",
+        "default",
+        ReasoningChoice::Default,
+    );
+    surface.chat_model_open = true;
+    assert!(surface.picker_precompute().report.is_none());
+    surface.pending_user = Some("Hello".into());
+    assert!(surface.picker_precompute().report.is_some());
+    surface.pending_user = None;
+    begin(&mut surface);
+    assert!(surface.picker_precompute().report.is_some());
+    surface.chat_model_open = false;
+    assert!(surface.picker_precompute().report.is_none());
+}
+
+#[test]
 fn the_geometry_fits_narrow_wide_and_middling_composers() {
     for composer in [280.0, 360.0, 1000.0] {
         let (w, h) = size(composer, rail_height(2, 0));
@@ -387,6 +407,20 @@ fn the_picker_follows_the_composers_empty_and_begun_positions() {
     // A composer near the window's top has no room above it: the picker
     // hangs from the chip instead.
     surface.composer_hit_rect = Rect::new(20.0, 60.0, 600.0, 100.0);
+    // Placement reads the same resolved element frame as painting/hits.
+    // Move that frame too; changing only the legacy hit rect leaves the
+    // model icon at its previously laid-out position at the window's foot.
+    surface.composer_shell = Some(crate::composer_shell::layout(
+        surface.composer_hit_rect,
+        0.0,
+        koru_draw::theme::role::ui().metrics.line_height,
+        true,
+        "Add context",
+        "Send",
+        None,
+        None,
+        None,
+    ));
     open(&mut surface);
     let low = surface.picker_geometry().unwrap().panel;
     let chip = surface.chat_model_button();
@@ -943,18 +977,38 @@ fn a_begun_agent_chat_moves_between_its_own_agents_models_where_its_host_takes_o
 
     // While a reply runs: the choice is the next message's, and says so.
     surface.attempt = Some(koru_ai_core::InferenceAttemptId::new());
+    let notice_started = std::time::Instant::now();
     surface.choose_agent_model(agent("agent-claude"), "sonnet".into());
     assert_eq!(updates(&commands).len(), 1);
     let note = surface.copy_feedback.label().unwrap_or_default().to_owned();
-    assert_eq!(note, "Sonnet 4.6 · applies to your next message");
+    assert_eq!(
+        note,
+        "An answer is in progress. Sonnet 4.6 applies to your next message."
+    );
+    let until = surface.copy_feedback.maintenance_deadline().unwrap();
+    assert!(
+        surface
+            .copy_feedback
+            .visibility(until - std::time::Duration::from_millis(1))
+            > 0.0
+    );
+    assert!(until >= notice_started + std::time::Duration::from_secs(5));
+    surface.copy_feedback.maintain(until);
+    surface
+        .copy_feedback
+        .maintain(until + std::time::Duration::from_secs(1));
+    assert!(
+        surface.copy_feedback.label().is_none(),
+        "model notice expires rather than becoming status"
+    );
 }
 
 /// **The rail shows until the chat begins, and then it is gone** (the
 /// user: *once the chat is running, hide the model rail since we don't
 /// support switching models*). A new chat has every agent, *Favorites* and
 /// the **+**; from the first message the picker is the chat's own agent's
-/// list alone, in the rail's room — the panel keeps its size — with its
-/// footer as before, and no press, tooltip, Tab or arrow reaches a rail.
+/// list alone, in the rail's room, with context statistics below the model
+/// controls. No press, tooltip, Tab or arrow reaches a rail.
 #[test]
 fn the_rail_is_hidden_once_the_chat_has_begun() {
     let mut surface = picker_with_everything();
@@ -1003,7 +1057,15 @@ fn the_rail_is_hidden_once_the_chat_has_begun() {
     let spec = surface.picker_spec();
     assert!(spec.hide_rail && !spec.manage && spec.marks.is_empty());
     let after = surface.picker_geometry().unwrap();
-    assert_eq!(after.panel, before.panel, "the picker keeps its size");
+    let report = surface
+        .picker_spec()
+        .report
+        .expect("a begun chat includes context statistics");
+    assert_eq!(after.panel.w, before.panel.w, "the picker keeps its width");
+    assert!(
+        (after.panel.h - before.panel.h - report.height(after.panel.w)).abs() < 0.01,
+        "the report extends the panel below its existing model controls"
+    );
     assert_eq!(after.rail.w, 0.0);
     assert!(surface.picker_manage_rect(&after).is_none());
     // The list takes the rail's room: inset from the panel's start as
@@ -2866,10 +2928,15 @@ fn a_begun_chats_picker_tree_has_no_rail() {
             f64::from(panel.x),
             f64::from(panel.y),
             f64::from(panel.x + panel.w),
-            f64::from(panel.y + panel.h),
+            records[one("Model usage report")].bounds[1],
         ],
-        "the content fills the panel"
+        "model controls fill the panel above its context report"
     );
+    let combined = one("Model picker and usage");
+    let report = one("Model usage report");
+    assert_eq!(records[picker].parent, Some(combined));
+    assert_eq!(records[report].parent, Some(combined));
+    assert_eq!(records[report].bounds[3], f64::from(panel.y + panel.h));
     for part in [elements::SEARCH_ROW, elements::LIST, elements::FOOTER] {
         assert_eq!(records[one(part)].parent, Some(content), "{part}");
     }

@@ -32,10 +32,7 @@
 
 mod actor;
 mod attempt;
-#[doc(hidden)]
-pub mod bot_wire;
 mod bots;
-pub mod children;
 mod connections;
 mod context;
 pub mod decisions;
@@ -63,24 +60,10 @@ pub use attempt::{
     PublicationKind, StaleAttempt,
 };
 pub use bots::{
-    AllocateMemoryEditRequest, MEMORY_EDIT_ALLOCATION_LIMIT, MEMORY_EDIT_UNLINKED_LIMIT,
-    MEMORY_ENSURE_TITLE, MemoryBaseResolution, MemoryBaseSelector, MemoryEditAction,
-    MemoryEditAllocation, MemoryEditAuthorityV1, MemoryEditSubjectV1, MemoryEnsureIdentity,
-    NativeEffectPurpose, same_native_edit_revision,
-};
-pub use bots::{
-    BOT_BOOT_PAGE_LIMIT, BotAccess, BotAdmissionBarrier, BotAdmissionState, BotAdmissionView,
-    BotBootAdmission, BotBootCursor, BotBootEntry, BotBootIdentity, BotBootPage, BotBootReceipt,
-    BotBootScan, BotBootState, BotDeliveryReceipt, BotExecutionFence, BotHello, BotInputRefusal,
-    BotOwner, BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt,
-    BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
-    BotTeamBarrier, BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder, CapturedBotPolicy,
-    ChildParent, ConfirmNativeResult, NativeDrainReason, NativeEffectBinding,
-    NativeEffectDrainReceipt, NativeEffectKind, NativeEffectTimestamp, NativePendingEffect,
-    NativePendingEffects, NativePolicyRequestId, NativeRecoveryCursor, NativeResultDisposition,
-    NativeResultIntentView, NativeResultKey, NativeResultKind, NativeResultObservation,
-    NativeResultOperation, NativeResultReference, NativeResultRefusal, NativeResultStage,
-    PrepareNativeResult, RunToolAuthority, native_store_scope,
+    BotAccess, BotDeliveryReceipt, BotInputRefusal, BotOwner, BotProvenance, BotRoutineCloseReason,
+    BotWorkingFolder, CapturedBotPolicy, ChildParent, NativeResultKind, NativeResultReference,
+    RoutineControlLifecycle, RoutineControlOutcome, RoutineDefinitionIdentity, RoutineDigest32,
+    RoutineDigestError, RoutineProvenance, routine_digest_json,
 };
 pub use connections::{
     CONNECTION_GRANT_LIMIT, ConnectionGrantRef, PrivateEffectDisposition, PrivateEffectKey,
@@ -100,8 +83,8 @@ pub use failure::RunFailureReason;
 pub use header::{DelegatedRun, Rating, ResultReference, RunHeader, RunRating};
 pub use ids::{
     ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, ChildRequestId,
-    ConnectionId, ConnectionItemId, DelegateBootId, HandoffId, IdParseError, ModelRef,
-    PrivateDispatcherId, RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
+    ConnectionId, ConnectionItemId, HandoffId, IdParseError, ModelRef, PrivateDispatcherId,
+    RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
 };
 pub use name::RunName;
 pub use pin::ContextState;
@@ -110,7 +93,7 @@ pub use schedule::{ScheduleContextFailureStage, ScheduleFiringOutcome, ScheduleP
 pub use scope::{ExecutionEnvironment, ScopeOverlap, WorkspaceScope};
 pub use status::{
     Attention, AttentionSet, CancelReason, ControlState, FailureStage, IllegalTransition,
-    PriorAttempt, RunEvent, RunStatus, transition, transition_bot,
+    PriorAttempt, RunEvent, RunStatus, transition,
 };
 pub use text::{
     ArtifactTitle, MAX_ARTIFACT_TITLE_CHARS, MAX_OBJECTIVE_CHARS, MAX_RATING_NOTE_CHARS,
@@ -129,21 +112,6 @@ pub use view::{RunExecution, RunView, TimelineItem, TimelineWindow};
 
 // The vocabulary this crate speaks but does not own, re-exported so a
 // dependant names one crate for a run and its parts.
-pub use bots::{
-    BotRoutineCloseReason, FreshBotPolicyProof, INTERACTIVE_BOT_SUBMISSION_VERSION,
-    ROUTINE_BOT_SUBMISSION_VERSION, RoutineClaimFacts, RoutineClaimIdentity,
-    RoutineClaimObservation, RoutineClaimRecord, RoutineDefinitionIdentity, RoutineDigest32,
-    RoutineDigestError, RoutineExecutionIds, RoutineExpiredClaimFacts, RoutineLinkAcknowledgement,
-    RoutineLinkOutcome, RoutineLinkState, RoutinePolicyBarrier, RoutinePrepared, RoutineProvenance,
-    RoutineRepresentativeMiss, RoutineRouteIdentity, RoutineSkipOutcome, RoutineSkippedClaim,
-    RoutineSlot, RoutineTerminalReason, routine_digest_json,
-};
-// Delegate IPC 17: the neutral owner-control and owner-Test vocabulary.
-pub use bots::{
-    ROUTINE_CONTROL_WIRE_LIMIT, ROUTINE_TEST_CLAIM_MARGIN_MS, ROUTINE_TEST_MINUTE_MS,
-    RoutineControlLifecycle, RoutineControlOutcome, routine_control_revision_valid,
-    routine_control_within_wire_limit, routine_test_minute_of, routine_test_minute_valid,
-};
 pub use koru_device::DeviceId;
 pub use koru_events::EventId;
 pub use koru_session_protocol::{

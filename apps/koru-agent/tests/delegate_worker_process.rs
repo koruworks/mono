@@ -82,13 +82,26 @@ fn wait_until(what: &str, deadline: Duration, mut done: impl FnMut() -> bool) {
 
 fn kill_pid(pid: u32) {
     #[cfg(windows)]
-    let _ = Command::new("taskkill")
+    let result = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/F"])
         .output();
     #[cfg(not(windows))]
-    let _ = Command::new("kill")
+    let result = Command::new("kill")
         .args(["-KILL", &pid.to_string()])
         .output();
+    let output = result.unwrap_or_else(|error| {
+        let detail: String = error.to_string().chars().take(512).collect();
+        panic!("could not start termination of test process {pid}: {detail}");
+    });
+    assert!(
+        output.status.success(),
+        "termination of test process {pid} failed: status={}; stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(2048)
+            .collect::<String>(),
+    );
 }
 
 /// The checked-in Codex app-server fixture on a directory a host can be
@@ -1382,8 +1395,6 @@ mod claude_live;
 
 #[path = "delegate_worker_process/live_generic.rs"]
 mod live_generic;
-#[path = "delegate_worker_process/native_bots.rs"]
-mod native_bots;
 
 #[path = "delegate_worker_process/schedules.rs"]
 mod schedules;

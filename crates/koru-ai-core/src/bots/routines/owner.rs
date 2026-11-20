@@ -13,18 +13,6 @@ pub struct BotRoutineCreateResult {
     pub state: BotRoutineCreationState,
     pub refusal: Option<BotRoutineCreationRefusal>,
 }
-impl From<&BotRoutineCreationReceipt> for BotRoutineCreateResult {
-    fn from(receipt: &BotRoutineCreationReceipt) -> Self {
-        Self {
-            request_id: receipt.route.creation_request,
-            bot_id: receipt.route.bot,
-            schedule_id: receipt.route.schedule,
-            state: receipt.state,
-            refusal: receipt.refusal,
-        }
-    }
-}
-
 /// Current creation coordination status, never a current Schedule lifecycle,
 /// grant body or occurrence list. Frozen revisions describe original creation
 /// evidence and do not claim current effect permission or service availability.

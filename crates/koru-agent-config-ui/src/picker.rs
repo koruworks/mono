@@ -32,6 +32,7 @@ pub mod elements;
 pub mod inputs;
 pub mod mark;
 pub mod paint;
+pub mod report;
 pub mod tokens;
 pub mod view;
 

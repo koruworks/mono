@@ -36,38 +36,22 @@
 //! ledger as rows, and one run in as much detail as this file holds.
 
 mod attempts;
-mod bots;
-mod children;
 mod claims;
 mod clock;
 mod crash;
 mod cursors;
 mod db;
-mod decisions;
 mod deletions;
 mod domains;
 mod error;
 mod inspect;
 mod intents;
 mod ledger;
-mod native_results;
-mod private_effects;
 mod publications;
 mod restart;
 mod schedule_publications;
 
 pub use attempts::AttemptRow;
-pub use bots::{
-    BOT_ACTIVE_BUDGET_MS, BOT_HOST_EXECUTION_LIMIT, BOT_PENDING_LIMIT, BotAdmissionRecord,
-    BotExecutionCapacity, BotExecutionInventory, BotExecutionRecord, BotInitialSend, BotLedger,
-    BotLedgerError, BotOwnedExecution, BotReservation, BotSettlement, QueuedBotAdmission,
-    RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutinePolicyRecord,
-    RoutineQueuedCursor, RoutineRecoveryEntry, RoutineSlotCursor,
-};
-pub use children::{
-    CHILD_GRAPH_EDGE_LIMIT, CHILD_RESUME_RUN_PAGE, ChildAcknowledgedContinuation,
-    ChildSuccessorReservation, ChildWaitCursor, ChildWaitExecution, ChildWaitRecord, ChildWaitRun,
-};
 pub use claims::{ClaimedSlot, SkippedSlot, SlotClaim};
 pub use clock::{Clock, SystemClock};
 pub use crash::WriteOp;
@@ -76,11 +60,6 @@ pub use crash::{CrashPoint, Moment};
 pub use db::{
     DATABASE_NAME, OpenError, RETAINED_DECISIONS_DETAIL, RETAINED_DECISIONS_UPGRADE,
     RUNS_SCHEMA_VERSION, runs_db_path,
-};
-pub use decisions::{
-    AnswerDecision, DECISION_RESUME_RUN_PAGE, DecisionAcknowledgedContinuation,
-    DecisionCleanupOrigin, DecisionCleanupOwnership, DecisionRecord, DecisionWaitExecution,
-    DecisionWaitRecord,
 };
 pub use deletions::DeletionRecord;
 pub use domains::{AttemptPhase, IntentState, Projection, SlotOutcome, SlotState};
@@ -92,16 +71,8 @@ pub use inspect::{
 };
 pub use intents::{IntentFacts, IntentRecord, PendingIntent};
 pub use ledger::{RunsDb, WriteOutcome};
-pub use native_results::{
-    NativeEffectLease, NativeIntentRecord, NativeLeaseOutcome, NativeLeaseState,
-    NativePolicyRecord, NativeRecoveryCursor, NativeResultLedger, PendingNativeResult,
-};
-pub use private_effects::{
-    PRIVATE_RESOLUTION_LIMIT, PrivateEffectOutcome, PrivateEffectRecord, PrivateLedgerError,
-    PrivateResolved, PrivateRoutineFence,
-};
 pub use publications::{
-    DECISION_PROJECTION_RUN_PAGE, OpenPublication, PendingPublicationRunCursor, PendingPublicationRunSeek, PublicationBody,
+    OpenPublication, PendingPublicationRunCursor, PendingPublicationRunSeek, PublicationBody,
     PublicationRecord,
 };
 pub use restart::{LookupAnswer, RestartVerdict, ResumePolicy, classify_at_restart};
@@ -113,7 +84,3 @@ pub use schedule_publications::{
 
 #[cfg(test)]
 pub(crate) mod fixtures;
-/// Shared decision-ledger state builders over the public API only. Dev-only:
-/// dependents enable `test-support` in their `[dev-dependencies]`.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;

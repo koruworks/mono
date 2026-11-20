@@ -25,8 +25,6 @@ use super::{
     BATCH, BusScheduleEvents, DeliveryDisposition, ReconcileDisposition, definition_disposition,
     page_retry_needed, rejected_delivery_disposition,
 };
-mod phase;
-mod routine;
 use crate::ledger::SharedLedger;
 use koru_delegate_runtime::ScheduleEvents;
 
@@ -503,11 +501,7 @@ fn advanced_definition_keeps_the_prepared_row_out_of_the_ready_queue() {
         reason: SchedulePauseReason::Manual,
     };
     let prepared = events
-        .prepare_definition(
-            reference,
-            &header.definition,
-            koru_delegate_runtime::schedule_definition_event(&header.definition),
-        )
+        .prepare_definition(reference, &header.definition)
         .unwrap();
     let record = ledger
         .schedule_publications(schedule_id)
@@ -594,7 +588,7 @@ fn ambiguous_oldest_batch_rotates_to_a_later_actionable_row_on_the_next_real_wak
     let (oldest, more) = events.prepared_page(BATCH).unwrap();
     assert_eq!(oldest.len(), BATCH);
     assert!(more);
-    assert!(!page_retry_needed(
+    assert!(page_retry_needed(
         more,
         &[ReconcileDisposition::AwaitAuthorityWake; BATCH]
     ));
@@ -696,10 +690,12 @@ fn transient_authority_retry_is_revisited_after_the_cursor_wraps() {
 
 #[test]
 fn failed_authority_row_does_not_starve_a_later_actionable_row() {
-    let temp = tempfile::tempdir().unwrap();
+    use std::io::{BufRead as _, Write as _};
+    use std::time::{Duration, Instant};
+
     let now = Arc::new(AtomicI64::new(1_000));
     let mut db = RunsDb::open_with_clock(
-        &temp.path().join("runs.db"),
+        std::path::Path::new(":memory:"),
         Box::new(MutableClock(Arc::clone(&now))),
     )
     .unwrap();
@@ -728,24 +724,97 @@ fn failed_authority_row_does_not_starve_a_later_actionable_row() {
     // observably later without depending on random EventId ordering.
     now.store(1_001, Ordering::SeqCst);
     let actionable_schedule = ScheduleId::mint();
+    let actionable_ref = schedule_ref(actionable_schedule);
     let actionable = EventId::mint();
     db.prepare_schedule_publication(
         actionable,
-        publication_ref(schedule_ref(actionable_schedule)),
+        publication_ref(actionable_ref),
         SchedulePublicationFact::Created { revision: 1 },
         "{}",
     )
     .unwrap();
 
+    // A malformed outbox body is actionable only after its Schedule proves
+    // ordinary ownership. An unreadable header could belong to a retained
+    // Routine, whose rows must stay untouched. Arm each authority result
+    // explicitly instead of assuming a connection to port zero fails.
+    let snapshot = koru_delegate_document::ScheduleDocument::create(&header(
+        actionable_schedule,
+        ProfileId::new(),
+    ))
+    .unwrap()
+    .export_snapshot()
+    .unwrap();
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let authority = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        for (reference, status, body) in [
+            (
+                failed_ref,
+                "503 Service Unavailable",
+                br#"{"code":"store_unreachable","message":"fixture authority unavailable"}"#
+                    .to_vec(),
+            ),
+            (actionable_ref, "200 OK", snapshot),
+        ] {
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "authority request never arrived");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept authority request: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = std::io::BufReader::new(&stream);
+            let mut line = String::new();
+            request.read_line(&mut line).unwrap();
+            assert_eq!(
+                line,
+                format!(
+                    "POST /v1/workspaces/{}/snapshot/{} HTTP/1.1\r\n",
+                    reference.workspace.to_storage(),
+                    reference.document.to_storage()
+                )
+            );
+            loop {
+                line.clear();
+                assert_ne!(request.read_line(&mut line).unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            drop(request);
+            write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .unwrap();
+            stream.write_all(&body).unwrap();
+        }
+    });
+
     let ledger = SharedLedger::new(db);
     let client = koru_api_client::Client::new(koru_api_client::Discovery {
-        port: 0,
+        port,
         token: String::new(),
         expires_at_millis: i64::MAX,
     });
     let mut events = BusScheduleEvents::new(client, ledger.clone());
 
     let report = events.reconcile_prepared(2).unwrap();
+    authority.join().unwrap();
 
     assert!(
         report.retry_needed,
@@ -843,115 +912,5 @@ fn live_and_repair_paths_converge_on_the_first_semantic_row() {
             .len(),
         2,
         "one created root and one occurrence row"
-    );
-}
-
-/// P4.3 section 4.11: the event kind is the control's own fact, carried into
-/// the stored prepared event. A Pause is `paused`; an Edit of the Routine
-/// while it is paused leaves it paused and is `updated`, at preparation, on
-/// exact replay and when a restart reconciles the stored row.
-#[test]
-fn routine_control_edit_of_a_paused_routine_publishes_updated_not_paused() {
-    use koru_delegate_runtime::ScheduleDefinitionEvent;
-    let temp = tempfile::tempdir().unwrap();
-    let ledger = SharedLedger::new(RunsDb::open(&temp.path().join("runs.db")).unwrap());
-    let client = koru_api_client::Client::new(koru_api_client::Discovery {
-        port: 0,
-        token: String::new(),
-        expires_at_millis: i64::MAX,
-    });
-    let mut events = BusScheduleEvents::new(client, ledger.clone());
-    let schedule_id = ScheduleId::mint();
-    let mut header = header(schedule_id, ProfileId::new());
-    let reference = koru_delegate_runtime::ScheduleEventRef {
-        schedule: schedule_id,
-        workspace: WorkspaceId::new(),
-        document: DocumentId::from_uuid(schedule_id.as_uuid()),
-    };
-    events.existing_created(reference, &header).unwrap();
-    let manual = ScheduleLifecycle::Paused {
-        reason: SchedulePauseReason::Manual,
-    };
-
-    // Revision 2: the Routine is paused.
-    header.definition.revision = 2;
-    header.definition.effective_at_ms = 25;
-    header.definition.lifecycle = manual.clone();
-    let paused = events
-        .prepare_definition(
-            reference,
-            &header.definition,
-            ScheduleDefinitionEvent::Paused(SchedulePauseReason::Manual),
-        )
-        .unwrap();
-    // Revision 3: its timing is edited while it stays paused.
-    header.definition.revision = 3;
-    header.definition.effective_at_ms = 30;
-    assert_eq!(header.definition.lifecycle, manual);
-    let edited = events
-        .prepare_definition(
-            reference,
-            &header.definition,
-            ScheduleDefinitionEvent::Updated,
-        )
-        .unwrap();
-    let row = |event| {
-        ledger
-            .schedule_publications(schedule_id)
-            .unwrap()
-            .into_iter()
-            .find(|row| row.event == event)
-            .unwrap()
-    };
-    assert_eq!(
-        row(paused.event).fact,
-        SchedulePublicationFact::Paused { revision: 2 }
-    );
-    assert!(row(paused.event).body.as_str().contains("schedule.paused"));
-    let stored = row(edited.event);
-    assert_eq!(
-        stored.fact,
-        SchedulePublicationFact::Updated { revision: 3 }
-    );
-    assert!(stored.body.as_str().contains("schedule.updated"));
-    assert!(!stored.body.as_str().contains("schedule.paused"));
-
-    // An exact replay of the edit returns the same prepared event.
-    assert_eq!(
-        events
-            .prepare_definition(
-                reference,
-                &header.definition,
-                ScheduleDefinitionEvent::Updated
-            )
-            .unwrap()
-            .event,
-        edited.event
-    );
-    // A restart reconciles the stored `updated` row against the committed,
-    // still paused, revision 3 and makes it Ready rather than abandoning it.
-    assert_eq!(
-        events
-            .reconcile_definition_authority(&stored, 3, &header.definition)
-            .unwrap(),
-        ReconcileDisposition::Settled
-    );
-    let ready = row(edited.event);
-    assert!(ready.ready_at_ms.is_some());
-    assert_eq!(ready.body.as_str(), stored.body.as_str());
-
-    // A `paused` event is only ever the definition's own pause.
-    let mut active = header.definition.clone();
-    active.revision = 4;
-    active.effective_at_ms = 35;
-    active.lifecycle = ScheduleLifecycle::Active;
-    assert!(
-        events
-            .prepare_definition(
-                reference,
-                &active,
-                ScheduleDefinitionEvent::Paused(SchedulePauseReason::Manual)
-            )
-            .is_err()
     );
 }

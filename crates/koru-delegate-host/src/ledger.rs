@@ -13,9 +13,6 @@
 //! [`SharedLedger`] locks only for one SQLite statement. No path holds the
 //! guard while it calls another port or waits on the actor rendezvous.
 
-mod bots;
-mod private;
-
 use std::sync::{Arc, Mutex};
 
 use koru_delegate_core::{
@@ -34,28 +31,11 @@ use koru_delegate_sqlite::{
 
 /// The ledger, held once and named by several ports.
 #[derive(Clone)]
-pub struct SharedLedger(Arc<Mutex<RunsDb>>, bool);
+pub struct SharedLedger(Arc<Mutex<RunsDb>>);
 
 impl SharedLedger {
     pub fn new(db: RunsDb) -> Self {
-        Self(Arc::new(Mutex::new(db)), true)
-    }
-
-    pub fn with_legacy_bots(mut self, allowed: bool) -> Self {
-        self.1 = allowed;
-        self
-    }
-
-    fn visible_run(&self, run: RunId) -> Result<bool, LedgerError> {
-        if self.1 {
-            return Ok(true);
-        }
-        Ok(self.intent_facts(run)?.is_some_and(|facts| {
-            !matches!(
-                facts.scope,
-                koru_delegate_core::WorkspaceScope::BotFolder { .. }
-            )
-        }))
+        Self(Arc::new(Mutex::new(db)))
     }
 
     /// The settled facts of a creation — the asker, the launch profile, the
@@ -108,11 +88,15 @@ impl SharedLedger {
             .prepared_schedule_publications_after(cursor, limit)
     }
 
-    pub fn ready_schedule_publications(
+    pub fn ready_schedule_publications_after(
         &self,
+        after: Option<(i64, i64, EventId)>,
         limit: usize,
     ) -> Result<Vec<SchedulePublicationRecord>, LedgerError> {
-        self.0.lock().unwrap().ready_schedule_publications(limit)
+        self.0
+            .lock()
+            .unwrap()
+            .ready_schedule_publications_after(after, limit)
     }
 
     #[cfg(test)]
@@ -182,173 +166,9 @@ impl SharedLedger {
     ) -> Result<Option<SlotClaim>, LedgerError> {
         self.0.lock().unwrap().slot(schedule, occurrence_ms)
     }
-
-    pub fn validate_ordinary_schedule_run(&self, run: RunId) -> Result<(), LedgerError> {
-        self.0.lock().unwrap().validate_ordinary_schedule_run(run)
-    }
-}
-
-impl koru_delegate_runtime::RoutineLedger for SharedLedger {
-    fn routine_firing(
-        &self,
-        slot: &koru_delegate_core::RoutineSlot,
-    ) -> Result<Option<koru_delegate_sqlite::SlotClaim>, koru_delegate_sqlite::BotLedgerError> {
-        self.0.lock().unwrap().routine_firing(slot)
-    }
-    fn routine_route(
-        &self,
-        schedule: koru_delegate_core::ScheduleId,
-    ) -> Result<
-        Option<koru_delegate_core::RoutineRouteIdentity>,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        self.0
-            .lock()
-            .unwrap()
-            .routine_route(schedule)
-            .map_err(Into::into)
-    }
-
-    fn held_routine_page(
-        &self,
-        after: Option<koru_delegate_sqlite::RoutineHeldCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineHeldCursor,
-            koru_delegate_sqlite::RoutineRecoveryEntry,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        self.0.lock().unwrap().held_routine_page(after)
-    }
-
-    fn queued_routine_page(
-        &self,
-        after: Option<koru_delegate_sqlite::RoutineQueuedCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineQueuedCursor,
-            Option<koru_delegate_sqlite::RoutineRecoveryEntry>,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        self.0.lock().unwrap().queued_routine_page(after)
-    }
-
-    fn routine_slots_page(
-        &self,
-        route: &koru_delegate_core::RoutineRouteIdentity,
-        after: Option<koru_delegate_sqlite::RoutineSlotCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineSlotCursor,
-            koru_delegate_sqlite::RoutineOccurrenceFact,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        self.0.lock().unwrap().routine_slots_page(route, after)
-    }
-    fn record_expired_routine(
-        &mut self,
-        authority: koru_delegate_document::RoutineExpiryAuthority,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        koru_delegate_runtime::RoutineLedger::record_expired_routine(
-            &mut *self.0.lock().unwrap(),
-            authority,
-        )
-    }
-    fn claim_bot_routine(
-        &mut self,
-        authority: ScheduleClaimAuthority,
-        admission: &koru_delegate_core::BotAdmissionBarrier,
-        fresh: &koru_delegate_core::FreshBotPolicyProof,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        // Acquire the writer before live authority is consumed, not afterward.
-        koru_delegate_runtime::RoutineLedger::claim_bot_routine(
-            &mut *self.0.lock().unwrap(),
-            authority,
-            admission,
-            fresh,
-        )
-    }
-    fn claim_bot_routine_test(
-        &mut self,
-        authority: koru_delegate_document::RoutineTestAuthority,
-        admission: &koru_delegate_core::BotAdmissionBarrier,
-        fresh: &koru_delegate_core::FreshBotPolicyProof,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        // As above: the writer is held before the Test authority is consumed,
-        // so nothing can change the ledger between its revalidation and the
-        // claim transaction.
-        koru_delegate_runtime::RoutineLedger::claim_bot_routine_test(
-            &mut *self.0.lock().unwrap(),
-            authority,
-            admission,
-            fresh,
-        )
-    }
-    fn bot_admission_barrier(
-        &self,
-        owner: koru_delegate_core::BotOwner,
-        bot: koru_delegate_core::BotId,
-    ) -> Result<Option<koru_delegate_core::BotAdmissionBarrier>, koru_delegate_sqlite::BotLedgerError>
-    {
-        koru_delegate_runtime::RoutineLedger::bot_admission_barrier(
-            &*self.0.lock().unwrap(),
-            owner,
-            bot,
-        )
-    }
-    fn read_routine_claim(
-        &self,
-        slot: &koru_delegate_core::RoutineSlot,
-    ) -> Result<koru_delegate_core::RoutineClaimObservation, koru_delegate_sqlite::BotLedgerError>
-    {
-        self.0.lock().unwrap().read_routine_claim(slot)
-    }
-    fn acknowledge_routine_link(
-        &mut self,
-        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
-    ) -> Result<koru_delegate_core::RoutineClaimRecord, koru_delegate_sqlite::BotLedgerError> {
-        self.0
-            .lock()
-            .unwrap()
-            .acknowledge_routine_link(acknowledgement)
-    }
 }
 
 impl RunStore for SharedLedger {
-    fn decision_projection_runs(
-        &self,
-        after: Option<RunId>,
-        limit: usize,
-    ) -> Result<Vec<RunId>, LedgerError> {
-        if !self.1 {
-            return Ok(Vec::new());
-        }
-        self.0
-            .lock()
-            .unwrap()
-            .decision_projection_runs(after, limit)
-    }
     fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {
@@ -363,29 +183,17 @@ impl RunStore for SharedLedger {
         self.0
             .lock()
             .unwrap()
-            .next_pending_publication_run_for_mode(after, through, before_or_at, self.1)
+            .next_pending_publication_run(after, through, before_or_at)
     }
-    fn decision_open_publications_for(
+    fn bounded_open_publications_for(
         &self,
         run: RunId,
         limit: usize,
     ) -> Result<Vec<OpenPublication>, LedgerError> {
-        if !self.visible_run(run)? {
-            return Ok(Vec::new());
-        }
         self.0
             .lock()
             .unwrap()
-            .decision_open_publications_for(run, limit)
-    }
-    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
-        if self.1 { Some(self) } else { None }
-    }
-    fn private_effects(&mut self) -> Option<&mut dyn koru_delegate_runtime::PrivateEffectLedger> {
-        if self.1 { Some(self) } else { None }
-    }
-    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
-        if self.1 { Some(self) } else { None }
+            .bounded_open_publications_for(run, limit)
     }
 
     fn validate_intent(
@@ -417,34 +225,15 @@ impl RunStore for SharedLedger {
     }
 
     fn pending_intents(&self) -> Result<Vec<PendingIntent>, LedgerError> {
-        let mut rows = self.0.lock().unwrap().pending_intents()?;
-        if !self.1 {
-            rows.retain(|row| {
-                !matches!(
-                    row.payload.scope,
-                    koru_delegate_core::WorkspaceScope::BotFolder { .. }
-                )
-            });
-        }
-        Ok(rows)
+        self.0.lock().unwrap().pending_intents()
     }
 
     fn intent(&self, run: RunId) -> Result<Option<IntentRecord>, LedgerError> {
-        if !self.visible_run(run)? {
-            return Ok(None);
-        }
         self.0.lock().unwrap().intent(run)
     }
 
     fn intents(&self) -> Result<Vec<IntentRecord>, LedgerError> {
-        let rows = self.0.lock().unwrap().intents()?;
-        let mut visible = Vec::new();
-        for row in rows {
-            if self.visible_run(row.run)? {
-                visible.push(row);
-            }
-        }
-        Ok(visible)
+        self.0.lock().unwrap().intents()
     }
 
     fn intent_facts(
@@ -516,14 +305,7 @@ impl RunStore for SharedLedger {
     }
 
     fn live_attempts(&self) -> Result<Vec<AttemptRow>, LedgerError> {
-        let rows = self.0.lock().unwrap().live_attempts()?;
-        let mut visible = Vec::new();
-        for row in rows {
-            if self.visible_run(row.run)? {
-                visible.push(row);
-            }
-        }
-        Ok(visible)
+        self.0.lock().unwrap().live_attempts()
     }
 
     fn enqueue(
@@ -545,10 +327,7 @@ impl RunStore for SharedLedger {
     }
 
     fn open_publications(&self, limit: usize) -> Result<Vec<OpenPublication>, LedgerError> {
-        self.0
-            .lock()
-            .unwrap()
-            .open_publications_for_mode(None, limit, self.1)
+        self.0.lock().unwrap().open_publications(limit)
     }
 
     fn open_publications_for(
@@ -559,7 +338,7 @@ impl RunStore for SharedLedger {
         self.0
             .lock()
             .unwrap()
-            .open_publications_for_mode(Some(run), limit, self.1)
+            .open_publications_for(Some(run), limit)
     }
 
     fn publication(
@@ -664,7 +443,7 @@ impl ScheduleLedger for SharedLedger {
             .record_outcome(schedule, occurrence_ms, outcome)
     }
     fn unsettled(&self) -> Result<Vec<SlotClaim>, LedgerError> {
-        self.0.lock().unwrap().ordinary_unsettled_claims()
+        self.0.lock().unwrap().unsettled_claims()
     }
     fn by_run(&self, run: RunId) -> Result<Option<SlotClaim>, LedgerError> {
         self.0.lock().unwrap().slot_for_run(run)

@@ -399,11 +399,10 @@ pub(crate) async fn route(
     chat: ChatId,
     operation: Operation,
 ) -> Option<Response> {
-    if !koru_bots_engine::ENABLED {
-        return None;
-    }
     let Some(gateway) = state.bots_engine.get().cloned() else {
-        return Some(failed(Error::EngineUnavailable));
+        // Ordinary AI attachments do not depend on Bot service availability.
+        // Its repository still rejects any chat it does not own.
+        return None;
     };
     let Ok(permit) = gateway.permits.clone().try_acquire_owned() else {
         return Some(failed(Error::EngineUnavailable));

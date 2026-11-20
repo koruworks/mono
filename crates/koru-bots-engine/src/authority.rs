@@ -228,16 +228,7 @@ impl Database {
         if running {
             return Err(Error::TurnRunning);
         }
-        let (grant, kind): (Vec<u8>, String) = tx.query_row(
-            "SELECT b.access,t.kind FROM bots b JOIN threads t ON t.id=?2 WHERE b.id=?1",
-            params![who.bot.to_string(), request.thread.to_string()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        // M3 supplies the Routine's narrower grant. Never use the main grant
-        // merely because that composition has not landed yet.
-        if kind == "routine" {
-            return Err(Error::NotAllowed);
-        }
+        let grant = crate::routines::grant(&tx, who.bot, request.thread)?;
         let session = Uuid::new_v4();
         let secret = Secret(format!(
             "{}{}",

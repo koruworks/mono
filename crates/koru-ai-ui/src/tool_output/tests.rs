@@ -182,6 +182,103 @@ fn an_input_that_says_nothing_is_not_shown() {
 }
 
 #[test]
+fn generic_tool_objects_and_arrays_use_the_same_pretty_code_as_input() {
+    for output in [
+        r#"{"tools":[{"name":"read_document","ready":true}]}"#,
+        r#"[{"name":"one"},{"name":"two"}]"#,
+    ] {
+        let activity = done(
+            "search_tool",
+            "search_tool",
+            Some(r#"{"query":"read"}"#),
+            output,
+        );
+        let detail = pieces(&activity, Lang::En, NOW, false);
+        let heading = detail
+            .iter()
+            .position(|piece| matches!(piece, Piece::Meta(label) if label == "Output"))
+            .unwrap();
+        let Piece::Code(lines) = &detail[heading + 1] else {
+            panic!("structured output must be code: {detail:?}");
+        };
+        let displayed = lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(displayed.contains('\n'));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&displayed).unwrap(),
+            serde_json::from_str::<serde_json::Value>(output).unwrap()
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.ink == Ink::Text && line.gutter.is_empty())
+        );
+        let mut engine = koru_draw::text::TextEngine::new();
+        assert!(layout::lay_out(&mut engine, &[detail[heading + 1].clone()], 300.0)[0].panel);
+    }
+}
+
+#[test]
+fn generic_tool_prose_and_incomplete_json_keep_their_markdown() {
+    for output in [
+        "Found **three** tools.",
+        r#"{"tools":[{"name":"cut off"}"#,
+        "true",
+        "42",
+    ] {
+        let detail = pieces(
+            &done("search_tool", "search_tool", None, output),
+            Lang::En,
+            NOW,
+            false,
+        );
+        assert_eq!(detail.first(), Some(&Piece::Markdown(output.into())));
+    }
+}
+
+#[test]
+fn folding_json_never_changes_the_value_available_to_copy() {
+    let output = serde_json::to_string(
+        &(0..40)
+            .map(|number| format!("result {number}"))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let activity = done("search_tool", "search_tool", None, &output);
+    let folded = pieces(&activity, Lang::En, NOW, false);
+    assert!(folded.iter().any(|piece| matches!(piece, Piece::Toggle(_))));
+    assert!(!words(&folded).iter().any(|word| word.contains("result 20")));
+    assert_eq!(copy_text(&activity), Some(output.as_str()));
+    let expanded = pieces(&activity, Lang::En, NOW, true);
+    assert!(
+        words(&expanded)
+            .iter()
+            .any(|word| word.contains("result 20"))
+    );
+    assert_eq!(copy_text(&activity), Some(output.as_str()));
+
+    // Raw whitespace, terminal escapes and an upstream truncation marker
+    // are part of the stored value; copying neither formats nor invents it.
+    for output in [
+        " \nraw output\r\n ",
+        "\u{1b}[31mfailed\u{1b}[0m",
+        r#"{"_truncated":true,"count":200}"#,
+    ] {
+        assert_eq!(
+            copy_text(&done("search_tool", "search_tool", None, output)),
+            Some(output)
+        );
+    }
+    assert_eq!(
+        copy_text(&done("search_tool", "search_tool", None, "  \n")),
+        None
+    );
+}
+
+#[test]
 fn a_failure_without_words_says_why_on_its_status_line() {
     let failed = row("agent.other", Some("x"), ToolActivityStatus::Failed);
     let pieces = pieces(&failed, Lang::En, NOW, false);

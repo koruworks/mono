@@ -6,11 +6,6 @@ mod ai;
 mod artifacts;
 mod bots_engine;
 pub mod bots_workspace;
-mod decision_bridge;
-#[cfg(feature = "fixtures")]
-#[doc(hidden)]
-pub mod fixtures;
-mod routine_bridge;
 mod run_mcp;
 mod runs;
 mod schedules;
@@ -39,7 +34,6 @@ mod session_routes;
 pub mod settings;
 pub mod workspaces;
 
-pub use decision_bridge::{DECISION_ENROLL_ROUTE, DECISION_READ_ROUTE, DecisionBridgeCredential};
 pub use session_bridge::{BridgeError, BridgeSubscription, SessionBridge};
 
 pub const SESSION_TTL_MILLIS: i64 = 60 * 60 * 1_000;
@@ -133,38 +127,13 @@ pub const SETTINGS_READ_SCOPE: &str = "settings.read";
 pub const SETTINGS_WRITE_SCOPE: &str = "settings.write";
 const SEARCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// What a linked device may change of a Bot on the computer that runs it:
-/// its name, model, reasoning, mode and Fast (M8). **Held only by a
-/// linked-device principal** ([`GatewayPrincipal::linked_device`]). It is in
-/// neither scope list of a bearer, so no HTTP caller can ask for it, vouched
-/// or not. It is narrower than `bots.manage`, which stays vouched-only.
-pub const BOTS_CONFIGURE_SCOPE: &str = "bots.configure";
-
-/// Exactly what a linked device holds here, and nothing else.
-pub const LINKED_DEVICE_SCOPES: [&str; 3] = ["bots.read", "bots.run", BOTS_CONFIGURE_SCOPE];
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatewayPrincipal {
     pub label: String,
     pub scopes: Vec<String>,
 }
 
-impl GatewayPrincipal {
-    /// The principal of one of the person's own linked devices, as the Bot
-    /// ingress adapter builds it for a stream the carrier authenticated and
-    /// the admission port named (M8). It holds exactly
-    /// [`LINKED_DEVICE_SCOPES`].
-    ///
-    /// **It is never a bearer.** Nothing stores it in the session table and
-    /// no HTTP request can resolve to it: it exists for the lifetime of the
-    /// stream it was built for.
-    pub fn linked_device(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            scopes: effective_scopes(&[], Admission::LinkedDevice),
-        }
-    }
-}
+impl GatewayPrincipal {}
 
 #[derive(Clone, Debug)]
 struct Session {
@@ -179,33 +148,22 @@ pub struct SessionAuthority {
 
 /// What the gateway knows about a caller when it decides its scopes.
 ///
-/// **Three states. The first two are callers on this computer, and the
-/// second one is the whole of R9's first-party split.** `Ordinary` is every
+/// **Two states distinguish callers on this computer.** `Ordinary` is every
 /// local caller: admitted by channel and API version, its `product` a
 /// free-form string it chose. `Vouched` means the Agent — the process that
 /// launches Koru's own windows — confirmed at admission that it launched this
 /// one, by minting a grant the caller presented and the gateway spent against
 /// it.
 ///
-/// `LinkedDevice` is not on this computer at all (M8): one of the person's
-/// own devices, authenticated by the device network and named by the Bot
-/// admission port. **It is never minted as an HTTP bearer.** The Bot ingress
-/// adapter builds its principal for one stream
-/// ([`GatewayPrincipal::linked_device`]), with exactly
-/// [`LINKED_DEVICE_SCOPES`]; asking [`SessionAuthority::mint_admitted`] for
-/// it mints an ordinary caller.
-///
 /// It is not a scope and it is not a role. It decides which narrow scopes
 /// can be granted at all: `Vouched` is what makes
 /// [`WORKSPACE_DESTROY_SCOPE`], [`WORKSPACE_MIGRATE_SCOPE`] and
-/// `bots.manage` reachable, and `LinkedDevice` is what makes
-/// [`BOTS_CONFIGURE_SCOPE`] reachable.
+/// `bots.manage` reachable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Admission {
     #[default]
     Ordinary,
     Vouched,
-    LinkedDevice,
 }
 
 impl SessionAuthority {
@@ -232,12 +190,6 @@ impl SessionAuthority {
             uuid::Uuid::new_v4().simple()
         );
         let expires_at_millis = now_millis.saturating_add(SESSION_TTL_MILLIS);
-        // A linked device is never a bearer: whoever asks for one is minted
-        // as the ordinary local caller it is.
-        let admission = match admission {
-            Admission::LinkedDevice => Admission::Ordinary,
-            admission => admission,
-        };
         let scopes = effective_scopes(requested_scopes, admission);
         self.sessions.lock().expect("gateway sessions").insert(
             token_hash(&bearer),
@@ -300,8 +252,6 @@ fn effective_scopes(requested: &[String], admission: Admission) -> Vec<String> {
         MANAGE_WORKSPACES_SCOPE,
         "ai.chat",
         "ai.manage_providers",
-        "bots.read",
-        "bots.run",
         "ai.read_usage",
         EVENTS_READ_SCOPE,
         "events.write",
@@ -313,15 +263,6 @@ fn effective_scopes(requested: &[String], admission: Admission) -> Vec<String> {
         koru_delegate_api::DelegateScope::Read.as_str(),
         koru_delegate_api::DelegateScope::Write.as_str(),
     ];
-    // A linked device holds a fixed set, whatever was asked: it is not a
-    // caller that names scopes. `bots.configure` is in neither list above,
-    // so this is the only way to hold it.
-    if matches!(admission, Admission::LinkedDevice) {
-        return LINKED_DEVICE_SCOPES
-            .iter()
-            .map(|scope| (*scope).to_owned())
-            .collect();
-    }
     // **`workspace.destroy`, `workspace.migrate` and `bots.manage` are in
     // neither list, and that is the split.** Every other narrow scope is
     // reachable by naming it; these three are reachable only by naming one
@@ -447,28 +388,10 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         reason: "Bot conversations require the vouched desktop owner",
     },
     MobileUnavailableOperation {
-        id: "ai.list_bots",
-        client: "client.ai().list_bots",
-        http: "POST /v1/ai/bots/list",
-        reason: "External Bot tasks currently run on the desktop owner",
-    },
-    MobileUnavailableOperation {
-        id: "ai.start_bot_task",
-        client: "client.ai().start_bot_task",
-        http: "POST /v1/ai/bots/tasks/start",
-        reason: "External Bot tasks currently run on the desktop owner",
-    },
-    MobileUnavailableOperation {
-        id: "ai.read_bot_task",
-        client: "client.ai().read_bot_task",
-        http: "POST /v1/ai/bots/tasks/read",
-        reason: "External Bot tasks currently run on the desktop owner",
-    },
-    MobileUnavailableOperation {
-        id: "ai.stop_bot_task",
-        client: "client.ai().stop_bot_task",
-        http: "POST /v1/ai/bots/tasks/stop",
-        reason: "External Bot tasks currently run on the desktop owner",
+        id: "ai.bot_routine_command",
+        client: "client.ai().bot_routine",
+        http: "POST /v1/ai/bots/routines",
+        reason: "Native Routine history and controls require the vouched desktop owner",
     },
     MobileUnavailableOperation {
         id: "ai.create_chat",
@@ -1129,14 +1052,7 @@ pub struct GatewayState {
     /// worker's transport later. Empty means `/v1/runs/*` answers 503.
     delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::DelegatePort>>,
     /// Private bootstrap capability, never a provider or public request principal.
-    bot_delegate: std::sync::OnceLock<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
-    /// Derived bootstrap authority and bounded HTTP-body admission only. The
-    /// private shell does not own an AI job or a physical execution permit.
-    routine_bridge: Arc<routine_bridge::HttpState>,
-    /// The decision wait bridge's own credential domain and HTTP admission;
-    /// the Routine credential is never accepted on its routes.
-    decision_bridge: Arc<decision_bridge::HttpState>,
-    native_mutations: std::sync::OnceLock<Arc<koru_ai_server::NativeMutationGate>>,
+    run_authority: std::sync::OnceLock<Arc<dyn koru_delegate_api::authority::RunAuthorityPort>>,
     artifacts: std::sync::OnceLock<Arc<dyn koru_artifact_api::ArtifactDomain>>,
     /// `http://127.0.0.1:<port>`, handed down by the host once its listener
     /// is bound: the base of the endpoint URL a run's authority names. Empty
@@ -1182,16 +1098,8 @@ impl GatewayState {
         events: Option<koru_events_server::EventsHandle>,
         session_bridge: Option<SessionBridge>,
     ) -> Arc<Self> {
-        // A worker whose mirror was started (M8) is read through the
-        // routing port: a call that names a Bot another computer runs is
-        // answered from this computer's copy or sent to that computer.
-        // Otherwise, and for every other call, this is the worker's own
-        // client, as before.
         let local: Arc<dyn koru_ai_api::AiServerPort> = Arc::new(ai_worker.client());
-        let client = match ai_worker.linked_bots() {
-            Some(linked) => koru_ai_client::Client::routed(local, linked),
-            None => koru_ai_client::Client::new(local),
-        };
+        let client = koru_ai_client::Client::new(local);
         Self::build(
             channel,
             store,
@@ -1228,12 +1136,6 @@ impl GatewayState {
         events: Option<koru_events_server::EventsHandle>,
         session_bridge: Option<SessionBridge>,
     ) -> Arc<Self> {
-        // Snapshot the concrete private client once. No worker-handle lock is
-        // retained by HTTP calls, including while they await physical work.
-        let routine_worker = ai.as_ref().and_then(|ai| {
-            let worker = ai.worker.lock().ok()?;
-            worker.as_ref().map(|worker| worker.client())
-        });
         Arc::new(Self {
             instance_id: uuid::Uuid::new_v4().to_string(),
             channel,
@@ -1249,10 +1151,7 @@ impl GatewayState {
             settings_write_fault: settings::SettingsWriteFault::default(),
             artifacts: std::sync::OnceLock::new(),
             delegate: std::sync::OnceLock::new(),
-            bot_delegate: std::sync::OnceLock::new(),
-            decision_bridge: Arc::new(decision_bridge::HttpState::new(routine_worker.clone())),
-            routine_bridge: Arc::new(routine_bridge::HttpState::new(routine_worker)),
-            native_mutations: std::sync::OnceLock::new(),
+            run_authority: std::sync::OnceLock::new(),
             public_endpoint: std::sync::OnceLock::new(),
             openapi: public_openapi(),
             asyncapi: public_asyncapi(),
@@ -1307,43 +1206,18 @@ impl GatewayState {
         self.delegate.get().cloned()
     }
 
-    /// Compose the same private owner port used by AI before serving Run tools.
-    pub fn set_bot_delegate_port(
+    /// Compose positive ordinary-Run authority before serving Run tools.
+    pub fn set_run_authority_port(
         &self,
-        port: Arc<dyn koru_delegate_api::bots::BotDelegatePort>,
+        port: Arc<dyn koru_delegate_api::authority::RunAuthorityPort>,
     ) -> bool {
-        self.bot_delegate.set(port).is_ok()
+        self.run_authority.set(port).is_ok()
     }
 
-    fn bot_delegate_port(&self) -> Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> {
-        self.bot_delegate.get().cloned()
-    }
-
-    /// Install the independently derived private capability once, before
-    /// serving, including hosts where the AI worker is unavailable.
-    pub fn set_routine_bridge_authority(
+    fn run_authority_port(
         &self,
-        authority: koru_delegate_api::routines::RoutineBridgeAuthority,
-    ) -> bool {
-        self.routine_bridge.install(authority)
-    }
-
-    /// Install the decision domain's separately derived credential once,
-    /// before serving. Until it is installed every decision route answers 401.
-    pub fn set_decision_bridge_credential(
-        &self,
-        credential: Arc<dyn decision_bridge::DecisionBridgeCredential>,
-    ) -> bool {
-        self.decision_bridge.install(credential)
-    }
-
-    /// Same process-scoped gate given to AI recovery, composed before serving.
-    pub fn set_native_mutation_gate(&self, gate: Arc<koru_ai_server::NativeMutationGate>) -> bool {
-        self.native_mutations.set(gate).is_ok()
-    }
-
-    fn native_mutations_ready(&self) -> bool {
-        self.native_mutations.get().is_some_and(|gate| gate.ready())
+    ) -> Option<Arc<dyn koru_delegate_api::authority::RunAuthorityPort>> {
+        self.run_authority.get().cloned()
     }
 
     /// Tell the state where it is listening, once, so an issued run
@@ -1570,11 +1444,6 @@ pub fn router(state: Arc<GatewayState>) -> Router {
         // and `/v1/oauth/*` fall through to the Store like any unknown path
         // (docs/developers/API.md).
         .merge(ai::router())
-        // Private bootstrap authentication, absent from the public catalog.
-        // Valid envelopes refuse Unavailable until the real AI owner is wired.
-        .merge(routine_bridge::router(Arc::clone(&state.routine_bridge)))
-        // The decision wait bridge: its own credential domain (O115).
-        .merge(decision_bridge::router(Arc::clone(&state.decision_bridge)))
         // The Artifact Store's own namespace (D13). Its routes exist whether
         // or not `artifacts.db` opened, and answer 503 when it did not.
         .merge(artifacts::router())
@@ -1623,13 +1492,6 @@ async fn authenticate(
     // authority never minted one and must not be asked. The route resolves
     // the bearer itself, on every call.
     if run_mcp::is_run_endpoint(request.uri().path()) {
-        return next.run(request).await;
-    }
-    // Only these exact paths bypass the ordinary session bearer. Their own
-    // handler checks the derived capability before it ever polls a body.
-    if routine_bridge::is_endpoint(request.uri().path())
-        || decision_bridge::is_endpoint(request.uri().path())
-    {
         return next.run(request).await;
     }
     let bearer = request
@@ -3395,132 +3257,6 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), expected);
-        }
-    }
-
-    /// `read_run` rides the same route: vouched `bots.manage` only, its body
-    /// closed (no session or workspace field reaches the owner), and a
-    /// well-formed one is answered by the AI owner itself.
-    #[tokio::test]
-    async fn bot_run_read_rides_the_bot_route_strictly() {
-        let (_root, state, _) = state_with_ai();
-        let (ordinary, _) =
-            state
-                .sessions
-                .mint("claimed-owner", &["bots.manage".into()], now_millis());
-        let (owner, _) = state.sessions.mint_admitted(
-            "owner",
-            &["bots.manage".into()],
-            Admission::Vouched,
-            now_millis(),
-        );
-        let command = koru_ai_wire::BotCommand::ReadRun {
-            bot_id: koru_ai_core::bots::BotId::mint(),
-            chat_id: koru_ai_core::ChatId::new(),
-            message_id: Some(koru_ai_core::MessageId::new()),
-            run_id: koru_delegate_core::RunId::mint(),
-            from: 0,
-            len: 100,
-        };
-        let valid = serde_json::to_value(&command).unwrap();
-        let mut extra = valid.clone();
-        extra["session"] = serde_json::json!("caller-controlled");
-        for (token, body, expected) in [
-            (&ordinary, &valid, Some(StatusCode::FORBIDDEN)),
-            (&owner, &extra, Some(StatusCode::BAD_REQUEST)),
-            (&owner, &valid, None),
-        ] {
-            let response = router(Arc::clone(&state))
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/v1/ai/bots")
-                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(body.to_string()))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            match expected {
-                Some(status) => assert_eq!(response.status(), status),
-                None => {
-                    // This mock host has no Bot authority: the owner refuses
-                    // with its own code, past the route's checks.
-                    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
-                        .await
-                        .unwrap();
-                    let failure: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                    assert_eq!(failure["code"], "workspace_unavailable", "{failure}");
-                }
-            }
-        }
-    }
-
-    /// `stop_task` rides the same route: vouched `bots.manage` only, its body
-    /// closed (no run, fence or session field reaches the owner), and a
-    /// well-formed one is answered by the AI owner itself.
-    #[tokio::test]
-    async fn bot_task_stop_rides_the_bot_route_strictly() {
-        let (_root, state, _) = state_with_ai();
-        let (ordinary, _) =
-            state
-                .sessions
-                .mint("claimed-owner", &["bots.manage".into()], now_millis());
-        let (owner, _) = state.sessions.mint_admitted(
-            "owner",
-            &["bots.manage".into()],
-            Admission::Vouched,
-            now_millis(),
-        );
-        let command = koru_ai_wire::BotCommand::StopTask {
-            request_id: koru_ai_core::bots::BotRequestId::mint(),
-            bot_id: koru_ai_core::bots::BotId::mint(),
-        };
-        let valid = serde_json::to_value(&command).unwrap();
-        assert_eq!(valid["command"], "stop_task");
-        for field in ["run_id", "fence", "session"] {
-            let mut extra = valid.clone();
-            extra[field] = serde_json::json!("caller-controlled");
-            let response = router(Arc::clone(&state))
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/v1/ai/bots")
-                        .header(header::AUTHORIZATION, format!("Bearer {owner}"))
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(extra.to_string()))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{field}");
-        }
-        for (token, expected) in [(&ordinary, Some(StatusCode::FORBIDDEN)), (&owner, None)] {
-            let response = router(Arc::clone(&state))
-                .oneshot(
-                    Request::builder()
-                        .method("POST")
-                        .uri("/v1/ai/bots")
-                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-                        .header(header::CONTENT_TYPE, "application/json")
-                        .body(Body::from(valid.to_string()))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            match expected {
-                Some(status) => assert_eq!(response.status(), status),
-                None => {
-                    // This mock host has no Bot authority: the owner refuses
-                    // with its own code, past the route's checks.
-                    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
-                        .await
-                        .unwrap();
-                    let failure: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-                    assert_eq!(failure["code"], "workspace_unavailable", "{failure}");
-                }
-            }
         }
     }
 

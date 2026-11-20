@@ -599,6 +599,7 @@ impl MainView {
         // The rail's inline field, over the row the rail reserved for it.
         self.draw_new_list(scene, root);
         self.draw_lifted_viewer(scene, root);
+        self.draw_bot_work(scene, root);
         self.draw_menu(scene, root);
         // Where the menu would be: it is opened in a menu's place, and its
         // targets' names are tooltips drawn after it.

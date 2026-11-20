@@ -73,37 +73,24 @@ mod scheduler;
 pub use counters::{Counters, CountingCapture};
 pub use facts::{RunFact, UsageReport};
 pub use orchestrator::{
-    CHILD_STALL_LIMIT_MS, ChildClockSample, ChildClockTick, ChildEnrollmentBridge,
-    ChildResumeStep, CreateError, CreateIntentStatus, Created, DecisionEditRequest,
-    DecisionEnrollmentBridge,
-    DecisionResumeStep, HandleOutcome, Held, Options, Orchestrator, Purged,
+    CreateError, CreateIntentStatus, Created, HandleOutcome, Options, Orchestrator, Purged,
     RestartReport, RunError, RunPlace, RunView, ScheduledScopeReservation,
-    ScopeReservationResolution, SourceProducer, SourceProgress, Started,
-    TEAM_VALUE_REQUIRED, TOOL_STEP_BOUND,
-    TimelineWindow, WindowItem,
+    ScopeReservationResolution, Started, TOOL_STEP_BOUND, TimelineWindow, WindowItem,
 };
 pub use ports::{
-    AppliedRunProjection, ArtifactRegistrations, CaptureFailure, CaptureStage, CapturedContext,
-    Clock, ContextCapture, ContextPin, CreatedSession, ListedRun, ListedSchedule,
-    MaterializeFailure, MaterializeStage, MaterializedContext, McpEndpoints, McpLaunch,
-    NoScheduleEvents, Port, PortError, PortResult, Ports, Preamble, PreparedScheduleEvent,
-    ChildRequestFact, ChildWaitMark, PrivateEffectLedger, PrivateOperationSettled,
-    PublishFailure, RoutineBridge, RoutineBridgeFailure, RoutineBridgeResult, RoutineCandidate,
-    RoutineLedger, RoutinePreparationObservation, RoutinePreparedReply, RoutineWork,
-    DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage, RunDocumentHandle,
-    RunDocumentOpen, RunDocuments, RunEvents, RunProjectionIntent, RunPublicationDocument,
-    RunPublicationOperation, RunPublicationStart, RunPublicationTicket, RunSourceObservation,
-    RunStore, ScheduleCatalog, ScheduleChangeWatch, ScheduleClock, ScheduleDefinitionEvent,
-    ScheduleDocumentHandle, ScheduleDocuments, ScheduleEventMaintenance, ScheduleEventRef,
-    ScheduleEvents, ScheduleLedger, ScheduleOccurrenceEvent, SchedulePhaseGate, SchedulePhaseGuard,
-    SchedulePreparation, ScheduleWake, ScheduleWatchTargets, SessionEvents, SessionLaunch,
-    SessionUpdate, Sessions, Sleep, SourceRefusal, SourceRefusalReason, publication_pending,
-    schedule_definition_event,
+    ArtifactRegistrations, CaptureFailure, CaptureStage, CapturedContext, Clock, ContextCapture,
+    ContextPin, CreatedSession, ListedRun, ListedSchedule, MaterializeFailure, MaterializeStage,
+    MaterializedContext, McpEndpoints, McpLaunch, NoScheduleEvents, Port, PortError, PortResult,
+    Ports, Preamble, PreparedScheduleEvent, PublishFailure, RunDocumentHandle, RunDocuments,
+    RunEvents, RunStore, ScheduleCatalog, ScheduleChangeWatch, ScheduleClock,
+    ScheduleDefinitionEvent, ScheduleDocumentHandle, ScheduleDocuments, ScheduleEventMaintenance,
+    ScheduleEventRef, ScheduleEvents, ScheduleLedger, ScheduleOccurrenceEvent, SchedulePreparation,
+    ScheduleWake, ScheduleWatchTargets, SessionEvents, SessionLaunch, SessionUpdate, Sessions,
+    Sleep, SourceRefusal, SourceRefusalReason, schedule_definition_event,
 };
 pub use scheduler::{
-    PlannedAction, RoutineControl, RoutineControlled, RoutineTestAccepted, ScheduleAdmission,
-    ScheduleCoordinator, ScheduleEffects, ScheduleEvaluation, ScheduleList, ScheduleListing,
-    ScheduleNext, SchedulePlan, plan_schedule,
+    PlannedAction, ScheduleAdmission, ScheduleCoordinator, ScheduleEffects, ScheduleEvaluation,
+    ScheduleList, ScheduleListing, ScheduleNext, SchedulePlan, plan_schedule,
 };
 
 // The vocabulary a host names when it composes this crate, re-exported so
@@ -113,12 +100,6 @@ pub use koru_delegate_sqlite::{
     AttemptPhase, AttemptRow, IntentRecord, LedgerError, LookupAnswer, OpenPublication,
     PendingIntent, Projection, WriteOutcome,
 };
-
-/// Dev-only decision-chain builder for dependents' composition tests. A
-/// dependent enables `test-support` in its `[dev-dependencies]`; nothing
-/// shipped does.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;
 
 #[cfg(test)]
 mod tests;

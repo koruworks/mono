@@ -6,9 +6,9 @@
 //! tree` and nothing else.
 //!
 //! `every_row` is the fixture the crate's promises are checked against: one
-//! envelope per registry row, built through the builders with deterministic
+//! envelope per current registry row, built through the builders with deterministic
 //! ids and clocks, so the validity, privacy and vector tests all speak about
-//! the same 35 envelopes and a row added to the registry without a builder —
+//! the same 32 envelopes and a row added to the registry without a builder —
 //! or a builder without a row — fails `rows::every_delegate_row_has_exactly_one_builder`.
 
 use std::collections::BTreeSet;
@@ -28,11 +28,9 @@ use uuid::Uuid;
 use crate::*;
 
 mod actors;
-mod children;
 mod dependency;
 mod identity;
 mod privacy;
-mod private;
 mod rows;
 mod tokens;
 mod vectors;
@@ -555,32 +553,6 @@ pub(crate) fn every_row() -> Vec<(&'static str, Envelope)> {
                     occurrence_ms: T0 + 172_800_000,
                     reason: ScheduleSkipReason::busy(run_ref().run),
                 },
-            ),
-        ),
-        (
-            "delegate.private_operation.settled",
-            chain.private_operation_settled(
-                stamp(32),
-                private::private_fact(PrivateOutcome::Confirmed {
-                    outcome_bytes: 2048,
-                    withheld: false,
-                }),
-            ),
-        ),
-        (
-            "delegate.child.requested",
-            chain.child_requested(stamp(33), children::child_ref(1)),
-        ),
-        (
-            "delegate.child.changed",
-            chain.child_changed(
-                stamp(34),
-                children::child_change(
-                    2,
-                    koru_delegate_core::children::ChildRequestState::Settled,
-                    koru_delegate_core::children::ChildClock::Stopped,
-                    Some(koru_delegate_core::children::ChildSettledBy::ChildEnded),
-                ),
             ),
         ),
     ]

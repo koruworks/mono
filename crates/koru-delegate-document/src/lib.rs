@@ -58,19 +58,15 @@
 //! `store.snapshot(ws, id)`. `crates/koru-store-sqlite/tests/run_document.rs`
 //! proves the sequence through the real store.
 
-mod bounded_value;
 mod codec;
 mod document;
 mod schedule;
 
 pub use codec::{Part, RunDocumentError, TimelineItem};
 pub use document::RunDocument;
-pub use document::projection::{AppliedRunProjection, RunProjectionIntent, RunProjectionStaging};
-pub use document::source::{DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage};
 pub use schedule::{
-    RoutineDetailProjection, RoutineExpiryAuthority, RoutineExpiryPlan, RoutineOccurrenceLifecycle,
-    RoutineOverview, RoutineTestAuthority, ScheduleClaimAuthority, ScheduleClaimPlan,
-    ScheduleDocument, ScheduleDocumentError, ScheduleRunClaim, ScheduleSkipClaim, ScheduleWrite,
+    ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument, ScheduleDocumentError,
+    ScheduleRunClaim, ScheduleSkipClaim, ScheduleWrite,
 };
 
 /// The manifest kind token a run is registered under. A **stored name**: it
@@ -90,9 +86,9 @@ pub const SCHEDULE_KIND: &str = "koru-schedule";
 /// `koru_store_core::version::Compatibility::against(found, this)`: a run
 /// written by a newer build opens read-only here, never refused, and never
 /// through the node model's `meta.schema_version` (proposal F3). This is the
-/// reader maximum: Bot Run format 6 reads and writes here.
+/// reader maximum: retained Bot format 6 remains decodable for exclusion only.
 pub const RUN_DOCUMENT_SCHEMA_VERSION: i64 = 6;
-/// Every new Bot Run, Manual or Routine, is created at this format. Format 6
+/// Retained Bot format. Format 6
 /// is the first that can hold a parent (`bot.parent`), a pinned result
 /// (`native_results[].version_id`) and the `waiting_for_bot` marker and step.
 /// It carries Bot provenance and never an ordinary Run.
@@ -101,18 +97,13 @@ pub const RUN_DOCUMENT_SCHEMA_VERSION: i64 = 6;
 /// Run holds any of those three facts, that build cannot decode the header and
 /// reports it malformed; it never reads the Run as an ordinary one.
 pub const RUN_BOT_DOCUMENT_SCHEMA_VERSION: i64 = 6;
-/// A committed projection upgrades an earlier Bot Run (3, 4 or 5) to the
-/// current Bot format; a Bot Run created at 6 stays at 6.
-pub const RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION: i64 = RUN_BOT_DOCUMENT_SCHEMA_VERSION;
-/// Bot Runs created by the previous build. Still read and written as they
-/// are: such a Run stays at 5 until a projection is committed to it or a
-/// format 6 fact is written into it, and then it is 6.
+/// Retained earlier Bot format; legacy documents are never written here.
 pub const RUN_BOT_PREVIOUS_DOCUMENT_SCHEMA_VERSION: i64 = 5;
 /// Ordinary (non-Bot) creation keeps writing this format. Manual Bot Runs
-/// created by an earlier build also carry it and remain readable and writable.
+/// created by an earlier build also carry it; their marker prevents writes.
 pub const RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 /// Routine Runs created by an earlier build: this format requires coherent
-/// scheduled Bot provenance. New Routine Runs are created at the Bot format.
+/// scheduled Bot provenance. It is retained for exclusion only.
 pub const RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION: i64 = 4;
 
 /// The schedule document's own local gate, stored at `schedule.schema`.

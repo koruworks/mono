@@ -1128,6 +1128,10 @@ impl AcpControl {
 }
 
 impl AgentControl for AcpControl {
+    fn submission_known_unsent(&self, turn_id: AgentTurnId) -> bool {
+        // Failed writes poison this connection; accepted identities are retained.
+        !self.turns.contains_key(&turn_id) && self.unusable.is_none() && !self.shut_down
+    }
     fn start(&mut self, start: AgentStart) -> Result<AgentCapabilities, ProviderFailure> {
         let first = self.capabilities.is_none();
         if first {

@@ -67,6 +67,28 @@ fn shift_tab(surface: &mut ChatSurface) -> bool {
     surface.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT)
 }
 
+#[test]
+fn hovering_the_badge_opens_the_panel_without_changing_permissions() {
+    let (mut surface, commands) = surface();
+    let mode = surface.approval_mode_button().unwrap();
+    assert!(surface.approval_mode_hover_open((0.0, 0.0), mode.x + 1.0, mode.y + 1.0));
+    assert!(surface.approval_mode_panel().is_some());
+    assert_eq!(
+        surface.approval_mode_mouse_down(mode.x + 1.0, mode.y + 1.0),
+        Some(true)
+    );
+    assert!(
+        surface.approval_mode_panel().is_some(),
+        "a click after hover keeps the panel open"
+    );
+    assert!(
+        commands.try_recv().is_err(),
+        "opening a panel cannot change permission mode"
+    );
+    surface.close_approval_modes();
+    assert!(surface.approval_mode_panel().is_none());
+}
+
 fn chosen(commands: &std::sync::mpsc::Receiver<Command>) -> Option<String> {
     match commands.recv_timeout(Duration::from_millis(50)).ok()? {
         Command::UpdateAgentSettings(_, request) => request.mode,
@@ -766,8 +788,8 @@ fn an_agent_with_no_modes_is_not_asked_forever() {
 }
 
 /// **The composer's toolbar for a Claude chat** holds, left to right, the
-/// context button, the approval-mode chip naming its mode, the model chip
-/// and the send button — each where it is drawn and hit, none
+/// context button, the model icon, send button and compact approval-mode
+/// target — each where it is drawn and hit, none
 /// over another. No globe: web search is an OpenAI model's.
 #[test]
 fn a_claude_chats_toolbar_holds_spaces_mode_model_and_send() {
@@ -795,7 +817,7 @@ fn a_claude_chats_toolbar_holds_spaces_mode_model_and_send() {
         assert!(left.w > 0.0 && right.w > 0.0);
         assert!(left.x + left.w <= right.x, "{left:?} runs into {right:?}");
     }
-    assert_eq!(mode.w, koru_ui::split_button::SplitButton::MENU_W);
+    assert_eq!(mode.w, koru_ui::split_button::SplitButton::RESTING_MENU_W);
 }
 
 /// The open list with the pointer on *Ask first* and the keyboard on

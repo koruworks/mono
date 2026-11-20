@@ -34,8 +34,6 @@ use crate::{actor::Command as ActorCommand, schedule_events::ScheduleEventAuthor
 const REPAIR_BACKOFF: Duration = Duration::from_secs(1);
 const SCHEDULER_RECONCILE_BATCH: usize = 1;
 const EVENT_PUBLISHER_STOP_BOUND: Duration = Duration::from_secs(8);
-mod routine;
-mod routine_control;
 
 #[derive(Default)]
 struct LoopState {
@@ -98,21 +96,6 @@ enum Command {
         reply: mpsc::SyncSender<Result<u64, Failure>>,
     },
     CancelWatch(u64),
-    /// IPC 17: one owner control of a Bot Routine. Served here because the
-    /// Schedule document write belongs to this thread.
-    ControlRoutine {
-        route: koru_delegate_core::RoutineRouteIdentity,
-        expected_revision: u32,
-        action: koru_delegate_api::bots::RoutineControlAction,
-        reply: routine_control::RoutineReply,
-    },
-    /// IPC 17: acceptance of one owner Test. The claim is a later pass.
-    TestRoutine {
-        route: koru_delegate_core::RoutineRouteIdentity,
-        expected_revision: u32,
-        occurrence_ms: i64,
-        reply: routine_control::RoutineReply,
-    },
     #[cfg(feature = "test-support")]
     FixtureWake(mpsc::SyncSender<Result<(), String>>),
     Stop,
@@ -230,8 +213,8 @@ impl Handle {
         actor: mpsc::Sender<ActorCommand>,
         publisher_events: Box<dyn ScheduleEvents>,
         authority_gate: Arc<ScheduleEventAuthorityGate>,
-        stopped: Arc<AtomicBool>,
     ) -> Result<Self, String> {
+        let stopped = Arc::new(AtomicBool::new(false));
         let (commands, inbox) = mpsc::channel();
         let wake_commands = commands.clone();
         let wake = ScheduleWake::new(move || {
@@ -679,7 +662,7 @@ fn run(
     stopped: Arc<AtomicBool>,
 ) {
     let stopped_actor = actor.clone();
-    let mut effects = ActorEffects::new(actor, stopped.clone());
+    let mut effects = ActorEffects { actor };
     let mut exact_watch: Option<Box<dyn ScheduleChangeWatch>> = None;
     let mut exact_targets = None;
     let mut state = LoopState::default();
@@ -706,47 +689,15 @@ fn run(
         #[cfg(not(feature = "test-support"))]
         let fixture_woken = false;
         let woke = wake.take() || fixture_woken;
-        if woke {
-            coordinator.wake_routine_repair();
-        }
         if state.take_evaluation(woke, wall_now, now) {
+            let Some(_authority) = authority_gate.enter() else {
+                break;
+            };
+            reconcile_schedule_events(&mut coordinator, &mut event_unhealthy);
             #[cfg(feature = "test-support")]
             let mut fixture_result = Ok(());
             let zone = koru_time_zone::SystemZone::detect();
-            let evaluation = effects
-                .finish_pending_routine_release(
-                    Instant::now() + koru_delegate_api::routines::ROUTINE_BRIDGE_DEADLINE,
-                )
-                .and_then(|()| {
-                    let authority = authority_gate.enter().ok_or_else(|| {
-                        PortError::new(
-                            Port::Schedules,
-                            "scheduler_stopped",
-                            "Schedule authority stopped",
-                        )
-                    })?;
-                    reconcile_schedule_events(&mut coordinator, &mut event_unhealthy);
-                    let evaluated = coordinator.evaluate(&mut effects, wall_now, &zone);
-                    drop(authority);
-                    let mut report = evaluated?;
-                    if let Some(work) = report.routine_work.take() {
-                        let routine = coordinator.evaluate_routine_work(
-                            work,
-                            &mut effects,
-                            Instant::now() + koru_delegate_api::routines::ROUTINE_BRIDGE_DEADLINE,
-                        )?;
-                        report.failures = report.failures.saturating_add(routine.failures);
-                        report.evaluated = report.evaluated.saturating_add(routine.evaluated);
-                        report.started.extend(routine.started);
-                        report.next_deadline_ms =
-                            match (report.next_deadline_ms, routine.next_deadline_ms) {
-                                (Some(a), Some(b)) => Some(a.min(b)),
-                                (a, b) => a.or(b),
-                            };
-                    }
-                    Ok(report)
-                });
-            match evaluation {
+            match coordinator.evaluate(&mut effects, wall_now, &zone) {
                 Ok(report) => {
                     state.deadline_ms = report.next_deadline_ms;
                     state.repair_at = None;
@@ -1053,59 +1004,6 @@ fn run(
             Ok(Command::CancelWatch(watcher)) => {
                 cancel_watcher(&mut watchers, watcher);
             }
-            Ok(Command::ControlRoutine {
-                route,
-                expected_revision,
-                action,
-                reply,
-            }) => {
-                let zone = koru_time_zone::SystemZone::detect();
-                let result = {
-                    let Some(_authority) = authority_gate.enter() else {
-                        break;
-                    };
-                    routine_control::controlled(coordinator.control_routine(
-                        &route,
-                        expected_revision,
-                        routine_control::request(action),
-                        wall_now_ms(),
-                        &zone,
-                    ))
-                };
-                // Answered only after the Store acknowledged the commit and
-                // the prepared event was made Ready, in that order.
-                let changed = answer_then_publish(reply, result, &publisher_wake);
-                if changed {
-                    generation.generation = generation.generation.saturating_add(1);
-                    notify_watchers(&mut watchers, &generation);
-                    wake.signal();
-                }
-            }
-            Ok(Command::TestRoutine {
-                route,
-                expected_revision,
-                occurrence_ms,
-                reply,
-            }) => {
-                let result = {
-                    let Some(_authority) = authority_gate.enter() else {
-                        break;
-                    };
-                    routine_control::accepted(coordinator.accept_routine_test(
-                        &route,
-                        expected_revision,
-                        occurrence_ms,
-                        wall_now_ms(),
-                    ))
-                };
-                let accepted = result.is_ok();
-                let _ = reply.send(result);
-                if accepted {
-                    // The next pass runs the Test candidate. Acceptance wrote
-                    // nothing, so there is nothing to publish.
-                    wake.signal();
-                }
-            }
             #[cfg(feature = "test-support")]
             Ok(Command::FixtureWake(completed)) => fixture_completions.push(completed),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1211,8 +1109,6 @@ fn answer_then_publish<T, E>(
 
 struct ActorEffects {
     actor: mpsc::Sender<ActorCommand>,
-    stopped: Arc<AtomicBool>,
-    routine: Option<routine::PendingRoutine>,
 }
 
 impl ActorEffects {
@@ -1226,29 +1122,12 @@ impl ActorEffects {
 }
 
 impl ScheduleEffects for ActorEffects {
-    fn begin_routine(
-        &mut self,
-        prepared: &koru_delegate_core::RoutinePrepared,
-        admission: &koru_delegate_core::BotAdmissionBarrier,
-        proof: &koru_delegate_core::FreshBotPolicyProof,
-        scope: ScopeIdentity,
-        authored_scope: koru_delegate_core::WorkspaceScope,
-        deadline: Instant,
-    ) -> PortResult<ScheduleAdmission> {
-        self.begin_routine_wait(prepared, admission, proof, scope, authored_scope, deadline)
-    }
-
-    fn release_routine(&mut self, run: RunId, deadline: Instant) -> PortResult<()> {
-        self.release_routine_wait(run, deadline)
-    }
-
     fn begin(
         &mut self,
         run: RunId,
         scope: ScopeIdentity,
         authored_scope: koru_delegate_core::WorkspaceScope,
     ) -> PortResult<ScheduleAdmission> {
-        self.no_pending_routine()?;
         let (reply, answer) = mpsc::sync_channel(1);
         self.actor
             .send(ActorCommand::ScheduleBegin {
@@ -1268,7 +1147,6 @@ impl ScheduleEffects for ActorEffects {
         scope: koru_delegate_scope::ResolvedScope,
         authored_scope: koru_delegate_core::WorkspaceScope,
     ) -> PortResult<Option<Started>> {
-        self.no_pending_routine()?;
         let (reply, answer) = mpsc::sync_channel(1);
         self.actor
             .send(ActorCommand::ScheduleFinish {
@@ -1292,7 +1170,6 @@ impl ScheduleEffects for ActorEffects {
         claim: SlotClaim,
         authored_scope: koru_delegate_core::WorkspaceScope,
     ) -> PortResult<Option<Started>> {
-        self.no_pending_routine()?;
         let (reply, answer) = mpsc::sync_channel(1);
         self.actor
             .send(ActorCommand::ScheduleReconcile {

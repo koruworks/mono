@@ -239,6 +239,37 @@ impl Gateway {
                     },
                 })
             }
+            BotCommand::SetMemory {
+                request_id,
+                bot_id,
+                expected_revision,
+                memory,
+            } => {
+                let current: person::Bot = self.person_read(
+                    owner,
+                    Query::Bot {
+                        bot: bot_id.as_uuid(),
+                    },
+                )?;
+                if memory
+                    .as_ref()
+                    .is_some_and(|page| page.workspace != current.definition.access.workspace)
+                {
+                    return Err(Error::InvalidRequest);
+                }
+                let bot = self.window_change(
+                    owner,
+                    request_id,
+                    Change::Memory {
+                        bot: bot_id.as_uuid(),
+                        revision: expected_revision,
+                        memory: memory.map(|page| page.document.as_uuid()),
+                    },
+                )?;
+                Ok(BotResponse::Bot {
+                    bot: self.bot_view(owner, bot)?,
+                })
+            }
             BotCommand::Pause {
                 request_id,
                 bot_id,

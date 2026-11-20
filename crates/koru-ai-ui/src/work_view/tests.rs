@@ -20,6 +20,7 @@ fn transcript() -> ChatTranscript {
     let now = Timestamp::from_millis(1);
     let chat_id = ChatId::new();
     ChatTranscript {
+        active_attempt: None,
         sources: Vec::new(),
         chat: Chat {
             id: chat_id,
@@ -113,7 +114,7 @@ fn row(
 
 /// A finished reply that read two files after saying what it would do,
 /// with the commentary and the answer run together as an agent stores them.
-fn finished(surface: &mut ChatSurface) -> (MessageId, [ToolInvocationId; 2]) {
+pub(crate) fn finished(surface: &mut ChatSurface) -> (MessageId, [ToolInvocationId; 2]) {
     let mut transcript = transcript();
     let chat = transcript.chat.id;
     let question = message(
@@ -235,6 +236,178 @@ fn the_header_opens_the_commentary_and_the_steps_by_click_and_by_key() {
     assert!(!surface.opened_work.contains(&reply));
     rebuild(&mut surface);
     assert!(surface.work_layouts[0].lines.is_empty());
+}
+
+fn output_surface(output: &str) -> (ChatSurface, MessageId, ToolInvocationId) {
+    let mut surface = ChatSurface::new();
+    let (reply, [call, _]) = finished(&mut surface);
+    let rows = &mut surface.transcript.as_mut().unwrap().tool_activities;
+    rows.truncate(1);
+    rows[0].tool_name = "agent.other".into();
+    rows[0].agent_label = Some("search_tool".into());
+    rows[0].agent_output = Some(output.into());
+    surface.opened_work.insert(reply);
+    surface.opened_step_groups.insert((reply, 0));
+    surface.opened_calls.insert(call);
+    rebuild(&mut surface);
+    (surface, reply, call)
+}
+
+#[test]
+fn the_copy_button_shares_the_open_call_row_and_copies_its_whole_folded_value() {
+    let output = serde_json::to_string(&(0..40).collect::<Vec<_>>()).unwrap();
+    let (mut surface, _, call) = output_surface(&output);
+    for width in [180.0, 640.0] {
+        surface.rebuild_messages(width);
+        let work = &surface.work_layouts[0];
+        let line = work
+            .lines
+            .iter()
+            .find(|line| line.hit == Some(WorkHit::Call(call)))
+            .unwrap();
+        let origin = (40.0, 60.0);
+        let row = line.rect(origin.0, origin.1, width);
+        let copy = line.copy_button(origin.0, origin.1, width).unwrap().rect();
+        assert!(copy.x >= row.x && copy.x + copy.w <= row.x + row.w);
+        assert!(copy.y >= row.y && copy.y + copy.h <= row.y + row.h);
+        assert!(line.layout.width() + CARET + COPY_GAP + copy.w <= row.w + 1.0);
+        assert!(
+            work.lines
+                .iter()
+                .any(|line| line.hit == Some(WorkHit::Toggle(call)))
+        );
+        assert_eq!(
+            hit(
+                work,
+                origin.0,
+                origin.1,
+                width,
+                copy.x + copy.w / 2.0,
+                copy.y + copy.h / 2.0
+            ),
+            Some(WorkHit::CopyOutput(call))
+        );
+        assert_eq!(
+            hit(
+                work,
+                origin.0,
+                origin.1,
+                width,
+                row.x + 1.0,
+                row.y + row.h / 2.0
+            ),
+            Some(WorkHit::Call(call))
+        );
+    }
+    crate::tests::COPIED.with(|copied| copied.borrow_mut().clear());
+    surface.messages_dirty = false;
+    assert!(surface.toggle_work(WorkHit::CopyOutput(call)));
+    crate::tests::COPIED.with(|copied| assert_eq!(*copied.borrow(), [output.clone()]));
+    assert!(
+        !surface.messages_dirty,
+        "copy does not reflow the transcript"
+    );
+    assert!(surface.opened_calls.contains(&call));
+    assert!(!surface.expanded_outputs.contains(&call));
+
+    surface.toggle_work(WorkHit::Call(call));
+    rebuild(&mut surface);
+    assert!(
+        surface.work_layouts[0]
+            .lines
+            .iter()
+            .all(|line| line.copy_output.is_none())
+    );
+    assert!(!surface.copy_tool_output(ToolInvocationId::new()));
+}
+
+#[test]
+fn keyboard_reaches_copy_after_the_call_and_activates_the_same_value() {
+    let output = r#"{"tools":["first","second"]}"#;
+    let (mut surface, reply, call) = output_surface(output);
+    surface.opened_work.clear();
+    surface.opened_calls.clear();
+    surface.opened_step_groups.clear();
+    surface.messages_dirty = true;
+    surface.focus = Focus::Composer;
+    let tab = Key::Named(NamedKey::Tab);
+    let enter = Key::Named(NamedKey::Enter);
+    assert!(surface.key(&tab, None, ModifiersState::SHIFT));
+    assert_eq!(surface.work_focus(), Some(WorkHit::Header(reply)));
+    assert!(surface.key(&enter, None, ModifiersState::empty()));
+    assert!(surface.key(&tab, None, ModifiersState::empty()));
+    assert_eq!(surface.work_focus(), Some(WorkHit::Group(reply, 0)));
+    assert!(surface.key(&enter, None, ModifiersState::empty()));
+    assert!(surface.key(&tab, None, ModifiersState::empty()));
+    assert_eq!(surface.work_focus(), Some(WorkHit::Call(call)));
+    assert!(surface.key(&enter, None, ModifiersState::empty()));
+    assert!(surface.key(&tab, None, ModifiersState::empty()));
+    assert_eq!(surface.work_focus(), Some(WorkHit::CopyOutput(call)));
+    crate::tests::COPIED.with(|copied| copied.borrow_mut().clear());
+    assert!(surface.key(&enter, None, ModifiersState::empty()));
+    crate::tests::COPIED.with(|copied| assert_eq!(*copied.borrow(), [output]));
+    assert!(surface.key(&tab, None, ModifiersState::SHIFT));
+    assert_eq!(surface.work_focus(), Some(WorkHit::Call(call)));
+    assert!(surface.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty()));
+    assert_eq!(surface.focus, Focus::Composer);
+}
+
+#[test]
+fn calls_without_output_have_no_copy_action() {
+    for output in ["", "  \n"] {
+        let (surface, _, _) = output_surface(output);
+        assert!(
+            surface.work_layouts[0]
+                .lines
+                .iter()
+                .all(|line| line.copy_output.is_none())
+        );
+    }
+}
+
+#[test]
+fn the_shared_copy_button_is_recorded_inside_its_call_row() {
+    let (mut surface, _, call) = output_surface(r#"{"tools":["one"]}"#);
+    let work = &surface.work_layouts[0];
+    let at = Rect::new(40.0, 60.0, 320.0, work.height);
+    let frame =
+        koru_draw::inspect::Frame::begin(1, Affine::IDENTITY, scene::rect(0.0, 0.0, 500.0, 1000.0));
+    draw(
+        &mut Scene::new(),
+        Affine::IDENTITY,
+        &mut surface.engine,
+        Lang::En,
+        work,
+        at,
+        None,
+        Some(WorkHit::CopyOutput(call)),
+        100_000,
+        None,
+        None,
+        &mut |_, _, _, _| {},
+    );
+    let recorded = frame.finish();
+    let (copy_index, copy) = recorded
+        .records
+        .iter()
+        .enumerate()
+        .find(|(_, record)| record.name == "Copy tool output")
+        .unwrap();
+    let row = &recorded.records[copy.parent.expect("copy belongs to its row")];
+    assert_eq!(row.name, "Tool call row");
+    assert!(copy.bounds[0] >= row.bounds[0] && copy.bounds[2] <= row.bounds[2]);
+    assert!(copy.bounds[1] >= row.bounds[1] && copy.bounds[3] <= row.bounds[3]);
+    assert!(
+        copy.properties
+            .iter()
+            .any(|property| property.name == "slot" && property.value == "S7")
+    );
+    assert!(
+        recorded
+            .records
+            .iter()
+            .any(|record| record.parent == Some(copy_index) && record.name == "KoruIconButton")
+    );
 }
 
 #[test]

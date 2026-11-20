@@ -36,13 +36,10 @@ mod actor;
 mod authority;
 mod bootstrap;
 mod context;
-mod decision_bridge;
 mod documents;
 mod events;
 mod ledger;
-mod publication;
 mod roots;
-mod routine_bridge;
 mod schedule_events;
 mod scheduler;
 pub mod schedules;
@@ -136,8 +133,6 @@ fn serve(
     debug: bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + PEERS_DEADLINE;
-    let legacy_bots =
-        koru_bots_engine::legacy_allowed(&bootstrap.root).map_err(|error| error.to_string())?;
     let session_endpoint = sessions::endpoint(&bootstrap.segment, explicit_root)
         .map_err(|error| format!("session endpoint: {error}"))?;
     let sessions =
@@ -159,13 +154,9 @@ fn serve(
     // launch profile from its intent, and the bus reads the identity a run's
     // `created` fact first travelled under.
     let ledger = ledger::SharedLedger::new(
-        RunsDb::open_with_clock(
-            &koru_delegate_sqlite::runs_db_path(&bootstrap.store_directory),
-            Box::new(stubs::WallClock),
-        )
-        .map_err(|error| format!("runs.db: {error}"))?,
-    )
-    .with_legacy_bots(legacy_bots);
+        RunsDb::open_beside(&bootstrap.store_directory)
+            .map_err(|error| format!("runs.db: {error}"))?,
+    );
     // The gateway builds a run's endpoint URL from the address it published,
     // so this worker overrides it only when a person named one.
     let mcp_base = koru_env::value(koru_env::name::KORU_DELEGATE_MCP_ENDPOINT);
@@ -200,7 +191,11 @@ fn serve(
             gateway.client.clone(),
             ledger.clone(),
         )),
-        preamble: Box::new(stubs::InstalledPreamble::new(installation_dir())),
+        preamble: Box::new(
+            stubs::InstalledPreamble::new(installation_dir()).with_orientation_override(
+                settings().map(|paths| paths.session_instructions_file()),
+            ),
+        ),
         // **Not `<delegate-root>/runs/` any more** (ADR-365). Where a run
         // that belongs to no project does its work is a person's choice, held
         // as a device-local setting and defaulting to this machine's
@@ -227,28 +222,6 @@ fn serve(
             ..Options::default()
         },
     );
-    let schedule_event_authority = Arc::new(schedule_events::ScheduleEventAuthorityGate::new());
-    let schedule_stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let routine_bridge = routine_bridge::HostRoutineBridge::new(
-        &gateway.client,
-        bootstrap.bot_authority(),
-        Arc::clone(&schedule_stopped),
-    );
-    // The decision enrollment client, under its own credential domain and the
-    // same stop flag. It moves onto the fixed publication worker below, the
-    // only thread its HTTP call runs on.
-    let decision_bridge = decision_bridge::HostDecisionBridge::new(
-        &gateway.client,
-        bootstrap.bot_authority(),
-        Arc::clone(&schedule_stopped),
-    );
-    // The child wait's enrollment client (M6): the same credential domain on
-    // the child routes, as its own client so each has its own in-flight slot.
-    let child_bridge = decision_bridge::HostDecisionBridge::new(
-        &gateway.client,
-        bootstrap.bot_authority(),
-        Arc::clone(&schedule_stopped),
-    );
     let scheduler = ScheduleCoordinator::new(
         Box::new(schedules::StoreSchedules::new(gateway.client.clone())),
         Box::new(ledger.clone()),
@@ -260,15 +233,7 @@ fn serve(
         gateway.client.clone(),
         ledger.clone(),
     )));
-    let scheduler = if legacy_bots {
-        scheduler.with_routines(
-            Box::new(ledger.clone()),
-            Box::new(routine_bridge),
-            Box::new(schedule_event_authority.as_ref().clone()),
-        )
-    } else {
-        scheduler
-    };
+    let schedule_event_authority = Arc::new(schedule_events::ScheduleEventAuthorityGate::new());
     let schedule_publisher = Box::new(schedule_events::BusScheduleEvents::publisher(
         gateway.client.clone(),
         ledger.clone(),
@@ -277,20 +242,12 @@ fn serve(
 
     let (commands, inbox) = mpsc::channel();
     let mut actor = actor::Actor::new(orchestrator, commands.clone(), device.clone());
-    actor.legacy_bots = legacy_bots;
-    actor
-        .attach_decision_bridge(Box::new(decision_bridge))
-        .map_err(|error| format!("could not start the publication worker: {error}"))?;
-    actor
-        .attach_child_bridge(Box::new(child_bridge))
-        .map_err(|error| format!("could not attach the child enrollment client: {error}"))?;
     let scheduler = scheduler::Handle::spawn(
         scheduler,
         gateway.client.clone(),
         commands.clone(),
         schedule_publisher,
         schedule_event_authority,
-        schedule_stopped,
     )?;
     actor.attach_scheduler(scheduler.control());
     let listener = koru_ipc::Listener::bind(
@@ -304,14 +261,13 @@ fn serve(
             launch_id: bootstrap.launch_id.clone(),
             authority: bootstrap.authority().to_owned(),
             device_id: device.clone(),
-            bot_authority: bootstrap.bot_authority().cloned(),
+            run_authority: bootstrap.run_authority().cloned(),
             run_authorities,
         },
         commands,
         stop_tx,
         actor.active_runs(),
         scheduler.control(),
-        legacy_bots,
     )?;
     tracing::info!(
         target: "koru::delegate",

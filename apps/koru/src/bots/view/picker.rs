@@ -32,6 +32,7 @@ pub(super) enum Destination {
     Access,
     Role,
     Knowledge,
+    Memory,
     /// The quick setup's step 2: Knowledge, saved as soon as it is picked.
     Setup,
 }
@@ -56,12 +57,18 @@ impl BotView {
         self.picker_destination = Destination::Knowledge;
     }
 
+    pub(super) fn open_memory_picker(&mut self) {
+        self.open_page_picker();
+        self.picker_destination = Destination::Memory;
+    }
+
     /// The control the picker opens under, and the keyboard goes back to.
     fn picker_anchor(&self) -> koru_draw::el::Key {
         match self.picker_destination {
             Destination::Role => super::create::CHOOSE_ROLE_PAGE,
             Destination::Access => ADD_PAGE,
             Destination::Knowledge => super::library::ADD,
+            Destination::Memory => super::memory::CHOOSE,
             Destination::Setup => super::onboard::BROWSE,
         }
     }
@@ -122,7 +129,7 @@ impl BotView {
         );
         let pages = match self.picker_destination {
             Destination::Knowledge | Destination::Setup => self.library.pages(),
-            Destination::Role => &[],
+            Destination::Role | Destination::Memory => &[],
             Destination::Access => self.pages_shown(),
         };
         let listed: Vec<koru_core::DocumentId> = pages
@@ -131,6 +138,21 @@ impl BotView {
             .collect();
         hits.into_iter()
             .filter(|hit| !listed.contains(&hit.target.document))
+            .filter(|hit| {
+                self.picker_destination != Destination::Memory
+                    || self.library.held().is_some_and(|held| {
+                        held.role.document.as_uuid() != hit.target.document.as_uuid()
+                            && !self
+                                .library
+                                .pages()
+                                .iter()
+                                .chain(held.knowledge.iter())
+                                .chain(held.memory.iter())
+                                .any(|page| {
+                                    page.document.as_uuid() == hit.target.document.as_uuid()
+                                })
+                    })
+            })
             .filter(|hit| {
                 !knowledge
                     || self
@@ -196,6 +218,9 @@ impl BotView {
                 }
                 None if self.picker_destination == Destination::Setup => {
                     self.setup_add_page(page);
+                }
+                None if self.picker_destination == Destination::Memory => {
+                    self.choose_memory_page(page);
                 }
                 None => {
                     if self.picker_destination == Destination::Knowledge {

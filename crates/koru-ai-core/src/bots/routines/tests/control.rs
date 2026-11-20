@@ -22,11 +22,6 @@ fn routine_control_commands_are_closed_and_carry_no_owner_or_authority_field() {
             expected_definition_revision: 1,
             action: BotRoutineLifecycleAction::Enable,
         },
-        BotCommand::TestRoutine {
-            bot_id,
-            schedule_id,
-            expected_definition_revision: 1,
-        },
         BotCommand::EditRoutine {
             bot_id,
             schedule_id,
@@ -123,15 +118,6 @@ fn routine_control_replies_roundtrip_with_their_stable_spelling() {
             reason: SchedulePauseReason::Manual,
         }
     );
-    let test = BotResponse::RoutineTest {
-        test: BotRoutineTest {
-            schedule_id,
-            occurrence_ms: 2 * MINUTE,
-        },
-    };
-    let json = serde_json::to_value(&test).unwrap();
-    assert_eq!(json["result"], "routine_test");
-    assert_eq!(serde_json::from_value::<BotResponse>(json).unwrap(), test);
     let access = BotResponse::RoutineAccess {
         access: BotRoutineAccess::of(
             schedule_id,
@@ -176,19 +162,6 @@ fn routine_control_not_ready_reasons_have_one_order_and_stable_tokens() {
     for reason in reasons {
         assert_eq!(serde_json::to_value(reason).unwrap(), reason.token());
     }
-}
-
-#[test]
-fn routine_control_test_minute_is_the_current_one_until_ten_seconds_remain() {
-    // A fake clock: no time is read.
-    assert_eq!(routine_test_minute(0), Some(0));
-    assert_eq!(routine_test_minute(5 * MINUTE + 49_999), Some(5 * MINUTE));
-    assert_eq!(routine_test_minute(5 * MINUTE + 50_000), Some(5 * MINUTE));
-    // Under ten seconds left: the wait for the next minute, never that one.
-    assert_eq!(routine_test_minute(5 * MINUTE + 50_001), None);
-    assert_eq!(routine_test_minute(5 * MINUTE + 59_999), None);
-    assert_eq!(routine_test_minute(6 * MINUTE), Some(6 * MINUTE));
-    assert_eq!(routine_test_minute(-1), None);
 }
 
 fn line(minute: i64, outcome: RoutineOccurrenceOutcome) -> RoutineFiringLine {

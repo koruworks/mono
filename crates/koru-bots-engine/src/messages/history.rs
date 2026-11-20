@@ -162,7 +162,7 @@ impl Database {
             PAGE_LIMIT,
             true,
             None,
-            koru_bot_client_wire::limits::MAX_PAGE_BYTES as usize,
+            crate::limits::MAX_PAGE_BYTES,
         )?;
         messages.reverse();
         Ok(messages)
@@ -182,7 +182,7 @@ impl Database {
             PAGE_LIMIT,
             false,
             None,
-            koru_bot_client_wire::limits::MAX_PAGE_BYTES as usize,
+            crate::limits::MAX_PAGE_BYTES,
         )
     }
     /// The worker carrier must resolve the current Bot identity before calling.
@@ -204,7 +204,7 @@ impl Database {
             PAGE_LIMIT,
             false,
             None,
-            koru_bot_client_wire::limits::MAX_PAGE_BYTES as usize,
+            crate::limits::MAX_PAGE_BYTES,
         )
     }
 }

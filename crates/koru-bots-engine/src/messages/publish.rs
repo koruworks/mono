@@ -8,9 +8,7 @@ impl Database {
         request: &Publish,
         now: i64,
     ) -> Result<Receipt<Published>, Error> {
-        if request.command.is_nil()
-            || encode(request)?.len() > koru_bot_client_wire::MAX_FRAME_BYTES
-        {
+        if request.command.is_nil() || encode(request)?.len() > crate::limits::MAX_PAYLOAD_BYTES {
             return Err(Error::InvalidRequest);
         }
         let digest = receipts::digest("publish", request)?;
@@ -68,6 +66,7 @@ impl Database {
             params![request.turn.id.to_string(), message.to_string()],
         )?;
         collaboration::published(&tx, request.turn, message, thread_id, now)?;
+        crate::routines::schedule::published(&tx, request.turn, message, now)?;
         let unfinished:Vec<(String,Vec<u8>)>=tx.prepare("SELECT id,payload FROM deliveries WHERE turn=?1 AND state IN ('offered','unknown')")?.query_map([request.turn.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
         for (id, payload) in unfinished {
             let mut delivery: Delivery = decode(&payload)?;

@@ -29,6 +29,7 @@ use koru_ai_wire::{
     UsageResponse,
 };
 
+pub use koru_ai_wire::bot_routines;
 use koru_store_core::errors::{Code, Error, Result};
 
 pub use koru_api_wire::{
@@ -66,13 +67,9 @@ pub mod schedules;
 #[cfg(feature = "delegate")]
 pub use schedules::{ScheduleSubscription, SchedulesClient, SchedulesResult};
 #[cfg(feature = "delegate")]
-pub mod routine_bridge;
 #[cfg(feature = "delegate")]
-pub use routine_bridge::{RoutineBridgeClient, RoutineBridgeTransportError};
 #[cfg(feature = "delegate")]
-pub mod decision_bridge;
 #[cfg(feature = "delegate")]
-pub use decision_bridge::{DecisionBridgeClient, DecisionBridgeTransportError};
 pub mod catalog;
 pub use catalog::{
     CatalogClient, WORKSPACE_IN_USE, WorkspaceApiFailure, WorkspaceError, WorkspaceResult,
@@ -670,46 +667,6 @@ pub struct ModelPullEventStream {
 }
 
 impl AiClient<'_> {
-    pub fn list_bots(
-        &self,
-        request: &koru_ai_wire::ListBotsRequest,
-    ) -> AiResult<koru_ai_wire::ListBotsResponse> {
-        self.json(
-            reqwest::Method::POST,
-            "/v1/ai/bots/list".into(),
-            Some(json_body(request)?),
-        )
-    }
-    pub fn start_bot_task(
-        &self,
-        request: &koru_ai_wire::StartBotTaskRequest,
-    ) -> AiResult<koru_ai_wire::SendTurnAccepted> {
-        self.json(
-            reqwest::Method::POST,
-            "/v1/ai/bots/tasks/start".into(),
-            Some(json_body(request)?),
-        )
-    }
-    pub fn read_bot_task(
-        &self,
-        request: &koru_ai_wire::ReadBotTaskRequest,
-    ) -> AiResult<koru_ai_wire::ReadBotTaskResponse> {
-        self.json(
-            reqwest::Method::POST,
-            "/v1/ai/bots/tasks/read".into(),
-            Some(json_body(request)?),
-        )
-    }
-    pub fn stop_bot_task(
-        &self,
-        request: &koru_ai_wire::StopBotTaskRequest,
-    ) -> AiResult<koru_ai_wire::CancelAttemptResponse> {
-        self.json(
-            reqwest::Method::POST,
-            "/v1/ai/bots/tasks/stop".into(),
-            Some(json_body(request)?),
-        )
-    }
     pub fn bots(&self, request: &koru_ai_wire::BotCommand) -> AiResult<koru_ai_wire::BotResponse> {
         self.json(
             reqwest::Method::POST,
@@ -724,6 +681,16 @@ impl AiClient<'_> {
         self.json(
             reqwest::Method::POST,
             "/v1/ai/bots/threads".into(),
+            Some(json_body(request)?),
+        )
+    }
+    pub fn bot_routine(
+        &self,
+        request: &koru_ai_wire::bot_routines::Command,
+    ) -> AiResult<koru_ai_wire::bot_routines::Response> {
+        self.json(
+            reqwest::Method::POST,
+            "/v1/ai/bots/routines".into(),
             Some(json_body(request)?),
         )
     }

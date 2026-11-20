@@ -19,6 +19,33 @@ use crate::ChatSurface;
 
 const DOCUMENT: &str = "koru://doc/0b9c1f1e-6a0e-4b7a-9f53-2d8f0c6a7e11";
 
+#[test]
+fn bot_references_are_clickable_without_a_url_card_and_web_cards_still_work() {
+    let bot = uuid::Uuid::new_v4();
+    let url = koru_link::bot_link(bot, "Scout");
+    let mut surface = surface_with(&format!("[Scout]({url}) and [website](https://k.test/)"));
+    let point = point_on(&surface, "https://k.test/");
+    surface.mouse_move(point.0, point.1);
+    assert!(
+        surface
+            .link_card
+            .visible(Instant::now() + Duration::from_secs(1))
+    );
+    let point = point_on(&surface, &url);
+    surface.mouse_move(point.0, point.1);
+    assert!(
+        !surface
+            .link_card
+            .visible(Instant::now() + Duration::from_secs(1))
+    );
+    assert!(surface.link_card.deadline().is_none());
+    assert!(surface.mouse_down(point.0, point.1));
+    surface.mouse_up();
+    assert!(
+        matches!(surface.take_open_document_request(), Some(koru_link::KoruLink::Bot { bot: actual, .. }) if actual == bot)
+    );
+}
+
 /// A reply with a link in every kind of block a reply has: a paragraph, a
 /// list item, a quote, a heading, bold and italic, an autolink, an address
 /// written bare, and a table whose cells hold a web link and a document.
@@ -49,6 +76,7 @@ fn surface_with(markdown: &str) -> ChatSurface {
     surface.lang = koru_i18n::Lang::En;
     surface.set_viewport(Rect::new(0.0, 0.0, 1000.0, 3000.0));
     surface.transcript = Some(ChatTranscript {
+        active_attempt: None,
         sources: Vec::new(),
         chat: Chat {
             id: chat_id,

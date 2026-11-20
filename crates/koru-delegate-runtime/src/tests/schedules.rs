@@ -16,8 +16,6 @@ use koru_delegate_schedule::{
 use koru_delegate_scope::ScopeIdentity;
 use koru_delegate_sqlite::SlotOutcome;
 
-mod routine;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ScheduleEventCall {
     ExistingCreated,
@@ -32,7 +30,6 @@ enum ScheduleEventCall {
 #[derive(Default)]
 struct ScheduleEventScript {
     calls: Vec<ScheduleEventCall>,
-    definitions: Vec<koru_delegate_schedule::ScheduleDefinition>,
     fail_definition_prepare: bool,
     fail_occurrence_reconcile: bool,
 }
@@ -91,7 +88,6 @@ impl ScheduleEvents for RecordingScheduleEvents {
         &mut self,
         _schedule: ScheduleEventRef,
         definition: &koru_delegate_schedule::ScheduleDefinition,
-        kind: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent> {
         let mut script = self.script.lock().unwrap();
         if script.fail_definition_prepare {
@@ -103,10 +99,10 @@ impl ScheduleEvents for RecordingScheduleEvents {
             ));
         }
         let event = EventId::mint();
-        script.definitions.push(definition.clone());
-        script
-            .calls
-            .push(ScheduleEventCall::PrepareDefinition(event, kind));
+        script.calls.push(ScheduleEventCall::PrepareDefinition(
+            event,
+            schedule_definition_event(definition),
+        ));
         Ok(PreparedScheduleEvent { event })
     }
 
@@ -318,15 +314,6 @@ struct MemoryScheduleHandle {
 }
 
 impl ScheduleDocumentHandle for MemoryScheduleHandle {
-    fn expired_routine_authority(
-        &self,
-        device: DeviceId,
-        plan: koru_delegate_document::RoutineExpiryPlan,
-    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
-        self.document
-            .expired_routine_authority(self.workspace, device, plan)
-            .map_err(Into::into)
-    }
     fn document(&self) -> &ScheduleDocument {
         &self.document
     }
@@ -551,13 +538,6 @@ struct FailFirstCommitHandle {
 }
 
 impl ScheduleDocumentHandle for FailFirstCommitHandle {
-    fn expired_routine_authority(
-        &self,
-        device: DeviceId,
-        plan: koru_delegate_document::RoutineExpiryPlan,
-    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
-        self.inner.expired_routine_authority(device, plan)
-    }
     fn document(&self) -> &ScheduleDocument {
         self.inner.document()
     }
@@ -641,13 +621,6 @@ struct FailSecondAbsorbHandle {
 }
 
 impl ScheduleDocumentHandle for FailSecondAbsorbHandle {
-    fn expired_routine_authority(
-        &self,
-        device: DeviceId,
-        plan: koru_delegate_document::RoutineExpiryPlan,
-    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
-        self.inner.expired_routine_authority(device, plan)
-    }
     fn document(&self) -> &ScheduleDocument {
         self.inner.document()
     }
@@ -2807,7 +2780,7 @@ fn listing_coordinator(
         )),
         script: Arc::new(Mutex::new(LedgerScript::default())),
     };
-    let coordinator = ScheduleCoordinator::new(
+    ScheduleCoordinator::new(
         Box::new(schedules),
         Box::new(store),
         Box::new(TestSchedulePreparation {
@@ -2822,8 +2795,7 @@ fn listing_coordinator(
         }),
         Box::new(EvaluationNowClock),
         device,
-    );
-    routine::mutations::with_routes(coordinator, None, false)
+    )
 }
 
 #[test]

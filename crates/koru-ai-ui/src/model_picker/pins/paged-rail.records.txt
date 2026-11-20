@@ -1,24 +1,25 @@
-panel [438.00 67.50 360.00 315.00] rail [438.00 67.50 44.00 315.00] search [490.00 75.50 304.00 32.00] field [490.00 75.50 274.00 32.00] refresh [766.00 77.50 26.00 28.00] list [490.00 111.50 304.00 180.00] footer Some("[490.00 291.50 304.00 87.00]") strip Some("[498.00 302.50 288.00 32.00]") context Some("[564.17 342.50 82.26 28.00]") fast Some("[498.00 342.50 60.17 28.00]")
+panel [444.00 46.00 360.00 315.00] rail [444.00 46.00 44.00 315.00] search [496.00 54.00 304.00 32.00] field [496.00 54.00 274.00 32.00] refresh [772.00 56.00 26.00 28.00] list [496.00 90.00 304.00 180.00] footer Some("[496.00 270.00 304.00 87.00]") strip Some("[504.00 281.00 288.00 32.00]") context Some("[570.17 321.00 82.26 28.00]") fast Some("[504.00 321.00 60.17 28.00]")
 records 93 truncated false
-0 ^- part "Popover surface" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z0
+0 ^- part "Popover surface" b[444.00 46.00 804.00 361.00] c[0.00 0.00 900.00 700.00] z0
     radius = "10" (PopoverShell::radius; caller-owned field)
     recipe viewport inset = "8" (theme::overlay::popover().viewport_inset; anchored default, not measured padding)
     recipe anchor gap = "6" (theme::overlay::popover().anchor_gap; anchored default, not measured spacing)
     recipe radius = "10" (theme::overlay::popover().radius; anchored default, actual radius shown separately)
     coverage = "Shell paint and its content: what is drawn inside the panel nests under this record" (PopoverShell::draw_containing)
-1 ^0 part "FloatingPanel" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z1
+1 ^0 part "FloatingPanel" b[444.00 46.00 804.00 361.00] c[0.00 0.00 900.00 700.00] z1
     fill = "#FFFFFF / alpha 1.000" (scene::Panel::fill)
     elevation = "Raised" (scene::Panel::elevation)
     radius = "10" (scene::Panel::radius)
-2 ^1 part "Shadow" b[418.00 50.50 818.00 405.50] c[0.00 0.00 900.00 700.00] z2
+    shadow opacity = "1" (scene::Panel::shadow_alpha)
+2 ^1 part "Shadow" b[424.00 29.00 824.00 384.00] c[0.00 0.00 900.00 700.00] z2
     rings = "16" (one soft shadow drawn as expanding fills; vello has no blur)
     spread / dy = "20 / 3" (SHADOW_SPREAD / SHADOW_DY)
-3 ^1 primitive "fill" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z3
+3 ^1 primitive "fill" b[444.00 46.00 804.00 361.00] c[0.00 0.00 900.00 700.00] z3
     color = "#FFFFFF / alpha 1.000" (resolved paint; token origin not exposed)
-4 ^1 primitive "stroke" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z4
+4 ^1 primitive "stroke" b[444.00 46.00 804.00 361.00] c[0.00 0.00 900.00 700.00] z4
     color = "#E0E0E0 / alpha 1.000" (resolved paint; token origin not exposed)
     width = "1" (scene::stroke)
-5 ^0 element "Model picker" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z5
+5 ^0 element "Model picker" b[444.00 46.00 804.00 361.00] c[0.00 0.00 900.00 700.00] z5
     element = "row" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -27,7 +28,7 @@ records 93 truncated false
     gap = "alias::RAIL_CONTENT_GAP = Space::S2 -> 8" (El::gap)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-6 ^5 element "Agent rail" b[438.00 67.50 482.00 382.50] c[0.00 0.00 900.00 700.00] z6
+6 ^5 element "Agent rail" b[444.00 46.00 488.00 361.00] c[0.00 0.00 900.00 700.00] z6
     element = "row" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -39,7 +40,7 @@ records 93 truncated false
     pad_end = "Space::S0 -> 0" (El::pad_end)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-7 ^6 element "Agent rail column" b[439.00 68.50 482.00 381.50] c[0.00 0.00 900.00 700.00] z7
+7 ^6 element "Agent rail column" b[445.00 47.00 488.00 360.00] c[0.00 0.00 900.00 700.00] z7
     element = "column" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -54,9 +55,9 @@ records 93 truncated false
     fill colour = "Surface::Ground -> #F7F7F7 / alpha 1.000" (El::bg)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-8 ^7 primitive "fill" b[439.00 68.50 482.00 381.50] c[0.00 0.00 900.00 700.00] z8
+8 ^7 primitive "fill" b[445.00 47.00 488.00 360.00] c[0.00 0.00 900.00 700.00] z8
     color = "#F7F7F7 / alpha 1.000" (resolved paint; token origin not exposed)
-9 ^7 element "Previous agent page" b[444.00 75.50 476.00 107.50] c[0.00 0.00 900.00 700.00] z9
+9 ^7 element "Previous agent page" b[450.00 54.00 482.00 86.00] c[0.00 0.00 900.00 700.00] z9
     element = "column" (El constructor)
     key = "surface model-picker/previous-agents" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -71,7 +72,7 @@ records 93 truncated false
     semantics = "Button" (El::semantics)
     name = "Key::AiPickerPreviousAgents" (El::name)
     input = "pointer target; Click" (El::hit / El::action)
-10 ^9 element "Icon" b[444.00 75.50 476.00 107.50] c[0.00 0.00 900.00 700.00] z10
+10 ^9 element "Icon" b[450.00 54.00 482.00 86.00] c[0.00 0.00 900.00 700.00] z10
     element = "icon" (El constructor)
     within = "surface model-picker/previous-agents" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -83,11 +84,11 @@ records 93 truncated false
     ink = "Ink::Secondary -> #6B6B6B / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-11 ^10 part "text line" b[452.00 83.50 468.00 99.50] c[0.00 0.00 900.00 700.00] z11
+11 ^10 part "text line" b[458.00 62.00 474.00 78.00] c[0.00 0.00 900.00 700.00] z11
     line height = "16" (actual Parley line box)
-    baseline = "99.5" (local layout coordinates)
+    baseline = "78" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-12 ^11 primitive "icon" b[452.00 83.50 468.00 99.50] c[0.00 0.00 900.00 700.00] z12
+12 ^11 primitive "icon" b[458.00 62.00 474.00 78.00] c[0.00 0.00 900.00 700.00] z12
     icon pack = "Tabler" (selected icon pack)
     icon source = "Tabler" (upstream or original Koru artwork)
     icon name = "CARET_UP" (icons::ALL canonical name)
@@ -95,7 +96,7 @@ records 93 truncated false
     icon variant = "regular" (requested state)
     icon size = "16" (layout slot)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint)
-13 ^7 element "Rail gap" b[460.00 107.50 460.00 113.50] c[0.00 0.00 900.00 700.00] z13
+13 ^7 element "Rail gap" b[466.00 86.00 466.00 92.00] c[0.00 0.00 900.00 700.00] z13
     element = "column" (El constructor)
     occurrence = "1 of 7 named alike" (Frame)
     profile = "desktop" (FrameCx::profile)
@@ -106,7 +107,7 @@ records 93 truncated false
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-14 ^7 element "Rail mark" b[444.00 113.50 476.00 145.50] c[0.00 0.00 900.00 700.00] z14
+14 ^7 element "Rail mark" b[450.00 92.00 482.00 124.00] c[0.00 0.00 900.00 700.00] z14
     element = "column" (El constructor)
     key = "model 00000000-0000-0000-ad8e-feba7ab03657/agent" (El::id)
     occurrence = "1 of 5 named alike" (Frame)
@@ -123,7 +124,7 @@ records 93 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-15 ^14 element "Rail mark glyph" b[444.00 113.50 476.00 145.50] c[0.00 0.00 900.00 700.00] z15
+15 ^14 element "Rail mark glyph" b[450.00 92.00 482.00 124.00] c[0.00 0.00 900.00 700.00] z15
     element = "leaf" (El constructor)
     within = "model 00000000-0000-0000-ad8e-feba7ab03657/agent" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -133,7 +134,7 @@ records 93 truncated false
     fill = "Fill(1)" (El::fill)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-16 ^7 element "Rail gap" b[460.00 145.50 460.00 151.50] c[0.00 0.00 900.00 700.00] z16
+16 ^7 element "Rail gap" b[466.00 124.00 466.00 130.00] c[0.00 0.00 900.00 700.00] z16
     element = "column" (El constructor)
     occurrence = "2 of 7 named alike" (Frame)
     profile = "desktop" (FrameCx::profile)
@@ -144,7 +145,7 @@ records 93 truncated false
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-17 ^7 element "Rail mark" b[444.00 151.50 476.00 183.50] c[0.00 0.00 900.00 700.00] z17
+17 ^7 element "Rail mark" b[450.00 130.00 482.00 162.00] c[0.00 0.00 900.00 700.00] z17
     element = "column" (El constructor)
     key = "model 00000000-0000-0000-573d-3500b4ceeefa/agent" (El::id)
     occurrence = "2 of 5 named alike" (Frame)
@@ -161,7 +162,7 @@ records 93 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-18 ^17 element "Rail mark glyph" b[444.00 151.50 476.00 183.50] c[0.00 0.00 900.00 700.00] z18
+18 ^17 element "Rail mark glyph" b[450.00 130.00 482.00 162.00] c[0.00 0.00 900.00 700.00] z18
     element = "leaf" (El constructor)
     within = "model 00000000-0000-0000-573d-3500b4ceeefa/agent" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -171,7 +172,7 @@ records 93 truncated false
     fill = "Fill(1)" (El::fill)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-19 ^7 element "Rail gap" b[460.00 183.50 460.00 189.50] c[0.00 0.00 900.00 700.00] z19
+19 ^7 element "Rail gap" b[466.00 162.00 466.00 168.00] c[0.00 0.00 900.00 700.00] z19
     element = "column" (El constructor)
     occurrence = "3 of 7 named alike" (Frame)
     profile = "desktop" (FrameCx::profile)
@@ -182,7 +183,7 @@ records 93 truncated false
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-20 ^7 element "Rail mark" b[444.00 189.50 476.00 221.50] c[0.00 0.00 900.00 700.00] z20
+20 ^7 element "Rail mark" b[450.00 168.00 482.00 200.00] c[0.00 0.00 900.00 700.00] z20
     element = "column" (El constructor)
     key = "model 00000000-0000-0000-88c0-b7f9d432ae29/agent" (El::id)
     occurrence = "3 of 5 named alike" (Frame)
@@ -199,7 +200,7 @@ records 93 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-21 ^20 element "Rail mark glyph" b[444.00 189.50 476.00 221.50] c[0.00 0.00 900.00 700.00] z21
+21 ^20 element "Rail mark glyph" b[450.00 168.00 482.00 200.00] c[0.00 0.00 900.00 700.00] z21
     element = "leaf" (El constructor)
     within = "model 00000000-0000-0000-88c0-b7f9d432ae29/agent" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -209,11 +210,11 @@ records 93 truncated false
     fill = "Fill(1)" (El::fill)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-22 ^21 part "text line" b[451.00 196.50 469.00 214.50] c[0.00 0.00 900.00 700.00] z22
+22 ^21 part "text line" b[457.00 175.00 475.00 193.00] c[0.00 0.00 900.00 700.00] z22
     line height = "18" (actual Parley line box)
-    baseline = "214.5" (local layout coordinates)
+    baseline = "193" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-23 ^22 primitive "icon" b[451.00 196.50 469.00 214.50] c[0.00 0.00 900.00 700.00] z23
+23 ^22 primitive "icon" b[457.00 175.00 475.00 193.00] c[0.00 0.00 900.00 700.00] z23
     icon pack = "Tabler" (selected icon pack)
     icon source = "Tabler" (upstream or original Koru artwork)
     icon name = "ROBOT" (icons::ALL canonical name)
@@ -221,7 +222,7 @@ records 93 truncated false
     icon variant = "regular" (requested state)
     icon size = "18" (layout slot)
     foreground = "#191919 / alpha 1.000" (resolved paint)
-24 ^7 element "Rail gap" b[460.00 221.50 460.00 227.50] c[0.00 0.00 900.00 700.00] z24
+24 ^7 element "Rail gap" b[466.00 200.00 466.00 206.00] c[0.00 0.00 900.00 700.00] z24
     element = "column" (El constructor)
     occurrence = "4 of 7 named alike" (Frame)
     profile = "desktop" (FrameCx::profile)
@@ -232,7 +233,7 @@ records 93 truncated false
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-25 ^7 element "Rail mark" b[444.00 227.50 476.00 259.50] c[0.00 0.00 900.00 700.00] z25
+25 ^7 element "Rail mark" b[450.00 206.00 482.00 238.00] c[0.00 0.00 900.00 700.00] z25
     element = "column" (El constructor)
     key = "model 00000000-0000-0000-69d0-bae953be80ff/agent" (El::id)
     occurrence = "4 of 5 named alike" (Frame)
@@ -249,7 +250,7 @@ records 93 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-26 ^25 element "Rail mark glyph" b[444.00 227.50 476.00 259.50] c[0.00 0.00 900.00 700.00] z26
+26 ^25 element "Rail mark glyph" b[450.00 206.00 482.00 238.00] c[0.00 0.00 900.00 700.00] z26
     element = "leaf" (El constructor)
     within = "model 00000000-0000-0000-69d0-bae953be80ff/agent" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -259,7 +260,7 @@ records 93 truncated false
     fill = "Fill(1)" (El::fill)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-27 ^7 element "Rail gap" b[460.00 259.50 460.00 265.50] c[0.00 0.00 900.00 700.00] z27
+27 ^7 element "Rail gap" b[466.00 238.00 466.00 244.00] c[0.00 0.00 900.00 700.00] z27
     element = "column" (El constructor)
     occurrence = "5 of 7 named alike" (Frame)
     profile = "desktop" (FrameCx::profile)
@@ -270,7 +271,7 @@ records 93 truncated false
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-28 ^7 element "Rail mark" b[444.00 265.50 476.00 297.50] c[0.00 0.00 900.00 700.00] z28
+28 ^7 element "Rail mark" b[450.00 244.00 482.00 276.00] c[0.00 0.00 900.00 700.00] z28
     element = "column" (El constructor)
     key = "model 00000000-0000-0000-0583-bab034e821f7/agent" (El::id)
     occurrence = "5 of 5 named alike" (Frame)
@@ -287,7 +288,7 @@ records 93 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-29 ^28 element "Rail mark glyph" b[444.00 265.50 476.00 297.50] c[0.00 0.00 900.00 700.00] z29
+29 ^28 element "Rail mark glyph" b[450.00 244.00 482.00 276.00] c[0.00 0.00 900.00 700.00] z29
     element = "leaf" (El constructor)
     within = "model 00000000-0000-0000-0583-bab034e821f7/agent" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -297,11 +298,11 @@ records 93 truncated false
     fill = "Fill(1)" (El::fill)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-30 ^29 part "text line" b[451.00 272.50 469.00 290.50] c[0.00 0.00 900.00 700.00] z30
+30 ^29 part "text line" b[457.00 251.00 475.00 269.00] c[0.00 0.00 900.00 700.00] z30
     line height = "18" (actual Parley line box)
-    baseline = "290.5" (local layout coordinates)
+    baseline = "269" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-31 ^30 primitive "icon" b[451.00 272.50 469.00 290.50] c[0.00 0.00 900.00 700.00] z31
+31 ^30 primitive "icon" b[457.00 251.00 475.00 269.00] c[0.00 0.00 900.00 700.00] z31
     icon pack = "Tabler" (selected icon pack)
     icon source = "Tabler" (upstream or original Koru artwork)
     icon name = "CODE" (icons::ALL canonical name)
@@ -309,7 +310,7 @@ records 93 truncated false
     icon variant = "regular" (requested state)
     icon size = "18" (layout slot)
     foreground = "#191919 / alpha 1.000" (resolved paint)
-32 ^7 element "Rail gap" b[460.00 297.50 460.00 303.50] c[0.00 0.00 900.00 700.00] z32
+32 ^7 element "Rail gap" b[466.00 276.00 466.00 282.00] c[0.00 0.00 900.00 700.00] z32
     element = "column" (El constructor)
     occurrence = "6 of 7 named alike" (Frame)
     profile = "desktop" (FrameCx::profile)
@@ -320,7 +321,7 @@ records 93 truncated false
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-33 ^7 element "Manage agent providers" b[444.00 303.50 476.00 335.50] c[0.00 0.00 900.00 700.00] z33
+33 ^7 element "Manage agent providers" b[450.00 282.00 482.00 314.00] c[0.00 0.00 900.00 700.00] z33
     element = "column" (El constructor)
     key = "surface model-picker/manage-agents" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -335,7 +336,7 @@ records 93 truncated false
     semantics = "Button" (El::semantics)
     name = "Key::AiPickerManageAgents" (El::name)
     input = "pointer target; Click" (El::hit / El::action)
-34 ^33 element "Icon" b[444.00 303.50 476.00 335.50] c[0.00 0.00 900.00 700.00] z34
+34 ^33 element "Icon" b[450.00 282.00 482.00 314.00] c[0.00 0.00 900.00 700.00] z34
     element = "icon" (El constructor)
     within = "surface model-picker/manage-agents" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -349,11 +350,11 @@ records 93 truncated false
     ink = "Ink::Secondary -> #6B6B6B / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "lit by surface model-picker/manage-agents" (El::hit / El::action)
-35 ^34 part "text line" b[452.00 311.50 468.00 327.50] c[0.00 0.00 900.00 700.00] z35
+35 ^34 part "text line" b[458.00 290.00 474.00 306.00] c[0.00 0.00 900.00 700.00] z35
     line height = "16" (actual Parley line box)
-    baseline = "327.5" (local layout coordinates)
+    baseline = "306" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-36 ^35 primitive "icon" b[452.00 311.50 468.00 327.50] c[0.00 0.00 900.00 700.00] z36
+36 ^35 primitive "icon" b[458.00 290.00 474.00 306.00] c[0.00 0.00 900.00 700.00] z36
     icon pack = "Tabler" (selected icon pack)
     icon source = "Tabler" (upstream or original Koru artwork)
     icon name = "PLUS" (icons::ALL canonical name)
@@ -361,7 +362,7 @@ records 93 truncated false
     icon variant = "regular" (requested state)
     icon size = "16" (layout slot)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint)
-37 ^7 element "Rail gap" b[460.00 335.50 460.00 341.50] c[0.00 0.00 900.00 700.00] z37
+37 ^7 element "Rail gap" b[466.00 314.00 466.00 320.00] c[0.00 0.00 900.00 700.00] z37
     element = "column" (El constructor)
     occurrence = "7 of 7 named alike" (Frame)
     profile = "desktop" (FrameCx::profile)
@@ -372,7 +373,7 @@ records 93 truncated false
     pad_bottom = "Space::S0 -> 0" (El::pad_bottom)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-38 ^5 element "Picker content" b[490.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z38
+38 ^5 element "Picker content" b[496.00 46.00 804.00 361.00] c[0.00 0.00 900.00 700.00] z38
     element = "column" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -384,7 +385,7 @@ records 93 truncated false
     pad_end = "alias::PICKER_PAD = Space::S1 -> 4" (El::pad_end)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-39 ^38 element "Search row" b[490.00 71.50 794.00 111.50] c[0.00 0.00 900.00 700.00] z39
+39 ^38 element "Search row" b[496.00 50.00 800.00 90.00] c[0.00 0.00 900.00 700.00] z39
     element = "row" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -394,7 +395,7 @@ records 93 truncated false
     pad_y = "alias::PICKER_SEARCH_INSET = Space::S1 -> 4" (El::pad_y)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-40 ^39 element "Search box" b[490.00 75.50 794.00 107.50] c[0.00 0.00 900.00 700.00] z40
+40 ^39 element "Search box" b[496.00 54.00 800.00 86.00] c[0.00 0.00 900.00 700.00] z40
     element = "row" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -406,7 +407,7 @@ records 93 truncated false
     gap = "alias::PICKER_REFRESH_GAP = Space::S0_5 -> 2" (El::gap)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "presses surface model-picker/search" (El::hit / El::action)
-41 ^40 element "Search field" b[490.00 75.50 764.00 107.50] c[0.00 0.00 900.00 700.00] z41
+41 ^40 element "Search field" b[496.00 54.00 770.00 86.00] c[0.00 0.00 900.00 700.00] z41
     element = "leaf" (El constructor)
     key = "surface model-picker/search" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -418,26 +419,26 @@ records 93 truncated false
     semantics = "TextInput: delegated to the leaf's own node" (El::semantics)
     name = "Key::AiModelSearch" (El::name)
     input = "neutral" (El::hit / El::action)
-42 ^41 component "KoruTextInput" b[490.00 75.50 764.00 107.50] c[0.00 0.00 900.00 700.00] z42
+42 ^41 component "KoruTextInput" b[496.00 54.00 770.00 86.00] c[0.00 0.00 900.00 700.00] z42
     implementation = "koru_ui::text_input" (shared implementation)
     focused = "false" (caller state)
     masked = "false" (input state)
     docs = "docs/features/koruui/COMPONENTS.md" (catalog)
-43 ^42 primitive "fill" b[490.00 75.50 764.00 107.50] c[0.00 0.00 900.00 700.00] z43
+43 ^42 primitive "fill" b[496.00 54.00 770.00 86.00] c[0.00 0.00 900.00 700.00] z43
     color = "#EAEAEA / alpha 1.000" (resolved paint; token origin not exposed)
-44 ^42 part "text line" b[497.00 83.64 500.47 99.36] c[0.00 0.00 900.00 700.00] z44
+44 ^42 part "text line" b[503.00 62.14 506.47 77.86] c[0.00 0.00 900.00 700.00] z44
     line height = "15.729492" (actual Parley line box)
-    baseline = "96.229004" (local layout coordinates)
+    baseline = "74.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-45 ^42 part "text line" b[497.00 84.50 601.29 102.50] c[0.00 0.00 900.00 700.00] z45
+45 ^42 part "text line" b[503.00 63.00 607.29 81.00] c[0.00 0.00 900.00 700.00] z45
     line height = "18" (actual Parley line box)
-    baseline = "98.229004" (local layout coordinates)
+    baseline = "76.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-46 ^45 primitive "text run" b[497.00 85.64 601.29 101.36] c[0.00 0.00 900.00 700.00] z46
+46 ^45 primitive "text run" b[503.00 64.14 607.29 79.86] c[0.00 0.00 900.00 700.00] z46
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "98.229004" (local layout coordinates)
+    baseline = "76.729004" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#ABABAB / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -446,7 +447,7 @@ records 93 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-47 ^40 element "Refresh models" b[766.00 77.50 792.00 105.50] c[0.00 0.00 900.00 700.00] z47
+47 ^40 element "Refresh models" b[772.00 56.00 798.00 84.00] c[0.00 0.00 900.00 700.00] z47
     element = "leaf" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -454,7 +455,7 @@ records 93 truncated false
     contrast = "standard" (FrameCx::contrast)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-48 ^38 element "Model list" b[490.00 111.50 794.00 291.50] c[0.00 0.00 900.00 700.00] z48
+48 ^38 element "Model list" b[496.00 90.00 800.00 270.00] c[0.00 0.00 900.00 700.00] z48
     element = "scroll viewport" (El constructor)
     key = "surface model-picker/list" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -468,7 +469,7 @@ records 93 truncated false
     semantics = "List" (El::semantics)
     name = "Key::AiPickerFavorites" (El::name)
     input = "neutral" (El::hit / El::action)
-49 ^48 element "Model row" b[490.00 111.50 794.00 141.50] c[490.00 111.50 794.00 291.50] z49
+49 ^48 element "Model row" b[496.00 90.00 800.00 120.00] c[496.00 90.00 800.00 270.00] z49
     element = "row" (El constructor)
     key = "model 00000000-0000-0000-0c6f-660f03afcaa1/row" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -485,7 +486,7 @@ records 93 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-50 ^49 element "Row mark" b[498.00 118.50 514.00 134.50] c[490.00 111.50 794.00 291.50] z50
+50 ^49 element "Row mark" b[504.00 97.00 520.00 113.00] c[496.00 90.00 800.00 270.00] z50
     element = "leaf" (El constructor)
     within = "model 00000000-0000-0000-0c6f-660f03afcaa1/row" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -496,7 +497,7 @@ records 93 truncated false
     h = "metrics::PICKER_ROW_MARK -> 16" (El::h)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-51 ^49 element "Model name" b[514.00 117.50 758.00 135.50] c[490.00 111.50 794.00 291.50] z51
+51 ^49 element "Model name" b[520.00 96.00 764.00 114.00] c[496.00 90.00 800.00 270.00] z51
     element = "text" (El constructor)
     within = "model 00000000-0000-0000-0c6f-660f03afcaa1/row" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -512,15 +513,15 @@ records 93 truncated false
     lines = "1" (measured layout)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-52 ^51 part "label line" b[522.00 117.77 589.29 135.77] c[490.00 111.50 794.00 291.50] z52
+52 ^51 part "label line" b[528.00 96.27 595.29 114.27] c[496.00 90.00 800.00 270.00] z52
     line height = "18" (actual Parley line box; first-line draw)
-    baseline = "131.5" (local layout coordinates)
+    baseline = "110" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-53 ^52 primitive "text run" b[522.00 118.91 589.29 134.64] c[490.00 111.50 794.00 291.50] z53
+53 ^52 primitive "text run" b[528.00 97.41 595.29 113.14] c[496.00 90.00 800.00 270.00] z53
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "131.5" (local layout coordinates)
+    baseline = "110" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -529,7 +530,7 @@ records 93 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-54 ^49 element "Favorite star" b[760.00 115.50 782.00 137.50] c[490.00 111.50 794.00 291.50] z54
+54 ^49 element "Favorite star" b[766.00 94.00 788.00 116.00] c[496.00 90.00 800.00 270.00] z54
     element = "column" (El constructor)
     key = "model 00000000-0000-0000-0c6f-660f03afcaa1/star" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -542,7 +543,7 @@ records 93 truncated false
     semantics = "none: transparent to semantic parenting" (El::semantics)
     name = "Key::AiModelFavoriteRemove" (El::name)
     input = "pointer target; Click" (El::hit / El::action)
-55 ^54 element "Icon" b[760.00 115.50 782.00 137.50] c[490.00 111.50 794.00 291.50] z55
+55 ^54 element "Icon" b[766.00 94.00 788.00 116.00] c[496.00 90.00 800.00 270.00] z55
     element = "icon" (El constructor)
     within = "model 00000000-0000-0000-0c6f-660f03afcaa1/star" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -558,11 +559,11 @@ records 93 truncated false
     semantics = "decorative" (El::semantics)
     selected = "true" (El::selected)
     input = "lit by model 00000000-0000-0000-0c6f-660f03afcaa1/star" (El::hit / El::action)
-56 ^55 part "text line" b[764.00 119.50 778.00 133.50] c[490.00 111.50 794.00 291.50] z56
+56 ^55 part "text line" b[770.00 98.00 784.00 112.00] c[496.00 90.00 800.00 270.00] z56
     line height = "14" (actual Parley line box)
-    baseline = "133.5" (local layout coordinates)
+    baseline = "112" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-57 ^56 primitive "icon" b[764.00 119.50 778.00 133.50] c[490.00 111.50 794.00 291.50] z57
+57 ^56 primitive "icon" b[770.00 98.00 784.00 112.00] c[496.00 90.00 800.00 270.00] z57
     icon pack = "Tabler" (selected icon pack)
     icon source = "Tabler" (upstream or original Koru artwork)
     icon name = "STAR" (icons::ALL canonical name)
@@ -570,7 +571,7 @@ records 93 truncated false
     icon variant = "filled" (requested state)
     icon size = "14" (layout slot)
     foreground = "#3B6BB5 / alpha 1.000" (resolved paint)
-58 ^38 element "Picker footer" b[490.00 291.50 794.00 378.50] c[0.00 0.00 900.00 700.00] z58
+58 ^38 element "Picker footer" b[496.00 270.00 800.00 357.00] c[0.00 0.00 900.00 700.00] z58
     element = "column" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -578,7 +579,7 @@ records 93 truncated false
     contrast = "standard" (FrameCx::contrast)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-59 ^58 element "Divider" b[490.00 291.50 794.00 292.50] c[0.00 0.00 900.00 700.00] z59
+59 ^58 element "Divider" b[496.00 270.00 800.00 271.00] c[0.00 0.00 900.00 700.00] z59
     element = "divider" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -587,9 +588,9 @@ records 93 truncated false
     line = "Line::Divider -> #E0E0E0 / alpha 1.000" (divider)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-60 ^59 primitive "fill" b[490.00 291.50 794.00 292.50] c[0.00 0.00 900.00 700.00] z60
+60 ^59 primitive "fill" b[496.00 270.00 800.00 271.00] c[0.00 0.00 900.00 700.00] z60
     color = "#E0E0E0 / alpha 1.000" (resolved paint; token origin not exposed)
-61 ^58 element "Footer block" b[490.00 292.50 794.00 378.50] c[0.00 0.00 900.00 700.00] z61
+61 ^58 element "Footer block" b[496.00 271.00 800.00 357.00] c[0.00 0.00 900.00 700.00] z61
     element = "column" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -601,7 +602,7 @@ records 93 truncated false
     gap = "alias::PICKER_FOOTER_GAP = Space::S2 -> 8" (El::gap)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-62 ^61 element "Effort strip" b[498.00 302.50 786.00 334.50] c[0.00 0.00 900.00 700.00] z62
+62 ^61 element "Effort strip" b[504.00 281.00 792.00 313.00] c[0.00 0.00 900.00 700.00] z62
     element = "row" (El constructor)
     key = "surface model-picker/effort" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -617,9 +618,9 @@ records 93 truncated false
     semantics = "Group" (El::semantics)
     name = "Key::AiEffortGroup" (El::name)
     input = "neutral" (El::hit / El::action)
-63 ^62 primitive "fill" b[498.00 302.50 786.00 334.50] c[0.00 0.00 900.00 700.00] z63
+63 ^62 primitive "fill" b[504.00 281.00 792.00 313.00] c[0.00 0.00 900.00 700.00] z63
     color = "#EAEAEA / alpha 1.000" (resolved paint; token origin not exposed)
-64 ^62 element "Effort segment" b[500.00 304.50 569.50 332.50] c[0.00 0.00 900.00 700.00] z64
+64 ^62 element "Effort segment" b[506.00 283.00 575.50 311.00] c[0.00 0.00 900.00 700.00] z64
     element = "leaf" (El constructor)
     key = "surface model-picker/effort-off" (El::id)
     occurrence = "1 of 4 named alike" (Frame)
@@ -633,15 +634,15 @@ records 93 truncated false
     name = "Key::AiEffortOff" (El::name)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-65 ^64 part "label line" b[526.58 311.63 542.92 325.63] c[0.00 0.00 900.00 700.00] z65
+65 ^64 part "label line" b[532.58 290.13 548.92 304.13] c[0.00 0.00 900.00 700.00] z65
     line height = "14" (actual Parley line box; first-line draw)
-    baseline = "322.6328" (local layout coordinates)
+    baseline = "301.1328" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-66 ^65 primitive "text run" b[526.58 311.98 542.92 325.29] c[0.00 0.00 900.00 700.00] z66
+66 ^65 primitive "text run" b[532.58 290.48 548.92 303.79] c[0.00 0.00 900.00 700.00] z66
     font size = "11" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "322.6328" (local layout coordinates)
+    baseline = "301.1328" (local layout coordinates)
     ascent / descent = "10.65625 / 2.6533203" (rendered font metrics; not padding)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -650,7 +651,7 @@ records 93 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-67 ^62 element "Effort segment" b[571.50 304.50 641.00 332.50] c[0.00 0.00 900.00 700.00] z67
+67 ^62 element "Effort segment" b[577.50 283.00 647.00 311.00] c[0.00 0.00 900.00 700.00] z67
     element = "leaf" (El constructor)
     key = "surface model-picker/effort-low" (El::id)
     occurrence = "2 of 4 named alike" (Frame)
@@ -664,15 +665,15 @@ records 93 truncated false
     name = "Key::AiEffortLow" (El::name)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-68 ^67 part "label line" b[595.35 311.44 617.15 325.44] c[0.00 0.00 900.00 700.00] z68
+68 ^67 part "label line" b[601.35 289.94 623.15 303.94] c[0.00 0.00 900.00 700.00] z68
     line height = "14" (actual Parley line box; first-line draw)
-    baseline = "322.4375" (local layout coordinates)
+    baseline = "300.9375" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-69 ^68 primitive "text run" b[595.35 311.78 617.15 325.09] c[0.00 0.00 900.00 700.00] z69
+69 ^68 primitive "text run" b[601.35 290.28 623.15 303.59] c[0.00 0.00 900.00 700.00] z69
     font size = "11" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "322.4375" (local layout coordinates)
+    baseline = "300.9375" (local layout coordinates)
     ascent / descent = "10.65625 / 2.6533203" (rendered font metrics; not padding)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -681,7 +682,7 @@ records 93 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-70 ^62 element "Effort segment" b[643.00 304.50 712.50 332.50] c[0.00 0.00 900.00 700.00] z70
+70 ^62 element "Effort segment" b[649.00 283.00 718.50 311.00] c[0.00 0.00 900.00 700.00] z70
     element = "leaf" (El constructor)
     key = "surface model-picker/effort-medium" (El::id)
     occurrence = "3 of 4 named alike" (Frame)
@@ -695,21 +696,21 @@ records 93 truncated false
     name = "Key::AiEffortMedium" (El::name)
     selected = "true" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-71 ^70 primitive "fill" b[642.50 305.00 713.00 334.50] c[0.00 0.00 900.00 700.00] z71
+71 ^70 primitive "fill" b[648.50 283.50 719.00 313.00] c[0.00 0.00 900.00 700.00] z71
     color = "#191919 / alpha 0.110" (resolved paint; token origin not exposed)
-72 ^70 primitive "fill" b[643.00 305.50 712.50 333.50] c[0.00 0.00 900.00 700.00] z72
+72 ^70 primitive "fill" b[649.00 284.00 718.50 312.00] c[0.00 0.00 900.00 700.00] z72
     color = "#191919 / alpha 0.220" (resolved paint; token origin not exposed)
-73 ^70 primitive "fill" b[643.00 304.50 712.50 332.50] c[0.00 0.00 900.00 700.00] z73
+73 ^70 primitive "fill" b[649.00 283.00 718.50 311.00] c[0.00 0.00 900.00 700.00] z73
     color = "#FFFFFF / alpha 1.000" (resolved paint; token origin not exposed)
-74 ^70 part "label line" b[665.99 311.44 689.51 325.44] c[0.00 0.00 900.00 700.00] z74
+74 ^70 part "label line" b[671.99 289.94 695.51 303.94] c[0.00 0.00 900.00 700.00] z74
     line height = "14" (actual Parley line box; first-line draw)
-    baseline = "322.4375" (local layout coordinates)
+    baseline = "300.9375" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-75 ^74 primitive "text run" b[665.99 311.78 689.51 325.09] c[0.00 0.00 900.00 700.00] z75
+75 ^74 primitive "text run" b[671.99 290.28 695.51 303.59] c[0.00 0.00 900.00 700.00] z75
     font size = "11" (rendered run)
     font weight = "600" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "322.4375" (local layout coordinates)
+    baseline = "300.9375" (local layout coordinates)
     ascent / descent = "10.65625 / 2.6533203" (rendered font metrics; not padding)
     foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -718,7 +719,7 @@ records 93 truncated false
     variation coordinates = "[0, 5898]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-76 ^62 element "Effort segment" b[714.50 304.50 784.00 332.50] c[0.00 0.00 900.00 700.00] z76
+76 ^62 element "Effort segment" b[720.50 283.00 790.00 311.00] c[0.00 0.00 900.00 700.00] z76
     element = "leaf" (El constructor)
     key = "surface model-picker/effort-high" (El::id)
     occurrence = "4 of 4 named alike" (Frame)
@@ -732,15 +733,15 @@ records 93 truncated false
     name = "Key::AiEffortHigh" (El::name)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-77 ^76 part "label line" b[737.05 310.44 761.45 324.44] c[0.00 0.00 900.00 700.00] z77
+77 ^76 part "label line" b[743.05 288.94 767.45 302.94] c[0.00 0.00 900.00 700.00] z77
     line height = "14" (actual Parley line box; first-line draw)
-    baseline = "321.4453" (local layout coordinates)
+    baseline = "299.9453" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-78 ^77 primitive "text run" b[737.05 310.79 761.45 324.10] c[0.00 0.00 900.00 700.00] z78
+78 ^77 primitive "text run" b[743.05 289.29 767.45 302.60] c[0.00 0.00 900.00 700.00] z78
     font size = "11" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "321.4453" (local layout coordinates)
+    baseline = "299.9453" (local layout coordinates)
     ascent / descent = "10.65625 / 2.6533203" (rendered font metrics; not padding)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -749,7 +750,7 @@ records 93 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-79 ^61 element "Footer toggles" b[498.00 342.50 786.00 370.50] c[0.00 0.00 900.00 700.00] z79
+79 ^61 element "Footer toggles" b[504.00 321.00 792.00 349.00] c[0.00 0.00 900.00 700.00] z79
     element = "row" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -759,7 +760,7 @@ records 93 truncated false
     gap = "alias::PICKER_PILL_GAP = Space::S1_5 -> 6" (El::gap)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-80 ^79 element "Fast pill" b[498.00 342.50 558.17 370.50] c[0.00 0.00 900.00 700.00] z80
+80 ^79 element "Fast pill" b[504.00 321.00 564.17 349.00] c[0.00 0.00 900.00 700.00] z80
     element = "leaf" (El constructor)
     key = "surface model-picker/fast" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -771,18 +772,18 @@ records 93 truncated false
     name = "Key::AiModelFast" (El::name)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-81 ^80 primitive "stroke" b[498.50 343.00 557.67 370.00] c[0.00 0.00 900.00 700.00] z81
+81 ^80 primitive "stroke" b[504.50 321.50 563.67 348.50] c[0.00 0.00 900.00 700.00] z81
     color = "#E0E0E0 / alpha 1.000" (resolved paint; token origin not exposed)
     width = "1" (scene::stroke)
-82 ^80 part "text line" b[508.00 350.25 520.00 362.25] c[0.00 0.00 900.00 700.00] z82
+82 ^80 part "text line" b[514.00 328.75 526.00 340.75] c[0.00 0.00 900.00 700.00] z82
     line height = "12" (actual Parley line box)
-    baseline = "361.5" (local layout coordinates)
+    baseline = "340" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-83 ^82 primitive "text run" b[508.00 350.25 520.00 362.25] c[0.00 0.00 900.00 700.00] z83
+83 ^82 primitive "text run" b[514.00 328.75 526.00 340.75] c[0.00 0.00 900.00 700.00] z83
     font size = "12" (rendered run)
     font weight = "400" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "361.5" (local layout coordinates)
+    baseline = "340" (local layout coordinates)
     ascent / descent = "11.25 / 0.75" (rendered font metrics; not padding)
     foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Phosphor" (actual font face; fallback included)
@@ -791,15 +792,15 @@ records 93 truncated false
     variation coordinates = "[]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-84 ^80 part "label line" b[524.00 348.42 548.17 364.42] c[0.00 0.00 900.00 700.00] z84
+84 ^80 part "label line" b[530.00 326.92 554.17 342.92] c[0.00 0.00 900.00 700.00] z84
     line height = "16" (actual Parley line box; first-line draw)
-    baseline = "360.78906" (local layout coordinates)
+    baseline = "339.28906" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-85 ^84 primitive "text run" b[524.00 349.16 548.17 363.68] c[0.00 0.00 900.00 700.00] z85
+85 ^84 primitive "text run" b[530.00 327.66 554.17 342.18] c[0.00 0.00 900.00 700.00] z85
     font size = "12" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "360.78906" (local layout coordinates)
+    baseline = "339.28906" (local layout coordinates)
     ascent / descent = "11.625 / 2.8945313" (rendered font metrics; not padding)
     foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -808,7 +809,7 @@ records 93 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-86 ^79 element "Context pill" b[564.17 342.50 646.43 370.50] c[0.00 0.00 900.00 700.00] z86
+86 ^79 element "Context pill" b[570.17 321.00 652.43 349.00] c[0.00 0.00 900.00 700.00] z86
     element = "leaf" (El constructor)
     key = "surface model-picker/context" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -820,18 +821,18 @@ records 93 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-87 ^86 primitive "stroke" b[564.67 343.00 645.93 370.00] c[0.00 0.00 900.00 700.00] z87
+87 ^86 primitive "stroke" b[570.67 321.50 651.93 348.50] c[0.00 0.00 900.00 700.00] z87
     color = "#E0E0E0 / alpha 1.000" (resolved paint; token origin not exposed)
     width = "1" (scene::stroke)
-88 ^86 part "label line" b[574.17 348.43 636.43 364.43] c[0.00 0.00 900.00 700.00] z88
+88 ^86 part "label line" b[580.17 326.93 642.43 342.93] c[0.00 0.00 900.00 700.00] z88
     line height = "16" (actual Parley line box; first-line draw)
-    baseline = "360.79688" (local layout coordinates)
+    baseline = "339.29688" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-89 ^88 primitive "text run" b[574.17 349.17 636.43 363.69] c[0.00 0.00 900.00 700.00] z89
+89 ^88 primitive "text run" b[580.17 327.67 642.43 342.19] c[0.00 0.00 900.00 700.00] z89
     font size = "12" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "360.79688" (local layout coordinates)
+    baseline = "339.29688" (local layout coordinates)
     ascent / descent = "11.625 / 2.8945313" (rendered font metrics; not padding)
     foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -840,7 +841,7 @@ records 93 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-90 ^79 element "Effort readout" b[652.43 342.50 786.00 370.50] c[0.00 0.00 900.00 700.00] z90
+90 ^79 element "Effort readout" b[658.43 321.00 792.00 349.00] c[0.00 0.00 900.00 700.00] z90
     element = "leaf" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -849,15 +850,15 @@ records 93 truncated false
     fill = "Fill(1)" (El::fill)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-91 ^90 part "label line" b[660.47 348.99 786.00 362.99] c[0.00 0.00 900.00 700.00] z91
+91 ^90 part "label line" b[666.47 327.49 792.00 341.49] c[0.00 0.00 900.00 700.00] z91
     line height = "14" (actual Parley line box; first-line draw)
-    baseline = "359.9922" (local layout coordinates)
+    baseline = "338.4922" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-92 ^91 primitive "text run" b[660.47 349.34 786.00 362.65] c[0.00 0.00 900.00 700.00] z92
+92 ^91 primitive "text run" b[666.47 327.84 792.00 341.15] c[0.00 0.00 900.00 700.00] z92
     font size = "11" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "359.9922" (local layout coordinates)
+    baseline = "338.4922" (local layout coordinates)
     ascent / descent = "10.65625 / 2.6533203" (rendered font metrics; not padding)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)

@@ -388,6 +388,8 @@ pub enum TextMode {
     Single,
     /// One line, elided to the box's width.
     Truncate,
+    /// One line retaining its beginning and end, with an ellipsis between.
+    TruncateMiddle,
     /// One line: the words that fit the box's width, cut at a word with no
     /// ellipsis. How chrome has long cut a label (`draw_layout_first_line`);
     /// the Profiles page's names are set this way (ELEMENTS-PLAN P5).
@@ -996,6 +998,14 @@ impl El {
     pub fn truncate(mut self) -> Self {
         if let Kind::Text(t) = &mut self.kind {
             t.mode = TextMode::Truncate;
+        }
+        self
+    }
+
+    /// One line retaining both ends, such as a path's drive and final folder.
+    pub fn truncate_middle(mut self) -> Self {
+        if let Kind::Text(t) = &mut self.kind {
+            t.mode = TextMode::TruncateMiddle;
         }
         self
     }

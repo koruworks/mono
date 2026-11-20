@@ -50,7 +50,9 @@ pub(super) fn install_authority(channel_root: &std::path::Path, state: &Arc<Gate
 /// would be a rehearsal quietly reading an installation's preferences. What
 /// stays here is the part that is the composition's to know — which channel
 /// this is.
-fn settings_paths(channel_root: &std::path::Path) -> Option<koru_settings::SettingsPaths> {
+pub(super) fn settings_paths(
+    channel_root: &std::path::Path,
+) -> Option<koru_settings::SettingsPaths> {
     koru_settings::SettingsPaths::for_channel_root(
         channel_root,
         koru_channel::channel_root().as_deref(),

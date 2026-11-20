@@ -119,6 +119,9 @@ pub enum MenuSubject {
         bot: koru_ai_core::bots::BotId,
         tab: u64,
     },
+    BotRoster {
+        bot: Option<koru_ai_core::bots::BotId>,
+    },
     /// **A conversation row's menu in a Bot's tab** (S14): one
     /// conversation's Trash. The Bot and the conversation by id, the tab
     /// that asked by its identity.
@@ -243,6 +246,7 @@ pub enum MenuAction {
     /// Parent of the Documents flyout on the `+` menu.
     Documents,
     NewDocument,
+    NewBot,
     /// A recent document under Documents. Title comes from the snapshot
     /// [`set_plus_snapshots`] captures when the menu opens.
     ///
@@ -358,6 +362,11 @@ pub enum MenuAction {
     /// **Archive a Bot** (S14): asks first, then the owner stops its work
     /// as the person's Stop and archives it.
     ArchiveBot,
+    EditBotIdentity,
+    BotSettings,
+    BotNewConversation,
+    BotTeamPause(koru_i18n::Key),
+    BotArchived(bool),
     /// **Move a Bot to Trash** (S14): asks first; its conversations go with
     /// it and nothing else moves.
     TrashBot,
@@ -1045,6 +1054,7 @@ impl MenuAction {
         match self {
             // Agents (shell sessions stay).
             Self::NewAgent | Self::ActiveAgents | Self::ManageAgents => f::agents(),
+            Self::NewBot => f::bots(),
             // A project is a row of the Agents view's tree.
             Self::DeleteProject => f::agent_views(),
             Self::TerminalProfile(index) => {
@@ -1188,6 +1198,7 @@ impl MenuAction {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
             MenuAction::NewDocument => "New",
+            MenuAction::NewBot => koru_i18n::t(crate::format::lang(), koru_i18n::Key::BotsNewBot),
             MenuAction::Canvases => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::CanvasesTitle)
             }
@@ -1248,6 +1259,37 @@ impl MenuAction {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::ChatsUnpin,
+                ));
+            }
+            MenuAction::EditBotIdentity => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsEditIdentity,
+                ));
+            }
+            MenuAction::BotSettings => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsSettings,
+                ));
+            }
+            MenuAction::BotNewConversation => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::BotsNewConversation,
+                ));
+            }
+            MenuAction::BotTeamPause(words) => {
+                return Cow::Borrowed(koru_i18n::t(crate::format::lang(), words));
+            }
+            MenuAction::BotArchived(on) => {
+                return Cow::Borrowed(koru_i18n::t(
+                    crate::format::lang(),
+                    if on {
+                        koru_i18n::Key::BotsArchivedOn
+                    } else {
+                        koru_i18n::Key::BotsArchivedOff
+                    },
                 ));
             }
             MenuAction::ArchiveBot => {
@@ -1633,6 +1675,7 @@ impl MenuAction {
             MenuAction::Canvases | MenuAction::NewCanvas => Some(koru_draw::icons::CANVAS),
             MenuAction::NewShell => Some(koru_draw::icons::TERMINAL),
             MenuAction::NewAgent => Some(koru_draw::icons::SPARKLE),
+            MenuAction::NewBot => Some(koru_draw::icons::ROBOT),
             MenuAction::ManageAgents => Some(koru_draw::icons::FADERS),
             // A profile row wears the launched product's mark (Q-E6 P3/P4).
             // A glyph mark — the *System* row's OS logo — answers here; a
@@ -2178,6 +2221,7 @@ pub fn new_tab_items() -> Vec<MenuAction> {
         MenuAction::NewAgent,
         MenuAction::Delegate,
         MenuAction::Chats,
+        MenuAction::NewBot,
         MenuAction::Socials,
         MenuAction::Divider,
         MenuAction::ImportAs,

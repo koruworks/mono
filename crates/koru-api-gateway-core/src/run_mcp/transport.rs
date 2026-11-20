@@ -4,7 +4,7 @@
 //! run endpoint.
 //!
 //! Authority first, on every message including `initialize`: the bearer
-//! is resolved through the artifact domain's [`RunAuthority`] port, and it
+//! is resolved through the artifact domain's authority port, and it
 //! must name the run in the path — a token for one run at another run's
 //! URL is refused as unknown. Then the body, which is one SDK
 //! `ClientJsonRpcMessage`: a request is answered `200` with the JSON-RPC
@@ -30,11 +30,8 @@ use rmcp::model::{
     ServerJsonRpcMessage, ServerResult,
 };
 
-use super::{native, tools};
+use super::tools;
 use crate::GatewayState;
-use koru_delegate_core::RunToolAuthority;
-mod native_bounds;
-mod routine_bounds;
 
 /// The most bytes one JSON-RPC message may carry. Arguments are a path, a
 /// title, an id or a query; the bytes of a result never travel here.
@@ -111,22 +108,8 @@ fn answer(id: RequestId, result: ServerResult) -> Response {
     Json(message).into_response()
 }
 
-/// What `initialize` answers. The protocol version is the client's when
-/// this SDK knows it, else the latest this SDK speaks — the SDK server's
-/// own negotiation rule.
-#[cfg(test)]
-fn initialize(offered: &ProtocolVersion, bot: bool) -> InitializeResult {
-    initialize_listing(offered, bot, native::children::ChildTools::NONE)
-}
-
-/// [`initialize`] for a Bot Run whose catalog may list the tools that ask
-/// another Bot (M6): their sentence, and the count, appear only when they
-/// are listed.
-fn initialize_listing(
-    offered: &ProtocolVersion,
-    bot: bool,
-    children: native::children::ChildTools,
-) -> InitializeResult {
+/// Negotiate the ordinary Run endpoint's MCP version.
+fn initialize(offered: &ProtocolVersion) -> InitializeResult {
     let negotiated = if ProtocolVersion::KNOWN_VERSIONS.contains(offered) {
         offered.clone()
     } else {
@@ -135,15 +118,8 @@ fn initialize_listing(
     InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
         .with_protocol_version(negotiated)
         .with_server_info(Implementation::new("koru-run", env!("CARGO_PKG_VERSION")))
-        .with_instructions(if bot {
-            native::children::instructions(BOT_INSTRUCTIONS, children)
-        } else {
-            ORDINARY_INSTRUCTIONS.to_owned()
-        })
+        .with_instructions(ORDINARY_INSTRUCTIONS.to_owned())
 }
-
-/// The Bot endpoint's instructions for its thirteen tools.
-const BOT_INSTRUCTIONS: &str = "This Bot endpoint exposes thirteen scoped tools. search_documents, read_document, create_document and edit_document use effective document permissions; create_document and edit_document save ordinary Run results after durable verification and registration. list_memory/read_memory inspect this Bot's lifetime Memory page without granting generic page access. remember_memory/correct_memory/forget_memory change only that Memory; their saved receipts never become Run results. Use a stable operation_id and identical arguments on every document or Memory mutation retry. Memory edits require an exact history version from list_memory/read_memory; only first-use remember_memory may omit it to use the original empty seed. After saving, read Current for the next edit. Unknown outcomes must retain the same operation and body. create_routine, read_routine_creation, retry_routine_creation and list_routines operate only on this Run's own Bot. Obtain expected_bot_revision from list_routines. Creation retains an initially Paused Routine with an independent copied grant; it never enables work or creates a Run result. Reuse the original request_id and identical Create body after uncertainty. Read creation state before retrying with its observed_token; never replace a lost token or mint a new request automatically. Listing reports applied observations and local references, not current execution or permission authority. Access refusals require an owner grant and explicit continuation.";
 
 /// An ordinary Run's artifact endpoint instructions.
 const ORDINARY_INSTRUCTIONS: &str = "This is the run's artifact endpoint. Write results under your .artifacts/<RunId>/ folder, then register them with `create`; use `create_version` for a further version of a result, `get`/`read` to inspect one, `search` to find earlier results in the workspaces granted to this run, and `attach_to_run` to record one as your input.";
@@ -184,86 +160,43 @@ pub(super) async fn handle(
         Ok(authority) => authority,
         Err(response) => return response,
     };
-    let classification = match native::classify(state.bot_delegate_port(), &authority).await {
-        Ok(value) => value,
-        Err(error) => return refuse(StatusCode::SERVICE_UNAVAILABLE, error),
-    };
-    let is_bot = classification.bot_subject().is_some();
-    // Whether the private read is listed for this Run (M5): never while its
-    // gate is closed, which it is in this build.
-    let private = classification
-        .bot_subject()
-        .is_some_and(|(provenance, policy)| {
-            native::private::listed_for(&state, provenance, policy)
-        });
-    // Which of the three tools that ask another Bot are listed (M6). Their
-    // gate is open in this build, so for every message of a Bot Run that is
-    // not a child the AI worker is asked whether the Bot may ask (5 s bound).
-    // That answer does not need the Run's turn: an agent lists its tools
-    // when its session starts. It authorizes no call.
-    let children = match classification.bot_subject() {
-        Some((provenance, policy)) => {
-            native::children::listed_for(&state, &authority, provenance, policy).await
-        }
-        None => native::children::ChildTools::NONE,
-    };
-    let wait = native::RunWait::of(&classification);
-    let listing = Listing { private, children };
-    authenticated_message_listing(is_bot, listing, body, |params| async move {
-        match classification {
-            // O147 (a decision wait) and M6 4.6 (a child wait): the same Bot
-            // tools; new mutations are refused in dispatch with the wait's
-            // own code, and the AI owner rechecks its own Routine work.
-            RunToolAuthority::Bot { provenance, policy }
-            | RunToolAuthority::BotDecisionWait {
-                provenance, policy, ..
-            }
-            | RunToolAuthority::BotChildWait {
-                provenance, policy, ..
-            } => native::call(&state, authority, provenance, policy, wait, params).await,
-            RunToolAuthority::Ordinary {} => tools::call(&state, authority, params).await,
-        }
+    // A valid artifact bearer does not prove this is an ordinary Run. The
+    // execution owner must still confirm the exact current generation.
+    if let Err(error) = classify(state.run_authority_port(), &authority).await {
+        return refuse(StatusCode::SERVICE_UNAVAILABLE, error);
+    }
+    authenticated_message(body, |params| async move {
+        tools::call(&state, authority, params).await
     })
     .await
 }
 
-/// What a Bot Run's catalog lists beyond the thirteen tools every Bot Run
-/// has. The private read is never listed in this build (its gate is closed).
-#[derive(Clone, Copy, Debug, Default)]
-struct Listing {
-    private: bool,
-    children: native::children::ChildTools,
+async fn classify(
+    port: Option<Arc<dyn koru_delegate_api::authority::RunAuthorityPort>>,
+    record: &RunAuthorityRecord,
+) -> Result<(), ToolFailure> {
+    let unavailable = || {
+        ToolFailure::new(
+            "run_authority_unavailable",
+            "The Run tool authority is unavailable.",
+        )
+    };
+    let port = port.ok_or_else(unavailable)?;
+    let (run, generation) = (record.run, record.generation);
+    tokio::task::spawn_blocking(move || port.resolve(run, generation))
+        .await
+        .map_err(|_| unavailable())?
+        .map_err(|_| unavailable())
 }
 
 /// Shared transport after bearer authentication and current Run classification.
 /// The callback owns dispatch only; this function never establishes authority.
-#[cfg_attr(not(test), allow(dead_code))]
-async fn authenticated_message<F, R>(is_bot: bool, body: Bytes, dispatch: F) -> Response
+async fn authenticated_message<F, R>(body: Bytes, dispatch: F) -> Response
 where
     F: FnOnce(rmcp::model::CallToolRequestParams) -> R,
     R: std::future::Future<Output = rmcp::model::CallToolResult>,
 {
-    authenticated_message_listing(is_bot, Listing::default(), body, dispatch).await
-}
-
-/// [`authenticated_message`] for a Bot Run whose catalog may also list the
-/// private read and the tools that ask another Bot.
-async fn authenticated_message_listing<F, R>(
-    is_bot: bool,
-    listing: Listing,
-    body: Bytes,
-    dispatch: F,
-) -> Response
-where
-    F: FnOnce(rmcp::model::CallToolRequestParams) -> R,
-    R: std::future::Future<Output = rmcp::model::CallToolResult>,
-{
-    let limit = if is_bot {
-        4 * 1024 * 1024
-    } else {
-        MESSAGE_LIMIT
-    };
-    if body.len() > limit {
+    if body.len() > MESSAGE_LIMIT {
         return jsonrpc_error(
             StatusCode::PAYLOAD_TOO_LARGE,
             None,
@@ -302,44 +235,17 @@ where
     match request.request {
         ClientRequest::InitializeRequest(initialize_request) => answer(
             id,
-            ServerResult::InitializeResult(initialize_listing(
-                &initialize_request.params.protocol_version,
-                is_bot,
-                listing.children,
-            )),
+            ServerResult::InitializeResult(initialize(&initialize_request.params.protocol_version)),
         ),
         ClientRequest::PingRequest(_) => answer(id, ServerResult::empty(())),
         ClientRequest::ListToolsRequest(_) => answer(
             id,
-            ServerResult::ListToolsResult(ListToolsResult::with_all_items(if is_bot {
-                native::definitions_for(listing.private, listing.children)
-            } else {
-                tools::definitions()
-            })),
+            ServerResult::ListToolsResult(ListToolsResult::with_all_items(tools::definitions())),
         ),
-        ClientRequest::CallToolRequest(call) => {
-            let routine = is_bot && native::routines::recognizes(call.params.name.as_ref());
-            let mutation = routine && native::routines::mutation(call.params.name.as_ref());
-            let native = is_bot && native_bounds::recognizes(call.params.name.as_ref());
-            if routine {
-                if let Err(refusal) = routine_bounds::preflight(&id) {
-                    return refusal;
-                }
-            }
-            if native {
-                if let Err(refusal) = native_bounds::preflight(&id) {
-                    return refusal;
-                }
-            }
-            let result = ServerResult::CallToolResult(dispatch(call.params).await);
-            if routine {
-                routine_bounds::answer(id, result, mutation)
-            } else if native {
-                native_bounds::answer(id, result)
-            } else {
-                answer(id, result)
-            }
-        }
+        ClientRequest::CallToolRequest(call) => answer(
+            id,
+            ServerResult::CallToolResult(dispatch(call.params).await),
+        ),
         other => jsonrpc_error(
             StatusCode::OK,
             Some(id),

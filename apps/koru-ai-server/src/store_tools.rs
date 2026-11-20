@@ -43,7 +43,6 @@ impl StoreToolAdapter {
             executor: WorkspaceToolExecutor::new(backend),
             definitions: workspace_tool_catalog()
                 .into_iter()
-                .filter(|tool| !koru_mcp_server::BOT_TOOL_NAMES.contains(&tool.name.as_str()))
                 .map(|tool| AiToolDefinition {
                     name: tool.name,
                     title: tool.title,

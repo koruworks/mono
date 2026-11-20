@@ -240,8 +240,7 @@ fn a_kind_no_server_producer_raises_is_still_passed_on() {
 
 #[test]
 fn maintenance_runs_at_its_deadline_and_not_before() {
-    let (mut agent, mut inbox) =
-        scene(vec![(2, event(gone(1))), (7, event(gone(2))), (9, None)]);
+    let (mut agent, mut inbox) = scene(vec![(2, event(gone(1))), (7, event(gone(2))), (9, None)]);
     agent.deadlines = [secs(5), secs(8)].into();
 
     assert_eq!(supervise(&mut agent, &mut inbox), ServerExit::Abandoned);
@@ -308,8 +307,9 @@ fn the_delegate_is_ticked_on_its_period_when_nothing_else_happens() {
 /// delays no tick.
 #[test]
 fn a_steady_stream_of_events_does_not_delay_the_tick() {
-    let mut arrivals: Vec<(u64, Option<Message>)> =
-        (1..=61).map(|second| (second, event(gone(second)))).collect();
+    let mut arrivals: Vec<(u64, Option<Message>)> = (1..=61)
+        .map(|second| (second, event(gone(second))))
+        .collect();
     arrivals.push((62, None));
     let (mut agent, mut inbox) = scene(arrivals);
 
@@ -356,10 +356,7 @@ fn a_signal_begins_one_quit_and_the_loop_waits_for_the_agent_to_finish() {
 
     assert_eq!(
         agent.did,
-        [
-            Did::Quit(secs(3)),
-            Did::Wake("SessionHostStopped", secs(5)),
-        ]
+        [Did::Quit(secs(3)), Did::Wake("SessionHostStopped", secs(5)),]
     );
 }
 
@@ -401,7 +398,10 @@ fn a_quit_that_never_finishes_ends_the_loop_at_the_bound() {
 #[test]
 fn the_stop_bound_leaves_room_inside_a_service_managers_patience() {
     assert!(STOP_PATIENCE > secs(30), "{STOP_PATIENCE:?}");
-    assert!(STOP_PATIENCE + secs(30) + secs(12) < secs(90), "{STOP_PATIENCE:?}");
+    assert!(
+        STOP_PATIENCE + secs(30) + secs(12) < secs(90),
+        "{STOP_PATIENCE:?}"
+    );
 }
 
 /// `koru-agent stop` reaches the same quit over a connection. The loop needs
@@ -483,6 +483,7 @@ fn a_signal_quits_the_real_agent_without_a_question() {
     let mut under_loop = AgentUnderLoop {
         agent: Arc::clone(&agent),
         delegate_wakes: None,
+        routine_clock: None,
     };
 
     assert_eq!(supervise(&mut under_loop, &mut inbox), ServerExit::Stopped);
@@ -497,7 +498,10 @@ fn a_server_is_never_run_on_the_per_user_root() {
     let refused = run_server(Paths::for_channel(std::path::PathBuf::from("ordinary")));
     match refused {
         Err(StartError::Failed(why)) => assert!(why.contains("explicit root"), "{why}"),
-        other => panic!("a server started on a channel root: {:?}", other.map(|_| ())),
+        other => panic!(
+            "a server started on a channel root: {:?}",
+            other.map(|_| ())
+        ),
     }
 }
 

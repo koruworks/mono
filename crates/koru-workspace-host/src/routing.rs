@@ -96,6 +96,8 @@ pub enum ModalKind {
     /// key and press is the viewer's until `Esc` or its close control takes
     /// it down. Nothing to type into, so a modal and never a prompt.
     MediaViewer,
+    /// The retained work of one Bot reply, lifted to a read-only window modal.
+    BotWork,
     /// A right-click menu, a caption menu, or a submenu of one.
     ///
     /// Grouped with the modals rather than given a kind of its own because

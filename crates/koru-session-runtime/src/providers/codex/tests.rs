@@ -2548,6 +2548,7 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
     frames.push(json!({ "id": 4, "result": { "turn": { "id": "native-turn-1" } } }));
     frames.push(json!({ "id": 5, "result": { "turnId": "native-turn-1" } }));
     let (mut control, state) = replay_control(frames, Arc::new(NoopAttachmentPathResolver));
+    assert!(control.submission_known_unsent(AgentTurnId::mint()));
     control
         .start(AgentStart {
             session_id: SessionId::mint(),
@@ -2609,6 +2610,10 @@ fn steering_adds_text_to_the_running_turn_with_its_native_id_and_only_then() {
         .unwrap_err();
     assert_eq!(stranger.code, ErrorCode::InvalidTransition);
     control.turns.get_mut(&turn_id).unwrap().terminal = true;
+    assert!(
+        !control.submission_known_unsent(turn_id),
+        "completed identities must never be forgotten by the unsent proof"
+    );
     let finished = control
         .steer(AgentInput {
             model: None,

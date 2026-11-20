@@ -29,6 +29,8 @@ use tokio::sync::{Notify, Semaphore, mpsc};
 use crate::lifecycle::LifecycleQueue;
 use crate::projects::ProjectRegistry;
 
+mod instructions;
+
 /// The first negotiated version that can carry the project verbs.
 const PROJECTS_PROTOCOL_VERSION: u32 = 10;
 /// The first negotiated version that can carry the per-project scope rewrite.
@@ -1933,6 +1935,7 @@ fn create_profile_session(
                     // agent that asks them (koru-ai D108); every other
                     // session's agent declines, as before v21.
                     questions: protocol.questions(),
+                    orientation: instructions::capture(&request, &state.bootstrap),
                     // A chat's agent gets Koru's own tools through the
                     // desktop bridge; a terminal's or a run's does not.
                     mcp_servers: match request.origin {

@@ -34,7 +34,7 @@ fn titles(section: &ExtraSection) -> Vec<&str> {
 
 /// **Only Bots that can actually be asked are offered**: the same person's
 /// Bots in the same home workspace, run by this computer, active, and not
-/// the Bot itself — the set the service answers to `list_askable_bots`.
+/// the Bot itself — the set supplied by the native roster.
 #[test]
 fn bot_mention_feed_excludes_itself_archived_other_workspaces_and_other_computers() {
     let home = WorkspaceId::new();

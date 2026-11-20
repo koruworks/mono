@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Presentation state for a conversation whose engine owns its turns.
 //! Input acceptance, live observations and published messages are separate
-//! facts. This module opens no service and creates no inference-attempt ids.
+//! facts. This module opens no service or inference attempts. Its tools adapter
+//! reuses ordinary chat rendering types without issuing ordinary chat commands.
 use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
@@ -54,6 +55,7 @@ pub(crate) struct Live {
     pub reply: MessageId,
     pub bot: Uuid,
     pub text: String,
+    pub progress: crate::bot_presentation::Progress,
     /// False after a gap until a genuine turn-start observation establishes
     /// that subsequent deltas include the beginning of this reply.
     pub complete_prefix: bool,
@@ -71,6 +73,7 @@ pub(crate) struct State {
     /// engine history identities and must never be used as durable links.
     blocks: BTreeMap<u64, Vec<koru_ai_core::MessageBlock>>,
     pub live: HashMap<Uuid, Live>,
+    pub tools: crate::managed_tools::Observed,
     pub before: Option<u64>,
     pub history_pending: bool,
     pub history_anchor: Option<(MessageId, f32)>,
@@ -84,6 +87,8 @@ pub(crate) struct State {
     pub pending_send: Option<wire::Command>,
     pub retry_send: bool,
     pub retry_at: Instant,
+    /// Take-once diagnostic from an exact engine observation, not reply prose.
+    pub notice: Option<String>,
 }
 
 macro_rules! redacted {
@@ -103,6 +108,7 @@ impl State {
             .map(|m| (m.sequence, render_blocks(m)))
             .collect();
         Self {
+            notice: None,
             navigation: crate::managed_navigation::State::new(std::mem::take(
                 &mut opened.navigation,
             )),
@@ -116,6 +122,7 @@ impl State {
                 .collect(),
             blocks,
             live: HashMap::new(),
+            tools: Default::default(),
             before: opened.before,
             history_pending: false,
             history_anchor: None,
@@ -196,9 +203,19 @@ impl State {
                 self.snapshot.conversation.chat.agent_fast;
         }
         self.history_changed = false;
+        let published = self
+            .messages
+            .values()
+            .chain(&update.messages)
+            .map(|m| m.id)
+            .collect();
+        let tools_changed =
+            self.tools
+                .apply(&update.feed, &self.snapshot, &update.snapshot, &published);
         let old = &self.snapshot;
         let new = &update.snapshot;
-        let mut changed = old.conversation.chat != new.conversation.chat
+        let mut changed = tools_changed
+            || old.conversation.chat != new.conversation.chat
             || old.joined != new.joined
             || old.participants != new.participants
             || old.origin != new.origin
@@ -237,15 +254,24 @@ impl State {
             }) && !self.messages.values().any(|m| m.id == live.reply.as_uuid())
         });
         changed |= count != self.live.len();
-        changed |= self.observe(update.feed);
+        changed |= self.observe_live(update.feed);
         changed
     }
 
+    #[cfg(test)]
     fn observe(&mut self, feed: Feed) -> bool {
+        let published = self.messages.values().map(|m| m.id).collect();
+        let tools_changed = self
+            .tools
+            .apply(&feed, &self.snapshot, &self.snapshot, &published);
+        self.observe_live(feed) || tools_changed
+    }
+
+    fn observe_live(&mut self, feed: Feed) -> bool {
         let reset = feed.gap || self.boot != Some(feed.boot);
         let mut changed = false;
         if reset {
-            changed = !self.live.is_empty();
+            changed |= !self.live.is_empty();
             self.live.clear();
             self.cursor = 0;
         }
@@ -270,6 +296,7 @@ impl State {
                 reply: MessageId::from_uuid(reply),
                 bot: current.bot,
                 text: String::new(),
+                progress: Default::default(),
                 complete_prefix: false,
                 markdown: Default::default(),
             });
@@ -297,6 +324,13 @@ impl State {
             let Some(reply) = current.reply_message else {
                 continue;
             };
+            if let wire::AgentEvent::Notice { turn_id, text } = &observation.event {
+                if turn_id.to_string() == turn.id.to_string() && !text.is_empty() {
+                    self.notice = Some(text.chars().take(2048).collect());
+                    changed = true;
+                }
+                continue;
+            }
             if self.messages.values().any(|m| m.id == reply) {
                 continue;
             }
@@ -305,6 +339,7 @@ impl State {
                 reply: MessageId::from_uuid(reply),
                 bot: observation.bot,
                 text: String::new(),
+                progress: Default::default(),
                 complete_prefix: false,
                 markdown: Default::default(),
             });
@@ -313,6 +348,10 @@ impl State {
                     live.complete_prefix = true;
                 }
                 wire::AgentEvent::MessageDelta { text, .. } => {
+                    if !text.is_empty() {
+                        changed |= live.progress != crate::bot_presentation::Progress::Typing;
+                        live.progress = crate::bot_presentation::Progress::Typing;
+                    }
                     if live.complete_prefix
                         && live.text.len().saturating_add(text.len()) <= MAX_LIVE_BYTES
                     {
@@ -323,6 +362,15 @@ impl State {
                         live.text.clear();
                         live.complete_prefix = false;
                     }
+                }
+                wire::AgentEvent::ToolStarted { .. }
+                | wire::AgentEvent::ToolCompleted { .. }
+                | wire::AgentEvent::WaitingForInput { .. }
+                | wire::AgentEvent::TurnCompleted { .. }
+                | wire::AgentEvent::TurnCancelled { .. }
+                | wire::AgentEvent::TurnFailed { .. } => {
+                    changed |= live.progress != crate::bot_presentation::Progress::Thinking;
+                    live.progress = crate::bot_presentation::Progress::Thinking;
                 }
                 _ => {}
             }
@@ -373,6 +421,7 @@ impl State {
             })
             .collect();
         ChatTranscript {
+            active_attempt: None,
             chat: self.snapshot.conversation.chat.clone(),
             tool_policy: koru_ai_core::ChatToolPolicy {
                 chat_id: self.thread(),
@@ -380,7 +429,7 @@ impl State {
                 workspace_ids: vec![],
             },
             messages,
-            tool_activities: vec![],
+            tool_activities: self.tools.rows(),
             notices: vec![],
             blocks: self.blocks.values().flatten().cloned().collect(),
             pinned_documents: vec![],

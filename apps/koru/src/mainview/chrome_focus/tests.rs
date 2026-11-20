@@ -409,13 +409,8 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
     });
 }
 
-/// **`F6` reaches a Bot tab's *Settings***, the one control its header has,
-/// which no key reaches otherwise while the conversation has the keyboard
-/// (Bots P1.8). The tab's header is the rotation's last stop; landing there
-/// gives the tab the keyboard on *Settings*, Enter opens the settings and
-/// Escape closes them with the keyboard back on *Settings*. `F6` moves on
-/// and takes it from the tab; a press outside the tab takes it too. Every
-/// other tab has no such stop.
+/// Settings open from the navigator menu. F6 visits their visible controls,
+/// while a plain conversation has no phantom stop for the removed header.
 #[test]
 fn f6_reaches_a_bot_tabs_settings_and_gives_the_keyboard_back() {
     use crate::bots::view::region::SETTINGS_BUTTON;
@@ -447,7 +442,8 @@ fn f6_reaches_a_bot_tabs_settings_and_gives_the_keyboard_back() {
             "Scout",
             false,
         ));
-        assert!(v.open_bot_tab(bot));
+        v.explore.bots_mut().listed_for_test(vec![bot.clone()]);
+        assert!(v.open_bot_tab(bot.clone()));
         let bot_focus = |v: &MainView| match &v.tabs().active_tab().view {
             TabView::Bot(view) => view.focus(),
             _ => panic!("the Bot tab is in front"),
@@ -456,31 +452,41 @@ fn f6_reaches_a_bot_tabs_settings_and_gives_the_keyboard_back() {
             TabView::Bot(view) => view.settings_shown(),
             _ => panic!("the Bot tab is in front"),
         };
-        // The pane is shut: the lane, then the tab.
+        // The pane is shut and the conversation has no header controls.
         assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
         assert_eq!(v.chrome_focus, Some(ChromeStop::Lane(LaneControl::Toggle)));
         assert_eq!(bot_focus(&v), None);
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
+        assert_eq!(v.current_stop(), Some(Stop::Lane));
+        assert_eq!(bot_focus(&v), None);
+
+        // The navigator menu opens Settings; those real controls join F6.
+        assert!(v.choose_bot_roster_action(
+            Some(bot.id),
+            crate::mainview::context_menu::MenuAction::BotSettings,
+        ));
+        assert!(v.maintain_bot_roster_actions());
+        assert!(settings_shown(&v));
         assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
         assert_eq!(v.chrome_focus, None, "the sidebar's stop is left");
         assert_eq!(bot_focus(&v), Some(SETTINGS_BUTTON), "on Settings");
         assert_eq!(v.current_stop(), Some(Stop::Tab));
 
-        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
-        assert!(settings_shown(&v), "Enter opened the settings");
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
         assert!(!settings_shown(&v));
-        assert_eq!(
-            bot_focus(&v),
-            Some(SETTINGS_BUTTON),
-            "the keyboard came back to Settings"
-        );
+        assert_eq!(bot_focus(&v), None, "Back returns to the composer");
 
         // F6 moves on, round to the lane, and the tab lets go.
         assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
         assert_eq!(v.chrome_focus, Some(ChromeStop::Lane(LaneControl::Toggle)));
         assert_eq!(bot_focus(&v), None);
 
-        // Back on the tab, then a press outside it.
+        // Open Settings again, then a press outside its visible controls.
+        assert!(v.choose_bot_roster_action(
+            Some(bot.id),
+            crate::mainview::context_menu::MenuAction::BotSettings,
+        ));
+        assert!(v.maintain_bot_roster_actions());
         assert!(press(&mut v, &mut workspace.ws, NamedKey::F6));
         assert_eq!(bot_focus(&v), Some(SETTINGS_BUTTON));
         let lane = v.lane_controls().toggle;
@@ -549,14 +555,17 @@ fn shift_f6_walks_the_same_stops_backwards_in_every_mode() {
                 );
             }
             if mode == NavigatorMode::Bots {
-                assert_eq!(forward.last(), Some(&Some(Stop::Tab)), "every stop stands");
+                assert!(
+                    !forward.contains(&Some(Stop::Tab)),
+                    "no removed header stop"
+                );
                 assert!(forward.contains(&Some(Stop::Column)));
                 // From nowhere, the last stop.
                 v.chrome_focus = None;
                 v.explore.clear_focus();
                 v.release_tab_keyboard();
                 assert!(back(&mut v, &mut workspace.ws));
-                assert_eq!(v.current_stop(), Some(Stop::Tab));
+                assert_eq!(v.current_stop(), forward.last().copied().flatten());
             }
         }
     });
@@ -624,7 +633,10 @@ fn shift_f6_as_a_keyboard_sends_it_walks_a_bot_tab_backwards_in_every_mode() {
                 forward.push(stop);
             }
             assert!(forward.iter().all(Option::is_some), "{mode:?}: {forward:?}");
-            assert_eq!(forward.last(), Some(&Some(Stop::Tab)), "{mode:?}");
+            assert!(
+                !forward.contains(&Some(Stop::Tab)),
+                "{mode:?}: closed settings have no header stop"
+            );
             to_composer(&mut v);
             let mut backward = Vec::new();
             for _ in 0..forward.len() {
@@ -636,7 +648,7 @@ fn shift_f6_as_a_keyboard_sends_it_walks_a_bot_tab_backwards_in_every_mode() {
             assert!(back(&mut v, &mut workspace.ws));
             assert_eq!(
                 v.current_stop(),
-                Some(Stop::Tab),
+                reversed.first().copied().flatten(),
                 "{mode:?}: round to where the backwards walk began"
             );
         }

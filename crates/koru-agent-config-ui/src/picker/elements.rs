@@ -236,6 +236,7 @@ pub struct ListRow {
 /// What the picker shows, as far as its layout and its declarations go.
 #[derive(Default)]
 pub struct Spec {
+    pub report: Option<super::report::Report>,
     /// **No rail**: the chat has begun and keeps its provider, so the
     /// content takes the rail's room, inset at its start as at its end.
     pub hide_rail: bool,
@@ -942,15 +943,23 @@ pub fn tree(spec: &Spec, painted: Painted) -> El {
     if let Some(spec) = &spec.footer {
         content = content.child(footer(spec));
     }
-    if spec.hide_rail {
+    let picker = if spec.hide_rail {
         // The content in the rail's room, as far from the panel's start
         // as from its end.
-        return row(PICKER).child(content.pad_start(PANEL_INSET));
+        row(PICKER).child(content.pad_start(PANEL_INSET))
+    } else {
+        row(PICKER)
+            .gap(CONTENT_GAP)
+            .child(rail_column(slots))
+            .child(content)
+    };
+    if let Some(report) = &spec.report {
+        col("Model picker and usage")
+            .child(picker.fill())
+            .child(report.tree())
+    } else {
+        picker
     }
-    row(PICKER)
-        .gap(CONTENT_GAP)
-        .child(rail_column(slots))
-        .child(content)
 }
 
 fn rail_page_button(name: &'static str, key: Key, glyph: char, label: koru_i18n::Key) -> El {

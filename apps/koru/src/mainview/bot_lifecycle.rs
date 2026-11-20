@@ -2,8 +2,8 @@
 
 //! **A Bot's lifecycle, from the window's side** (Bots P1.8 S14).
 //!
-//! The Bot tab draws its ⋯ and its rows' Move to Trash, and follows what it
-//! sends; **the window owns the menu and the question**, through the same
+//! The navigator offers each Bot and conversation's lifecycle actions; the
+//! Bot tab follows what it sends. **The window owns the menu and the question**, through the same
 //! `ContextMenu` and `Confirm` every other menu and question in it uses, so
 //! no gesture reaches the owner without being asked first. On a yes the tab
 //! sends the command; on a no nothing is sent; either way the keyboard goes
@@ -37,6 +37,68 @@ use crate::bots::lifecycle::Ask;
 use crate::bots::stops::{self, Facts, Scope, WorkNow};
 
 impl MainView {
+    /// Moved conversation rows keep the tab's existing mutation and refusal
+    /// paths. The navigator supplies only the durable subject and geometry.
+    pub(super) fn bot_navigator_conversation(&self) -> Option<(BotId, koru_ai_core::ChatId)> {
+        if !self.sidebar.is_open() || !self.explore.showing_bots() {
+            return None;
+        }
+        self.explore
+            .bot_conversation_at(self.explore_area(), self.pointer.0, self.pointer.1)
+            .or_else(|| {
+                self.explore
+                    .has_focus()
+                    .then(|| self.explore.bots().focused_conversation())
+                    .flatten()
+            })
+    }
+
+    pub(super) fn bot_navigator_tab(&mut self, bot: BotId) -> Option<u64> {
+        if matches!(&self.tabs().active_tab().view, TabView::Bot(view) if view.bot() == Some(bot)) {
+            return Some(self.tabs().active_tab().id);
+        }
+        let row = self.explore.bots().menu_row(bot)?;
+        self.open_bot_tab(row);
+        let tab = self.tabs().active_tab();
+        matches!(&tab.view, TabView::Bot(view) if view.bot() == Some(bot)).then_some(tab.id)
+    }
+
+    pub(super) fn bot_navigator_menu(
+        &mut self,
+        bot: BotId,
+        chat: koru_ai_core::ChatId,
+        at: (f32, f32),
+    ) -> bool {
+        let Some(tab) = self.bot_navigator_tab(bot) else {
+            return true;
+        };
+        self.explore.bots_mut().focus_conversation(chat);
+        let Some(view) = self.asking_bot_tab(tab, bot) else {
+            return true;
+        };
+        if matches!(
+            view.rename_refusal(chat),
+            Some(Words::BotsErrArchived | Words::BotsErrBotTrashed | Words::BotsErrTrashed)
+        ) {
+            return true;
+        }
+        let items = if view.can_trash_conversation(chat) {
+            vec![MenuAction::RenameAiChat, MenuAction::TrashBotConversation]
+        } else {
+            vec![MenuAction::RenameAiChat]
+        };
+        let mut menu = ContextMenu::new(
+            &mut self.engine,
+            MenuSubject::BotConversation { bot, chat, tab },
+            at,
+            items,
+        );
+        let enabled = self.enabled_items(&menu);
+        menu.step(&enabled, 1);
+        self.menu = Some(menu);
+        true
+    }
+
     /// **The tab that asked**, by its own identity (`Tab::id`), while it is
     /// still `bot`'s: a menu or a question is answered to the tab it came
     /// from, never to whichever of the Bot's tabs is in front. `None` when

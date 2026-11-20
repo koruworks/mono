@@ -94,6 +94,7 @@ impl Host {
     fn inputs(&self) -> Inputs<'_, String> {
         let offers_footer = self.model == "opus";
         Inputs {
+            report: None,
             lang: Lang::En,
             agents: vec![
                 Agent {

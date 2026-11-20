@@ -69,6 +69,8 @@ mod agent_providers;
 mod bot_context;
 mod bot_lifecycle;
 mod bot_onboard;
+mod bot_roster;
+mod bot_work;
 mod bots;
 mod canvas;
 mod canvas_chain;
@@ -118,6 +120,7 @@ mod reminder_management;
 mod reminder_shell;
 mod reminders;
 mod reminders_view;
+mod routine_startup;
 pub(crate) mod routing;
 mod run_trash;
 mod runs;
@@ -752,6 +755,7 @@ pub struct MainView {
     /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
     /// tab, and its one read off the window thread (`bots::labels`).
     bot_labels: crate::bots::labels::ChatLabels,
+    bot_roster_action: Option<(koru_ai_core::bots::BotId, u64, MenuAction)>,
     /// **The trashed Bots and Bot conversations, for the Trash tab** (S14):
     /// read only while a Trash tab is in front, off the window thread.
     bot_trash: crate::bots::trash::BotTrash,
@@ -1468,9 +1472,10 @@ pub struct MainView {
     ///
     /// A link and not a read, because the delegation modal has to *show* that
     /// path and opening the modal may touch no disk. The worker behind this
-    /// holds the whole Global section; this window reads one field of it and
-    /// writes one field of it, which is what a per-field patch is for.
+    /// holds the whole Global section. Folder selection and the Routine
+    /// startup offer each patch only their own preference.
     delegate_folder: koru_api_client::GlobalLink,
+    routine_startup: routine_startup::StartupOffer,
 
     // ------------------------------------------------------- session tabs
     /// This window's connection to the session backend, made on first session
@@ -1940,6 +1945,7 @@ impl MainView {
             first_bot: Default::default(),
             bot_setups: Default::default(),
             bot_labels: crate::bots::labels::ChatLabels::default(),
+            bot_roster_action: None,
             bot_trash: crate::bots::trash::BotTrash::default(),
             held_chat_opens: Vec::new(),
             ai_computer_ask: None,
@@ -2192,6 +2198,7 @@ impl MainView {
                     koru_workspace_host::cli::root_from_args(),
                 ),
             },
+            routine_startup: Default::default(),
             session_backend: None,
             session_lanes: Vec::new(),
             closed_tabs: Vec::new(),
@@ -2240,6 +2247,12 @@ impl MainView {
         &mut self,
         proxy: winit::event_loop::EventLoopProxy<koru_workspace_host::app::Wake>,
     ) {
+        self.delegate_folder.on_update({
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
+            }
+        });
         self.reminders.set_waker(std::sync::Arc::new({
             let proxy = proxy.clone();
             move || {
@@ -2833,6 +2846,11 @@ impl MainView {
             && let Some(schedule) = self.explore.agent_schedule_at(node)
         {
             return self.start_schedule_rename(schedule);
+        }
+        if let Some((bot, chat)) = self.bot_navigator_conversation()
+            && let Some(tab) = self.bot_navigator_tab(bot)
+        {
+            return self.start_bot_chat_rename(bot, tab, chat);
         }
         // **A Bot tab's conversation list**: the row under the pointer, else
         // the one the keyboard is on while the list holds it — as the Chats
@@ -4014,6 +4032,11 @@ impl MainView {
     }
 
     fn select(&mut self, i: usize) -> bool {
+        if i != self.tabs().active()
+            && let Some(surface) = self.bot_work_surface_mut()
+        {
+            surface.close_bot_work();
+        }
         // Switching tabs is a jump like any other: Back after it should return
         // you to the tab you came from, which is what it does everywhere else
         // that has both tabs and a history.
@@ -4469,6 +4492,7 @@ impl MainView {
                         | MenuAction::Socials
                         | MenuAction::Delegate
                         | MenuAction::NewDocument
+                        | MenuAction::NewBot
                         | MenuAction::OpenRecentDocument(_)
                         | MenuAction::Canvases
                         | MenuAction::NewCanvas
@@ -4602,6 +4626,30 @@ impl MainView {
             // Archive and Move to Trash dim, not hide, while a change of
             // the Bot is still being delivered: the owner would refuse them
             // (`bot_operation_pending`), and the tab says which change.
+            MenuSubject::BotRoster { bot } => match (bot, action) {
+                (None, MenuAction::BotTeamPause(_)) => self
+                    .explore
+                    .bots()
+                    .team()
+                    .control()
+                    .is_some_and(|control| control.enabled),
+                (None, MenuAction::BotArchived(_)) => true,
+                (
+                    Some(bot),
+                    MenuAction::ArchiveBot
+                    | MenuAction::EditBotIdentity
+                    | MenuAction::BotNewConversation,
+                ) => self
+                    .explore
+                    .bots()
+                    .row(*bot)
+                    .is_some_and(|row| !row.archived),
+                (Some(bot), MenuAction::BotSettings | MenuAction::TrashBot) => {
+                    self.explore.bots().menu_row(*bot).is_some()
+                }
+                (Some(bot), MenuAction::UnarchiveBot) => self.explore.bots().can_unarchive(*bot),
+                _ => false,
+            },
             MenuSubject::Bot { bot, tab } => match action {
                 MenuAction::ArchiveBot | MenuAction::TrashBot => !self
                     .asking_bot_tab(*tab, *bot)
@@ -4902,6 +4950,7 @@ impl MainView {
             },
             MenuSubject::NewTab => match action {
                 MenuAction::NewDocument => self.new_tab(),
+                MenuAction::NewBot => self.open_new_bot_dialog(new_bot::Opener::Elsewhere),
                 MenuAction::OpenWelcome => self.open_welcome_tab(),
                 // The quick switch, for somebody who has not met its chord.
                 MenuAction::ViewOpenTabs => self.cycle_tab(1),
@@ -5052,6 +5101,7 @@ impl MainView {
                 MenuAction::DeleteRun => self.queue_run_trash(runs),
                 _ => false,
             },
+            MenuSubject::BotRoster { bot } => self.choose_bot_roster_action(bot, action),
             MenuSubject::Bot { bot, tab } => self.choose_bot_lifecycle(bot, tab, action),
             MenuSubject::BotConversation { bot, chat, tab } => match action {
                 MenuAction::TrashBotConversation => self.ask_trash_bot_conversation(bot, tab, chat),
@@ -6352,8 +6402,9 @@ impl MainView {
     /// nobody is looking at asks the Bot service for nothing and folds
     /// nothing. Its link starts the first time it is shown.
     fn maintain_bots(&mut self) -> bool {
+        let navigation_changed = self.maintain_bot_roster_actions();
         if !self.explore.showing_bots() {
-            return false;
+            return navigation_changed;
         }
         self.explore.start_bots(crate::search::gateway_root());
         let workspace = self
@@ -6377,12 +6428,6 @@ impl MainView {
         // window run's finding 3d).
         for request in self.explore.bots_mut().take_creations_moved() {
             changed |= self.creation_moved_elsewhere(request);
-        }
-        // Another computer's Bots are listed (M8): their headings name the
-        // computer as the Agent's device list does, asked for once per
-        // connection. Nothing is asked while no copy lists one.
-        if !self.explore.bots().linked().is_empty() {
-            self.request_device_names_if_needed();
         }
         // **The roster asks; this window opens** — the Bot's tab, or the one
         // already on its conversation (Bots P1.8 S4).
@@ -6428,7 +6473,7 @@ impl MainView {
             ),
             None => false,
         };
-        changed || opened || opened_chat || created || asked || page
+        changed || opened || opened_chat || created || asked || page || navigation_changed
     }
 
     /// **The Chats view's own pass** (AGENTUX I5).
@@ -6941,6 +6986,13 @@ impl MainView {
                 };
                 if view.bot() != Some(bot) {
                     return None;
+                }
+                if self.sidebar.is_open()
+                    && let Some(row) = self
+                        .explore
+                        .bot_conversation_label_rect(self.explore_area(), chat)
+                {
+                    return Some(row);
                 }
                 let local = view.rename_rect(chat)?;
                 let at = self.focused_view_rect();
@@ -7491,15 +7543,6 @@ impl MainView {
                     .map(|id| (id, device.display_name.clone()))
             })
             .collect();
-        // The Bots roster names the person's other computers from this
-        // same list (M8): the copy of their Bots carries no name.
-        self.explore
-            .bots_mut()
-            .set_computer_names(crate::bots::linked::Names::new(
-                self.device_names
-                    .iter()
-                    .map(|(id, name)| (*id, name.clone())),
-            ));
         self.linked_devices.set_linked(this_device, devices, relay);
         self.push_linked_devices();
         // A name that has just arrived changes what a pill says.
@@ -10694,6 +10737,9 @@ impl MainView {
     }
 
     fn mouse_down_inner(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        if self.bot_work_pointer(x, y, true) {
+            return true;
+        }
         self.tooltip.clear();
         self.pointer = (x, y);
         if self.file_preview.is_some() {
@@ -11305,6 +11351,14 @@ impl MainView {
     }
 
     fn mouse_up_inner(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let work_owns_release = self.bot_work_owns_input();
+        if self
+            .bot_work_surface_mut()
+            .is_some_and(ChatSurface::bot_work_release)
+            || work_owns_release
+        {
+            return true;
+        }
         // A chat's lifted picture viewer takes the release of its own press.
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_up(),
@@ -12030,6 +12084,11 @@ impl View for MainView {
             // the cursor rather than under a button.
             Hit::Sidebar => {
                 self.refresh_explore(ws, true);
+                if let Some((bot, chat)) =
+                    self.explore.bot_conversation_at(self.explore_area(), x, y)
+                {
+                    return self.bot_navigator_menu(bot, chat, (x, y));
+                }
                 let out = self.explore.context_menu(self.explore_area(), x, y);
                 self.apply(ws, out)
             }
@@ -12126,6 +12185,9 @@ impl View for MainView {
     /// under the button, so the walk from one to the other is continuous, which
     /// is what makes a hover menu usable at all.
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        if self.bot_work_pointer(x, y, false) {
+            return true;
+        }
         self.pointer = (x, y);
         if self.file_preview.is_some() {
             return true;
@@ -12241,6 +12303,9 @@ impl View for MainView {
     }
 
     fn mouse_double_click(&mut self, ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        if self.bot_work_owns_input() {
+            return true;
+        }
         if self.file_preview.is_some() {
             return true;
         }
@@ -12377,6 +12442,12 @@ impl View for MainView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        if self.bot_work_owns_input() {
+            if let Some(surface) = self.bot_work_surface_mut() {
+                surface.bot_work_scroll(delta);
+            }
+            return;
+        }
         if let Some(preview) = self.file_preview.as_mut() {
             preview.scroll_by(delta, self.viewport);
             return;
@@ -12626,6 +12697,9 @@ impl View for MainView {
     }
 
     fn zoom_wheel(&mut self, delta: MouseScrollDelta, x: f32, y: f32) -> bool {
+        if self.bot_work_owns_input() {
+            return true;
+        }
         if let Some(claimed) = self.lifted_viewer_zoom(ViewerZoom::Wheel(delta, x, y)) {
             return claimed;
         }
@@ -12633,6 +12707,9 @@ impl View for MainView {
     }
 
     fn zoom_key(&mut self, intent: ZoomIntent) -> bool {
+        if self.bot_work_owns_input() {
+            return true;
+        }
         if let Some(claimed) = self.lifted_viewer_zoom(ViewerZoom::Key(intent)) {
             return claimed;
         }
@@ -12640,6 +12717,9 @@ impl View for MainView {
     }
 
     fn key_up(&mut self, ws: &mut WorkspaceDoc, key: &Key) -> bool {
+        if self.bot_work_owns_input() {
+            return true;
+        }
         let before = ws.version();
         let handled = self.canvas_key_up(ws, key);
         if ws.version() != before {
@@ -12691,6 +12771,9 @@ impl View for MainView {
     }
 
     fn cursor_icon(&self) -> CursorIcon {
+        if self.bot_work_owns_input() {
+            return CursorIcon::Default;
+        }
         if self.file_preview.is_some() {
             return CursorIcon::Default;
         }
@@ -14481,11 +14564,13 @@ impl View for MainView {
     /// that did not forward this would leave the manager showing a dash for
     /// everything, which is exactly what it did the first time.
     fn set_reminder_startup(&mut self, facts: koru_window::ReminderStartupFacts) -> bool {
+        let changed = self.routine_startup.observe(facts.start_on_login);
         self.reminder_preferences
             .set_startup_facts(crate::reminder_settings::StartupFacts {
                 start_on_login: facts.start_on_login,
                 reminder_explained: facts.explained,
             })
+            | changed
     }
 
     fn reminder_startup_result(
@@ -14971,7 +15056,8 @@ impl View for MainView {
                 )),
                 Instant::now(),
             )
-            .with_progress(voice_progress(fraction)),
+            .with_progress(voice_progress(fraction))
+            .with_monospace_digits(),
             ToastPayload::VoiceDownload,
         ));
         true
@@ -16031,6 +16117,7 @@ impl View for MainView {
                         label: tab.label.clone(),
                         glyph: tab.view.icon().unwrap_or(koru_draw::icons::DOCUMENT),
                         emoji: tab.icon.clone(),
+                        face: tab.view.face().map(|(face, name)| (face, name.to_owned())),
                         current: tab.id == current,
                         status: tab.view.status_mark(),
                     },
@@ -16198,6 +16285,7 @@ impl View for MainView {
                 .min(),
             self.reminders.deadline(),
             self.reminder_shell.maintenance_deadline(),
+            self.routine_startup.deadline(),
             if self.ai_visible() {
                 self.ai_chat.maintenance_deadline()
             } else {
@@ -16216,10 +16304,6 @@ impl View for MainView {
             // a roster that is showing.
             (self.explore.showing_bots() && self.explore.bots_awaiting())
                 .then(|| Instant::now() + std::time::Duration::from_millis(50)),
-            // **One wake every few seconds while the roster lists another
-            // computer's Bots** (M8): how current each copy is, read again.
-            // `None` for a roster that lists none, or is hidden.
-            self.explore.bots().linked_deadline(),
             // And while the window waits to learn whose a conversation it
             // was asked to open is (Bots P1.8, B1).
             self.bot_labels
@@ -16613,7 +16697,6 @@ impl View for MainView {
             | self.drain_bot_lifecycle_asks()
             | self.drain_bot_create_asks()
             | self.drain_bot_child_open()
-            | self.drain_bot_memory_asks()
             | self.drain_bot_routine_open()
             | self.maintain_bot_trash();
         let ai_attachment_opened = self.open_pending_ai_attachment();
@@ -16748,6 +16831,7 @@ impl View for MainView {
             let (view, doc) = group.tabs_mut().active_mut().doc(ws);
             view_changed |= view.maintain(doc, now);
         }
+        view_changed |= self.maintain_routine_startup();
         if reminder_submitted || reminder_cancelled || pasted_draft {
             self.adopt_siblings(ws);
         }
@@ -17047,6 +17131,7 @@ impl MainView {
             // below reaches. Named so adding a kind stays a compile error.
             // A chat's picture viewer answers every key while it stands; a
             // document's is answered by the leaf in its own `key`.
+            Blockers::Modal(ModalKind::BotWork) => return self.bot_work_key(key, mods),
             Blockers::Modal(ModalKind::MediaViewer) => match self.lifted_viewer() {
                 Some(LiftedViewer::FileImage) => {
                     return self.file_image_input(|viewer| viewer.key(key, text, mods));
@@ -17195,6 +17280,20 @@ impl MainView {
             if self.explore.take_quick_filter_stale() {
                 self.explore_stale = true;
             }
+            return true;
+        }
+        // Delete belongs only to the focused conversation row, never to the
+        // container or the composer beside it. Keep the existing confirmation.
+        if self.sidebar.is_open()
+            && self.explore.showing_bots()
+            && self.explore.has_focus()
+            && mods.is_empty()
+            && *key == Key::Named(winit::keyboard::NamedKey::Delete)
+            && !self.tabs().active_tab().view.is_prompting()
+            && let Some((bot, chat)) = self.explore.bots().focused_conversation()
+            && let Some(tab) = self.bot_navigator_tab(bot)
+        {
+            self.ask_trash_bot_conversation(bot, tab, chat);
             return true;
         }
         // **The tree, while it holds the keyboard.** Only the navigation keys —
@@ -18204,6 +18303,17 @@ impl MainView {
     }
 
     fn open_ai_document_link(&mut self, link: koru_link::KoruLink, choose_place: bool) -> bool {
+        if let koru_link::KoruLink::Bot { bot, .. } = &link {
+            let Some(row) = self
+                .explore
+                .bots()
+                .menu_row(koru_ai_core::bots::BotId::from_uuid(*bot))
+            else {
+                return false;
+            };
+            self.open_bot_tab(row);
+            return true;
+        }
         let koru_link::KoruLink::Document { document, node } = link else {
             return false;
         };

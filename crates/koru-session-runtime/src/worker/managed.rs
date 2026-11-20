@@ -17,12 +17,18 @@ use super::{Shared, failed};
 
 const COMMAND_CAPACITY: usize = 32;
 
+pub(super) struct ManagedSubmitFailure {
+    pub code: ErrorCode,
+    /// This attempt is proven unsent. An earlier ambiguous attempt still wins.
+    pub known_unsent: bool,
+}
+
 enum ManagedCommand {
     Submit {
         input: AgentInput,
         /// A set's answers sent as the person's next message (D108).
         answers: Option<koru_session_protocol::QuestionsReply>,
-        reply: SyncSender<Result<(), ProviderFailure>>,
+        reply: SyncSender<Result<(), ManagedSubmitFailure>>,
     },
     Cancel {
         turn_id: AgentTurnId,
@@ -84,14 +90,21 @@ impl ManagedHandle {
         &self,
         input: AgentInput,
         answers: Option<koru_session_protocol::QuestionsReply>,
-    ) -> Result<(), ErrorCode> {
+    ) -> Result<(), ManagedSubmitFailure> {
         let (reply, response) = mpsc::sync_channel(1);
         self.send(ManagedCommand::Submit {
             input,
             answers,
             reply,
+        })
+        .map_err(|code| ManagedSubmitFailure {
+            code,
+            known_unsent: true,
         })?;
-        receive(response)
+        response.recv().map_err(|_| ManagedSubmitFailure {
+            code: ErrorCode::ProviderUnavailable,
+            known_unsent: false,
+        })?
     }
 
     /// Steer `input` — or a set's answers — into the running turn.
@@ -250,10 +263,18 @@ fn handle_command(control: &mut dyn AgentControl, command: ManagedCommand) {
             answers,
             reply,
         } => {
-            let _ = reply.send(match answers {
+            let turn_id = input.turn_id;
+            let result = match answers {
                 Some(answers) => control.submit_answers(input, answers),
                 None => control.submit(input),
+            };
+            // The provider owner is serialized: no event or another command
+            // may run between failure and this turn-wide proof.
+            let result = result.map_err(|failure| ManagedSubmitFailure {
+                code: failure.code,
+                known_unsent: control.submission_known_unsent(turn_id),
             });
+            let _ = reply.send(result);
         }
         ManagedCommand::Cancel { turn_id, reply } => {
             let _ = reply.send(control.cancel(turn_id));

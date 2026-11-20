@@ -130,6 +130,7 @@ use winit::keyboard::NamedKey;
 /// The note over the strip when a level is chosen during a reply (D70).
 const LEVEL_NOTE_KEY: u64 = 0x5049_1004;
 const LEVEL_NOTE_HOLD: std::time::Duration = std::time::Duration::from_millis(2200);
+const MODEL_NOTE_HOLD: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// **The footer's readout** (§9.3, D76) for the chat's reasoning control
 /// and choice, in the control's words.
@@ -150,6 +151,7 @@ pub(crate) fn readout(
 /// picker opens, what the footer offers, whom the rail opens on, a begun
 /// chat's built-in provider, and what the choosing applies to.
 struct Precomputed {
+    report: Option<cfg::report::Report>,
     place: Place,
     footer: FooterOffer,
     preferred: Option<AiProviderId>,
@@ -210,6 +212,7 @@ fn chat_inputs<'a>(
         })
         .collect();
     Inputs {
+        report: pre.report,
         lang,
         agents,
         builtin: pre.builtin,
@@ -286,6 +289,10 @@ impl crate::ChatSurface {
                 }
             });
         Precomputed {
+            report: (self.chat_model_open && (begun || self.pending_user.is_some()))
+                .then(|| self.context_window_snapshot())
+                .flatten()
+                .map(|snapshot| snapshot.report(self.lang)),
             place: Place {
                 anchor: self.chat_model_button(),
                 viewport: self.viewport,
@@ -790,8 +797,12 @@ impl crate::ChatSurface {
         let anchor = self
             .picker_geometry()
             .map_or_else(|| self.chat_model_button(), |geometry| geometry.list);
-        let label = koru_i18n::fill(t(self.lang, Key::AiAgentModeNextMessage), &[name]);
-        self.show_next_message_note(anchor, label);
+        let label = koru_i18n::fill(t(self.lang, Key::AiModelDuringReply), &[name]);
+        self.copy_feedback.show_transient(
+            TooltipContent::new(LEVEL_NOTE_KEY, anchor, label),
+            std::time::Instant::now(),
+            MODEL_NOTE_HOLD,
+        );
     }
 
     fn show_next_message_note(&mut self, anchor: Rect, label: String) {

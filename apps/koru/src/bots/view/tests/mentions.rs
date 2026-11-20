@@ -33,20 +33,16 @@ fn row(name: &str, home: WorkspaceId, paused: bool) -> RosterBot {
 }
 
 /// The roster's rows around the tab's Bot: itself, two it may ask (one
-/// paused), an archived one, one of another workspace and one another
-/// computer runs.
+/// paused), an archived one and one of another workspace.
 fn roster(f: &Fixture) -> Vec<RosterBot> {
     let home = f.bot.home_workspace;
     let mut archived = row("Retired", home, false);
     archived.archived = true;
-    let mut remote = row("On the laptop", home, false);
-    remote.owner = Some(koru_ai_core::bots::DeviceId::new());
     vec![
         RosterBot::from(f.bot.clone()),
         row("CFO", home, false),
         archived,
         row("Elsewhere", WorkspaceId::new(), false),
-        remote,
         row("Legal", home, true),
     ]
 }

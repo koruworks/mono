@@ -24,151 +24,7 @@ use koru_delegate_sqlite::{
 use crate::{RunStore, ScheduleLedger, counters};
 use koru_delegate_document::ScheduleClaimAuthority;
 
-impl crate::RoutineLedger for RunsDb {
-    fn routine_firing(
-        &self,
-        slot: &koru_delegate_core::RoutineSlot,
-    ) -> Result<Option<koru_delegate_sqlite::SlotClaim>, koru_delegate_sqlite::BotLedgerError> {
-        RunsDb::routine_firing(self, slot)
-    }
-    fn routine_route(
-        &self,
-        schedule: koru_delegate_core::ScheduleId,
-    ) -> Result<
-        Option<koru_delegate_core::RoutineRouteIdentity>,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        RunsDb::routine_route(self, schedule).map_err(Into::into)
-    }
-
-    fn held_routine_page(
-        &self,
-        after: Option<koru_delegate_sqlite::RoutineHeldCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineHeldCursor,
-            koru_delegate_sqlite::RoutineRecoveryEntry,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        RunsDb::held_routine_page(self, after)
-    }
-
-    fn queued_routine_page(
-        &self,
-        after: Option<koru_delegate_sqlite::RoutineQueuedCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineQueuedCursor,
-            Option<koru_delegate_sqlite::RoutineRecoveryEntry>,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        RunsDb::queued_routine_page(self, after)
-    }
-
-    fn routine_slots_page(
-        &self,
-        route: &koru_delegate_core::RoutineRouteIdentity,
-        after: Option<koru_delegate_sqlite::RoutineSlotCursor>,
-    ) -> Result<
-        koru_delegate_sqlite::RoutinePage<
-            koru_delegate_sqlite::RoutineSlotCursor,
-            koru_delegate_sqlite::RoutineOccurrenceFact,
-        >,
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        RunsDb::routine_slots_page(self, route, after)
-    }
-    fn record_expired_routine(
-        &mut self,
-        authority: koru_delegate_document::RoutineExpiryAuthority,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        // Sole production conversion; the host holds its writer mutex, and no
-        // external call lies between live consumption and the transaction.
-        let facts = authority
-            .into_expired_bot_routine()
-            .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
-        RunsDb::record_expired_routine(self, facts)
-    }
-    fn claim_bot_routine(
-        &mut self,
-        authority: ScheduleClaimAuthority,
-        admission: &koru_delegate_core::BotAdmissionBarrier,
-        fresh: &koru_delegate_core::FreshBotPolicyProof,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        // This is the sole production conversion into neutral claim facts. The
-        // host already holds its writer mutex. No await or external port lies
-        // between consuming the actual live token and the ledger transaction.
-        let facts = authority
-            .into_bot_routine()
-            .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
-        RunsDb::claim_bot_routine(self, facts, admission, fresh)
-    }
-    fn claim_bot_routine_test(
-        &mut self,
-        authority: koru_delegate_document::RoutineTestAuthority,
-        admission: &koru_delegate_core::BotAdmissionBarrier,
-        fresh: &koru_delegate_core::FreshBotPolicyProof,
-    ) -> Result<
-        (
-            koru_delegate_core::RoutineClaimObservation,
-            Option<koru_delegate_core::RoutineSkippedClaim>,
-        ),
-        koru_delegate_sqlite::BotLedgerError,
-    > {
-        // The sole production conversion of an owner Test. The Test authority
-        // revalidates the paused definition itself; it is consumed here, under
-        // the host's writer mutex, with nothing between it and the same claim
-        // transaction every Routine occurrence uses.
-        let facts = authority
-            .into_bot_routine_test()
-            .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
-        RunsDb::claim_bot_routine(self, facts, admission, fresh)
-    }
-    fn bot_admission_barrier(
-        &self,
-        owner: koru_delegate_core::BotOwner,
-        bot: koru_delegate_core::BotId,
-    ) -> Result<Option<koru_delegate_core::BotAdmissionBarrier>, koru_delegate_sqlite::BotLedgerError>
-    {
-        koru_delegate_sqlite::BotLedger::bot_barrier(self, owner, bot)
-    }
-    fn read_routine_claim(
-        &self,
-        slot: &koru_delegate_core::RoutineSlot,
-    ) -> Result<koru_delegate_core::RoutineClaimObservation, koru_delegate_sqlite::BotLedgerError>
-    {
-        RunsDb::read_routine_claim(self, slot)
-    }
-    fn acknowledge_routine_link(
-        &mut self,
-        acknowledgement: &koru_delegate_core::RoutineLinkAcknowledgement,
-    ) -> Result<koru_delegate_core::RoutineClaimRecord, koru_delegate_sqlite::BotLedgerError> {
-        RunsDb::acknowledge_routine_link(self, acknowledgement)
-    }
-}
-
 impl RunStore for RunsDb {
-    fn decision_projection_runs(
-        &self,
-        after: Option<RunId>,
-        limit: usize,
-    ) -> Result<Vec<RunId>, LedgerError> {
-        RunsDb::decision_projection_runs(self, after, limit)
-    }
     fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {
@@ -182,21 +38,12 @@ impl RunStore for RunsDb {
     ) -> Result<koru_delegate_sqlite::PendingPublicationRunSeek, LedgerError> {
         RunsDb::next_pending_publication_run(self, after, through, before_or_at)
     }
-    fn decision_open_publications_for(
+    fn bounded_open_publications_for(
         &self,
         run: RunId,
         limit: usize,
     ) -> Result<Vec<OpenPublication>, LedgerError> {
-        RunsDb::decision_open_publications_for(self, run, limit)
-    }
-    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
-        Some(self)
-    }
-    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
-        Some(self)
-    }
-    fn private_effects(&mut self) -> Option<&mut dyn crate::PrivateEffectLedger> {
-        Some(self)
+        RunsDb::bounded_open_publications_for(self, run, limit)
     }
 
     fn validate_intent(
@@ -490,7 +337,7 @@ impl ScheduleLedger for RunsDb {
     }
 
     fn unsettled(&self) -> Result<Vec<SlotClaim>, LedgerError> {
-        self.ordinary_unsettled_claims()
+        self.unsettled_claims()
     }
     fn by_run(&self, run: RunId) -> Result<Option<SlotClaim>, LedgerError> {
         self.slot_for_run(run)

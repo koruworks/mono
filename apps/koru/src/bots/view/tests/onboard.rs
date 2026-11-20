@@ -714,8 +714,9 @@ fn the_keyboard_reaches_every_control_and_escape_gives_it_back() {
         words(&f, Words::BotsSetupRoleLabel)
     );
 
-    assert!(f.view.focus_header(), "F6 lands on the tab's header");
-    let mut walked = Vec::new();
+    assert!(f.view.focus_header(), "F6 enters the first drawn control");
+    assert_eq!(f.view.focus(), Some(ui::SKIP_ALL));
+    let mut walked = vec![ui::SKIP_ALL];
     for _ in 0..40 {
         assert!(key(&mut f.view, named(NamedKey::Tab), None));
         let focus = f.view.focus().expect("the walk keeps the keyboard");

@@ -17,6 +17,8 @@
 
 mod dialect;
 mod evaluate;
+mod plan;
+pub use plan::{PlannedAction, SchedulePlan, plan_schedule};
 
 pub use dialect::{
     CronExpression, CronParts, DialectError, MinutePattern, MinuteSet, RuleShape, Weekday,

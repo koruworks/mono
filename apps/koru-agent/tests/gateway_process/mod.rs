@@ -123,7 +123,7 @@ impl Gateway {
         let launch_id = uuid::Uuid::new_v4().to_string();
         let bootstrap = LaunchBootstrap {
             device_id: None,
-            bot_delegate: None,
+            run_authority: None,
             bots_engine: None,
             launch_id: launch_id.clone(),
             bridge_version: BRIDGE_VERSION,

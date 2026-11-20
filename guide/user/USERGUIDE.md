@@ -4258,7 +4258,7 @@ column is not visible.
 ### Finding routines
 
 This section describes repeating delegations created with **Repeat**.
-Bot-created routines start paused and are managed in the Bot’s **Routines**
+New Bot-created routines start on and are managed in the Bot’s **Routines**
 context, described next; the ordinary controls below do not change a Bot
 routine’s access.
 
@@ -4268,13 +4268,16 @@ Open a Bot, open the context pane and choose **Routines**. Each routine shows
 its name, a switch, its state in words (**On** or **Paused**) and, while it is
 on, its next time.
 
+Its conversation appears below the Bot in the sidebar after the first message.
+Before its first run, manage it here in **Routines**. Later runs reuse that same
+conversation under the routine's name.
+
 - **Turn on or pause.** Use the switch. It reads *Turning on…* or *Pausing…*
   until the computer that owns the routine confirms, and only then shows the
   new state. If the change is refused, the row says why. Pausing does not stop
   a run that has already started.
-- **Test.** While a routine is paused, **Test** runs it once now without
-  turning it on. The result appears in the routine’s history. Late in a minute
-  the button reads *Test available at* a time; press it again then.
+- **Run now.** Requests one occurrence without changing the routine's on/off
+  setting. Its actual progress and answer appear in the routine's history.
 - **Details** shows the timing, the time zone, the access and the history.
   *Time zone* is this computer’s zone when this computer owns the routine, and
   *Owner local* otherwise.
@@ -4285,9 +4288,9 @@ on, its next time.
   starts with the default access: it asks before editing pages it did not
   create or was not given. The other choice lets it edit any page in the Bot’s
   home workspace.
-- **History** lists what each past time became: *Ran* (press it to open that
-  conversation), *Missed*, *Skipped, Bot was busy*, or *Test*. Missed runs are
-  not caught up.
+- **History** lists each occurrence's actual progress, answer, missed time or
+  busy outcome. **Open conversation** opens the routine's persistent thread.
+  Missed runs are not caught up.
 
 Archiving a Bot or moving it to Trash pauses its routines first. After you
 unarchive or restore the Bot they stay paused until you turn them on.
@@ -4531,6 +4534,40 @@ there.
 **Re-run is not Resume.** Resume continues *the same run* and only ever
 appears on a run that was interrupted; Re-run appears only once a run has
 ended, and makes a separate one. You will never see both on the same run.
+
+### Shared instructions for Koru AI sessions
+
+Koru supplies a common orientation explaining the workspace, session mode, and
+how to find available Koru tools. Its shipped copy is
+`docs/prompts/session.md` beside the application (on macOS, under
+`Contents/Resources`). It is separate from a Bot's Role and from the delegated
+artifact instructions below. Editing instructions does not grant additional
+tool access.
+
+To keep your own version across updates, copy that file into the `prompts`
+folder beside `preferences.conf` and edit it as UTF-8:
+
+| Installation | Override file |
+| --- | --- |
+| Windows | `%APPDATA%\koru\prompts\session.md` |
+| macOS | `~/Library/Application Support/koru/prompts/session.md` |
+| Linux | `$XDG_CONFIG_HOME/koru/prompts/session.md`, or `~/.config/koru/prompts/session.md` |
+| A separate `--root` | `<root>/settings/prompts/session.md` |
+
+Koru reads this override before the installed default. Removing the override
+returns to the shipped instructions. The file must contain text, be valid
+UTF-8, and be no larger than 64 KiB. An unreadable or invalid file falls back
+to the compiled default; Koru does not rewrite your file. Ordinary AI chats,
+native Bots and managed Agent sessions show a notice for that fallback;
+artifact sessions currently record it in their logs.
+
+API chat requests read the instructions for each request. Managed agent
+sessions retain the instructions sent with their initial input; start a new
+session to use an edit. Each new Bot execution captures the current instructions,
+including a later Routine firing in the same conversation. An uncertain retry
+retains its original instructions. Raw Shell and raw CLI terminals receive no
+injected prompt. The Runs **System
+prompt** editor continues to edit the separate artifact instructions below.
 
 ### The instructions a delegated agent starts with
 
@@ -6737,30 +6774,105 @@ restart.
 | `Alt+1` … `Alt+8` | the views down the Explore column's rail, by place (top is `Alt+1`) |
 | `Ctrl+Shift+J` or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
 
-## Conversations in the new Bots engine
+## Bot conversations
 
-In builds with the new Bots engine enabled, a Bot can ask another Bot in a side
-conversation. Its card appears in the originating conversation and in Main.
-Choose **Open conversation** to read along. **Join conversation** adds you
-without sending a message; sending a message also joins. Use `@` in the composer
-to address particular Bots. Without a mention, the conversation's starting Bot
-receives your message. When several Bots are working, each has its own Stop
-control beside its name.
+To create a Bot, press **+** in the Bots heading, choose **New bot** from the
+tab's **+** menu, or choose **Bot** in the creation picker. Enter a name, choose an avatar,
+and pick its agent/runtime from the pills below **This device**. The selected
+runtime's readiness appears beneath the choices. **Manage agent providers**
+opens agent configuration and keeps your draft in a New bot tab so you can
+return to it. **More** contains working-folder options. The runtime choice is
+fixed after creation.
 
-Messages arriving while a Bot is answering currently wait for its next turn.
+Open Bot tabs show their colored avatars in the open-tabs switcher as well as
+the tab strip.
 
-Use the branch button beneath a finished response to start a conversation with
-the history through that response. The original conversation keeps going
-independently. Files and saved outputs remain accessible from the copied
-history, and branching does not repeat earlier writes. **Started from** opens
-the originating conversation.
+A Bot can ask other Bots in side
+conversations. A small grouped receipt shows who was messaged and how many have
+replied. Returned answers appear beneath it, named by their sender. Click a Bot
+in the receipt or reply heading to observe that exchange. Conversations between
+Bots are read-only; continue your own discussion in the originating chat.
+Use `@` in your composer to address particular Bots. Without a mention, the
+conversation's starting Bot receives your message.
+
+Bot chats follow new replies at the bottom. Scroll up to read earlier messages
+without being pulled away; return to the bottom to follow again. Sending does
+not lift your message to the top or add an empty area beneath it. The model
+picker shows context statistics once the conversation has started.
+
+Changing the model while an answer is in progress keeps the activity line and
+**Stop** available. A five-second notice confirms that the selected model
+applies to your next message. Reopening the conversation also restores the
+in-progress reply and its Stop control.
+
+Bot references show a subtle background on hover. Click them to navigate;
+they do not open a URL preview tooltip.
+
+Bot replies default to concise, conversational answers. Ask for more detail
+when you want it. This guidance lives in the editable shared session
+instructions and applies only to Bot conversations.
+
+The Bot's messages have a subtle background. Bot chats use a narrower centered
+column, with both sides' message bubbles limited to 80% of that column; short
+messages fit their text. The animated avatar and current activity appear below
+the latest reply while the Bot works.
+
+The activity words shimmer gently and follow observed work: waiting to start,
+thinking, searching, reading, or typing as the answer arrives. Tool activity can
+name a page or Bot already known to the workspace. The label does not generate
+another AI response. Working rings in the Bots sidebar animate like the tabs.
+Reduced motion keeps the face, label and rings still; the activity line disappears
+when the response ends. Waiting to start means the request is queued, not that
+the model has begun answering.
+
+Hover over a reply to show its anchor in the bottom action row, or reach it
+with the keyboard. Reply action buttons show their names on hover. The anchor
+opens that reply's retained work history with all calls collapsed.
+Expand a call to inspect its results and copy values; close the modal to return to
+the conversation. Questions or approvals needing your answer remain visible
+in the conversation. Tool details are currently
+available only for activity observed while that conversation is open.
+
+The activity line uses the current tool action, for example **Reading Top News
+Today**, **Asking Scout** or **Creating daily news routine**. Koru uses names
+it already knows and falls back to a general action when the event provides
+less detail. Producing this label does not make another AI request or consume
+additional model tokens.
+
+Messages arriving in the same conversation while a Bot is answering wait for
+its next turn. Bot chats do not offer branching; use **New conversation** to
+start another discussion.
 
 Saved outputs appear as cards beside the conversation. Main also lists outputs
 from the Bot's other conversations under **Artifacts**. Open a card to view its
 page. A Bot's words alone do not count as a saved output.
 
-The new engine is still under development; its test builds require a fresh,
-disposable root. Routine and connection screens for this engine are later work.
+Ask a Bot to create a routine, then choose **Routines** in the context pane to review the
+timing, time zone and separate access. New routines start on; existing paused
+routines stay paused. **Run now** requests one occurrence without changing that setting. History
+shows what actually happened, including missed or busy occurrences, and keeps
+each occurrence's own reply. **Open conversation** opens the routine's full
+conversation. Results also appear in the Bot's main conversation.
+
+You can also ask the Bot to run an existing routine. It
+requests the run and briefly confirms whether it was queued or skipped; the
+routine does the work in its own conversation. Later runs keep that same
+conversation, named for the routine.
+
+A routine starts with default access, without inheriting broader Bot access.
+Pause it to change access in the pane. Floating timing follows the device's
+time zone; a selected fixed zone keeps its own timing. If Koru cannot confirm
+a control's outcome, **Retry** repeats that same request.
+
+The first enabled routine offers to start Koru at login when you open Routines. Accepting changes
+the existing device setting; declining leaves it unchanged. Routines need the
+Koru Agent running, but the window may be closed. Missed scheduled work does
+not run later to catch up.
+
+Bots use the native engine in ordinary builds. Old Bot data is not converted
+or deleted; it does not appear in this runtime. Connection screens and remote
+Bot access remain later work. Archive, Trash and Restore are available;
+permanent Bot deletion is not yet implemented.
 
 ## A Bot's Library
 
@@ -6802,35 +6914,20 @@ Library; Upcoming and Computer sections are not available yet.
 
 ### A Bot's Memory
 
-Each Bot has one lifetime Memory page in its home workspace. Ask the Bot to
-remember a fact; its first Remember can create that page without a prior visit
-to Settings. You can also open **Settings → Library → Memory** and choose
-**Create Memory page**. **Check status** reports creation progress; a pending
-request is not a confirmed page. If a reply is lost, retry the same request.
-Conflict or abandoned creation needs an explicit recovery choice; Koru does not
-silently replace the page.
+Memory is an ordinary page in the Bot's home workspace. Create a page with the
+normal page editor, then open **Settings → Library → Memory** and choose
+**Choose a page…**. The picker excludes the current Role, Knowledge and Memory
+pages. Selecting a page saves the binding; Role and Knowledge stay as they are.
 
-Open the Memory page to edit it normally, or use its fact list and details in
-Settings. A direct level-two heading is a fact summary; its children hold the
-detail. Other prose can stay on the page without becoming a fact. Settings show
-omitted or unsupported content explicitly. A new task captures a bounded index
-of the facts; existing tasks retain their captured version. A new conversation
-can use the same lifetime Memory.
+**Open Memory page** opens the bound page for normal reading and editing.
+Removing the binding leaves the page and its content in the workspace. Choosing
+a different page changes the binding without deleting the previous page.
+There is no special fact list or Memory creation workflow.
 
-The Bot can remember, correct or forget its own facts without gaining general
-permission to edit other pages. Remember and Correct add a **Source Run** link.
-Correct preserves the fact identity and replaces its entire detail/source
-subtree; use the ordinary editor for richer or multiline changes. Forget moves
-the fact and its descendants to ordinary Trash. It does not erase document
-history, conversation transcripts or an agent's runtime context. Memory edits
-do not appear as saved Run results.
-
-An edit uses an exact version. If you change the page while the Bot is working,
-its stale edit refuses; the Bot must read Current before requesting a new edit.
-After any successful edit it must read Current again for the next version. If
-the outcome is unknown, retry only the original operation and body. Moving the
-page to Trash does not make the Bot recreate it: restore the original page to
-continue using it. Archive, Restore and creation recovery keep that identity.
+If the save's reply is lost, use the Library's **Retry** action to repeat the
+same request. A concurrent change keeps the current binding until Koru can read
+its actual revision. Archived Bots allow reading and opening their pages but
+do not allow changing their Library.
 
 ## Chatting with a local agent
 
@@ -6867,6 +6964,12 @@ koru.bat* — and afterwards the row keeps only what kind of thing it was, how i
 ended and when. When the agent asks permission, the row shows the choices it
 offered; nothing happens until you answer, and a rejection is the safe answer.
 **Stop** cancels the turn even while the agent is silent.
+
+Open a tool row to inspect its Input and Output. JSON objects and arrays are
+formatted as code. **Copy output** copies the complete result retained by Koru,
+including text hidden by display folding. Tab reaches Copy and Enter or Space
+activates it. If the provider itself shortened a result before sending it,
+Copy cannot restore the missing part.
 
 The agent runs on this computer with its own account and settings, in your
 home folder, and stays alive while Koru runs. One agent conversation belongs

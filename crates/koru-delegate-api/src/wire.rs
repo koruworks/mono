@@ -25,9 +25,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use koru_delegate_core::{DocumentId, RunHeader, TimelineEntry, UsageFact};
-// The Run view family lives in the vocabulary crate, so the AI owner's Bots
-// API can answer it without this transport crate (P1.8 B1); the path and the
-// bytes are unchanged.
+// Run view DTOs are shared vocabulary for the ordinary public API.
 pub use koru_delegate_core::{RunExecution, RunView, TimelineItem, TimelineWindow};
 
 /// `POST /v1/schedules`. The client mints the stable schedule identity and

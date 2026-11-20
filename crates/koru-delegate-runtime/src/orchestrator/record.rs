@@ -12,7 +12,6 @@
 
 use koru_delegate_core::{
     EventId, RunEvent, RunId, RunStatus, StepKind, TimelineEntry, TimelineRefs, transition,
-    transition_bot,
 };
 
 use crate::{RunFact, orchestrator::RunError};
@@ -38,7 +37,7 @@ struct PublicationPass {
 impl Orchestrator {
     /// The run's status as the document holds it.
     pub(crate) fn status(&mut self, run: RunId) -> Result<RunStatus, RunError> {
-        Ok(self.open(run)?.doc.document()?.header()?.status)
+        Ok(self.open(run)?.doc.document().header()?.status)
     }
 
     /// Move the status through the one closed function and commit it.
@@ -52,35 +51,8 @@ impl Orchestrator {
         event: &RunEvent,
         reason: Option<koru_delegate_core::RunFailureReason>,
     ) -> Result<RunStatus, RunError> {
-        self.apply_recorded_event(run, event, reason, None)
-    }
-
-    pub(crate) fn apply_with_step(
-        &mut self,
-        run: RunId,
-        event: &RunEvent,
-        step: &TimelineEntry,
-    ) -> Result<RunStatus, RunError> {
-        self.apply_recorded_event(run, event, None, Some(step))
-    }
-
-    fn apply_recorded_event(
-        &mut self,
-        run: RunId,
-        event: &RunEvent,
-        reason: Option<koru_delegate_core::RunFailureReason>,
-        step: Option<&TimelineEntry>,
-    ) -> Result<RunStatus, RunError> {
-        if matches!(event, RunEvent::BotResponseDelivered) {
-            return Err(super::bots::refused("bot_delivery_owner_required"));
-        }
-        let header = self.header(run)?;
-        let from = header.status;
-        let next = if header.bot.is_some() {
-            transition_bot(&from, event)?
-        } else {
-            transition(&from, event)?
-        };
+        let from = self.status(run)?;
+        let next = transition(&from, event)?;
         let now = self.ports.clock.now_ms();
         let state = self.open(run)?;
         let failure = if let RunStatus::Failed { stage } = &next {
@@ -105,9 +77,6 @@ impl Orchestrator {
         state.doc.commit(&mut |document| {
             document.set_status_with_failure_reason(&status, reason)?;
             if let Some(entry) = &failure {
-                document.append_step(entry)?;
-            }
-            if let Some(entry) = step {
                 document.append_step(entry)?;
             }
             Ok(())
@@ -247,8 +216,7 @@ impl Orchestrator {
     }
 
     /// Rotate across pending Runs, retaining FIFO within each Run. At most 53
-    /// indexed seeks and one 64-row/4 MiB body prefix per call. Unavailable
-    /// exclusive owners cannot hide another Run behind the old global LIMIT.
+    /// indexed seeks and one 64-row/4 MiB body prefix per call.
     pub fn retry_publications(&mut self, limit: usize) -> Result<usize, RunError> {
         if limit == 0 {
             return Ok(0);
@@ -288,7 +256,7 @@ impl Orchestrator {
                     let open = self
                         .ports
                         .store
-                        .decision_open_publications_for(run, limit.min(64))?;
+                        .bounded_open_publications_for(run, limit.min(64))?;
                     // A short byte-bounded prefix is not a drain observation.
                     // The next rotation reads the same Run again if debt remains.
                     return self.drain_publications(open);

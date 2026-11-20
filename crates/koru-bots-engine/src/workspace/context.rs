@@ -51,13 +51,13 @@ impl Sources {
 impl Database {
     pub(crate) fn context_sources(&self, who: Worker, thread: Uuid) -> Result<Sources, Error> {
         let scope = authority::membership(&self.connection, who, thread)?;
-        let (grant, role, knowledge, memory, kind): (Vec<u8>, Option<String>, Vec<u8>, Option<String>, String) = self.connection.query_row(
-            "SELECT b.access,b.role_page,b.knowledge_pages,b.memory_page,t.kind FROM bots b JOIN threads t ON t.id=?2 WHERE b.id=?1",
-            rusqlite::params![who.bot.to_string(),thread.to_string()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        )?;
-        if kind == "routine" {
-            return Err(Error::NotAllowed);
-        }
+        let (role, knowledge, memory): (Option<String>, Vec<u8>, Option<String>) =
+            self.connection.query_row(
+                "SELECT role_page,knowledge_pages,memory_page FROM bots WHERE id=?1",
+                [who.bot.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        let grant = crate::routines::grant(&self.connection, who.bot, thread)?;
         let parse = |value: String| Uuid::parse_str(&value).map_err(|_| Error::StorageUnavailable);
         let sources = Sources {
             scope,

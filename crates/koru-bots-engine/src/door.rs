@@ -71,7 +71,7 @@ impl Door {
     /// MCP tools/call params, still raw so duplicate keys cannot disappear in
     /// an outer parser. JSON-RPC IDs and unqualified _meta IDs confer no identity.
     pub fn call(&self, raw: &[u8]) -> Result<Value, Error> {
-        if raw.len() > koru_bot_client_wire::MAX_FRAME_BYTES {
+        if raw.len() > crate::limits::MAX_PAYLOAD_BYTES {
             return Err(Error::InvalidRequest);
         }
         let Unique(mut params) = serde_json::from_slice(raw).map_err(|_| Error::InvalidRequest)?;

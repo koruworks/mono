@@ -384,6 +384,26 @@ impl crate::ChatSurface {
         was
     }
 
+    /// Entering the badge opens its panel directly; it never selects a mode.
+    pub(crate) fn approval_mode_hover_open(&mut self, old: (f32, f32), x: f32, y: f32) -> bool {
+        if self.approval_mode_open
+            || !self
+                .approval_mode_button()
+                .is_some_and(|button| button.contains(x, y) && !button.contains(old.0, old.1))
+        {
+            return false;
+        }
+        self.tool_access_open = false;
+        self.tool_mode_open = false;
+        self.close_microphones();
+        if self.chat_model_open {
+            self.close_picker();
+        }
+        self.approval_mode_open = true;
+        self.approval_mode_focus = None;
+        true
+    }
+
     /// **Choose a mode for the chat's next message**. The chip names it; a
     /// note beside the chip speaks only while a reply runs, to say it
     /// applies to the next message (D65).
@@ -516,7 +536,8 @@ impl crate::ChatSurface {
             .approval_mode_button()
             .is_some_and(|chip| chip.contains(x, y))
         {
-            let open = !self.approval_mode_open;
+            // Hover may already have opened it before this press arrives.
+            let open = true;
             self.tool_access_open = false;
             self.tool_mode_open = false;
             if self.chat_model_open {

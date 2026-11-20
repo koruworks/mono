@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-pub const MAX_COMMAND_BYTES: usize = koru_bot_client_wire::MAX_FRAME_BYTES / 2;
+pub const MAX_COMMAND_BYTES: usize = crate::limits::MAX_PAYLOAD_BYTES / 2;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Request {
@@ -43,6 +43,14 @@ impl std::fmt::Debug for Reply {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Command {
+    ClaimRoutineStartup {
+        id: Uuid,
+        bot: Uuid,
+    },
+    Routine {
+        id: Uuid,
+        action: crate::routines::Change,
+    },
     Read {
         query: Query,
     },
@@ -82,6 +90,25 @@ impl Command {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Query {
+    RoutineCreation {
+        bot: Uuid,
+        request: Uuid,
+    },
+    RoutineReceipt {
+        id: Uuid,
+        action: crate::routines::Change,
+    },
+    Routines {
+        bot: Uuid,
+        after: Option<Uuid>,
+        limit: u8,
+    },
+    Routine {
+        bot: Uuid,
+        routine: Uuid,
+        before: Option<crate::routines::Cursor>,
+        limit: u8,
+    },
     Cards {
         thread: Uuid,
         after: Option<Uuid>,
@@ -221,6 +248,11 @@ pub enum Change {
         bot: Uuid,
         revision: u64,
         knowledge: Vec<Uuid>,
+    },
+    Memory {
+        bot: Uuid,
+        revision: u64,
+        memory: Option<Uuid>,
     },
     Library {
         bot: Uuid,
@@ -456,7 +488,7 @@ pub fn handle(
         || request.sender.is_empty()
         || request.owner.len() > 256
         || request.sender.len() > 256
-        || encode(&request)?.len() > koru_bot_client_wire::MAX_FRAME_BYTES / 2
+        || encode(&request)?.len() > crate::limits::MAX_PAYLOAD_BYTES / 2
     {
         return Err(Error::InvalidRequest);
     }
@@ -465,6 +497,12 @@ pub fn handle(
         sender: request.sender,
     };
     let result = match request.command {
+        Command::ClaimRoutineStartup { id, bot } => {
+            value(crate::routines::claim_startup(db, &who, id, bot, now)?)
+        }
+        Command::Routine { id, action } => {
+            value(crate::routines::change(db, &who, id, &action, now)?)
+        }
         Command::Read { query } => read::query(db, &who, query),
         Command::Change { id, action } => value(change::apply(db, &who, id, &action, now)?),
         Command::Send { envelope } => value(db.accept_message(&who, &envelope, now)?),
@@ -485,7 +523,7 @@ pub fn handle(
             after,
         } => value(events.read(db, &who, thread, boot, after)?),
     }?;
-    if encode(&result)?.len() > koru_bot_client_wire::MAX_FRAME_BYTES {
+    if encode(&result)?.len() > crate::limits::MAX_PAYLOAD_BYTES {
         return Err(Error::InputTooSmall);
     }
     Ok(Reply(result))

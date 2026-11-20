@@ -31,8 +31,6 @@ use koru_events::wire::{AppendReceipt, EventBatch};
 
 use crate::ledger::SharedLedger;
 
-mod routine;
-
 const COMPONENT: &str = "delegate";
 const BATCH: usize = 32;
 pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -48,10 +46,10 @@ struct AuthorityGateState {
 /// Unlike a plain mutex, shutdown can close this gate and wake a scheduler
 /// waiting behind a publisher's bounded Store request. The current holder keeps
 /// its ordinary RAII ownership; new entrants receive `None` and exit.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub(crate) struct ScheduleEventAuthorityGate {
-    state: Arc<Mutex<AuthorityGateState>>,
-    released: Arc<Condvar>,
+    state: Mutex<AuthorityGateState>,
+    released: Condvar,
 }
 
 impl ScheduleEventAuthorityGate {
@@ -98,46 +96,6 @@ impl Drop for ScheduleEventAuthorityGuard<'_> {
     }
 }
 
-// Owned phase guards clone the same state/Condvar; ordinary enter() above keeps
-// its existing lifetime and wait behavior. Routine phases use that same owner.
-struct OwnedSchedulePhaseGuard {
-    gate: ScheduleEventAuthorityGate,
-}
-impl koru_delegate_runtime::SchedulePhaseGuard for OwnedSchedulePhaseGuard {}
-impl Drop for OwnedSchedulePhaseGuard {
-    fn drop(&mut self) {
-        let mut state = self.gate.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.held = false;
-        self.gate.released.notify_one();
-    }
-}
-impl koru_delegate_runtime::SchedulePhaseGate for ScheduleEventAuthorityGate {
-    fn enter_until(
-        &self,
-        deadline: std::time::Instant,
-    ) -> PortResult<Box<dyn koru_delegate_runtime::SchedulePhaseGuard>> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if state.stopped || remaining.is_zero() {
-                return Err(PortError::new(
-                    Port::Schedules,
-                    "routine_phase_unavailable",
-                    "Schedule phase stopped or expired",
-                ));
-            }
-            if !state.held {
-                state.held = true;
-                return Ok(Box::new(OwnedSchedulePhaseGuard { gate: self.clone() }));
-            }
-            (state, _) = self
-                .released
-                .wait_timeout(state, remaining)
-                .unwrap_or_else(|e| e.into_inner());
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum ReconcileDisposition {
     /// The row was made ready or conclusively abandoned.
@@ -175,11 +133,7 @@ fn definition_disposition(prepared_revision: u32, current_revision: u32) -> Reco
 }
 
 fn page_retry_needed(more: bool, dispositions: &[ReconcileDisposition]) -> bool {
-    dispositions.contains(&ReconcileDisposition::Retry)
-        || (more
-            && !dispositions
-                .iter()
-                .all(|item| *item == ReconcileDisposition::AwaitAuthorityWake))
+    more || dispositions.contains(&ReconcileDisposition::Retry)
 }
 
 pub struct BusScheduleEvents {
@@ -188,6 +142,7 @@ pub struct BusScheduleEvents {
     ledger: SharedLedger,
     ctx: EmitContext,
     prepared_cursor: Option<SchedulePublicationCursor>,
+    ready_cursor: Option<(i64, i64, koru_delegate_core::EventId)>,
     reconcile_gate: Option<Arc<ScheduleEventAuthorityGate>>,
 }
 
@@ -204,6 +159,7 @@ impl BusScheduleEvents {
             ledger,
             ctx: EmitContext::system(COMPONENT),
             prepared_cursor: None,
+            ready_cursor: None,
             reconcile_gate: None,
         }
     }
@@ -338,28 +294,20 @@ impl BusScheduleEvents {
             event_id: record.event,
             occurred_at_ms: definition.effective_at_ms,
         };
-        // The stored fact says which event this row is. An `updated` row
-        // matches its revision whatever the lifecycle (an edit of a paused
-        // Routine stays paused); a `paused` row needs the definition's own
-        // pause reason. The stamp binds either to this exact revision's
-        // effective time, so another mutation at the same revision differs.
-        let expected = match (record.fact, schedule_definition_event(definition)) {
-            (SchedulePublicationFact::Updated { .. }, _) => chain.updated(
+        let expected = match schedule_definition_event(definition) {
+            ScheduleDefinitionEvent::Updated => chain.updated(
                 stamp,
                 ScheduleUpdated {
                     revision: definition.revision,
                 },
             ),
-            (SchedulePublicationFact::Paused { .. }, ScheduleDefinitionEvent::Paused(reason)) => {
-                chain.paused(
-                    stamp,
-                    SchedulePaused {
-                        revision: definition.revision,
-                        reason,
-                    },
-                )
-            }
-            _ => return Ok(false),
+            ScheduleDefinitionEvent::Paused(reason) => chain.paused(
+                stamp,
+                SchedulePaused {
+                    revision: definition.revision,
+                    reason,
+                },
+            ),
         };
         Ok(stored == expected)
     }
@@ -498,7 +446,6 @@ impl BusScheduleEvents {
         &self,
         fact: ScheduleOccurrenceEvent,
     ) -> PortResult<Option<PreparedScheduleEvent>> {
-        self.validate_occurrence_authority(fact)?;
         let Some(root) = self.root_record(fact.schedule.schedule)? else {
             return Err(Self::error(
                 "schedule_event_root",
@@ -605,12 +552,36 @@ impl BusScheduleEvents {
             })
     }
 
+    // Routine envelopes share this ordinary outbox. Classify through the
+    // Schedule header before changing any retained publication row.
+    fn ordinary_schedule(&self, schedule: SchedulePublicationRef) -> Result<bool, ()> {
+        let document = match self.authoritative_document(schedule) {
+            Ok(document) => document,
+            Err(error)
+                if matches!(
+                    error.code(),
+                    koru_store_core::Code::DocumentNotFound
+                        | koru_store_core::Code::WorkspaceNotFound
+                ) =>
+            {
+                return Ok(false);
+            }
+            Err(_) => return Err(()),
+        };
+        let header = document.header().map_err(|_| ())?;
+        Ok(header.schedule == schedule.schedule
+            && header.definition.routine.is_none()
+            && !matches!(
+                header.definition.template.scope,
+                koru_delegate_core::WorkspaceScope::BotFolder { .. }
+            ))
+    }
+
     fn reconcile_created_authority(
         &mut self,
         record: &SchedulePublicationRecord,
         header: &ScheduleHeader,
     ) -> PortResult<ReconcileDisposition> {
-        self.validate_known_header(Self::event_ref(record.schedule), header)?;
         if Self::stored_matches_created(record, header)? {
             self.ready(PreparedScheduleEvent {
                 event: record.event,
@@ -657,8 +628,13 @@ impl BusScheduleEvents {
         &mut self,
         record: SchedulePublicationRecord,
     ) -> PortResult<ReconcileDisposition> {
-        // Parse and validate before consulting authority. An invalid prepared
-        // body can never be made publishable; it is still safe to abandon.
+        match self.ordinary_schedule(record.schedule) {
+            Ok(true) => {}
+            Ok(false) => return Ok(ReconcileDisposition::AwaitAuthorityWake),
+            Err(()) => return Ok(ReconcileDisposition::Retry),
+        }
+        // After proving ordinary ownership, validate before reconciling the
+        // fact. An invalid ordinary body can never be made publishable.
         if Self::parse(&record).is_err() {
             self.ledger
                 .abandon_schedule_publication(record.event)
@@ -728,7 +704,6 @@ impl BusScheduleEvents {
                 };
                 let schedule = Self::event_ref(record.schedule);
                 if let Some(pending) = Self::pending_fired_from_claim(schedule, &claim) {
-                    self.validate_occurrence_authority(pending)?;
                     let Some(root) = self.root_record(record.schedule.schedule)? else {
                         self.abandon(PreparedScheduleEvent {
                             event: record.event,
@@ -797,7 +772,6 @@ impl BusScheduleEvents {
                 return Ok(true);
             }
         };
-        self.validate_publication_authority(&record)?;
         self.ledger
             .bump_schedule_publication_attempts(record.event)
             .map_err(|error| Self::error("schedule_event_attempt", error))?;
@@ -850,24 +824,35 @@ impl ScheduleEvents for BusScheduleEvents {
     }
 
     fn drain_ready(&mut self, limit: usize) -> PortResult<ScheduleEventMaintenance> {
-        for _ in 0..limit {
-            let Some(record) = self
+        if limit == 0 {
+            return Ok(ScheduleEventMaintenance {
+                retry_needed: false,
+            });
+        }
+        let mut rows = self
+            .ledger
+            .ready_schedule_publications_after(self.ready_cursor, limit.saturating_add(1))
+            .map_err(|error| Self::error("schedule_event_ledger", error))?;
+        if rows.is_empty() && self.ready_cursor.take().is_some() {
+            rows = self
                 .ledger
-                .ready_schedule_publications(1)
-                .map_err(|error| Self::error("schedule_event_ledger", error))?
-                .pop()
-            else {
-                break;
-            };
-            if !self.drain_one(record)? {
-                break;
+                .ready_schedule_publications_after(None, limit.saturating_add(1))
+                .map_err(|error| Self::error("schedule_event_ledger", error))?;
+        }
+        let mut retry_needed = rows.len() > limit;
+        rows.truncate(limit);
+        for record in rows {
+            self.ready_cursor = Some((
+                record.ready_at_ms.expect("ready query"),
+                record.queued_at_ms,
+                record.event,
+            ));
+            match self.ordinary_schedule(record.schedule) {
+                Ok(true) => retry_needed |= !self.drain_one(record)?,
+                Ok(false) => {}
+                Err(()) => retry_needed = true,
             }
         }
-        let retry_needed = !self
-            .ledger
-            .ready_schedule_publications(1)
-            .map_err(|error| Self::error("schedule_event_ledger", error))?
-            .is_empty();
         Ok(ScheduleEventMaintenance { retry_needed })
     }
 
@@ -884,9 +869,8 @@ impl ScheduleEvents for BusScheduleEvents {
             // schedule. A lone failed row is reached again after cursor wrap.
             self.prepared_cursor = Some(next_cursor);
         }
-        // Keep walking a recovered backlog after this batch made progress.
-        // A prefix made entirely of authority-ambiguous historical definitions
-        // must not become an idle polling loop.
+        // Walk every bounded page once, including retired prefixes. Stop at
+        // the end when all remaining rows only need a future authority wake.
         Ok(ScheduleEventMaintenance {
             retry_needed: page_retry_needed(more_prepared, &dispositions),
         })
@@ -907,7 +891,6 @@ impl ScheduleEvents for BusScheduleEvents {
         schedule: ScheduleEventRef,
         header: &ScheduleHeader,
     ) -> PortResult<()> {
-        self.validate_known_header(schedule, header)?;
         if let Some(existing) = self.root_record(schedule.schedule)? {
             if Self::stored_matches_created(&existing, header)? {
                 if existing.ready_at_ms.is_none() {
@@ -937,7 +920,6 @@ impl ScheduleEvents for BusScheduleEvents {
         schedule: ScheduleEventRef,
         header: &ScheduleHeader,
     ) -> PortResult<PreparedScheduleEvent> {
-        self.validate_known_header(schedule, header)?;
         if let Some(existing) = self.root_record(schedule.schedule)? {
             if Self::stored_matches_created(&existing, header)? {
                 return Ok(PreparedScheduleEvent {
@@ -956,19 +938,8 @@ impl ScheduleEvents for BusScheduleEvents {
         &mut self,
         schedule: ScheduleEventRef,
         definition: &ScheduleDefinition,
-        event: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent> {
-        // The kind is the caller's fact. A `paused` event must be the
-        // definition's own pause; an `updated` one may leave it paused.
-        if matches!(event, ScheduleDefinitionEvent::Paused(_))
-            && event != schedule_definition_event(definition)
-        {
-            return Err(Self::error(
-                "schedule_event_conflict",
-                "a paused event needs the definition's own pause reason",
-            ));
-        }
-        let fact = match event {
+        let fact = match schedule_definition_event(definition) {
             ScheduleDefinitionEvent::Updated => SchedulePublicationFact::Updated {
                 revision: definition.revision,
             },
@@ -1005,7 +976,7 @@ impl ScheduleEvents for BusScheduleEvents {
         })?;
         let chain = ScheduleChain::rejoin(&self.ctx, Self::chain_ref(schedule), root.event);
         let stamp = Stamp::fresh(definition.effective_at_ms);
-        let envelope = match event {
+        let envelope = match schedule_definition_event(definition) {
             ScheduleDefinitionEvent::Updated => chain.updated(
                 stamp,
                 ScheduleUpdated {
@@ -1044,7 +1015,6 @@ impl ScheduleEvents for BusScheduleEvents {
             }
             return Ok(None);
         };
-        self.validate_occurrence_authority(actual)?;
         if let Some(prepared) = prepared {
             let record = self
                 .ledger
@@ -1067,13 +1037,6 @@ impl ScheduleEvents for BusScheduleEvents {
     }
 
     fn ready(&mut self, prepared: PreparedScheduleEvent) -> PortResult<()> {
-        if let Some(record) = self
-            .ledger
-            .schedule_publication(prepared.event)
-            .map_err(|error| Self::error("schedule_event_ledger", error))?
-        {
-            self.validate_publication_authority(&record)?;
-        }
         self.ledger
             .mark_schedule_publication_ready(prepared.event)
             .map(|_| ())

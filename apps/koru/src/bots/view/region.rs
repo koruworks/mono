@@ -78,6 +78,7 @@ pub(crate) const PAUSE_CARD: Key = Key::surface(SURFACE, "pause-card");
 pub(crate) const NAME_FIELD: Key = Key::surface(SURFACE, "name-field");
 pub(crate) const SAVE_NAME: Key = Key::surface(SURFACE, "save-name");
 pub(crate) const NAME_PENDING: Key = Key::surface(SURFACE, "name-pending");
+pub(crate) const IDENTITY_FACES: Key = Key::surface(SURFACE, "identity-faces");
 pub(crate) const OPEN_ROLE: Key = Key::surface(SURFACE, "open-role");
 pub(crate) const ACCESS_SUMMARY: Key = Key::surface(SURFACE, "access-summary");
 pub(crate) const ACCESS_CHOICE: Key = Key::surface(SURFACE, "access-choice");
@@ -128,6 +129,10 @@ pub(crate) fn page_key(page: &BotPage) -> Key {
     Key::model(page.document.as_uuid().as_u128(), PAGE_PART)
 }
 
+fn identity_face_key(face: u8) -> Key {
+    Key::model(u128::from(face), "bot-avatar-choice")
+}
+
 pub(crate) fn remove_key(page: &BotPage) -> Key {
     Key::model(page.document.as_uuid().as_u128(), REMOVE_PART)
 }
@@ -146,6 +151,7 @@ pub(crate) enum Act {
     /// the conversation's place, or back.
     ToggleConversations,
     SaveName,
+    Avatar(u8),
     OpenRole,
     Choose(BotAccess),
     AddPage,
@@ -186,10 +192,6 @@ pub(crate) enum Act {
     ChooseFolder,
     UseManagedFolder,
     OpenLeftPage,
-    /// A link in the band over the conversation (M6): a request card's
-    /// *Open conversation*, or the origin line's *Open {bot}'s
-    /// conversation*, by its key.
-    Child(Key),
     /// The access card's *May ask other bots* (M6, contract 7.6).
     ToggleMayAsk,
 }
@@ -342,16 +344,15 @@ impl BotView {
 
     /// The header's *Settings*: the one control the header has. Selected
     /// while the region is open.
-    pub(super) fn settings_button(&self, engine: &mut TextEngine) -> El {
+    fn settings_back_button(&self, engine: &mut TextEngine) -> El {
         self.button(
             engine,
-            "Bot settings button",
+            "Back from Bot settings",
             SETTINGS_BUTTON,
-            self.words(Words::BotsSettings),
+            self.words(Words::Back),
             ActionStyle::Ghost,
             false,
         )
-        .selected(self.settings_open)
     }
 
     /// **The region as elements.** Its cards only once the tab knows the
@@ -361,7 +362,8 @@ impl BotView {
         let mut content = col("Bot settings content")
             .pad_x(alias::NAV_PAD)
             .pad_y(Space::S3)
-            .gap(Space::S4);
+            .gap(Space::S4)
+            .child(self.settings_back_button(engine));
         let settings = &self.settings;
         if let Some(words) = settings.notice_words() {
             content = content.child(line(
@@ -454,7 +456,63 @@ impl BotView {
                     !self.settings.can_save_name(),
                 )
             });
-        card(ABOUT_CARD, Words::BotsSettings).child(name)
+        card(ABOUT_CARD, Words::BotsSettings)
+            .child(name)
+            .child(self.identity_faces())
+    }
+
+    pub(crate) fn edit_identity(&mut self) {
+        self.set_settings_open(true);
+        self.scroll = 0.0;
+        self.focus = Some(NAME_FIELD);
+    }
+
+    fn identity_faces(&self) -> El {
+        let mut grid = col("Bot avatar choices")
+            .id(IDENTITY_FACES)
+            .gap(Space::S1)
+            .semantics(Role::Group)
+            .name(Words::BotsNewBotAvatar);
+        for chunk in (0..koru_draw::face::FACE_COUNT)
+            .collect::<Vec<_>>()
+            .chunks(6)
+        {
+            let mut choices = row("Bot avatar row").gap(Space::S1);
+            for &face in chunk {
+                choices = choices.child(
+                    leaf(
+                        "Bot avatar",
+                        crate::bots::faces::FaceLeaf::still(
+                            face,
+                            self.settings.name_shown(),
+                            crate::bots::faces::ROW_FACE,
+                        ),
+                    )
+                    .semantic()
+                    .id(identity_face_key(face))
+                    .hit()
+                    .focusable()
+                    .action(koru_draw::el::Action::Click)
+                    .action(koru_draw::el::Action::Focus)
+                    .semantics(Role::Button)
+                    .name_text(koru_i18n::fill(
+                        &self.words(Words::BotsNewBotFace),
+                        &[&(face + 1).to_string()],
+                    ))
+                    .selected(face == self.settings.avatar_shown())
+                    .disabled(
+                        self.settings.bot().is_none()
+                            || self.settings.delivering()
+                            || self.settings.is_pending(Change::Name),
+                    )
+                    .pad(Space::S1)
+                    .radius(koru_draw::theme::Radius::M)
+                    .states(&crate::panes::sidebar::rail_elements::RAIL_SQUARE_STATES),
+                );
+            }
+            grid = grid.child(choices);
+        }
+        grid
     }
 
     /// **What the access choice shows**: the settings' draft over what the
@@ -636,14 +694,6 @@ impl BotView {
                 self.words(Words::BotsMayAskHelp),
                 Ink::Secondary,
             ));
-        if !crate::bots::children::ASKING_OPEN {
-            card = card.child(line(
-                "Bot may ask not yet",
-                MAY_ASK_NOT_YET,
-                self.words(Words::BotsMayAskNotYet),
-                Ink::Hint,
-            ));
-        }
         card
     }
 
@@ -1031,6 +1081,11 @@ impl BotView {
 
     /// What pressing `key` asks for, if anything.
     pub(super) fn act_for(&self, key: Key) -> Option<Act> {
+        if let Some(face) =
+            (0..koru_draw::face::FACE_COUNT).find(|face| identity_face_key(*face) == key)
+        {
+            return Some(Act::Avatar(face));
+        }
         if let Some(action) = self.memory_action(key) {
             return Some(Act::Memory(action));
         }
@@ -1060,7 +1115,6 @@ impl BotView {
             k if k == super::actions::UNARCHIVE => Act::Unarchive,
             k if k == super::actions::RESTORE => Act::Restore,
             k if k == MAY_ASK => Act::ToggleMayAsk,
-            k if crate::bots::children::Children::is_link(k) => Act::Child(k),
             k if k.part == REMOVE_PART => Act::RemovePage(
                 self.pages_shown()
                     .iter()
@@ -1147,18 +1201,12 @@ impl BotView {
                 return self.begin_lifecycle(crate::bots::lifecycle::Ask::Unarchive);
             }
             Act::Restore => return self.begin_lifecycle(crate::bots::lifecycle::Ask::Restore),
-            // **A link of the band** (M6, contract 7.5): the window opens
-            // that conversation in its Bot's tab. The keyboard stays on the
-            // link, so coming back to this tab finds it there.
-            Act::Child(key) => {
-                let Some(request) = self.children.activate(key) else {
-                    return false;
-                };
-                self.open_request = Some(request);
-                return true;
-            }
             Act::ToggleMayAsk => {
                 self.settings.toggle_may_ask();
+                return true;
+            }
+            Act::Avatar(face) => {
+                self.settings.edit_avatar(face);
                 return true;
             }
             Act::SaveName => self.settings.save_name(),
@@ -1187,24 +1235,16 @@ impl BotView {
         }
     }
 
-    /// Open or close the region. Opening it before the tab holds the Bot as
-    /// the owner does asks for it. **Closing it gives the keyboard back to
-    /// where it came from**: to *Settings* when the keyboard opened the
-    /// region from there (`F6`, then Enter), and to the conversation
-    /// otherwise — a pointer's press opened it, and the keyboard was the
-    /// conversation's. (Opening always puts the keyboard on *Settings*, so
-    /// where it is at the close says nothing about where it came from.)
+    /// Open settings from the Bot's navigator menu, reading its configuration
+    /// if necessary. Back and Escape close the region and return to chat.
     pub(crate) fn set_settings_open(&mut self, open: bool) {
-        let from_header = self.focus == Some(SETTINGS_BUTTON);
         self.settings_open = open;
-        self.memory.show(open && !self.stale);
         if open {
             self.library.owe_read();
             if self.settings.bot().is_none() {
                 self.settings.owe_read();
             }
             self.sync_name_field();
-            self.settings_return = from_header;
             self.focus = Some(SETTINGS_BUTTON);
             // The agents-and-models catalog, read while the settings show
             // (S6): the agents, their readiness, the Bot's agent's list.
@@ -1213,8 +1253,7 @@ impl BotView {
                 self.catalog.want(&facts.provider);
             }
         } else {
-            let back = std::mem::take(&mut self.settings_return);
-            self.focus = back.then_some(SETTINGS_BUTTON);
+            self.focus = None;
             self.hot = None;
             self.picker = None;
             self.agent = None;
@@ -1326,9 +1365,6 @@ impl BotView {
             return Some(self.step_focus(mods.shift_key()));
         }
         if let WinitKey::Named(NamedKey::Escape) = key {
-            if self.memory.detail.is_some() && self.memory_available() {
-                return Some(self.perform_memory(super::memory::Action::Back));
-            }
             if self.settings_open {
                 self.set_settings_open(false);
             } else {
@@ -1644,8 +1680,6 @@ impl BotView {
                     && key != super::list::MORE_CONVERSATIONS
                     && key != super::list::TRASH_NOTICE
                     && !Self::is_lifecycle_control(key)
-                    // The band over the conversation (M6).
-                    && !crate::bots::children::is_band_key(key)
                 {
                     continue;
                 }
@@ -1814,10 +1848,6 @@ impl BotView {
         }
         if key == super::list::TRASH_NOTICE {
             return self.list_notice().map(|words| self.words(words));
-        }
-        // The band over the conversation (M6): its own words.
-        if crate::bots::children::is_band_key(key) {
-            return self.children.line_words(key);
         }
         if self.create.is_some() {
             return self.create_line_words(key);

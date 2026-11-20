@@ -22,7 +22,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -117,7 +117,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -212,7 +212,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -307,7 +307,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -402,7 +402,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -499,7 +499,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -596,7 +596,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -691,7 +691,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -786,7 +786,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -881,7 +881,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -976,7 +976,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -1073,7 +1073,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -1170,7 +1170,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -1265,7 +1265,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -1360,7 +1360,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -1455,7 +1455,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -1550,7 +1550,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -1647,7 +1647,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -1744,7 +1744,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -1839,7 +1839,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -1934,7 +1934,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -2029,7 +2029,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Profil verw
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Profil verwalten" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Synchronisierung" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -2124,7 +2124,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -2221,7 +2221,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "إدارة 
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "Research and development archive 2019–2026" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "إدارة ملف التعريف" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "المزامنة" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#333333@1.000 width=1
@@ -2318,7 +2318,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -2416,7 +2416,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -2515,7 +2515,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -2613,7 +2613,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -2709,7 +2709,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000066#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#root "space-b" 60.000 619.000 218.000 30.000 position=5 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f7275000040008000000000000067#manage "Manage profile" 282.000 619.000 20.000 30.000 position=6 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=7 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 511.000 258.000 183.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 494.000 298.000 223.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 511.000 258.000 183.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 511.000 258.000 183.000 color=#E0E0E0@1.000 width=1
@@ -2952,7 +2952,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 1560.000 218.000 30.000 position=79 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 1560.000 20.000 30.000 position=80 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=81 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 177.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 194.000 258.000 500.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 194.000 258.000 500.000 color=#E0E0E0@1.000 width=1
@@ -3325,7 +3325,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 1560.000 218.000 30.000 position=79 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 1560.000 20.000 30.000 position=80 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=81 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 177.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 194.000 258.000 500.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 194.000 258.000 500.000 color=#333333@1.000 width=1
@@ -3698,7 +3698,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 619.000 218.000 30.000 position=79 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 619.000 20.000 30.000 position=80 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=81 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#FFFFFF@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 177.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 194.000 258.000 500.000 color=#FFFFFF@1.000
 paint 1 stroke primitive 52.000 194.000 258.000 500.000 color=#E0E0E0@1.000 width=1
@@ -4070,7 +4070,7 @@ sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008b#manage "Manage prof
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#root "Profile 39" 60.000 619.000 218.000 30.000 position=79 selected=false actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/n:6b6f727500004000800000000000008c#manage "Manage profile" 282.000 619.000 20.000 30.000 position=80 actions=Click,Focus
 sem 1 MenuItem koru:w1/v1/s:explore-popover#global-sync "Sync" 56.000 658.000 250.000 30.000 position=81 actions=Click,Focus
-paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8
+paint 0 FloatingPanel part 52.000 194.000 258.000 500.000 fill=#1E1E1E@1.000 elevation=Raised radius=8 shadow_opacity=1
 paint 1 Shadow part 32.000 177.000 298.000 540.000 rings=16 spread_/_dy=20_/_3
 paint 1 fill primitive 52.000 194.000 258.000 500.000 color=#1E1E1E@1.000
 paint 1 stroke primitive 52.000 194.000 258.000 500.000 color=#333333@1.000 width=1

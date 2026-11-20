@@ -21,6 +21,11 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::from_rgb8(r, g, b)
 }
 
+/// Authored chat bubbles keep their black/white contrast in every app theme.
+pub fn chat_user_colors() -> (Color, Color) {
+    (rgb(0, 0, 0), rgb(255, 255, 255))
+}
+
 /// Fixed colors for the acquisition-style welcome split and its external
 /// Google mark. These are chrome, never document data, and deliberately do not
 /// become palette fields: the dark introduction panel and provider trademark

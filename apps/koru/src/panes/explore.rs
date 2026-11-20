@@ -932,6 +932,7 @@ pub struct ExploreView {
     pending_fold: Option<fold::Fold>,
     /// Whether the library heading's `…` actions button is under the pointer.
     actions_hover: bool,
+    bots_more_hover: bool,
     /// The row the active tab is showing, so the tree says where you are.
     selected: Option<NodeId>,
     /// The row the **keyboard** is on, which is not the same thing.
@@ -1199,6 +1200,31 @@ impl ExploreView {
     /// Whether the Bots roster is what is showing.
     pub fn showing_bots(&self) -> bool {
         self.mode == NavigatorMode::Bots
+    }
+
+    pub(crate) fn bot_conversation_at(
+        &self,
+        area: Rect,
+        x: f32,
+        y: f32,
+    ) -> Option<(koru_ai_core::bots::BotId, koru_ai_core::ChatId)> {
+        if !self.showing_bots() || !area.contains(x, y) {
+            return None;
+        }
+        self.bots
+            .conversation_at(self.above_footer(area), self.rows_top(area), x, y)
+    }
+
+    pub(crate) fn bot_conversation_label_rect(
+        &self,
+        area: Rect,
+        chat: koru_ai_core::ChatId,
+    ) -> Option<Rect> {
+        if !self.showing_bots() {
+            return None;
+        }
+        self.bots
+            .conversation_label_rect(self.above_footer(area), self.rows_top(area), chat)
     }
 
     /// Give the Bots roster its link to the Bot service, once — the first
@@ -5339,6 +5365,14 @@ impl ExploreView {
             return Outcome::Consumed;
         }
 
+        if self.mode == NavigatorMode::Bots
+            && self
+                .heading_part_rect(area, heading_elements::BOTS_MORE)
+                .contains(x, y)
+        {
+            self.bots.request_menu((x, y));
+            return Outcome::Consumed;
+        }
         if self.actions_at(area, x, y) {
             // The Chats heading's button is *New chat* (the review's note), not
             // a menu: the row that was at the list's head moved up here.
@@ -6143,6 +6177,12 @@ impl ExploreView {
         let popover = on_popover.map(|(i, _, _)| i);
         let popover_part = on_popover.map(|(_, _, part)| part);
         let actions = popover.is_none() && self.actions_at(area, x, y);
+        let bots_more = popover.is_none()
+            && self.mode == NavigatorMode::Bots
+            && self
+                .heading_part_rect(area, heading_elements::BOTS_MORE)
+                .contains(x, y);
+        let bots_more_moved = std::mem::replace(&mut self.bots_more_hover, bots_more) != bots_more;
         let on_footer = if popover.is_some() {
             None
         } else {
@@ -6185,7 +6225,7 @@ impl ExploreView {
         };
         let bots_moved = if self.mode == NavigatorMode::Bots {
             let top = self.rows_top(area);
-            if popover.is_some() || actions {
+            if !self.bots.pointer_active() && (popover.is_some() || actions || bots_more) {
                 self.bots.clear_hover()
             } else {
                 self.bots.mouse_move(self.above_footer(area), top, x, y)
@@ -6232,6 +6272,7 @@ impl ExploreView {
             || hover != self.hover
             || popover_part != self.popover_part
             || actions != self.actions_hover
+            || bots_more_moved
             || on_footer != self.footer_hover
             || on_cta != self.cta_hover
             || on_subscribe != self.subscribe_hover
@@ -6275,7 +6316,10 @@ impl ExploreView {
     /// Any pointer capture that must keep receiving moves outside the pane —
     /// the library's row drag, a scrollbar, or a list row on the tasks rail.
     pub fn pointer_active(&self) -> bool {
-        self.drag.is_some() || self.scroll_drag.is_some() || self.rail.dragging()
+        self.drag.is_some()
+            || self.scroll_drag.is_some()
+            || self.rail.dragging()
+            || self.bots.pointer_active()
     }
 
     /// Abort either kind of pointer capture. Returns whether anything changed.
@@ -6291,8 +6335,9 @@ impl ExploreView {
     /// mutated — only the row cache was — so the caller rebuilds from the
     /// document to restore positions. Returns whether a drag was cleared.
     pub fn cancel_drag(&mut self) -> bool {
+        let bots = self.bots.cancel_drag();
         let Some(_) = self.drag.take() else {
-            return false;
+            return bots;
         };
         self.drag_tick = None;
         self.slides.clear();
@@ -6742,6 +6787,9 @@ impl ExploreView {
     /// Release: a click if it never armed, otherwise commit the carried set to
     /// its landing and hand the move to the container.
     pub fn mouse_up(&mut self) -> Outcome {
+        if self.bots.mouse_up() {
+            return Outcome::Consumed;
+        }
         // The rail's own drag first: it is the only pointer capture the tasks
         // mode has, and the library's never starts while that mode is showing.
         if self.rail.dragging() {
@@ -7163,6 +7211,9 @@ impl ExploreView {
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
+        if self.bots.drag_armed() {
+            return CursorIcon::Grabbing;
+        }
         if self.scroll_drag.is_some() || self.scrollbar_hover {
             return CursorIcon::NsResize;
         }

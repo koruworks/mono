@@ -289,13 +289,6 @@ fn the_heading_opens_the_dialog_and_the_full_form_is_reachable() {
         .dialog
         .as_mut()
         .unwrap()
-        .activate(crate::bots::view::new_bot::MORE);
-    assert!(v.settle_new_bot(outcome));
-    let outcome = v
-        .first_bot
-        .dialog
-        .as_mut()
-        .unwrap()
         .activate(crate::bots::view::new_bot::FULL_FORM);
     assert!(v.settle_new_bot(outcome));
     assert!(!v.new_bot_open());
@@ -306,6 +299,32 @@ fn the_heading_opens_the_dialog_and_the_full_form_is_reachable() {
     assert!(view.is_creating());
     assert_eq!(view.create_bot(), draft, "the same draft");
     assert_eq!(v.tabs().active_tab().label, "Scout", "its name came along");
+}
+
+/// Runtime configuration opens Settings without abandoning the new Bot draft.
+#[test]
+fn new_bot_runtime_setup_opens_agent_providers_and_keeps_the_draft_tab() {
+    let (mut v, _) = on_bots();
+    let tabs = v.tabs().len();
+    assert!(v.open_new_bot_dialog(Opener::Elsewhere));
+    let dialog = v.first_bot.dialog.as_mut().unwrap();
+    dialog.accessibility_set_name("Grok bot");
+    let draft = dialog.draft_bot();
+    let outcome = dialog.activate(crate::bots::view::new_bot::MANAGE_AGENTS);
+    assert_eq!(outcome, Outcome::ManageAgents);
+    assert!(v.settle_new_bot(outcome));
+    assert!(!v.new_bot_open());
+    assert_eq!(v.tabs().len(), tabs + 2);
+    assert!(
+        matches!(&v.tabs().active_tab().view, TabView::Settings(settings)
+        if settings.page() == koru_settings_ui::PageId::AgentProviders)
+    );
+    assert!(
+        v.tabs()
+            .iter()
+            .any(|tab| matches!(&tab.view, TabView::Bot(bot)
+        if bot.create_bot() == draft && tab.label == "Grok bot"))
+    );
 }
 
 /// **On success the dialog closes and the new Bot's chat opens**: the
@@ -423,7 +442,6 @@ fn the_faces_share_one_deadline_and_ask_for_none_while_nothing_works() {
 
     // Ada and Bo have a reply running; Cy is waiting on the person.
     let activity = |bot: &koru_ai_core::bots::Bot, state| BotActivity {
-        waiting: None,
         bot_id: bot.id,
         chat_id: bot.main_chat,
         state,

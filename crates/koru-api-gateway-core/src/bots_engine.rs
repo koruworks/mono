@@ -180,6 +180,17 @@ impl Gateway {
                 return Ok(receipt);
             }
         }
+        if let Command::Routine { id, action } = &command {
+            let receipt = send(Command::Read {
+                query: Query::RoutineReceipt {
+                    id: *id,
+                    action: action.clone(),
+                },
+            })?;
+            if !receipt.is_null() {
+                return Ok(receipt);
+            }
+        }
         let read_bot = |bot| -> Result<person::Bot, Error> {
             serde_json::from_value(send(Command::Read {
                 query: Query::Bot { bot },
@@ -190,6 +201,36 @@ impl Gateway {
         let mut pages = vec![];
         let mut accepted_send = None;
         match &command {
+            Command::Routine { action, .. } => {
+                let home = read_bot(action.bot())?.definition.access.workspace;
+                workspaces.push(home);
+                match action {
+                    koru_bots_engine::routines::Change::Create { documents, .. } => {
+                        pages.extend(documents.iter().map(|id| BotPage {
+                            workspace: home,
+                            document: koru_ai_core::DocumentId::from_uuid(*id),
+                        }));
+                    }
+                    koru_bots_engine::routines::Change::Access { access, .. } => {
+                        if access.workspace != home || access.destination != home {
+                            return Err(Error::NotAllowed);
+                        }
+                        pages.extend(access.selected_pages.iter().map(|document| BotPage {
+                            workspace: home,
+                            document: *document,
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+            Command::Read {
+                query:
+                    Query::Routines { bot, .. }
+                    | Query::Routine { bot, .. }
+                    | Query::RoutineCreation { bot, .. },
+            } => {
+                workspaces.push(read_bot(*bot)?.definition.access.workspace);
+            }
             Command::Change {
                 action: Change::ConversationSettings { bot, .. },
                 ..
@@ -259,6 +300,17 @@ impl Gateway {
                 let home = read_bot(*bot)?.definition.access.workspace;
                 workspaces.push(home);
                 pages.extend(knowledge.iter().map(|id| BotPage {
+                    workspace: home,
+                    document: koru_ai_core::DocumentId::from_uuid(*id),
+                }));
+            }
+            Command::Change {
+                action: Change::Memory { bot, memory, .. },
+                ..
+            } => {
+                let home = read_bot(*bot)?.definition.access.workspace;
+                workspaces.push(home);
+                pages.extend(memory.iter().map(|id| BotPage {
                     workspace: home,
                     document: koru_ai_core::DocumentId::from_uuid(*id),
                 }));
@@ -369,6 +421,34 @@ impl Gateway {
         send(command)
     }
 }
+pub(crate) async fn routine_command(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    payload: Result<Json<koru_ai_wire::bot_routines::Command>, JsonRejection>,
+) -> Response {
+    if !permitted(&principal) {
+        return failed(Error::NotAllowed);
+    }
+    let Ok(Json(command)) = payload else {
+        return failed(Error::InvalidRequest);
+    };
+    let Some(gateway) = state.bots_engine.get().cloned() else {
+        return failed(Error::EngineUnavailable);
+    };
+    let Ok(permit) = gateway.permits.clone().try_acquire_owned() else {
+        return failed(Error::EngineUnavailable);
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        gateway.routine_command(&principal, command)
+    })
+    .await
+    {
+        Ok(Ok(reply)) => Json(reply).into_response(),
+        Ok(Err(error)) => failed(error),
+        Err(_) => failed(Error::EngineUnavailable),
+    }
+}
 pub(crate) async fn thread_command(
     State(state): State<Arc<GatewayState>>,
     Extension(principal): Extension<GatewayPrincipal>,
@@ -380,9 +460,6 @@ pub(crate) async fn thread_command(
     let Ok(Json(command)) = payload else {
         return failed(Error::InvalidRequest);
     };
-    if !koru_bots_engine::ENABLED {
-        return failed(Error::EngineDisabled);
-    }
     let Some(gateway) = state.bots_engine.get().cloned() else {
         return failed(Error::EngineUnavailable);
     };
@@ -485,9 +562,7 @@ fn failed(error: Error) -> Response {
     let status = match error {
         Error::NotAllowed | Error::Unauthenticated => StatusCode::FORBIDDEN,
         Error::InvalidRequest | Error::InputTooSmall => StatusCode::BAD_REQUEST,
-        Error::EngineUnavailable | Error::StorageUnavailable | Error::EngineDisabled => {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
+        Error::EngineUnavailable | Error::StorageUnavailable => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::CONFLICT,
     };
     crate::failure(

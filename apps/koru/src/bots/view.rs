@@ -101,7 +101,6 @@ pub(crate) mod context_library;
 pub(crate) mod context_routines;
 pub(crate) mod controls;
 pub(crate) mod conversations;
-pub(crate) mod copy;
 pub(crate) mod create;
 mod library;
 pub(crate) mod list;
@@ -173,7 +172,7 @@ pub(crate) const BOT_REFUSALS: koru_ai_ui::OwnedRefusals = &[
         super::settings::ROUTINE_RETRY_UNSUPPORTED,
         Words::BotsErrRoutineRetryUnsupported,
     ),
-    // Every Bot is paused (M8): a message to a Bot that is not working is
+    // Every Bot is paused: a message to a Bot that is not working is
     // refused, and says what to do about it.
     (super::team_pause::TEAM_PAUSED, Words::BotsTeamPausedSend),
 ];
@@ -202,16 +201,11 @@ pub(crate) struct BotFacts {
     /// The face the Bot wears (QUESTIONS O155): its stored choice, else the
     /// default one (`Bot::avatar`).
     pub avatar: u8,
-    /// **The other computer that runs the Bot** (M8, P8.3), when the tab
-    /// knows it is one: the tab is then a saved copy's ([`copy`]). `None`
-    /// for a Bot this computer runs, and until the tab knows.
-    pub owner: Option<koru_ai_core::bots::DeviceId>,
 }
 
 impl From<&RosterBot> for BotFacts {
     fn from(bot: &RosterBot) -> Self {
         Self {
-            owner: bot.owner,
             avatar: bot.avatar,
             id: bot.id,
             name: bot.name.clone(),
@@ -230,9 +224,6 @@ impl From<&RosterBot> for BotFacts {
 impl From<Bot> for BotFacts {
     fn from(bot: Bot) -> Self {
         Self {
-            // A Bot alone does not say which device this is: the tab
-            // keeps what it knew, or works it out ([`BotView::know`]).
-            owner: None,
             avatar: bot.avatar(),
             id: bot.id,
             name: bot.config.name,
@@ -335,11 +326,6 @@ pub(crate) struct BotView {
     pub(crate) routines: Box<super::routines::Routines>,
     /// The Routine whose timing dialog was asked for: the window opens it.
     routine_timing_request: Option<super::routines::control::TimingSeed>,
-    memory: Box<super::memory::Memory>,
-    #[cfg(test)]
-    memory_test_available: bool,
-    memory_ask: Option<Box<memory::Ask>>,
-    memory_target: Option<Box<koru_editor::trigger::DocumentTarget>>,
     settings_open: bool,
     context_library_visible: bool,
     context_instance: u64,
@@ -347,12 +333,10 @@ pub(crate) struct BotView {
     /// compact**: it takes the conversation's place until a row is chosen
     /// or it is closed.
     list_open: bool,
+    conversation_roster_dirty: bool,
     /// The control the keyboard is on: the header's *Settings*, or one of
     /// the region's. `None` gives the keyboard to the conversation.
     focus: Option<Key>,
-    /// The keyboard opened the settings from *Settings*: closing them gives
-    /// it back there rather than to the conversation.
-    settings_return: bool,
     /// The control under the pointer, and the access segment it is over.
     hot: Option<Key>,
     hot_segment: Option<usize>,
@@ -472,29 +456,31 @@ pub(crate) struct BotView {
     /// O155): the card's state, its field and the room the chat gives it
     /// ([`onboard`]). Boxed for the reason the settings are.
     card: Box<onboard::Card>,
-    // ----------------------------------- one Bot asks another (M6)
-    /// **The requests the conversation shown made of other Bots, and who
-    /// asked for it** (contract 7), read on a link of their own while the
-    /// tab is shown ([`crate::bots::children`]). Boxed for the reason the
-    /// settings are.
-    children: Box<crate::bots::children::Children>,
-    /// A conversation a request card or the origin line asked to open: the
-    /// window opens it in that Bot's tab. Taken once.
-    open_request: Option<crate::bots::children::OpenRequest>,
-    // ------------------------------- another computer's Bot (M8)
-    /// **What the tab holds while another computer runs its Bot** ([`copy`]):
-    /// that computer, its copy's state and what the last command came to.
-    /// Empty for a Bot this computer runs. Boxed for the reason the
-    /// settings are.
-    copy: Box<copy::Copy>,
     // ------------------------------------ mentioning another Bot
     /// **The Bots the conversation's `@` offers**, and how fresh the list
     /// is ([`crate::bots::mentions`]). Boxed for the reason the settings
     /// are.
     mentions: Box<crate::bots::mentions::Mentions>,
+    here: Option<koru_ai_core::bots::DeviceId>,
+}
+
+pub(crate) struct ConversationTarget {
+    pub bot: BotId,
+    pub name: String,
+    pub chat: ChatId,
 }
 
 impl BotView {
+    pub(crate) fn set_here(&mut self, here: Option<koru_ai_core::bots::DeviceId>) -> bool {
+        let changed = self.here != here;
+        self.here = here;
+        changed
+    }
+
+    fn here(&self) -> Option<koru_ai_core::bots::DeviceId> {
+        self.here
+    }
+
     fn blank(bot: Option<BotId>, chat: ChatId) -> Self {
         Self {
             bot,
@@ -523,17 +509,12 @@ impl BotView {
             library: Box::default(),
             routines: Box::default(),
             routine_timing_request: None,
-            memory: Box::default(),
-            #[cfg(test)]
-            memory_test_available: false,
-            memory_ask: None,
-            memory_target: None,
             settings_open: false,
             context_library_visible: false,
             context_instance: context_library::mint_instance(),
             list_open: false,
+            conversation_roster_dirty: false,
             focus: None,
-            settings_return: false,
             hot: None,
             hot_segment: None,
             pressed: None,
@@ -575,18 +556,21 @@ impl BotView {
             creation_news: None,
             face_pose: koru_draw::face::FacePose::STILL,
             card: Box::default(),
-            children: Box::default(),
-            open_request: None,
-            copy: Box::default(),
             mentions: Box::default(),
+            here: None,
         }
     }
 
-    /// **The pose the header's face is drawn in**, from the window's clock.
+    /// The live working label's face, from the window's shared clock.
     /// `true` when it moved, and a repaint is owed.
     pub(crate) fn set_face_pose(&mut self, pose: koru_draw::face::FacePose) -> bool {
-        let changed = self.face_pose != pose;
+        let mut changed = self.face_pose != pose;
         self.face_pose = pose;
+        let working = self.conversation_working();
+        if let (Some(facts), Some(conversation)) = (&self.facts, &mut self.conversation) {
+            let identity_changed = conversation.set_working_bot(facts.avatar, &facts.name, pose);
+            changed |= identity_changed && working;
+        }
         changed
     }
 
@@ -627,14 +611,15 @@ impl BotView {
         self.roster_news.take()
     }
 
-    /// Note `bot` as roster news when its name or its pause is not what the
+    /// Note `bot` as roster news when its identity or pause is not what the
     /// tab showed before.
     fn note_roster_news(&mut self, bot: &Bot) {
         // A tab's first read changes nothing the roster listed.
-        let moved = self
-            .facts
-            .as_ref()
-            .is_some_and(|facts| facts.name != bot.config.name || facts.paused != bot.paused);
+        let moved = self.facts.as_ref().is_some_and(|facts| {
+            facts.name != bot.config.name
+                || facts.avatar != bot.avatar()
+                || facts.paused != bot.paused
+        });
         if moved {
             self.roster_news = Some(bot.clone());
         }
@@ -883,8 +868,6 @@ impl BotView {
     /// sent now: a hidden tab sends nothing.
     pub(crate) fn hidden(&mut self) {
         self.routines.show(self.bot, false);
-        self.memory.show(false);
-        self.children.show(false);
         self.setup_hidden();
         if self.create.is_some() {
             self.create_hidden();
@@ -898,7 +881,6 @@ impl BotView {
         self.bot_read_next = None;
         self.bot_read_backoff = BOT_READ_FIRST;
         self.vouching.reset();
-        self.copy_hidden();
     }
 
     /// **Shown again after a read of whose the conversation is failed**:
@@ -992,14 +974,6 @@ impl BotView {
     /// Take `facts` as what the tab knows, and bind the conversation to the
     /// Bot's — the main one, unless this tab is on another of its chats.
     fn know(&mut self, facts: BotFacts) {
-        // **Which computer runs the Bot stays what the tab knew** (M8): a
-        // read or a row that does not say keeps it, as it keeps whether the
-        // Bot is archived.
-        let mut facts = facts;
-        if facts.owner.is_none() {
-            facts.owner = self.facts.as_ref().and_then(|known| known.owner);
-        }
-        self.set_copy_owner(facts.owner);
         self.conversations.set_bot(facts.id);
         self.lifecycle.set_bot(facts.id);
         self.lifecycle_awaits_read = false;
@@ -1042,8 +1016,6 @@ impl BotView {
         }
         self.facts = Some(facts);
         self.load = Load::Ready;
-        // A conversation just made is told what its copy lets it do.
-        self.push_saved_copy();
     }
 
     /// **A trashed Bot's conversation is let go, and its draft kept**: the
@@ -1115,64 +1087,22 @@ impl BotView {
         }
         // A trashed Bot lists nothing: its list would be refused.
         let listed = !self.facts.as_ref().is_some_and(|facts| facts.trashed) && self.list_pass();
-        // The conversation's requests to other Bots, and who asked for it
-        // (M6), on their own link.
-        let children = self.children_pass(root.clone());
         // The catalog only while the settings are shown (S6).
         let catalog = self.settings_open && self.catalog.pass(root);
         self.settle_agent_refreshes();
         let library = self.library_pass();
-        let memory = self.memory_pass();
         let routines = self.routines_pass();
         // Whether the tab draws the conversation's empty transcript (O155).
         let setup = self.setup_pass();
-        // Another computer's Bot (M8): its copy's state, on this link.
-        let copy = self.copy_pass();
         asked
-            || copy
             || setup
             || answered
             || polled
             || listed
-            || children
             || lifecycle
             || catalog
             || library
-            || memory
             || routines
-    }
-
-    /// **The pass of the conversation's requests to other Bots** (M6): once
-    /// the tab knows its Bot, and never for a Bot in Trash or a create tab.
-    /// `true` when what the band says changed.
-    fn children_pass(&mut self, root: Option<PathBuf>) -> bool {
-        if self
-            .conversation
-            .as_ref()
-            .is_some_and(|c| c.is_engine_owned())
-        {
-            let changed = self.children.shows();
-            self.children.show(false);
-            return changed;
-        }
-        if self.create.is_some() {
-            return false;
-        }
-        let Some(facts) = self.facts.as_ref().filter(|facts| !facts.trashed) else {
-            return false;
-        };
-        let (bot, main, name) = (facts.id, facts.main_chat, facts.name.clone());
-        self.children.start(root);
-        let before = self.children.shows();
-        let moved = self.children.set_subject(bot, self.chat, main);
-        let worded = self.children.set_words(self.lang, &name);
-        self.children.show(true);
-        let answered = self.children.pass(std::time::Instant::now());
-        // A child conversation is labelled in the list by who asked for it.
-        if let Some((chat, asker)) = self.children.take_origin_news() {
-            self.conversations.know_asked_by(chat, &asker);
-        }
-        answered || (moved && before) || (worded && self.children.shows())
     }
 
     // ------------------------------------ mentioning another Bot
@@ -1186,11 +1116,10 @@ impl BotView {
     }
 
     /// **The Bot whose conversation this is, when its `@` may offer Bots**:
-    /// asking is open in this build, the owner's own read of the Bot is
-    /// held (it says the setting), the Bot is active, and this computer
-    /// runs it. `None` otherwise: the picker then lists pages only.
+    /// the engine's read of the Bot is held and the Bot is active.
+    /// `None` otherwise: the picker then lists pages only.
     fn mention_asker(&self) -> Option<crate::bots::mentions::Asker> {
-        if !crate::bots::children::ASKING_OPEN || self.create.is_some() || self.copy().is_some() {
+        if self.create.is_some() {
             return None;
         }
         let bot = self.settings.bot()?;
@@ -1238,74 +1167,26 @@ impl BotView {
         changed
     }
 
-    /// The requests' pass on the window's maintenance: what the link
-    /// answered, and a read come due — for a tab already shown, which only
-    /// its draw makes it.
-    fn children_maintain(&mut self, now: std::time::Instant) -> bool {
-        if self
-            .conversation
-            .as_ref()
-            .is_some_and(|c| c.is_engine_owned())
-        {
-            let changed = self.children.shows();
-            self.children.show(false);
-            return changed;
-        }
-        let answered = self.children.pass(now);
-        if let Some((chat, asker)) = self.children.take_origin_news() {
-            self.conversations.know_asked_by(chat, &asker);
-        }
-        answered
-    }
-
-    /// **The conversation a request card or the origin line asked to open**
-    /// (M6, contract 7.5): the Bot, its name for the tab until it is read,
-    /// and the conversation. Taken once by the window.
-    pub(crate) fn take_open_request(&mut self) -> Option<crate::bots::children::OpenRequest> {
-        if let Some((bot, name, chat)) = self
-            .conversation
-            .as_mut()
-            .and_then(|c| c.take_open_bot_conversation())
-        {
-            return Some(crate::bots::children::OpenRequest { bot, name, chat });
-        }
-        self.open_request.take()
+    pub(crate) fn take_open_request(&mut self) -> Option<ConversationTarget> {
+        self.conversation
+            .as_mut()?
+            .take_open_bot_conversation()
+            .map(|(bot, name, chat)| ConversationTarget { bot, name, chat })
     }
 
     /// **The faces the window's roster lists**, for the request cards'
     /// leads. `true` when a card's face moved.
     pub(crate) fn know_faces(&mut self, faces: impl IntoIterator<Item = (BotId, u8)>) -> bool {
-        self.children.set_faces(faces) && self.children.shows()
-    }
-
-    /// The conversation's requests and origin, as the tab holds them. Test
-    /// only.
-    #[cfg(test)]
-    pub(crate) fn children(&self) -> &crate::bots::children::Children {
-        &self.children
-    }
-
-    /// The requests' link, for a test that answers it.
-    #[cfg(test)]
-    pub(crate) fn children_with_link(&mut self, link: BotsLink) {
-        *self.children = crate::bots::children::Children::with_link(link);
-    }
-
-    /// **The band over the conversation** (M6): the origin line, the line
-    /// said while the conversation waits, and the request cards, each link
-    /// one of the tab's own buttons. `None` when it has nothing to say.
-    pub(super) fn child_band(&self, engine: &mut koru_draw::text::TextEngine) -> Option<El> {
-        let mut button = |name: &'static str, key: Key, label: String| {
-            self.button(
-                engine,
-                name,
-                key,
-                label,
-                koru_ui::button::ActionStyle::Ghost,
-                false,
+        let faces: Vec<_> = faces.into_iter().collect();
+        let chat_changed = self.conversation.as_mut().is_some_and(|conversation| {
+            conversation.set_bot_faces(
+                faces
+                    .iter()
+                    .map(|(bot, face)| (bot.as_uuid(), *face))
+                    .collect(),
             )
-        };
-        self.children.band(&mut button)
+        });
+        chat_changed
     }
 
     /// The `ReadOperation`s the settings owe now. `true` when any went.
@@ -1375,13 +1256,32 @@ impl BotView {
         let mut changed = false;
         for answer in answers {
             match answer {
-                Answer::RoutineDetail {
+                Answer::NativeRoutineDetail {
                     seq,
                     bot,
                     schedule,
                     result,
                 } => {
-                    changed |= self.routines.detail_answer(seq, bot, schedule, result);
+                    changed |= self
+                        .routines
+                        .native_detail_answer(seq, bot, schedule, result);
+                }
+                Answer::NativeRoutineControl {
+                    seq,
+                    bot,
+                    schedule,
+                    result,
+                } => {
+                    changed |= self
+                        .routines
+                        .native_control_answer(seq, bot, schedule, result);
+                }
+                Answer::RoutineStartup {
+                    bot,
+                    request,
+                    result,
+                } => {
+                    changed |= self.routines.startup_answer(bot, request, result);
                 }
                 Answer::Routines { seq, bot, result } => {
                     changed |= self.routines.answer(seq, bot, result);
@@ -1409,20 +1309,6 @@ impl BotView {
                     result,
                 } => {
                     changed |= self.routines.labelled(seq, bot, chat, result);
-                }
-                Answer::Memory { request, result } => {
-                    if let Some(bot) = self.settings.bot() {
-                        let folded =
-                            self.memory
-                                .answer(self.context_instance, bot, request, result);
-                        if folded {
-                            if self.memory.known_revision() > bot.revision {
-                                self.asked = false;
-                                self.library.owe_read();
-                            }
-                            changed = true;
-                        }
-                    }
                 }
                 Answer::Library { seq, bot, result } if Some(bot) == self.bot => {
                     if let Some(bot) = self.settings.bot() {
@@ -1478,27 +1364,20 @@ impl BotView {
                     request,
                     result,
                 } if Some(bot) == self.bot => {
-                    // What a command for another computer came to (M8),
-                    // beside whatever the write's own surface says.
-                    changed |= self.copy_wrote(request, &result);
                     changed |= self.take_written(request, result, now);
                 }
-                // Another computer's Bot (M8): its copy's state, and how
-                // far a refused command got on its way there.
-                Answer::LinkedOwner { seq, bot, result } => {
-                    changed |= self.copy_answer(seq, bot, result);
-                }
-                Answer::Delivery {
-                    bot,
-                    request,
-                    delivery,
-                } => self.copy_delivery(bot, request, delivery),
                 Answer::Lifecycle {
                     seq,
+                    workspace,
                     lifecycle: BotLifecycle::Trashed,
                     result,
-                    ..
-                } if seq == self.trash_seq => {
+                } if self.trash_in_flight
+                    && seq == self.trash_seq
+                    && self
+                        .facts
+                        .as_ref()
+                        .is_some_and(|facts| facts.home == workspace) =>
+                {
                     self.trash_in_flight = false;
                     self.take_trash_listing(result);
                     changed = true;
@@ -1565,7 +1444,6 @@ impl BotView {
         }
         if matches!(&result, Ok(bot) if Some(bot.id) == self.bot &&
             (bot.revision < self.library.known_revision()
-                || bot.revision < self.memory.known_revision()
                 || self.settings.bot().is_some_and(|known| bot.revision < known.revision)))
         {
             self.asked = false;
@@ -1593,7 +1471,6 @@ impl BotView {
                 }
                 self.note_roster_news(&bot);
                 self.library.know_bot(&bot);
-                self.memory.know(&bot);
                 self.settings.know(bot.clone());
                 if bot.lifecycle != BotLifecycle::Trashed {
                     self.trashed_bot = None;
@@ -1602,12 +1479,7 @@ impl BotView {
                 // operation**: `know` gives it the Bot, so the first read of
                 // a tab restored at startup or opened from a link adopts a
                 // parked or moving operation rather than finding no Bot.
-                // Another device's Bot is that computer's (M8): the tab is
-                // a saved copy's from here on.
-                let owner = self.remote_owner(&bot);
-                let mut facts = BotFacts::from(bot.clone());
-                facts.owner = owner;
-                self.know(facts);
+                self.know(BotFacts::from(bot.clone()));
                 self.lifecycle.know(&bot);
                 // A read may finish the operation followed — one the owner
                 // completed by itself — which the tab acts on as on an
@@ -1727,126 +1599,25 @@ impl BotView {
         ))
     }
 
-    /// The header as elements: the Bot's name and its pause, where its work
-    /// goes and the first version's limit, a notice while the Bot is read
-    /// or could not be, and the divider that closes it.
+    /// Transient loading, recovery and operation notices. A settled Bot
+    /// has no header; identity and conversation controls live in the navigator.
     fn header(&self, engine: &mut koru_draw::text::TextEngine) -> El {
+        if self.facts.is_some()
+            && self.lifecycle_block(engine).is_none()
+            && self.notice().is_none()
+            && self.conversations.create_refused().is_none()
+            && self.list_notice().is_none()
+        {
+            return col("Bot notices").id(HEADER);
+        }
         let mut header = col("Bot header")
             .id(HEADER)
             .pad_x(alias::NAV_PAD)
             .pad_top(Space::S3)
             .gap(Space::S1);
-        if let Some(facts) = &self.facts {
-            let mut title = row("Bot title")
-                .gap(Space::S2)
-                .items_center()
-                // Its face (O155), beside its name: decorative, the name
-                // says who it is. Moving only while the Bot works.
-                .child(
-                    koru_draw::el::leaf(
-                        "Bot face",
-                        super::faces::FaceLeaf {
-                            face: facts.avatar,
-                            name: facts.name.clone(),
-                            pose: self.face_pose,
-                            size: super::faces::HEADER_FACE,
-                        },
-                    )
-                    .decorative(),
-                )
-                .child(
-                    text(&facts.name)
-                        .named("Bot name")
-                        .id(NAME)
-                        .role(roles::POPOVER_HEADING)
-                        .emphasis(true)
-                        .fill()
-                        .truncate(),
-                );
-            if facts.paused {
-                title = title.child(
-                    text(t(self.lang, Words::BotsPaused))
-                        .named("Bot paused")
-                        .id(PAUSED)
-                        .role(roles::META)
-                        .ink(Ink::Hint),
-                );
-            }
-            // In words, beside the name: never color alone.
-            if facts.archived {
-                title = title.child(
-                    text(t(self.lang, Words::BotsArchived))
-                        .named("Bot archived")
-                        .id(ARCHIVED)
-                        .role(roles::META)
-                        .ink(Ink::Hint),
-                );
-            }
-            // The lifecycle's ⋯ (S14), while it has a row to offer, and
-            // *Settings*, which a trashed Bot does not have.
-            if self.header_shows_actions() {
-                title = title.child(self.actions_button());
-            }
-            if !facts.trashed {
-                // Compact, the conversation column has left: its list is
-                // one press away (EXPERIENCE: a reachable disclosure).
-                if self.compact() {
-                    title = title.child(self.conversations_button(engine));
-                }
-                title = title.child(self.settings_button(engine));
-            }
-            header = header.child(title);
-            if self.chat == facts.main_chat {
-                header = header.child(
-                    text(t(self.lang, Words::BotsMainConversation))
-                        .named("Bot main conversation")
-                        .id(MAIN_MARK)
-                        .role(roles::META)
-                        .ink(Ink::Secondary),
-                );
-            }
-            if let Some(saves) = self.saves_in() {
-                header = header.child(
-                    text(saves)
-                        .named("Bot destination")
-                        .id(SAVES)
-                        .role(roles::META)
-                        .ink(Ink::Secondary)
-                        .wrap(),
-                );
-            }
-            header = header.child(
-                text(t(self.lang, Words::BotsHomeOnly))
-                    .named("Bot destination limit")
-                    .id(LIMIT)
-                    .role(roles::META)
-                    .ink(Ink::Hint)
-                    .wrap(),
-            );
+        if self.facts.is_some() {
             if let Some(block) = self.lifecycle_block(engine) {
                 header = header.child(block);
-            }
-            // Another computer's Bot (M8): that this is a saved copy and
-            // as of when, and what the last command came to.
-            if let Some(banner) = self.copy_banner() {
-                header = header.child(
-                    text(banner)
-                        .named("Bot saved copy")
-                        .id(copy::COPY_BANNER)
-                        .role(roles::META)
-                        .ink(Ink::Secondary)
-                        .wrap(),
-                );
-            }
-            if let Some(line) = self.copy_line() {
-                header = header.child(
-                    text(line)
-                        .named("Bot copy command")
-                        .id(copy::COPY_LINE)
-                        .role(roles::META)
-                        .ink(Ink::Hint)
-                        .wrap(),
-                );
             }
         } else if let Some(label) = self.create_label() {
             // A Bot being created (S8): its name so far, where its results
@@ -1907,6 +1678,26 @@ impl BotView {
                     .wrap(),
             );
         }
+        if let Some(refused) = self.conversations.create_refused() {
+            header = header.child(
+                text(t(self.lang, refused))
+                    .id(list::CREATE_REFUSED)
+                    .named("Bot new conversation refused")
+                    .role(roles::META)
+                    .ink(Ink::Accent)
+                    .wrap(),
+            );
+        }
+        if let Some(notice) = self.list_notice() {
+            header = header.child(
+                text(t(self.lang, notice))
+                    .id(list::TRASH_NOTICE)
+                    .named("Bot conversation notice")
+                    .role(roles::META)
+                    .ink(Ink::Accent)
+                    .wrap(),
+            );
+        }
         header.child(
             boxed("Bot header end")
                 .pad_top(Space::S2)
@@ -1927,35 +1718,8 @@ impl BotView {
             return tab;
         }
         let conversation = boxed("Bot conversation").id(CONVERSATION).fill();
-        // The conversation's requests to other Bots and who asked for it
-        // (M6), over the conversation and beside the column.
-        let conversation = match (!self.settings_open && !self.list_covers())
-            .then(|| self.child_band(engine))
-            .flatten()
-        {
-            Some(band) => col("Bot conversation side")
-                .fill()
-                .child(band)
-                .child(conversation),
-            None => conversation,
-        };
         if self.settings_open {
             tab.child(self.region(engine))
-        } else if self.list_covers() {
-            // Compact, the list opened: it takes the conversation's place.
-            tab.child(
-                koru_draw::el::row("Bot body")
-                    .fill()
-                    .child(self.conversation_column(engine)),
-            )
-        } else if self.shows_column() {
-            // The Bot's conversations beside the one shown (S8).
-            tab.child(
-                koru_draw::el::row("Bot body")
-                    .fill()
-                    .child(self.conversation_column(engine))
-                    .child(conversation),
-            )
         } else {
             tab.child(conversation)
         }
@@ -2075,9 +1839,6 @@ impl BotView {
                 self.lifecycle_said()
                     .map(|said| t(self.lang, said.words).to_owned()),
             );
-            // Another computer's Bot (M8).
-            line(copy::COPY_BANNER, self.copy_banner());
-            line(copy::COPY_LINE, self.copy_line());
             out
         })
     }
@@ -2110,9 +1871,6 @@ impl BotView {
         rev.str(self.home_name.as_deref().unwrap_or(""))
             .f32(self.size.0)
             .f32(self.size.1);
-        // Another computer's Bot (M8): the header's two lines.
-        rev.str(self.copy_banner().as_deref().unwrap_or(""))
-            .str(self.copy_line().as_deref().unwrap_or(""));
         // A create tab's name so far (S8); its fields, lines and controls
         // are folded with the controls below.
         rev.str(self.create_label().as_deref().unwrap_or(""));
@@ -2188,10 +1946,22 @@ impl BotView {
         self.settings_open
     }
 
+    pub(crate) fn conversation_visible(&self) -> bool {
+        !self.settings_open && !self.list_covers()
+    }
+
+    pub(crate) fn take_conversation_roster_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.conversation_roster_dirty)
+    }
+
+    pub(crate) fn identity_loaded(&self) -> bool {
+        self.settings.bot().is_some()
+    }
+
     /// Whether the header has a control the window's `F6` rotation can land
     /// on: *Settings*, which the header draws once it knows its Bot.
     pub(crate) fn header_stop(&self) -> bool {
-        self.facts.is_some() || self.create.is_some()
+        !self.focus_order().is_empty()
     }
 
     /// Whether one of the tab's own controls has the keyboard — *Settings*
@@ -2200,9 +1970,8 @@ impl BotView {
         self.focus.is_some()
     }
 
-    /// **`F6` landed on this tab**: the keyboard goes to the header's
-    /// *Settings*, where Enter or Space opens the settings and Escape gives
-    /// it back to the conversation. `false` when the header has no control.
+    /// `F6` lands on the first drawn control. Settings are opened from the
+    /// navigator menu; no focus target is retained for a removed header button.
     pub(crate) fn focus_header(&mut self) -> bool {
         if !self.header_stop() {
             return false;
@@ -2214,14 +1983,7 @@ impl BotView {
             self.focus = self.focus_order().first().copied();
             return self.focus.is_some();
         }
-        // A trashed Bot has no *Settings*: its first control is the
-        // keyboard's landing, when it has one.
-        let trashed = self.facts.as_ref().is_some_and(|facts| facts.trashed);
-        self.focus = if trashed {
-            self.focus_order().first().copied()
-        } else {
-            Some(region::SETTINGS_BUTTON)
-        };
+        self.focus = self.focus_order().first().copied();
         self.focus.is_some()
     }
 
@@ -2491,21 +2253,13 @@ impl View for BotView {
         let bounds = self.area();
         // **One frame for the tab**: the header's place and the
         // conversation's come from it, as input and accessibility read them.
-        let (header, header_frame, region, column, band, conversation_area) =
+        let (header, header_frame, region, column, conversation_area) =
             crate::input_engine::with(|engine| {
                 let (_, frame) = self.layout_with(engine);
                 let header_rect = frame
                     .node(HEADER)
                     .map_or(Rect::new(0.0, 0.0, 0.0, 0.0), |node| node.rect);
-                // The band over the conversation (M6) is the tab's own too:
-                // the pointer over it lights its links.
-                let band_rect = frame
-                    .node(crate::bots::children::BAND)
-                    .map(|node| node.rect);
-                self.header_bottom
-                    .set(band_rect.map_or(header_rect.y + header_rect.h, |rect| {
-                        (rect.y + rect.h).max(header_rect.y + header_rect.h)
-                    }));
+                self.header_bottom.set(header_rect.y + header_rect.h);
                 let conversation_area = self.conversation_area(&frame);
                 let column_rect = frame.node(list::CONVERSATIONS).map(|node| node.rect);
                 self.column_right
@@ -2537,23 +2291,10 @@ impl View for BotView {
                     let laid = tree.layout(engine, &mut self.cache.borrow_mut(), rect, cx);
                     (tree, laid, list_area)
                 });
-                // The band likewise, at its own rect.
-                let band = band_rect.and_then(|rect| {
-                    let tree = self.child_band(engine)?;
-                    let laid = tree.layout(engine, &mut self.cache.borrow_mut(), rect, cx);
-                    Some((tree, laid))
-                });
                 let mut work = self.work.get();
                 work.layouts += 1;
                 self.work.set(work);
-                (
-                    header,
-                    header_frame,
-                    region,
-                    column,
-                    band,
-                    conversation_area,
-                )
+                (header, header_frame, region, column, conversation_area)
             });
         self.place_conversation(conversation_area);
         // The room the chat gives the quick setup, now the chat is placed.
@@ -2590,9 +2331,7 @@ impl View for BotView {
                 self.paint_list(scene_out, root, *area);
             }
         }
-        if let Some((tree, frame)) = &band {
-            crate::input_engine::with(|engine| frame.paint(tree, scene_out, root, engine));
-        }
+
         if let Some((tree, frame)) = &region {
             crate::input_engine::with(|engine| frame.paint(tree, scene_out, root, engine));
             self.paint_picker(scene_out, root);
@@ -2686,10 +2425,6 @@ impl View for BotView {
                 // A Role read or write with the window's worker (O155),
                 // shown only.
                 || (!self.stale && self.role_saving())
-                || (self.memory_available()
-                    && !self.stale
-                    && self.settings_open
-                    && self.memory.busy())
                 || (self.form_open() && self.catalog.waiting())
                 // A Routine read or control on its way, shown only.
                 || (!self.stale
@@ -2716,14 +2451,11 @@ impl View for BotView {
             // A Test's wait or minute ending, while its Routines are shown.
             (!self.stale).then(|| self.routines_deadline(now)).flatten(),
             // A request read on its way, owed, or come due (M6), shown only.
-            (!self.stale).then(|| self.children.deadline(now)).flatten(),
             self.settings.deadline(now),
             self.lifecycle_deadline(now),
             creating,
             reread,
             checking,
-            // Another computer's copy state, read again while shown (M8).
-            (!self.stale).then(|| self.copy_deadline(now)).flatten(),
             // The Bots the `@` offers, asked for and not answered yet.
             (!self.stale && self.mentions.waiting(now)).then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))
@@ -2756,18 +2488,15 @@ impl View for BotView {
         // A create tab's read on its clock, never while hidden (S8).
         let read = !self.stale && self.send_create_read(now);
         let library = !self.stale && self.library_pass();
-        let memory = self.memory_pass();
         let routines = !self.stale && self.routines_pass();
         let setup = !self.stale && self.setup_pass();
         // The requests to other Bots (M6): an answer, or a read come due.
-        let children = !self.stale && self.children_maintain(now);
         // The Bot's read owed again: asked on the pass this repaint runs.
         let reread = !self.stale && self.bot_read_due(now);
         // The conversation's `@`: whom it offers, kept fresh while open.
         let mentions = !self.stale && self.mentions_pass(now);
         let folded = folded
             || mentions
-            || children
             || polled
             || listed
             || lifecycle
@@ -2775,7 +2504,6 @@ impl View for BotView {
             || read
             || reread
             || library
-            || memory
             || routines
             || setup;
         let chat = self

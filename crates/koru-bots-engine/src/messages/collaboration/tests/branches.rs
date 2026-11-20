@@ -359,3 +359,58 @@ fn navigation_pages_are_bounded_and_do_not_repeat_the_cursor() {
             .all(|r| r["id"] != next["items"][0]["id"])
     );
 }
+
+#[test]
+fn origin_cards_preview_only_the_exact_published_reply_from_the_recipient() {
+    let mut f = Fixture::new(2);
+    let a = f.bots[0];
+    let b = f.bots[1];
+    f.send("begin".into());
+    let origin = f.claim(a.0, a.1);
+    let (_, sent) = f.ask(&origin, a, b.0);
+    let side: Uuid = serde_json::from_value(sent["thread"].clone()).unwrap();
+    let read = |f: &mut Fixture| {
+        command(
+            f,
+            person::Command::Read {
+                query: person::Query::Cards {
+                    thread: a.1,
+                    after: None,
+                },
+            },
+        )
+        .unwrap()
+    };
+    assert!(read(&mut f)["items"][0]["dispatches"][0]["preview"].is_null());
+    let delivery = f.claim(b.0, side);
+    let answer = f.publish(&delivery).answer.message;
+    let cards = read(&mut f);
+    let dispatch = &cards["items"][0]["dispatches"][0];
+    let origin_reply: String =
+        f.db.connection
+            .query_row(
+                "SELECT reply_message FROM turns WHERE id=?1",
+                [origin.turn.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+    assert_eq!(dispatch["origin_reply"], json!(origin_reply));
+    assert_eq!(dispatch["preview"]["message"], json!(answer));
+    assert_eq!(dispatch["preview"]["markdown"], "Synthetic answer");
+    assert_eq!(dispatch["preview"]["truncated"], false);
+    // A newer, unrelated message in the same thread is not this ask's answer.
+    f.db.connection.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) SELECT ?1,thread,sequence+1,sender,kind,CAST(json_set(CAST(payload AS TEXT),'$.body','Unrelated answer') AS BLOB),state,accepted_at_ms+1 FROM messages WHERE id=?2",
+        rusqlite::params![Uuid::new_v4().to_string(), answer.to_string()]).unwrap();
+    assert_eq!(
+        read(&mut f)["items"][0]["dispatches"][0]["preview"]["markdown"],
+        "Synthetic answer"
+    );
+    // Even a mismatched answered_by record must not expose another sender.
+    f.db.connection
+        .execute(
+            "UPDATE messages SET sender=?1 WHERE id=?2",
+            rusqlite::params![a.0.to_string(), answer.to_string()],
+        )
+        .unwrap();
+    assert!(read(&mut f)["items"][0]["dispatches"][0]["preview"].is_null());
+}

@@ -88,6 +88,7 @@ pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result
         }
         Change::Configure { bot, .. }
         | Change::Knowledge { bot, .. }
+        | Change::Memory { bot, .. }
         | Change::Library { bot, .. }
         | Change::Access { bot, .. }
         | Change::Permissions { bot, .. }
@@ -149,6 +150,9 @@ pub(super) fn conversation(
 pub(super) fn retire(c: &Connection, bot: Option<Uuid>, thread: Option<Uuid>) -> Result<(), Error> {
     let bot = bot.map(|id| id.to_string());
     let thread = thread.map(|id| id.to_string());
+    // Restore preserves definitions and history, but never re-enables work.
+    c.execute("UPDATE routines SET enabled=0,next_due_ms=NULL,revision=revision+1 WHERE (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2)",params![bot,thread])?;
+    c.execute("UPDATE routine_occurrences SET state='cancelled',reason='lifecycle' WHERE state IN ('queued','running') AND routine IN (SELECT id FROM routines WHERE (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2))",params![bot,thread])?;
     c.execute("UPDATE obligations SET state='cancelled' WHERE state IN ('owed','delivered') AND (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2)",params![bot,thread])?;
     c.execute(
         "DELETE FROM inbox WHERE (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2)",
@@ -225,6 +229,20 @@ pub(super) fn apply(
             tx.execute(
                 "UPDATE bots SET knowledge_pages=?2 WHERE id=?1",
                 params![bot.to_string(), encode(knowledge)?],
+            )?;
+            updated(&tx, *bot, now)?;
+            value(read::bot(&tx, who, *bot)?)?
+        }
+        Change::Memory {
+            bot,
+            revision: rev,
+            memory,
+        } => {
+            revision(&tx, who, *bot, *rev, true)?;
+            pages(None, &[], *memory)?;
+            tx.execute(
+                "UPDATE bots SET memory_page=?2 WHERE id=?1",
+                params![bot.to_string(), memory.map(|id| id.to_string())],
             )?;
             updated(&tx, *bot, now)?;
             value(read::bot(&tx, who, *bot)?)?

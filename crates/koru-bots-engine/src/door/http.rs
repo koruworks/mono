@@ -89,7 +89,7 @@ impl Server {
                     };
                     let router = Router::new()
                         .route("/mcp", post(handle_request))
-                        .layer(DefaultBodyLimit::max(koru_bot_client_wire::MAX_FRAME_BYTES))
+                        .layer(DefaultBodyLimit::max(crate::limits::MAX_PAYLOAD_BYTES))
                         .with_state(Arc::new(HttpState {
                             registry,
                             host,
@@ -153,7 +153,7 @@ async fn handle_request(State(state): State<Arc<HttpState>>, request: Request) -
     };
     let Ok(Ok(bytes)) = tokio::time::timeout(
         std::time::Duration::from_secs(3),
-        axum::body::to_bytes(request.into_body(), koru_bot_client_wire::MAX_FRAME_BYTES),
+        axum::body::to_bytes(request.into_body(), crate::limits::MAX_PAYLOAD_BYTES),
     )
     .await
     else {
@@ -176,7 +176,7 @@ async fn handle_request(State(state): State<Arc<HttpState>>, request: Request) -
 }
 
 fn rpc(door: &Door, bytes: &[u8]) -> Result<Option<Value>, Error> {
-    if bytes.len() > koru_bot_client_wire::MAX_FRAME_BYTES {
+    if bytes.len() > crate::limits::MAX_PAYLOAD_BYTES {
         return Err(Error::InvalidRequest);
     }
     // Reauthenticate even initialize/ping/notifications. Static discovery never

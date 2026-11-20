@@ -10,16 +10,10 @@ description = "SQLite persistence adapter for Koru AI local state."
 [features]
 # `write_at_schema`: an ai.db as an older build left it, for tests above
 # this crate. Only dev-dependencies turn it on.
-#
-# It also turns on two parts of `rusqlite` that only the feed audit uses
-# (`src/repository/bots/client_feed/audit.rs`): SQL functions and the commit
-# hook. Neither is in a production build of this crate, and neither changes
-# a version: they are features of the `rusqlite` already in `Cargo.lock`.
-fixtures = ["rusqlite/functions", "rusqlite/hooks"]
+fixtures = []
 
 [dependencies]
 koru-ai-core = { path = "../koru-ai-core" }
-koru-delegate-core = { path = "../koru-delegate-core" }
 # Opening and versioning the file: the one policy every Koru database shares.
 koru-sqlite = { path = "../koru-sqlite" }
 rusqlite.workspace = true
@@ -29,6 +23,4 @@ uuid.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-# The feed audit's SQL functions and commit hook, for this crate's own tests.
-rusqlite = { workspace = true, features = ["functions", "hooks"] }
 tempfile.workspace = true

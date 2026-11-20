@@ -3,9 +3,11 @@ use super::*;
 mod attachments;
 mod lifecycle;
 mod lists;
+mod memory;
 mod permissions;
 mod readiness;
 mod recovery;
+mod routines;
 mod settings;
 mod threads;
 use koru_ai_core::{

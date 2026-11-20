@@ -53,11 +53,8 @@ use koru_workspace::store::{StoreSession, Synced};
 pub mod access;
 pub mod apps;
 mod attribution;
-mod bot_tools;
 mod capabilities;
 mod chat_tools;
-pub use bot_tools::BOT_TOOL_NAMES;
-use koru_ai_wire::{ListBotsRequest, ReadBotTaskRequest, StartBotTaskRequest, StopBotTaskRequest};
 pub mod effects;
 pub mod hosted;
 pub use access::{
@@ -960,7 +957,6 @@ enum WorkspaceTarget {
 enum ToolDomain {
     Workspace,
     Chat,
-    Bot,
 }
 
 #[derive(Copy, Clone)]
@@ -983,11 +979,6 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
             scope: None,
             workspace: WorkspaceTarget::None,
             domain: ToolDomain::Chat,
-        },
-        "list_bots" | "start_bot_task" | "read_bot_task" | "stop_bot_task" => ToolPolicy {
-            scope: None,
-            workspace: WorkspaceTarget::None,
-            domain: ToolDomain::Bot,
         },
         "list_workspaces" => ToolPolicy {
             scope: read,
@@ -1078,11 +1069,6 @@ impl WorkspaceToolExecutor {
             return Err(refusal);
         }
         let policy = tool_policy(tool).ok_or_else(|| ToolError::invalid("unknown tool"))?;
-        if policy.domain == ToolDomain::Bot && !bot_tools::allowed(context) {
-            return Err(ToolError::permission_denied(
-                "Bot task tools require the trusted local bridge",
-            ));
-        }
         if policy.domain == ToolDomain::Chat && context.chat_tools == ChatToolAccess::Denied {
             return Err(ToolError::permission_denied(
                 "this principal is not allowed to access chat tools",
@@ -1450,7 +1436,6 @@ pub struct LocalBackend {
     /// it: `StoreSession::join` re-discovers on each call, which is why
     /// reading a document recovered while listing workspaces did not.
     client: Arc<Mutex<Option<Client>>>,
-    bot_client: Arc<Mutex<Option<Client>>>,
     dialer: Option<koru_workspace::store::ClientFactory>,
     embedded: Option<Arc<dyn EmbeddedStore>>,
     /// Completed and pending image uploads for this process. The loopback
@@ -1607,7 +1592,6 @@ impl LocalBackend {
             root: root.map(Path::to_path_buf),
             client: Arc::new(Mutex::new(None)),
             dialer: None,
-            bot_client: Arc::new(Mutex::new(None)),
             embedded: None,
             uploads: ImageUploads::new(),
             upload_origin: None,
@@ -1629,7 +1613,6 @@ impl LocalBackend {
             root: None,
             client: Arc::new(Mutex::new(None)),
             dialer: Some(dialer),
-            bot_client: Arc::new(Mutex::new(None)),
             embedded: None,
             uploads: ImageUploads::new(),
             upload_origin: None,
@@ -1663,7 +1646,6 @@ impl LocalBackend {
             client: Arc::new(Mutex::new(None)),
             dialer: None,
             embedded: Some(store),
-            bot_client: Arc::new(Mutex::new(None)),
             uploads: ImageUploads::new(),
             upload_origin: None,
         }
@@ -3430,9 +3412,6 @@ impl Backend for LocalBackend {
     ) -> Result<Value, ToolError> {
         let call = Call::new(context);
         match tool {
-            "list_bots" | "start_bot_task" | "read_bot_task" | "stop_bot_task" => {
-                self.bot_tool(context, tool, arguments)
-            }
             "list_chats" => {
                 let request: ListChatsToolRequest = from(arguments)?;
                 serde_json::to_value(self.ai(|client| client.ai().tool_list_chats(&request))?)
@@ -7243,52 +7222,6 @@ impl KoruMcp {
     fn read_chat(&self, Parameters(a): Parameters<ReadChatToolRequest>) -> CallToolResult {
         self.call("read_chat", a)
     }
-
-    #[tool(
-        title = "List Koru Bots",
-        description = "List local Bots in a workspace; limit is 1 to 100. Returns names and task destinations.",
-        annotations(read_only_hint = true, open_world_hint = false)
-    )]
-    fn list_bots(&self, Parameters(a): Parameters<ListBotsRequest>) -> CallToolResult {
-        self.call("list_bots", a)
-    }
-
-    #[tool(
-        title = "Ask a Koru Bot",
-        description = "Start work in the Bot's main conversation. Generate one UUID v4 request_id; retry uncertainty with exactly that ID and input. At most 16 selected document_ids. Returns the durable attempt_id for read and stop. Requires the local bridge.",
-        annotations(
-            read_only_hint = false,
-            destructive_hint = true,
-            idempotent_hint = true,
-            open_world_hint = true
-        )
-    )]
-    fn start_bot_task(&self, Parameters(a): Parameters<StartBotTaskRequest>) -> CallToolResult {
-        self.call("start_bot_task", a)
-    }
-
-    #[tool(
-        title = "Read a Bot task",
-        description = "Read this request's status, terminal assistant answer and confirmed saved pages. Follow next_cursor for the complete answer/results. Preparing or unavailable results are explicit; use read_document for saved page content.",
-        annotations(read_only_hint = true, open_world_hint = false)
-    )]
-    fn read_bot_task(&self, Parameters(a): Parameters<ReadBotTaskRequest>) -> CallToolResult {
-        self.call("read_bot_task", a)
-    }
-
-    #[tool(
-        title = "Stop a Bot task",
-        description = "Stop this exact accepted request and attempt through the same Stop used in Koru. Safe to repeat; returns actual attempt status.",
-        annotations(
-            read_only_hint = false,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    fn stop_bot_task(&self, Parameters(a): Parameters<StopBotTaskRequest>) -> CallToolResult {
-        self.call("stop_bot_task", a)
-    }
 }
 
 /// Whether a bridge pages `tools/list` unless told otherwise. Off: Kimi
@@ -7732,10 +7665,7 @@ mod tests {
         ] {
             assert!(names.contains(expected), "missing MCP tool {expected}");
         }
-        for name in BOT_TOOL_NAMES {
-            assert!(names.contains(*name), "missing MCP tool {name}");
-        }
-        assert_eq!(names.len(), 29);
+        assert_eq!(names.len(), 25);
     }
 
     fn an_arg(key: &str, op: &str, values: &[&str], kinds: &[&str]) -> AttrFilterArg {
@@ -7862,14 +7792,11 @@ mod tests {
             "list_chats",
             "search_chats",
             "read_chat",
-            "list_bots",
-            "read_bot_task",
         ];
         let destructive = [
             "edit_document",
             "extract_to_document",
             "restore_document_version",
-            "start_bot_task",
         ];
         let non_idempotent = [
             "add_image",
@@ -7892,11 +7819,7 @@ mod tests {
                 .as_ref()
                 .unwrap_or_else(|| panic!("{name} has no annotations"));
             assert_eq!(annotations.title, None, "{name} repeats its title");
-            assert_eq!(
-                annotations.open_world_hint,
-                Some(name == "start_bot_task"),
-                "{name}"
-            );
+            assert_eq!(annotations.open_world_hint, Some(false), "{name}");
             if read_only.contains(&name) {
                 assert_eq!(annotations.read_only_hint, Some(true), "{name}");
                 assert_eq!(annotations.destructive_hint, None, "{name}");
@@ -7930,7 +7853,7 @@ mod tests {
                 !non_idempotent.contains(&name),
                 "{name} idempotent"
             );
-            assert_eq!(tool.safety.open_world, name == "start_bot_task", "{name}");
+            assert!(!tool.safety.open_world, "{name}");
         }
     }
 
@@ -7981,8 +7904,8 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        // The router's 29 and the three view tools (`apps`).
-        assert_eq!(listed.tools.len(), 32);
+        // The router's 25 and the three view tools (`apps`).
+        assert_eq!(listed.tools.len(), 28);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
@@ -8103,7 +8026,7 @@ mod tests {
             .map(|tool| tool.name.to_string())
             .collect();
         expected.sort();
-        assert_eq!(expected.len(), 32);
+        assert_eq!(expected.len(), 28);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -8279,14 +8202,14 @@ mod tests {
     }
 
     /// Hosts read the shared catalog, not `tools/list`: paging never hides
-    /// a tool. Koru AI adapters additionally omit external Bot task tools.
+    /// a tool.
     #[test]
     fn koru_ai_catalog_sees_every_tool_whether_or_not_the_bridge_pages() {
         let names: HashSet<String> = workspace_tool_catalog()
             .into_iter()
             .map(|tool| tool.name)
             .collect();
-        assert_eq!(names.len(), 29);
+        assert_eq!(names.len(), 25);
         let routed: HashSet<String> = KoruMcp::new(Arc::new(Fake), RequestContext::local())
             .tool_router
             .list_all()
@@ -8597,7 +8520,12 @@ mod tests {
         );
         assert_eq!(essentials["section"], Value::Null);
         let guide = read_model_document().unwrap();
-        assert!(guide.contains(text), "the short form is the contract's own");
+        // section_of joins logical lines with LF; a Windows checkout may
+        // contain CRLF. Compare the same text independent of checkout EOLs.
+        assert!(
+            guide.replace("\r\n", "\n").contains(text),
+            "the short form is the contract's own"
+        );
 
         let section =
             documentation(MODEL_RESOURCE_URI, Some("Creating a complete document")).unwrap();
@@ -12830,7 +12758,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 32);
+        assert_eq!(tools.len(), 28);
         assert!(
             tools
                 .iter()

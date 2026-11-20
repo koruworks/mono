@@ -115,7 +115,6 @@ impl ScheduleEvents for BlockingScheduleEvents {
         &mut self,
         _schedule: koru_delegate_runtime::ScheduleEventRef,
         _definition: &koru_delegate_schedule::ScheduleDefinition,
-        _event: koru_delegate_runtime::ScheduleDefinitionEvent,
     ) -> koru_delegate_runtime::PortResult<koru_delegate_runtime::PreparedScheduleEvent> {
         unreachable!()
     }

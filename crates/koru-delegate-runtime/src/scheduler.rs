@@ -23,9 +23,6 @@ use crate::{
     ScheduleOccurrenceEvent, SchedulePreparation, Started,
 };
 
-mod routines;
-pub use routines::{RoutineControl, RoutineControlled, RoutineTestAccepted};
-
 /// One bounded action from an evaluation. A month of missed minute slots is
 /// represented by one `Missed` action whose durable observation cursor skips
 /// the old range. A currently due minute precedes that representative miss,
@@ -126,8 +123,6 @@ pub struct ScheduleEvaluation {
     /// Per-schedule failures isolated so one bad document cannot starve the
     /// rest of the catalog. Content-free; the host logs only port/code.
     pub failures: u32,
-    /// One owned candidate, consumed after the host releases its ordinary gate.
-    pub routine_work: Option<crate::RoutineWork>,
 }
 
 /// Canonical read model produced on the scheduler thread. Public wire mapping
@@ -191,30 +186,6 @@ pub enum ScheduleAdmission {
 /// defers manual scope-claiming commands until `finish` or `abort` releases the
 /// lease. None of this runs on a socket connection thread.
 pub trait ScheduleEffects {
-    /// Routine arbitration needs the actor's acknowledged lease owner. Ordinary
-    /// direct Orchestrator implementations deliberately cannot grant this phase.
-    fn begin_routine(
-        &mut self,
-        _prepared: &koru_delegate_core::RoutinePrepared,
-        _admission: &koru_delegate_core::BotAdmissionBarrier,
-        _proof: &koru_delegate_core::FreshBotPolicyProof,
-        _scope: ScopeIdentity,
-        _authored_scope: koru_delegate_core::WorkspaceScope,
-        _deadline: std::time::Instant,
-    ) -> PortResult<ScheduleAdmission> {
-        Err(PortError::new(
-            Port::Schedules,
-            "routine_actor_required",
-            "Routine arbitration requires the actor",
-        ))
-    }
-    fn release_routine(&mut self, _run: RunId, _deadline: std::time::Instant) -> PortResult<()> {
-        Err(PortError::new(
-            Port::Schedules,
-            "routine_actor_required",
-            "Routine release requires the actor",
-        ))
-    }
     fn begin(
         &mut self,
         run: RunId,
@@ -248,7 +219,6 @@ pub struct ScheduleCoordinator {
     events: Box<dyn ScheduleEvents>,
     claimed_scopes: HashMap<RunId, (ResolvedScope, koru_delegate_core::WorkspaceScope)>,
     device: DeviceId,
-    routines: Option<routines::Routines>,
 }
 
 impl ScheduleCoordinator {
@@ -267,7 +237,6 @@ impl ScheduleCoordinator {
             events: Box::new(NoScheduleEvents),
             claimed_scopes: HashMap::new(),
             device,
-            routines: None,
         }
     }
 
@@ -385,6 +354,13 @@ impl ScheduleCoordinator {
             .filter(|listed| listed.header.schedule == schedule)
             .min_by_key(|listed| (listed.workspace, listed.document))
         {
+            if existing.header.definition.routine.is_some() {
+                return Err(PortError::new(
+                    Port::Schedules,
+                    "schedule_not_found",
+                    "the schedule is unavailable",
+                ));
+            }
             if existing.workspace != workspace {
                 return Err(PortError::new(
                     Port::Schedules,
@@ -448,19 +424,11 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let (document, expected) = self.schedule_document(workspace, schedule)?;
-        let location = ScheduleEventRef {
-            schedule,
-            workspace,
-            document,
-        };
+        let document = self.schedule_document(workspace, schedule)?;
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
-        self.mutation_header(location, &expected, &handle.document().header()?)?;
         let mut outcome = None;
         handle.commit(&mut |document| {
-            self.mutation_header(location, &expected, &document.header()?)
-                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?;
             outcome = Some(document.rename(self.device, expected_name, name)?);
             Ok(())
         })?;
@@ -491,22 +459,15 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let (document, expected) = self.schedule_document(workspace, schedule)?;
-        let location = ScheduleEventRef {
-            schedule,
-            workspace,
-            document,
-        };
+        let document = self.schedule_document(workspace, schedule)?;
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
-        let header = handle.document().header()?;
-        let route = self.mutation_header(location, &expected, &header)?;
-        let current = header.definition;
-        if route.is_some() {
+        let current = handle.document().header()?.definition;
+        if current.routine.is_some() {
             return Err(PortError::new(
                 Port::Schedules,
-                "bot_routine_unavailable",
-                "Bot routine edits require their Bot execution owner.",
+                "schedule_not_found",
+                "the schedule is unavailable",
             ));
         }
         let successor = expected_revision
@@ -530,19 +491,8 @@ impl ScheduleCoordinator {
             workspace,
             document,
         };
-        let prepared = self.events.prepare_definition(
-            reference,
-            &definition,
-            crate::schedule_definition_event(&definition),
-        )?;
+        let prepared = self.events.prepare_definition(reference, &definition)?;
         handle.commit(&mut |document| {
-            if self
-                .mutation_header(location, &expected, &document.header()?)
-                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?
-                .is_some()
-            {
-                return Err(ScheduleDocumentError::RoutineAssociationChanged);
-            }
             document.edit(
                 self.device,
                 expected_revision,
@@ -603,22 +553,15 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let (document, expected) = self.schedule_document(workspace, schedule)?;
-        let location = ScheduleEventRef {
-            schedule,
-            workspace,
-            document,
-        };
+        let document = self.schedule_document(workspace, schedule)?;
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
-        let header = handle.document().header()?;
-        let route = self.mutation_header(location, &expected, &header)?;
-        let current = header.definition;
-        if route.is_some() && matches!(lifecycle, ScheduleLifecycle::Active) {
+        let current = handle.document().header()?.definition;
+        if current.routine.is_some() {
             return Err(PortError::new(
                 Port::Schedules,
-                "bot_routine_unavailable",
-                "Bot routine activation requires its Bot execution owner.",
+                "schedule_not_found",
+                "the schedule is unavailable",
             ));
         }
         let successor = expected_revision
@@ -630,7 +573,7 @@ impl ScheduleCoordinator {
             now_ms.max(current.effective_at_ms.saturating_add(1))
         };
         let definition = ScheduleDefinition {
-            routine: current.routine,
+            routine: None,
             revision: successor,
             effective_at_ms,
             template: current.template.clone(),
@@ -644,15 +587,8 @@ impl ScheduleCoordinator {
                 document,
             },
             &definition,
-            crate::schedule_definition_event(&definition),
         )?;
         handle.commit(&mut |document| {
-            let route = self
-                .mutation_header(location, &expected, &document.header()?)
-                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?;
-            if route.is_some() && matches!(lifecycle, ScheduleLifecycle::Active) {
-                return Err(ScheduleDocumentError::RoutineAssociationChanged);
-            }
             document.set_lifecycle(
                 self.device,
                 expected_revision,
@@ -674,18 +610,10 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let (document, expected) = self.schedule_document(workspace, schedule)?;
-        let location = ScheduleEventRef {
-            schedule,
-            workspace,
-            document,
-        };
+        let document = self.schedule_document(workspace, schedule)?;
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
-        self.mutation_header(location, &expected, &handle.document().header()?)?;
         handle.commit(&mut |document| {
-            self.mutation_header(location, &expected, &document.header()?)
-                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?;
             document.retire(self.device, now_ms)?;
             Ok(())
         })?;
@@ -696,18 +624,8 @@ impl ScheduleCoordinator {
         &mut self,
         workspace: WorkspaceId,
         schedule: ScheduleId,
-    ) -> PortResult<(DocumentId, ScheduleHeader)> {
+    ) -> PortResult<DocumentId> {
         let active = self.schedules.discover_active()?;
-        if active.failures != 0
-            || !active.failed_workspaces.is_empty()
-            || !active.unavailable_documents.is_empty()
-        {
-            return Err(PortError::new(
-                Port::Schedules,
-                "schedule_unavailable",
-                "schedule identity cannot be proven from a partial catalog",
-            ));
-        }
         if !active.workspaces.contains(&workspace) {
             return Err(PortError::new(
                 Port::Schedules,
@@ -716,29 +634,12 @@ impl ScheduleCoordinator {
             ));
         }
         let identities = self.schedules.discover_identities()?;
-        if identities.failures != 0
-            || !identities.failed_workspaces.is_empty()
-            || !identities.unavailable_documents.is_empty()
-        {
+        if identities.failures != 0 {
             return Err(PortError::new(
                 Port::Schedules,
                 "schedule_unavailable",
                 "schedule identity cannot be proven from a partial catalog",
             ));
-        }
-        for listed in identities
-            .schedules
-            .iter()
-            .filter(|listed| listed.header.schedule == schedule)
-        {
-            self.mutation_route(
-                ScheduleEventRef {
-                    schedule,
-                    workspace: listed.workspace,
-                    document: listed.document,
-                },
-                &listed.header,
-            )?;
         }
         let existing = identities
             .schedules
@@ -752,6 +653,13 @@ impl ScheduleCoordinator {
                     "the schedule does not exist",
                 )
             })?;
+        if existing.header.definition.routine.is_some() {
+            return Err(PortError::new(
+                Port::Schedules,
+                "schedule_not_found",
+                "the schedule is unavailable",
+            ));
+        }
         if existing.workspace != workspace {
             return Err(PortError::new(
                 Port::Schedules,
@@ -759,7 +667,7 @@ impl ScheduleCoordinator {
                 "the schedule belongs to another workspace",
             ));
         }
-        Ok((existing.document, existing.header.clone()))
+        Ok(existing.document)
     }
 
     /// Read one workspace without letting public callers race the evaluator's
@@ -786,7 +694,8 @@ impl ScheduleCoordinator {
         let canonical = canonical_schedule_locations(&catalog.schedules);
         let mut schedules = Vec::new();
         for listed in catalog.schedules.into_iter().filter(|listed| {
-            listed.workspace == workspace
+            listed.header.definition.routine.is_none()
+                && listed.workspace == workspace
                 && listed.trashed_at_ms.is_none()
                 && canonical.get(&listed.header.schedule)
                     == Some(&(listed.workspace, listed.document))
@@ -812,6 +721,13 @@ impl ScheduleCoordinator {
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
         let header = handle.document().header()?;
+        if header.definition.routine.is_some() {
+            return Err(PortError::new(
+                Port::Schedules,
+                "schedule_not_found",
+                "the schedule is unavailable",
+            ));
+        }
         let name = handle.document().name()?;
         let state = handle.document().state()?;
         let firings = handle.document().firings()?;
@@ -870,9 +786,6 @@ impl ScheduleCoordinator {
         floating_zone: &R,
     ) -> PortResult<ScheduleEvaluation> {
         crate::counters::schedule_evaluation();
-        if let Some(routines) = &mut self.routines {
-            routines.begin_evaluation(now_ms)?;
-        }
         let evaluated = self.evaluate_inner(effects, now_ms, floating_zone);
         if evaluated.is_err() {
             crate::counters::schedule_evaluation_failed(1);
@@ -929,22 +842,11 @@ impl ScheduleCoordinator {
             report.next_deadline_ms =
                 min_option(report.next_deadline_ms, Some(now_ms.saturating_add(1_000)));
         }
-        if let Some(mut routines) = self.routines.take() {
-            let evaluated = self.evaluate_routine_catalog(
-                &mut routines,
-                catalog,
-                effects,
-                now_ms,
-                floating_zone,
-                &mut report,
-            );
-            self.routines = Some(routines);
-            evaluated?;
-            return Ok(report);
-        }
         let canonical = canonical_schedule_locations(&catalog.schedules);
         for listed in catalog.schedules.into_iter().filter(|listed| {
-            canonical.get(&listed.header.schedule) == Some(&(listed.workspace, listed.document))
+            listed.header.definition.routine.is_none()
+                && canonical.get(&listed.header.schedule)
+                    == Some(&(listed.workspace, listed.document))
         }) {
             crate::counters::schedule_document_evaluated();
             if let Err(error) =
@@ -968,11 +870,7 @@ impl ScheduleCoordinator {
         handle.absorb()?;
         let authoritative_header = handle.document().header()?;
         if authoritative_header.definition.routine.is_some() {
-            return Err(PortError::new(
-                Port::Schedules,
-                "bot_routine_unavailable",
-                "Bot routines require their Bot execution owner.",
-            ));
+            return Ok(());
         }
         let schedule_ref = ScheduleEventRef {
             schedule: authoritative_header.schedule,
@@ -1710,11 +1608,7 @@ fn pause(
         .ok_or(ScheduleDocumentError::RevisionExhausted)?;
     definition.effective_at_ms = now_ms.max(definition.effective_at_ms.saturating_add(1));
     definition.lifecycle = ScheduleLifecycle::Paused { reason };
-    let prepared = events.prepare_definition(
-        schedule,
-        &definition,
-        crate::schedule_definition_event(&definition),
-    )?;
+    let prepared = events.prepare_definition(schedule, &definition)?;
     handle.commit(&mut |document| document.update_definition(device, &definition))?;
     events.ready(prepared)
 }

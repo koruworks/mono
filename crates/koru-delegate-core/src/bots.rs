@@ -1,21 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Bot admission and result identities. Authority is supplied by the trusted AI
-//! owner, never inferred from these serializable values or a caller label.
-mod boot;
-mod memory;
-mod native;
+//! Native policy values and retained document markers. These types carry no
+//! delegate Bot admission, execution or recovery authority.
 mod refusal;
 mod routine;
-pub use boot::*;
-pub use memory::*;
-pub use native::*;
 pub use refusal::BotInputRefusal;
 pub use routine::*;
 
 use crate::{
-    AgentTurnId, AttemptGeneration, BotId, BotRequestId, DeviceId, DocumentId, RunAttemptId, RunId,
-    SessionId, WorkspaceId,
+    AttemptGeneration, BotId, BotRequestId, DeviceId, DocumentId, RunAttemptId, RunId, WorkspaceId,
 };
 pub use koru_store_core::UserScopeId;
 use serde::{Deserialize, Serialize};
@@ -102,185 +95,6 @@ fn v4(id: Uuid) -> bool {
     id.get_version() == Some(uuid::Version::Random) && id.get_variant() == uuid::Variant::RFC4122
 }
 
-/// Submitted only over the dedicated authenticated Bot port. The ordinary
-/// delegation request deliberately has no Bot authority field.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct BotSubmission {
-    pub provenance: BotProvenance,
-    pub policy: CapturedBotPolicy,
-    #[serde(with = "crate::bot_wire::StrictDelegationRequest")]
-    #[cfg_attr(feature = "schema", schemars(with = "crate::DelegationRequest"))]
-    pub request: crate::DelegationRequest,
-    pub workspace: WorkspaceId,
-    /// Current task input only. Never place assembled prior conversation
-    /// history here: AI supplies that transiently through BeginTurn after
-    /// observation is ready. The delegate remains controller owner.
-    #[serde(with = "crate::bot_wire::StrictPendingInput")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(with = "koru_session_protocol::PendingInput")
-    )]
-    pub input: koru_session_protocol::PendingInput,
-}
-impl std::fmt::Debug for BotSubmission {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BotSubmission")
-            .field("provenance", &self.provenance)
-            .field("run", &self.request.run)
-            .finish_non_exhaustive()
-    }
-}
-impl BotSubmission {
-    pub fn valid(&self) -> bool {
-        self.valid_for_version(INTERACTIVE_BOT_SUBMISSION_VERSION)
-    }
-
-    /// Shape validation for an explicit envelope owner. Existing ordinary
-    /// admission keeps calling `valid`, which never admits Routine work.
-    pub fn valid_for_version(&self, version: u32) -> bool {
-        let cohort = match (version, &self.provenance.routine) {
-            (INTERACTIVE_BOT_SUBMISSION_VERSION, None) => {
-                matches!(self.request.origin, crate::RunOrigin::Manual)
-            }
-            (ROUTINE_BOT_SUBMISSION_VERSION, Some(routine)) => {
-                routine.matches_origin(&self.request.origin)
-                    && v4(self.request.run.as_uuid())
-                    && self
-                        .request
-                        .context
-                        .iter()
-                        .all(|pin| pin.workspace() == self.workspace)
-            }
-            _ => false,
-        };
-        self.provenance.valid()
-            && self.policy.valid()
-            && self.workspace == self.policy.workspace
-            && self.request.executing_device == self.provenance.owner.device
-            && cohort
-            && matches!(self.request.scope, crate::WorkspaceScope::BotFolder { .. })
-            && self.request.grants.len() == 1
-            && self.request.grants.contains(&self.workspace)
-            && self.provenance.continued_from != Some(self.request.run)
-            && self
-                .provenance
-                .parent
-                .is_none_or(|parent| parent.run != self.request.run)
-    }
-}
-
-/// Durable AI-owned pause mirrored at the execution owner before acknowledgement.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct BotAdmissionBarrier {
-    pub owner: BotOwner,
-    pub bot: BotId,
-    pub request: BotRequestId,
-    pub epoch: u64,
-    pub paused: bool,
-}
-
-/// The team pause of one owner on this device, as the AI owner holds it
-/// durably and the execution owner holds it in memory for one run (M8).
-///
-/// `epoch` orders the values and never decreases. Epoch 0 is "never
-/// paused": not paused, and no request produced it. Every later epoch names
-/// the request that produced it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotTeamBarrier {
-    pub owner: BotOwner,
-    pub epoch: u64,
-    pub paused: bool,
-    pub request: Option<BotRequestId>,
-}
-
-impl BotTeamBarrier {
-    /// The value of a team that was never paused.
-    pub fn never_paused(owner: BotOwner) -> Self {
-        Self {
-            owner,
-            epoch: 0,
-            paused: false,
-            request: None,
-        }
-    }
-
-    /// Shape only: epoch 0 is exactly "never paused", a later epoch names
-    /// its request, and the epoch fits a stored integer.
-    pub fn valid(&self) -> bool {
-        match self.epoch {
-            0 => !self.paused && self.request.is_none(),
-            epoch => epoch <= i64::MAX as u64 && self.request.is_some(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotRunKey {
-    pub owner: BotOwner,
-    pub bot: BotId,
-    pub run: RunId,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotSubmissionKey {
-    pub owner: BotOwner,
-    pub bot: BotId,
-    pub request: BotRequestId,
-}
-/// Local reservation facts; canonical status stays in the Run document.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BotAdmissionState {
-    Queued,
-    Reserved,
-    Executing,
-    Settled,
-    Refused,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotAdmissionView {
-    pub key: BotSubmissionKey,
-    pub run: RunId,
-    pub state: BotAdmissionState,
-    pub queue_sequence: u64,
-    pub fence: Option<BotExecutionFence>,
-}
-
-/// One admission of a Bot that has not settled: reserved or executing (at
-/// most one per Bot) or queued. `held` is the session owner's answer to
-/// whether a person holds the Run's session or asked for it; it is a
-/// reason to wait, never permission to end anything.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotUnsettledAdmission {
-    pub admission: BotAdmissionView,
-    pub held: bool,
-}
-
-/// The work of one Bot its execution owner has not settled, read from the
-/// durable ledger every time it is asked (private IPC 12). The reserved or
-/// executing admission comes first, then queued ones in queue order. `more`
-/// says the queued page was cut at the caller's limit.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotUnsettledWork {
-    pub admissions: Vec<BotUnsettledAdmission>,
-    pub more: bool,
-}
-impl BotUnsettledWork {
-    /// The owner reports nothing reserved, executing or queued for the Bot.
-    pub fn is_settled(&self) -> bool {
-        self.admissions.is_empty() && !self.more
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -317,19 +131,6 @@ impl CapturedBotPolicy {
     pub fn grants_connection(&self, grant: &crate::ConnectionGrantRef) -> bool {
         self.connections.contains(grant)
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct BotExecutionFence {
-    pub owner: BotOwner,
-    pub bot: BotId,
-    pub run: RunId,
-    pub attempt: RunAttemptId,
-    pub generation: AttemptGeneration,
-    pub session: SessionId,
-    pub turn: Option<AgentTurnId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -447,6 +248,3 @@ impl std::fmt::Debug for BotWorkingFolder {
         f.write_str("BotWorkingFolder([REDACTED])")
     }
 }
-
-#[cfg(test)]
-mod tests;

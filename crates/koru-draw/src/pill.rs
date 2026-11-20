@@ -48,13 +48,20 @@ pub enum PillKind {
     /// Only the composer writes one, from a choice its host fed the `@`
     /// picker.
     Mention,
+    /// A Bot mention, with the host's current avatar choice.
+    Bot(u8),
 }
 
 impl PillKind {
     pub fn palette(self) -> &'static crate::theme::PillPalette {
         let p = crate::theme::p();
         match self {
-            Self::Document | Self::File | Self::Quote | Self::Skill | Self::Mention => &p.document,
+            Self::Document
+            | Self::File
+            | Self::Quote
+            | Self::Skill
+            | Self::Mention
+            | Self::Bot(_) => &p.document,
             Self::Contact => &p.contact,
             Self::Date => &p.date,
             Self::Link => &p.link,
@@ -117,6 +124,7 @@ pub struct PillVisual {
     /// Scheme glyph for links or a leading emoji for documents. Other kinds
     /// draw their icon as vectors.
     pub icon: Option<Layout<Brush>>,
+    pub avatar: Option<Scene>,
 }
 
 pub(crate) type PillKey = (PillKind, String, Option<String>, u32, u32, &'static str);
@@ -208,7 +216,24 @@ pub fn draw(
     selected: bool,
 ) {
     let palette = kind.palette();
+    let foreground = match kind {
+        PillKind::Bot(face) => {
+            theme::p().accents
+                [crate::face::ROWS[face as usize % crate::face::ROWS.len()].accent as usize]
+                .ink
+        }
+        _ => palette.fg,
+    };
     let alpha = if dimmed { 0.5 } else { 1.0 };
+    if let PillKind::Bot(face) = kind {
+        draw_bot_chip_outline(
+            scene,
+            root,
+            face,
+            crate::geometry::Rect::new(x, y, visual.width, visual.height),
+            hovered,
+        );
+    }
     let slot = visual.icon_slot;
     let gap = if slot > 0.0 {
         theme::PILL_ICON_GAP
@@ -216,14 +241,28 @@ pub fn draw(
         0.0
     };
     let label_x = x + visual.horizontal_padding + slot + gap;
-    let label_y = y + theme::PILL_PAD_Y;
+    let label_y = y + visual.inline_ascent - visual.label_baseline;
     let baseline_y = label_y + visual.label_baseline;
     let icon_x = x + visual.horizontal_padding;
-    let icon_color = palette.fg.multiply_alpha(alpha);
+    let icon_color = foreground.multiply_alpha(alpha);
 
     // File state icons win over the cached glyph: trash when binned, a broken
     // mark when the target is gone. Live files keep the measured FILE glyph.
-    if kind == PillKind::File && (trashed || dangling) {
+    if let Some(avatar) = &visual.avatar {
+        let avatar_y = y + (visual.height - slot) * 0.5;
+        scene.append(
+            avatar,
+            Some(root * Affine::translate((icon_x as f64, avatar_y as f64))),
+        );
+        if let PillKind::Bot(face) = kind {
+            draw_bot_avatar_border(
+                scene,
+                root,
+                face,
+                crate::geometry::Rect::new(icon_x, avatar_y, slot, slot),
+            );
+        }
+    } else if kind == PillKind::File && (trashed || dangling) {
         if trashed {
             draw_trash_icon(scene, root, icon_x, baseline_y, slot, icon_color);
         } else {
@@ -256,7 +295,7 @@ pub fn draw(
         &visual.label,
         label_x,
         label_y,
-        Some(palette.fg.multiply_alpha(alpha)),
+        Some(foreground.multiply_alpha(alpha)),
     );
 
     // A missing file reads as dead at a glance: strikethrough the caption.
@@ -274,7 +313,7 @@ pub fn draw(
         );
     }
 
-    if hovered || selected {
+    if (hovered || selected) && !matches!(kind, PillKind::Bot(_)) {
         let underline_y = (baseline_y + 1.5) as f64;
         stroke(
             scene,
@@ -287,6 +326,60 @@ pub fn draw(
             ),
         );
     }
+}
+
+/// The same boundary for an inline Bot box and a sent mention's text span.
+pub fn draw_bot_chip_outline(
+    scene: &mut Scene,
+    root: Affine,
+    face: u8,
+    at: crate::geometry::Rect,
+    hovered: bool,
+) {
+    if !hovered {
+        return;
+    }
+    let tone = &theme::p().accents
+        [crate::face::ROWS[face as usize % crate::face::ROWS.len()].accent as usize];
+    let shape = rrect(
+        at.x + 0.5,
+        at.y + 0.5,
+        (at.w - 1.0).max(0.0),
+        (at.h - 1.0).max(0.0),
+        at.h * 0.5,
+    );
+    fill(scene, root, tone.fill.multiply_alpha(0.15), &shape);
+    stroke(
+        scene,
+        root,
+        tone.ink.multiply_alpha(0.65),
+        theme::BORDER_W,
+        &shape,
+    );
+}
+
+/// A border belongs to the avatar even while its surrounding mention rests.
+pub fn draw_bot_avatar_border(
+    scene: &mut Scene,
+    root: Affine,
+    face: u8,
+    at: crate::geometry::Rect,
+) {
+    let tone = &theme::p().accents
+        [crate::face::ROWS[face as usize % crate::face::ROWS.len()].accent as usize];
+    stroke(
+        scene,
+        root,
+        tone.ink.multiply_alpha(0.5),
+        theme::BORDER_W,
+        &rrect(
+            at.x + 0.5,
+            at.y + 0.5,
+            (at.w - 1.0).max(0.0),
+            (at.h - 1.0).max(0.0),
+            at.h * 0.28,
+        ),
+    );
 }
 
 fn draw_trash_icon(
@@ -386,7 +479,7 @@ pub fn draw_icon(
         | PillKind::Skill
         // A mention has no glyph: its caption starts with `@`. Never reached
         // (its slot is zero wide), and the page mark is the fallback here.
-        | PillKind::Mention => {
+        | PillKind::Mention | PillKind::Bot(_) => {
             let inset = width * 0.08;
             stroke(
                 scene,

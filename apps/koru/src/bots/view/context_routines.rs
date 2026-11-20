@@ -2,7 +2,7 @@
 //! Routine content in the existing context frame. No second surface or reader.
 //!
 //! **Each row is one Routine and its controls** (P4.3 piece 4): its name, its
-//! switch, its state in words, its next time, and Test while it is paused.
+//! switch, its state in words, its next time, and Run now.
 //! The switch shows the state the owner last confirmed and nothing else: a
 //! control on its way is said in words beside it and cannot be pressed.
 use super::{BotView, context_library::Surface, controls::ToggleLeaf};
@@ -26,11 +26,9 @@ pub(crate) mod detail;
 const SURFACE: &str = "bot-context-routines";
 pub(crate) const REFRESH: Key = Key::surface(SURFACE, "refresh");
 pub(crate) const NEXT: Key = Key::surface(SURFACE, "next");
+pub(crate) const RETRY_CONTROL: Key = Key::surface(SURFACE, "retry-control");
 pub(crate) fn details_key(schedule: ScheduleId) -> Key {
     Key::model(schedule.as_uuid().as_u128(), "routine-details")
-}
-pub(crate) fn chat_key(chat: uuid::Uuid) -> Key {
-    Key::model(chat.as_u128(), "routine-conversation")
 }
 /// A Routine's switch: Enable while it is paused, Pause while it is on.
 pub(crate) fn toggle_key(schedule: ScheduleId) -> Key {
@@ -72,10 +70,10 @@ pub(crate) struct Data {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
+    RetryControl,
     Refresh,
     Next,
     RefreshDetail,
-    NextHistory,
     Details(ScheduleId),
     Open(ChatId),
     /// The row's switch.
@@ -117,17 +115,6 @@ fn switchable(item: &BotRoutineListItem) -> Option<bool> {
         _ => None,
     }
 }
-fn testable(item: &BotRoutineListItem) -> bool {
-    live(item).is_some_and(|live| {
-        matches!(
-            live.state,
-            ScheduleState::Paused {
-                reason: koru_delegate_core::SchedulePauseReason::Manual,
-                ..
-            }
-        )
-    })
-}
 fn conversations(item: &BotRoutineListItem) -> impl Iterator<Item = uuid::Uuid> + '_ {
     let items = match &item.local_conversations {
         BotRoutineLocalConversations::Available { items, .. } => items.as_slice(),
@@ -153,12 +140,7 @@ impl Data {
         !self.loading && !self.stale && !self.controls.busy()
     }
     fn test_enabled(&self, item: &BotRoutineListItem) -> bool {
-        self.controllable()
-            && testable(item)
-            && self
-                .controls
-                .test_wait
-                .is_none_or(|(waiting, _)| waiting != item.schedule_id)
+        self.controllable() && switchable(item).is_some()
     }
     /// **A switch's state for assistive technology**: on or off, as last
     /// confirmed. `None` for a key that is not a switch.
@@ -175,7 +157,7 @@ impl Data {
         if switchable(item).is_some() && (!enabled_only || self.controllable()) {
             keys.push(toggle_key(id));
         }
-        if testable(item) && (!enabled_only || self.test_enabled(item)) {
+        if ({ switchable(item).is_some() }) && (!enabled_only || self.test_enabled(item)) {
             keys.push(test_key(id));
         }
         if self.deciding(item).is_some() && (!enabled_only || (!self.loading && !self.stale)) {
@@ -186,6 +168,9 @@ impl Data {
     }
     pub(super) fn all_keys(&self) -> Vec<Key> {
         let mut keys = vec![REFRESH];
+        if self.controls.native_retry {
+            keys.push(RETRY_CONTROL);
+        }
         if let Some(page) = &self.page {
             if page.next_schedule.is_some() {
                 keys.push(NEXT);
@@ -230,6 +215,9 @@ impl Data {
     }
     pub fn keys(&self) -> Vec<Key> {
         let mut keys = Vec::new();
+        if self.controls.native_retry {
+            keys.push(RETRY_CONTROL);
+        }
         if let Some(page) = &self.page {
             for item in &page.items {
                 keys.extend(self.item_keys(item, true));
@@ -249,6 +237,9 @@ impl Data {
         keys
     }
     pub fn action(&self, key: Key) -> Option<Action> {
+        if key == RETRY_CONTROL && self.controls.native_retry {
+            return Some(Action::RetryControl);
+        }
         if !self.keys().contains(&key) {
             return None;
         }
@@ -299,6 +290,19 @@ impl Data {
     }
     pub fn content(&self, surface: &Surface, engine: &mut TextEngine, lang: Lang) -> El {
         let mut content = col("Routine overview").gap(Space::S2).pad(Space::S3);
+        if self.controls.native_retry {
+            content = content.child(
+                row("Unconfirmed Routine command")
+                    .gap(Space::S2)
+                    .child(line(t(lang, Words::BotsRoutineChecking)))
+                    .child(surface.button(
+                        engine,
+                        RETRY_CONTROL,
+                        t(lang, Words::BotsRetry).into(),
+                        false,
+                    )),
+            );
+        }
         if let Some(notice) = self.notice {
             content = content.child(line(t(lang, notice)));
         }
@@ -334,6 +338,9 @@ impl Data {
             }));
             if page.items.is_empty() {
                 content = content.child(line(t(lang, Words::BotsRoutinesEmpty)));
+                {
+                    content = content.child(line(t(lang, Words::BotsRoutineCreateHint)));
+                }
             }
             for item in &page.items {
                 content = content.child(self.group(item, surface, engine, lang));
@@ -538,16 +545,10 @@ impl Data {
         // The access the Routine runs under now.
         group = group.child(line(access_now(lang, &item.grant)));
         let mut actions = row("Routine actions").gap(Space::S1);
-        if testable(item) {
-            let label = match (self.controls.doing(id), self.controls.test_wait) {
-                (Some(control::Doing::Testing), _) => {
-                    t(lang, Words::BotsRoutineTestStarting).into()
-                }
-                (_, Some((waiting, at))) if waiting == id => fill(
-                    t(lang, Words::BotsRoutineTestAvailableAt),
-                    &[&time(lang, at)],
-                ),
-                _ => t(lang, Words::BotsRoutineTest).to_owned(),
+        if switchable(item).is_some() {
+            let label = match self.controls.doing(id) {
+                Some(control::Doing::Testing) => t(lang, Words::BotsRoutineTestStarting).into(),
+                _ => t(lang, Words::BotsRoutineRunNow).to_owned(),
             };
             actions = actions.child(
                 surface
@@ -605,15 +606,6 @@ pub(crate) fn date(lang: Lang, ms: i64) -> String {
         value
     }
 }
-/// A clock time on this computer, the reader's way.
-pub(crate) fn time(lang: Lang, ms: i64) -> String {
-    match crate::format::local_parts(ms) {
-        Some(parts) => {
-            koru_i18n::time::LocaleFormat::for_system(Some(lang.tag()), None).time_input(parts)
-        }
-        None => t(lang, Words::BotsRoutineDateUnavailable).into(),
-    }
-}
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -622,19 +614,26 @@ fn now_ms() -> i64 {
 }
 impl BotView {
     pub(super) fn routines_pass(&mut self) -> bool {
-        // A Test's wait or its minute ended: the clock the tab's deadline
-        // asked for. Nothing is sent by it but one read of the history.
+        // The native history's next due instant requests one fresh read.
         let ticked = self.routines.control_tick(now_ms());
-        let Some(command) = self.routines.read().or_else(|| self.routines.detail.read()) else {
+        let Some(command) = self
+            .routines
+            .read()
+            .or_else(|| self.routines.detail.read())
+            .or_else(|| self.routines.startup_read())
+        else {
             return ticked;
         };
         let detail = matches!(
             &command,
             crate::bots::link::Command::ReadRoutineDetail { .. }
         );
+        let startup = matches!(&command, crate::bots::link::Command::RoutineStartup { .. });
         let sent = self.link.as_ref().is_some_and(|link| link.send(command));
         if !sent {
-            if detail {
+            if startup {
+                self.routines.startup_unsent();
+            } else if detail {
                 self.routines.detail_unsent();
             } else {
                 self.routines.unsent();
@@ -645,8 +644,8 @@ impl BotView {
         self.work.set(work);
         true
     }
-    /// When the Routines shown next need the clock: a Test's wait or minute
-    /// ending. `None` while they are hidden.
+    /// When native controls or occurrence history next need a refresh.
+    /// `None` while the Routines are hidden.
     pub(super) fn routines_deadline(&self, now: std::time::Instant) -> Option<std::time::Instant> {
         let at = self.routines.control_deadline()?;
         let wait = u64::try_from(at.saturating_sub(now_ms())).unwrap_or(0);
@@ -667,11 +666,20 @@ impl BotView {
     }
     pub(crate) fn perform_context_routine(&mut self, action: Action) -> bool {
         match action {
+            Action::RetryControl => {
+                if let Some(command) = self.routines.startup_retry() {
+                    if !self.link.as_ref().is_some_and(|link| link.send(command)) {
+                        self.routines.startup_unsent();
+                    }
+                    return true;
+                }
+                let command = self.routines.retry_native();
+                self.send_routine_control(command)
+            }
             Action::Refresh => self.routines.refresh(false),
             Action::Next => self.routines.refresh(true),
             Action::Details(schedule) => self.routines.toggle(schedule),
             Action::RefreshDetail => self.routines.detail_refresh(false),
-            Action::NextHistory => self.routines.detail_refresh(true),
             Action::OlderHistory => self.routines.history_older(),
             Action::Toggle(schedule) => {
                 let command = self.routines.toggle_routine(schedule);
@@ -713,6 +721,9 @@ impl BotView {
     }
     pub(crate) fn take_routine_open(&mut self) -> Option<(koru_ai_core::bots::BotId, ChatId)> {
         self.routines.take_open()
+    }
+    pub(crate) fn take_routine_startup_offer(&mut self) -> bool {
+        std::mem::take(&mut self.routines.startup_offer)
     }
     /// The Routine whose timing dialog was asked for, taken once: the window
     /// opens it.

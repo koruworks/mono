@@ -11,15 +11,12 @@ use crate::bots::routines::control::Refusal;
 use crate::bots::view::context_library::ROUTINES_SECTION;
 use crate::bots::view::context_routines::{
     decide_key,
-    detail::{
-        ACCESS_CANCEL, ACCESS_SAVE, ACCESS_WORKSPACE, CHANGE_ACCESS, EDIT_TIMING, OLDER_HISTORY,
-        history_key,
-    },
+    detail::{ACCESS_CANCEL, ACCESS_SAVE, ACCESS_WORKSPACE, CHANGE_ACCESS, EDIT_TIMING},
     details_key, test_key, toggle_key,
 };
 use koru_ai_core::bots::routines::*;
 use koru_ai_core::bots::{BotAccess, BotCommand, BotResponse};
-use koru_delegate_core::{DeviceId, RoutineControlOutcome, RunId, ScheduleId, SchedulePauseReason};
+use koru_delegate_core::{DeviceId, RoutineControlOutcome, ScheduleId, SchedulePauseReason};
 use koru_delegate_schedule::{ScheduleName, ScheduleState};
 
 const MINUTE: i64 = 60_000;
@@ -222,316 +219,9 @@ fn routine_control_list_shows_each_routines_next_time_and_true_state() {
     assert!(at(toggle_key(on_id)) < at(details_key(on_id)));
     assert!(at(details_key(on_id)) < at(toggle_key(off_id)));
     assert!(at(toggle_key(off_id)) < at(test_key(off_id)));
-    // Test is offered only while paused.
-    assert!(disabled(&v, test_key(off_id)) == Some(false));
-    assert_eq!(disabled(&v, test_key(on_id)), None);
-}
-
-#[test]
-fn routine_control_enable_and_pause_show_pending_until_the_owner_answers() {
-    let (mut v, _w) = on_document();
-    let bot = bot();
-    let off = paused("Weekly digest");
-    let id = off.schedule_id;
-    let (commands, tx) = setup(&mut v, &bot, listing(&bot, vec![off]));
-    assert!(v.bot_context_action(toggle_key(id)));
-    let (seq, schedule, command) = control(&commands).expect("Enable was sent");
-    assert_eq!(schedule, id);
-    assert!(matches!(
-        command,
-        BotCommand::SetRoutineLifecycle {
-            expected_definition_revision: 2,
-            action: BotRoutineLifecycleAction::Enable,
-            ..
-        }
-    ));
-    // Pending: said, not pressable, and never shown as on.
-    assert!(says(&v, "Turning on…"));
-    assert!(!says(&v, "On") && !says(&v, "Paused"));
-    assert_eq!(disabled(&v, toggle_key(id)), Some(true));
-    assert!(!v.bot_context_action(toggle_key(id)));
-    assert!(!v.bot_context_action(test_key(id)));
-    assert!(control(&commands).is_none());
-    let data = v
-        .bot_context
-        .data
-        .as_ref()
-        .unwrap()
-        .routines
-        .as_ref()
-        .unwrap();
-    assert_eq!(data.switch_state(toggle_key(id)), Some(false));
-    // The owner's answer is what is shown.
-    reply(
-        &mut v,
-        &tx,
-        &bot,
-        seq,
-        id,
-        Ok(confirmed(id, BotRoutineControlAction::Enable, true)),
-    );
-    assert!(says(&v, "On") && !says(&v, "Turning on…"));
-    assert!(said(&v).iter().any(|line| line.starts_with("Next: ")));
-    assert_eq!(disabled(&v, toggle_key(id)), Some(false));
-    assert_eq!(
-        disabled(&v, test_key(id)),
-        None,
-        "no Test for a Routine that is on"
-    );
-    // Pause, the same way, against the revision the answer gave.
-    assert!(v.bot_context_action(toggle_key(id)));
-    let (seq, _, command) = control(&commands).expect("Pause was sent");
-    assert!(matches!(
-        command,
-        BotCommand::SetRoutineLifecycle {
-            expected_definition_revision: 3,
-            action: BotRoutineLifecycleAction::Pause,
-            ..
-        }
-    ));
-    assert!(says(&v, "Pausing…") && !says(&v, "Paused"));
-    reply(
-        &mut v,
-        &tx,
-        &bot,
-        seq,
-        id,
-        Ok(confirmed(id, BotRoutineControlAction::Pause, false)),
-    );
-    assert!(says(&v, "Paused") && !says(&v, "Pausing…"));
-}
-
-#[test]
-fn routine_control_refusal_is_a_sentence_and_a_lost_answer_is_checked() {
-    let (mut v, _w) = on_document();
-    let bot = bot();
-    let off = paused("Weekly digest");
-    let id = off.schedule_id;
-    let (commands, tx) = setup(&mut v, &bot, listing(&bot, vec![off.clone()]));
-    assert!(v.bot_context_action(toggle_key(id)));
-    let (seq, ..) = control(&commands).unwrap();
-    reply(
-        &mut v,
-        &tx,
-        &bot,
-        seq,
-        id,
-        Err(Refusal::not_ready(&["bot_paused", "access_pending"])),
-    );
-    assert!(says(&v, "The Bot is paused. Resume the Bot first."));
-    assert!(says(&v, "An access change is still being applied."));
-    assert!(says(&v, "Paused"), "the state nobody changed");
-    assert!(!lines(&v).contains("routine_"), "no code is shown");
-    // Lost: Checking…, the list read again, and then what it read.
-    assert!(v.bot_context_action(toggle_key(id)));
-    let (seq, ..) = control(&commands).unwrap();
-    reply(&mut v, &tx, &bot, seq, id, Err(Refusal::unanswered()));
-    assert!(says(&v, "Checking…"));
-    assert_eq!(disabled(&v, toggle_key(id)), Some(true));
-    let mut now_on = off;
-    now_on.live = BotRoutineLiveObservation::Current {
-        name: ScheduleName::new("Weekly digest").unwrap(),
-        definition_revision: 3,
-        state: state(true),
-        next: RoutineNextObservation::OwnerLocal {},
-    };
-    reread(&mut v, &commands, &tx, &bot, listing(&bot, vec![now_on]));
-    assert!(says(&v, "On") && !says(&v, "Checking…"));
-}
-
-#[test]
-fn routine_control_test_wait_is_a_disabled_button_with_a_time_not_an_error() {
-    let (mut v, _w) = on_document();
-    let bot = bot();
-    let off = paused("Weekly digest");
-    let id = off.schedule_id;
-    let (commands, tx) = setup(&mut v, &bot, listing(&bot, vec![off]));
-    assert_eq!(
-        label(&v, test_key(id)).as_deref(),
-        Some("Test: Weekly digest")
-    );
-    assert!(v.bot_context_action(test_key(id)));
-    let (seq, _, command) = control(&commands).unwrap();
-    assert!(matches!(
-        command,
-        BotCommand::TestRoutine {
-            expected_definition_revision: 2,
-            ..
-        }
-    ));
-    assert!(
-        label(&v, test_key(id))
-            .unwrap()
-            .starts_with("Starting test…")
-    );
-    assert_eq!(disabled(&v, test_key(id)), Some(true));
-    let before = said(&v).len();
-    reply(
-        &mut v,
-        &tx,
-        &bot,
-        seq,
-        id,
-        Err(Refusal::code("routine_test_too_soon")),
-    );
-    let waiting = label(&v, test_key(id)).unwrap();
-    assert!(waiting.starts_with("Test available at "), "{waiting}");
-    assert_eq!(disabled(&v, test_key(id)), Some(true));
-    assert!(!v.bot_context_action(test_key(id)));
-    // No error line was added, and the Routine is still paused.
-    assert_eq!(said(&v).len(), before);
-    assert!(says(&v, "Paused"));
-    // The tab asks for the clock once, for the end of the wait.
-    assert!(held(&mut v).routines.control_deadline().is_some());
-    assert!(
-        control(&commands).is_none(),
-        "the pane starts no Test by itself"
-    );
-}
-
-#[test]
-fn routine_control_test_result_appears_in_the_routines_history() {
-    let (mut v, _w) = on_document();
-    let bot = bot();
-    let off = paused("Weekly digest");
-    let id = off.schedule_id;
-    let listed = listing(&bot, vec![off]);
-    let (commands, tx) = setup(&mut v, &bot, listed.clone());
-    assert!(v.bot_context_action(test_key(id)));
-    let (seq, ..) = control(&commands).unwrap();
-    let minute = soon();
-    reply(
-        &mut v,
-        &tx,
-        &bot,
-        seq,
-        id,
-        Ok(BotResponse::RoutineTest {
-            test: BotRoutineTest {
-                schedule_id: id,
-                occurrence_ms: minute,
-            },
-        }),
-    );
-    // Accepted: its history is opened and read, and it is still paused.
-    let (seq, schedule, _) = detail_request(&mut v, &commands);
-    assert_eq!(schedule, id);
-    let mut detail = detail_page(&bot, &listed, id);
-    let chat = uuid::Uuid::new_v4();
-    detail.occurrences = RoutineOccurrenceHistoryObservation::Available {
-        items: vec![RoutineOccurrenceLine {
-            occurrence_ms: minute,
-            outcome: RoutineOccurrenceOutcome::Ran,
-            test: true,
-            recorded_at_ms: minute + 1_000,
-            conversation: Some(BotRoutineLocalConversation {
-                occurrence_ms: minute,
-                run_id: RunId::mint(),
-                chat_id: chat,
-                attempt_id: uuid::Uuid::new_v4(),
-                conversation: BotRoutineConversationVisibility::Available,
-            }),
-        }],
-        next_before_occurrence_ms: None,
-    };
-    detail_answer(&mut v, &tx, &bot, seq, id, Ok(detail));
-    let date = crate::bots::view::context_routines::date(koru_i18n::Lang::En, minute);
-    assert_eq!(
-        label(&v, history_key(minute)),
-        Some(format!("Open conversation · {date} · Test"))
-    );
-    assert!(says(&v, "Paused"));
-    assert!(!says(&v, "The test didn't start. Try again."));
-    // The line opens its conversation through the checked open.
-    assert!(v.bot_context_action(history_key(minute)));
-    assert!(commands.try_iter().any(|command| matches!(
-        command,
-        Command::RoutineLabel { chat: asked, .. } if asked.as_uuid() == chat
-    )));
-}
-
-#[test]
-fn routine_control_history_shows_ran_missed_skipped_and_test_lines() {
-    let (mut v, _w) = on_document();
-    let bot = bot();
-    let on = routine(
-        "Morning reading",
-        true,
-        RoutineNextObservation::OwnerLocal {},
-    );
-    let id = on.schedule_id;
-    let listed = listing(&bot, vec![on]);
-    let (commands, tx) = setup(&mut v, &bot, listed.clone());
-    assert!(v.bot_context_action(details_key(id)));
-    let (seq, ..) = detail_request(&mut v, &commands);
-    let base = soon() - 10 * MINUTE;
-    let line = |n: i64, outcome, test| RoutineOccurrenceLine {
-        occurrence_ms: base - n * MINUTE,
-        outcome,
-        test,
-        recorded_at_ms: base,
-        conversation: None,
-    };
-    let mut ran = line(0, RoutineOccurrenceOutcome::Ran, false);
-    ran.conversation = Some(BotRoutineLocalConversation {
-        occurrence_ms: ran.occurrence_ms,
-        run_id: RunId::mint(),
-        chat_id: uuid::Uuid::new_v4(),
-        attempt_id: uuid::Uuid::new_v4(),
-        conversation: BotRoutineConversationVisibility::Available,
-    });
-    let mut detail = detail_page(&bot, &listed, id);
-    detail.occurrences = RoutineOccurrenceHistoryObservation::Available {
-        items: vec![
-            ran,
-            line(1, RoutineOccurrenceOutcome::Missed, false),
-            line(2, RoutineOccurrenceOutcome::SkippedBusy, false),
-            line(3, RoutineOccurrenceOutcome::Ran, true),
-            line(4, RoutineOccurrenceOutcome::SkippedBusy, true),
-        ],
-        next_before_occurrence_ms: Some(base - 4 * MINUTE),
-    };
-    detail_answer(&mut v, &tx, &bot, seq, id, Ok(detail));
-    let date =
-        |n: i64| crate::bots::view::context_routines::date(koru_i18n::Lang::En, base - n * MINUTE);
-    assert!(says(&v, "History"));
-    // A minute that ran here opens its conversation; the rest are lines.
-    assert_eq!(
-        label(&v, history_key(base)),
-        Some(format!("Open conversation · {} · Ran", date(0)))
-    );
-    assert!(says(&v, &format!("{} · Missed", date(1))));
-    assert!(says(&v, &format!("{} · Skipped, Bot was busy", date(2))));
-    // A Test that ran elsewhere has no conversation here: still a line.
-    assert!(says(&v, &format!("{} · Test", date(3))));
-    assert!(says(
-        &v,
-        &format!("{} · Test · Skipped, Bot was busy", date(4))
-    ));
-    assert_eq!(
-        disabled(&v, history_key(base - MINUTE)),
-        None,
-        "a miss opens nothing"
-    );
-    // Missed work is history only: nothing offers to catch it up.
-    assert!(!lines(&v).to_lowercase().contains("catch"));
-    // Older lines are one more read, from the cursor the owner gave.
-    assert!(v.bot_context_action(OLDER_HISTORY));
-    let (_, schedule, before) = detail_request(&mut v, &commands);
-    assert_eq!((schedule, before), (id, Some(base - 4 * MINUTE)));
-
-    // Nothing yet.
-    let (mut v, _w) = on_document();
-    let (commands, tx) = setup(&mut v, &bot, listed.clone());
-    assert!(v.bot_context_action(details_key(id)));
-    let (seq, ..) = detail_request(&mut v, &commands);
-    let mut empty = detail_page(&bot, &listed, id);
-    empty.occurrences = RoutineOccurrenceHistoryObservation::Available {
-        items: vec![],
-        next_before_occurrence_ms: None,
-    };
-    detail_answer(&mut v, &tx, &bot, seq, id, Ok(empty));
-    assert!(says(&v, "Nothing has run yet."));
+    // Run now is offered for both on and manually paused Routines.
+    assert_eq!(disabled(&v, test_key(off_id)), Some(false));
+    assert_eq!(disabled(&v, test_key(on_id)), Some(false));
 }
 
 #[test]
@@ -630,7 +320,16 @@ fn routine_control_access_edit_is_unavailable_while_on_and_says_why() {
     assert!(!says(&v, "Pause this Routine to change its access."));
     assert!(v.bot_context_action(CHANGE_ACCESS));
     assert!(says(&v, "A new Routine starts with the default access."));
-    assert!(says(&v, "Saving removes the 2 pages selected at setup."));
+    assert!(!says(&v, "Saving removes the 2 pages selected at setup."));
+    let retained_pages = held(&mut v)
+        .routines
+        .detail
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .selected_pages
+        .clone();
+    assert_eq!(retained_pages.len(), 2);
     assert_eq!(
         label(&v, ACCESS_WORKSPACE).as_deref(),
         Some("Whole workspace")
@@ -650,7 +349,7 @@ fn routine_control_access_edit_is_unavailable_while_on_and_says_why() {
             access: BotAccess::Workspace,
             selected_pages,
             ..
-        } if selected_pages.is_empty()
+        } if *selected_pages == retained_pages
     ));
     // Pending: Saving…, and neither Save nor Cancel can be pressed.
     assert_eq!(label(&v, ACCESS_SAVE).as_deref(), Some("Saving…"));
@@ -682,7 +381,7 @@ fn routine_control_access_edit_is_unavailable_while_on_and_says_why() {
                 schedule_id: id,
                 grant_revision: 2,
                 access: BotAccess::Workspace,
-                selected_page_count: 0,
+                selected_page_count: 2,
             },
         }),
     );
@@ -838,7 +537,6 @@ fn routine_control_a_routine_waiting_for_a_decision_is_marked_and_leads_to_it() 
     // The window's activity read says that conversation needs the person.
     v.explore.bots_mut().activity_read_for_test(
         vec![koru_ai_core::bots::BotActivity {
-            waiting: None,
             bot_id: bot.id,
             chat_id: chat,
             state: koru_ai_core::bots::BotActivityState::NeedsYou,
@@ -868,7 +566,6 @@ fn routine_control_a_routine_waiting_for_a_decision_is_marked_and_leads_to_it() 
     // A Run still going under a paused Routine is said too.
     v.explore.bots_mut().activity_read_for_test(
         vec![koru_ai_core::bots::BotActivity {
-            waiting: None,
             bot_id: bot.id,
             chat_id: chat,
             state: koru_ai_core::bots::BotActivityState::Running,
@@ -916,43 +613,6 @@ fn routine_control_restore_lists_are_shown_on_the_routines() {
         1,
         "on the one Routine whose access cannot be read"
     );
-}
-
-#[test]
-fn routine_control_hiding_the_pane_drops_what_was_pending() {
-    let (mut v, _w) = on_document();
-    let bot = bot();
-    let off = paused("Weekly digest");
-    let id = off.schedule_id;
-    let (commands, tx) = setup(&mut v, &bot, listing(&bot, vec![off.clone()]));
-    assert!(v.bot_context_action(toggle_key(id)));
-    let (seq, ..) = control(&commands).unwrap();
-    // The pane is closed while the control is out.
-    v.context.set_immediately(false);
-    v.relayout();
-    v.sync_bot_context();
-    assert!(!held(&mut v).routines.visible());
-    assert!(!held(&mut v).routines.control_busy());
-    assert_eq!(held(&mut v).routines.control_deadline(), None);
-    // Its answer arrives and changes nothing; nothing is asked while hidden.
-    tx.send(Answer::RoutineControl {
-        seq,
-        bot: bot.id,
-        schedule: id,
-        result: Ok(confirmed(id, BotRoutineControlAction::Enable, true)),
-    })
-    .unwrap();
-    held(&mut v).shown_pass(None);
-    assert!(!commands.try_iter().any(|command| matches!(
-        command,
-        Command::ReadRoutines { .. } | Command::RoutineControl { .. }
-    )));
-    // Opened again, the list is read: the owner says what is true.
-    v.context.set_immediately(true);
-    v.relayout();
-    v.sync_bot_context();
-    reread(&mut v, &commands, &tx, &bot, listing(&bot, vec![off]));
-    assert!(says(&v, "Paused") && !says(&v, "Turning on…"));
 }
 
 #[test]

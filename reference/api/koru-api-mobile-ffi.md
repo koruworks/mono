@@ -61,10 +61,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.bot_command` | `client.ai().bots` | POST /v1/ai/bots | Bot configuration and Knowledge Library commands require the vouched desktop owner |
 | `ai.bot_engine_command` | `client.ai().bot_engine` | POST /v1/ai/bots/engine | Bot engine commands require the vouched desktop owner |
 | `ai.bot_thread_command` | `client.ai().bot_thread` | POST /v1/ai/bots/threads | Bot conversations require the vouched desktop owner |
-| `ai.list_bots` | `client.ai().list_bots` | POST /v1/ai/bots/list | External Bot tasks currently run on the desktop owner |
-| `ai.start_bot_task` | `client.ai().start_bot_task` | POST /v1/ai/bots/tasks/start | External Bot tasks currently run on the desktop owner |
-| `ai.read_bot_task` | `client.ai().read_bot_task` | POST /v1/ai/bots/tasks/read | External Bot tasks currently run on the desktop owner |
-| `ai.stop_bot_task` | `client.ai().stop_bot_task` | POST /v1/ai/bots/tasks/stop | External Bot tasks currently run on the desktop owner |
+| `ai.bot_routine_command` | `client.ai().bot_routine` | POST /v1/ai/bots/routines | Native Routine history and controls require the vouched desktop owner |
 | `ai.create_chat` | `client.ai().create_chat` | POST /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.list_chats` | `client.ai().list_chats` | GET /v1/ai/chats | Phase 1 ships desktop chat before a mobile chat host |
 | `ai.read_chat` | `client.ai().read_chat` | GET /v1/ai/chats/{chat} | Phase 1 ships desktop chat before a mobile chat host |

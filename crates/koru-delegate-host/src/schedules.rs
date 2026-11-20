@@ -177,37 +177,14 @@ impl ScheduleDocumentHandle for StoreScheduleHandle {
         &self.doc
     }
 
-    fn expired_routine_authority(
-        &self,
-        device: koru_delegate_core::DeviceId,
-        plan: koru_delegate_document::RoutineExpiryPlan,
-    ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
-        expired_routine_authority_at(self.document, self.workspace, &self.doc, device, plan)
-    }
-
     fn claim_authority(
         &self,
         device: koru_delegate_core::DeviceId,
         plan: ScheduleClaimPlan,
     ) -> PortResult<Option<ScheduleClaimAuthority>> {
-        routine_claim_location(
-            self.document,
-            match &plan {
-                ScheduleClaimPlan::BotRoutine { prepared, .. } => Some(prepared.slot.schedule),
-                _ => None,
-            },
-        )?;
         self.doc
             .claim_authority(self.workspace, device, plan)
             .map_err(Into::into)
-    }
-
-    fn test_claim_authority(
-        &self,
-        device: koru_delegate_core::DeviceId,
-        prepared: koru_delegate_core::RoutinePrepared,
-    ) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
-        test_claim_authority_at(self.document, self.workspace, &self.doc, device, prepared)
     }
 
     fn absorb(&mut self) -> PortResult<bool> {
@@ -229,46 +206,6 @@ impl ScheduleDocumentHandle for StoreScheduleHandle {
             }
         }
     }
-}
-
-/// Shared production binding, separated from the network-owning handle so its
-/// exact physical-location guard can be tested without opening a Store.
-fn expired_routine_authority_at(
-    physical: DocumentId,
-    workspace: WorkspaceId,
-    doc: &ScheduleDocument,
-    device: koru_delegate_core::DeviceId,
-    plan: koru_delegate_document::RoutineExpiryPlan,
-) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
-    routine_claim_location(physical, Some(doc.header()?.schedule))?;
-    doc.expired_routine_authority(workspace, device, plan)
-        .map_err(Into::into)
-}
-
-/// The owner Test's production binding. Like the two above it pins the
-/// physical Store DocumentId to the prepared ScheduleId and the handle's real
-/// workspace; the document then requires exactly Paused(Manual).
-fn test_claim_authority_at(
-    physical: DocumentId,
-    workspace: WorkspaceId,
-    doc: &ScheduleDocument,
-    device: koru_delegate_core::DeviceId,
-    prepared: koru_delegate_core::RoutinePrepared,
-) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
-    routine_claim_location(physical, Some(prepared.slot.schedule))?;
-    routine_claim_location(physical, Some(doc.header()?.schedule))?;
-    doc.test_claim_authority(workspace, device, prepared)
-        .map_err(Into::into)
-}
-
-fn routine_claim_location(
-    document: DocumentId,
-    schedule: Option<koru_delegate_core::ScheduleId>,
-) -> Result<(), ScheduleDocumentError> {
-    if schedule.is_some_and(|schedule| schedule.as_uuid() != document.as_uuid()) {
-        return Err(ScheduleDocumentError::ClaimBindingMismatch);
-    }
-    Ok(())
 }
 
 struct Watch {
@@ -467,6 +404,9 @@ fn discover_catalog(client: &Client) -> PortResult<ScheduleCatalog> {
                     continue;
                 }
             };
+            if header.definition.routine.is_some() {
+                continue;
+            }
             schedules.push(ListedSchedule {
                 workspace: *workspace,
                 document: entry.id,
@@ -729,77 +669,6 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
     use std::sync::mpsc;
-
-    #[test]
-    fn routine_expiry_production_binding_rejects_matching_header_at_wrong_physical_document() {
-        let mut header = header();
-        let workspace = WorkspaceId::from_uuid(header.initial_owner.as_uuid());
-        let association = koru_delegate_schedule::RoutineAssociation::new(
-            koru_delegate_core::BotOwner {
-                user_scope: koru_store_core::UserScopeId::from_uuid(header.initial_owner.as_uuid()),
-                device: header.initial_owner,
-            },
-            koru_delegate_core::BotId::mint(),
-            workspace,
-            koru_delegate_core::BotRequestId::mint(),
-        )
-        .unwrap();
-        header.definition.routine = Some(association.clone());
-        header.definition.lifecycle = koru_delegate_schedule::ScheduleLifecycle::Paused {
-            reason: koru_delegate_schedule::SchedulePauseReason::Manual,
-        };
-        let doc = ScheduleDocument::create(&header).unwrap();
-        header.definition.revision = 2;
-        header.definition.effective_at_ms += 1;
-        header.definition.lifecycle = koru_delegate_schedule::ScheduleLifecycle::Active;
-        doc.update_definition(header.initial_owner, &header.definition)
-            .unwrap();
-        let plan = koru_delegate_document::RoutineExpiryPlan {
-            occurrence_ms: 60_000,
-            planned_run: koru_delegate_core::RunId::mint(),
-            representative_miss: None,
-        };
-        assert!(
-            expired_routine_authority_at(
-                DocumentId::new(),
-                workspace,
-                &doc,
-                header.initial_owner,
-                plan
-            )
-            .is_err()
-        );
-        let canonical = DocumentId::from_uuid(header.schedule.as_uuid());
-        assert!(
-            expired_routine_authority_at(
-                canonical,
-                WorkspaceId::from_uuid(DocumentId::new().as_uuid()),
-                &doc,
-                header.initial_owner,
-                plan
-            )
-            .is_err()
-        );
-        let facts =
-            expired_routine_authority_at(canonical, workspace, &doc, header.initial_owner, plan)
-                .unwrap()
-                .unwrap()
-                .into_expired_bot_routine()
-                .unwrap();
-        assert_eq!(facts.slot().schedule, header.schedule);
-        assert_eq!(facts.slot().owner, association.owner);
-        assert_eq!(facts.planned_run(), plan.planned_run);
-        assert_eq!(facts.workspace(), workspace);
-    }
-
-    #[test]
-    fn routine_claim_location_requires_canonical_physical_store_document() {
-        let schedule = koru_delegate_core::ScheduleId::mint();
-        let canonical = DocumentId::from_uuid(schedule.as_uuid());
-        assert!(routine_claim_location(canonical, Some(schedule)).is_ok());
-        assert!(routine_claim_location(DocumentId::new(), Some(schedule)).is_err());
-        assert!(routine_claim_location(DocumentId::new(), None).is_ok());
-    }
 
     fn header() -> ScheduleHeader {
         ScheduleHeader {

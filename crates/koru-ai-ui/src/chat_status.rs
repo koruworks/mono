@@ -40,12 +40,22 @@ impl ChatSurface {
     /// **A reply is running in this chat** — sent and not yet taken by the
     /// service, or taken and its stream not ended.
     pub fn is_working(&self) -> bool {
+        if let Some(state) = &self.managed {
+            return state.running() || state.pending_send.is_some();
+        }
         self.reply_streaming() || self.message_on_its_way()
     }
 
     /// **A reply stopped to ask** — a call waits for its approval, or an
     /// agent for a permission answer, in the chat on screen.
     pub fn needs_you(&self) -> bool {
+        if let Some(state) = &self.managed {
+            return state
+                .snapshot
+                .turns
+                .iter()
+                .any(|turn| matches!(turn.state.as_str(), "needs_you" | "interrupted"));
+        }
         self.transcript.as_ref().is_some_and(|transcript| {
             transcript
                 .tool_activities
@@ -69,6 +79,18 @@ impl ChatSurface {
         let read_bound = self
             .owned()
             .is_none_or(|owned| owned.chat == transcript.chat.id);
+        if let Some(state) = &self.managed {
+            return read_bound
+                && state.thread() == transcript.chat.id
+                && state.pending_send.is_none()
+                && state.snapshot.waiting_messages == 0
+                && !state.snapshot.turns.iter().any(|turn| {
+                    matches!(
+                        turn.state.as_str(),
+                        "queued" | "running" | "needs_you" | "parked" | "interrupted"
+                    )
+                });
+        }
         self.current_chat_made()
             && read_bound
             && !self.is_working()
@@ -87,6 +109,7 @@ impl ChatSurface {
     pub fn pretend_read(&mut self, chat: koru_ai_core::ChatId) {
         let now = koru_ai_core::Timestamp::from_millis(1);
         let transcript = koru_ai_wire::ChatTranscript {
+            active_attempt: None,
             sources: Vec::new(),
             chat: koru_ai_core::Chat {
                 id: chat,
@@ -180,14 +203,4 @@ impl ChatSurface {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_sweep_crosses_once_and_starts_again() {
-        assert_eq!(sweep_phase(0), 0.0);
-        assert!((sweep_phase(SWEEP_MS / 2) - 0.5).abs() < 1e-6);
-        assert_eq!(sweep_phase(SWEEP_MS), 0.0);
-        assert!(sweep_phase(-1) > 0.99);
-    }
-}
+mod tests;

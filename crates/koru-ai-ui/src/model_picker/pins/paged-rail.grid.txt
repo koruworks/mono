@@ -1,96 +1,96 @@
-grid over [438.00 67.50 360.00 315.00] margin 12.00 step 6.00
+grid over [444.00 46.00 360.00 315.00] margin 12.00 step 6.00
 0: outside | hit None | cursor None | tooltip None
 1: panel | hit None | cursor Some(Default) | tooltip None
-2: rail | hit Some(Key { object: Surface("model-picker"), part: "previous-agents" }) | cursor Some(Default) | tooltip Some("0x50490000 \"Favorites\" [444.00 75.50 32.00 32.00]")
+2: rail | hit Some(Key { object: Surface("model-picker"), part: "previous-agents" }) | cursor Some(Default) | tooltip Some("0x50490000 \"Favorites\" [450.00 54.00 32.00 32.00]")
 3: search | hit Some(Key { object: Surface("model-picker"), part: "search" }) | cursor Some(Text) | tooltip None
 4: refresh | hit Some(Key { object: Surface("model-picker"), part: "search" }) | cursor Some(Default) | tooltip None
 5: rail | hit Some(Key { object: Model(12506213292130186839), part: "agent" }) | cursor Some(Default) | tooltip None
 6: list | hit Some(Key { object: Model(896047065542412961), part: "row" }) | cursor Some(Default) | tooltip None
 7: list | hit Some(Key { object: Model(896047065542412961), part: "star" }) | cursor Some(Default) | tooltip None
-8: rail | hit Some(Key { object: Model(12506213292130186839), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490001 \"Claude\" [444.00 122.50 32.00 32.00]")
-9: panel | hit None | cursor Some(Default) | tooltip Some("0x50490001 \"Claude\" [444.00 122.50 32.00 32.00]")
+8: rail | hit Some(Key { object: Model(12506213292130186839), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490001 \"Claude\" [450.00 101.00 32.00 32.00]")
+9: panel | hit None | cursor Some(Default) | tooltip Some("0x50490001 \"Claude\" [450.00 101.00 32.00 32.00]")
 10: list | hit None | cursor Some(Default) | tooltip None
-11: rail | hit Some(Key { object: Model(6286238932028813050), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490001 \"Claude\" [444.00 122.50 32.00 32.00]")
+11: rail | hit Some(Key { object: Model(6286238932028813050), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490001 \"Claude\" [450.00 101.00 32.00 32.00]")
 12: rail | hit Some(Key { object: Model(6286238932028813050), part: "agent" }) | cursor Some(Default) | tooltip None
-13: rail | hit Some(Key { object: Model(6286238932028813050), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490002 \"OpenCode\" [444.00 160.50 32.00 32.00]")
-14: panel | hit None | cursor Some(Default) | tooltip Some("0x50490002 \"OpenCode\" [444.00 160.50 32.00 32.00]")
+13: rail | hit Some(Key { object: Model(6286238932028813050), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490002 \"OpenCode\" [450.00 139.00 32.00 32.00]")
+14: panel | hit None | cursor Some(Default) | tooltip Some("0x50490002 \"OpenCode\" [450.00 139.00 32.00 32.00]")
 15: rail | hit Some(Key { object: Model(9854078268321476137), part: "agent" }) | cursor Some(Default) | tooltip None
-16: rail | hit Some(Key { object: Model(9854078268321476137), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490003 \"Grok\" [444.00 198.50 32.00 32.00]")
-17: panel | hit None | cursor Some(Default) | tooltip Some("0x50490003 \"Grok\" [444.00 198.50 32.00 32.00]")
-18: rail | hit Some(Key { object: Model(7624799680433389823), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490003 \"Grok\" [444.00 198.50 32.00 32.00]")
+16: rail | hit Some(Key { object: Model(9854078268321476137), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490003 \"Grok\" [450.00 177.00 32.00 32.00]")
+17: panel | hit None | cursor Some(Default) | tooltip Some("0x50490003 \"Grok\" [450.00 177.00 32.00 32.00]")
+18: rail | hit Some(Key { object: Model(7624799680433389823), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490003 \"Grok\" [450.00 177.00 32.00 32.00]")
 19: rail | hit Some(Key { object: Model(7624799680433389823), part: "agent" }) | cursor Some(Default) | tooltip None
-20: rail | hit Some(Key { object: Model(7624799680433389823), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490004 \"Kimi — Not installed\" [444.00 236.50 32.00 32.00]")
-21: panel | hit None | cursor Some(Default) | tooltip Some("0x50490004 \"Kimi — Not installed\" [444.00 236.50 32.00 32.00]")
-22: rail | hit Some(Key { object: Model(397366458103374327), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490004 \"Kimi — Not installed\" [444.00 236.50 32.00 32.00]")
+20: rail | hit Some(Key { object: Model(7624799680433389823), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490004 \"Kimi — Not installed\" [450.00 215.00 32.00 32.00]")
+21: panel | hit None | cursor Some(Default) | tooltip Some("0x50490004 \"Kimi — Not installed\" [450.00 215.00 32.00 32.00]")
+22: rail | hit Some(Key { object: Model(397366458103374327), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490004 \"Kimi — Not installed\" [450.00 215.00 32.00 32.00]")
 23: rail | hit Some(Key { object: Model(397366458103374327), part: "agent" }) | cursor Some(Default) | tooltip None
-24: rail | hit Some(Key { object: Model(397366458103374327), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490005 \"Codex\" [444.00 274.50 32.00 32.00]")
-25: panel | hit None | cursor Some(Default) | tooltip Some("0x50490005 \"Codex\" [444.00 274.50 32.00 32.00]")
+24: rail | hit Some(Key { object: Model(397366458103374327), part: "agent" }) | cursor Some(Default) | tooltip Some("0x50490005 \"Codex\" [450.00 253.00 32.00 32.00]")
+25: panel | hit None | cursor Some(Default) | tooltip Some("0x50490005 \"Codex\" [450.00 253.00 32.00 32.00]")
 26: rail | hit Some(Key { object: Surface("model-picker"), part: "manage-agents" }) | cursor Some(Default) | tooltip None
 27: strip | hit None | cursor Some(Default) | tooltip None
 28: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-off" }) | cursor Some(Default) | tooltip None
 29: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-low" }) | cursor Some(Default) | tooltip None
 30: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-medium" }) | cursor Some(Default) | tooltip None
 31: strip | hit Some(Key { object: Surface("model-picker"), part: "effort-high" }) | cursor Some(Default) | tooltip None
-32: rail | hit Some(Key { object: Surface("model-picker"), part: "manage-agents" }) | cursor Some(Default) | tooltip Some("0x50490006 \"Copilot\" [444.00 312.50 32.00 32.00]")
-33: panel | hit None | cursor Some(Default) | tooltip Some("0x50490006 \"Copilot\" [444.00 312.50 32.00 32.00]")
+32: rail | hit Some(Key { object: Surface("model-picker"), part: "manage-agents" }) | cursor Some(Default) | tooltip Some("0x50490006 \"Copilot\" [450.00 291.00 32.00 32.00]")
+33: panel | hit None | cursor Some(Default) | tooltip Some("0x50490006 \"Copilot\" [450.00 291.00 32.00 32.00]")
 34: fast | hit Some(Key { object: Surface("model-picker"), part: "fast" }) | cursor Some(Default) | tooltip None
 35: context | hit Some(Key { object: Surface("model-picker"), part: "context" }) | cursor Some(Default) | tooltip None
-36: panel | hit None | cursor Some(Default) | tooltip Some("0x50490007 \"Qwen\" [444.00 350.50 32.00 32.00]")
+36: panel | hit None | cursor Some(Default) | tooltip Some("0x50490007 \"Qwen\" [450.00 329.00 32.00 32.00]")
 37: chip | hit None | cursor None | tooltip None
-y55.50 0x65
-y61.50 0x65
-y67.50 0x2 1x61 0x2
-y73.50 0x2 1x61 0x2
-y79.50 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
-y85.50 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
-y91.50 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
-y97.50 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
-y103.50 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
-y109.50 0x2 1x61 0x2
-y115.50 0x2 1x1 5x6 1x2 6x45 7x4 6x2 1x1 0x2
-y121.50 0x2 1x1 5x6 1x2 6x45 7x4 6x2 1x1 0x2
-y127.50 0x2 1x1 8x6 1x2 6x45 7x4 6x2 1x1 0x2
-y133.50 0x2 1x1 8x6 1x2 6x45 7x4 6x2 1x1 0x2
-y139.50 0x2 1x1 8x6 1x2 6x51 1x1 0x2
-y145.50 0x2 1x1 9x6 1x2 10x51 1x1 0x2
-y151.50 0x2 1x1 11x6 1x2 10x51 1x1 0x2
-y157.50 0x2 1x1 12x6 1x2 10x51 1x1 0x2
-y163.50 0x2 1x1 13x6 1x2 10x51 1x1 0x2
-y169.50 0x2 1x1 13x6 1x2 10x51 1x1 0x2
-y175.50 0x2 1x1 13x6 1x2 10x51 1x1 0x2
-y181.50 0x2 1x1 13x6 1x2 10x51 1x1 0x2
-y187.50 0x2 1x1 14x6 1x2 10x51 1x1 0x2
-y193.50 0x2 1x1 15x6 1x2 10x51 1x1 0x2
-y199.50 0x2 1x1 16x6 1x2 10x51 1x1 0x2
-y205.50 0x2 1x1 16x6 1x2 10x51 1x1 0x2
-y211.50 0x2 1x1 16x6 1x2 10x51 1x1 0x2
-y217.50 0x2 1x1 16x6 1x2 10x51 1x1 0x2
-y223.50 0x2 1x1 17x6 1x2 10x51 1x1 0x2
-y229.50 0x2 1x1 18x6 1x2 10x51 1x1 0x2
-y235.50 0x2 1x1 19x6 1x2 10x51 1x1 0x2
-y241.50 0x2 1x1 20x6 1x2 10x51 1x1 0x2
-y247.50 0x2 1x1 20x6 1x2 10x51 1x1 0x2
-y253.50 0x2 1x1 20x6 1x2 10x51 1x1 0x2
-y259.50 0x2 1x1 21x6 1x2 10x51 1x1 0x2
-y265.50 0x2 1x1 22x6 1x2 10x51 1x1 0x2
-y271.50 0x2 1x1 23x6 1x2 10x51 1x1 0x2
-y277.50 0x2 1x1 24x6 1x2 10x51 1x1 0x2
-y283.50 0x2 1x1 24x6 1x2 10x51 1x1 0x2
-y289.50 0x2 1x1 24x6 1x2 10x51 1x1 0x2
-y295.50 0x2 1x1 24x6 1x54 0x2
-y301.50 0x2 1x1 25x6 1x54 0x2
-y307.50 0x2 1x1 26x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
-y313.50 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
-y319.50 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
-y325.50 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
-y331.50 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
-y337.50 0x2 1x1 33x6 1x54 0x2
-y343.50 0x2 1x1 33x6 1x3 34x11 1x1 35x13 1x26 0x2
-y349.50 0x2 1x10 34x11 1x1 35x13 1x26 0x2
-y355.50 0x2 1x1 36x6 1x3 34x11 1x1 35x13 1x26 0x2
-y361.50 0x2 1x1 36x6 1x3 34x11 1x1 35x13 1x26 0x2
-y367.50 0x2 1x1 36x6 1x3 34x11 1x1 35x13 1x26 0x2
-y373.50 0x2 1x1 36x6 1x54 0x2
-y379.50 0x2 1x1 36x6 1x54 0x2
-y385.50 0x65
-y391.50 0x49 37x14 0x2
+y34.00 0x65
+y40.00 0x65
+y46.00 0x2 1x61 0x2
+y52.00 0x2 1x61 0x2
+y58.00 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
+y64.00 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
+y70.00 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
+y76.00 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
+y82.00 0x2 1x1 2x6 1x2 3x46 4x5 1x1 0x2
+y88.00 0x2 1x61 0x2
+y94.00 0x2 1x1 5x6 1x2 6x45 7x4 6x2 1x1 0x2
+y100.00 0x2 1x1 5x6 1x2 6x45 7x4 6x2 1x1 0x2
+y106.00 0x2 1x1 8x6 1x2 6x45 7x4 6x2 1x1 0x2
+y112.00 0x2 1x1 8x6 1x2 6x45 7x4 6x2 1x1 0x2
+y118.00 0x2 1x1 8x6 1x2 6x51 1x1 0x2
+y124.00 0x2 1x1 9x6 1x2 10x51 1x1 0x2
+y130.00 0x2 1x1 11x6 1x2 10x51 1x1 0x2
+y136.00 0x2 1x1 12x6 1x2 10x51 1x1 0x2
+y142.00 0x2 1x1 13x6 1x2 10x51 1x1 0x2
+y148.00 0x2 1x1 13x6 1x2 10x51 1x1 0x2
+y154.00 0x2 1x1 13x6 1x2 10x51 1x1 0x2
+y160.00 0x2 1x1 13x6 1x2 10x51 1x1 0x2
+y166.00 0x2 1x1 14x6 1x2 10x51 1x1 0x2
+y172.00 0x2 1x1 15x6 1x2 10x51 1x1 0x2
+y178.00 0x2 1x1 16x6 1x2 10x51 1x1 0x2
+y184.00 0x2 1x1 16x6 1x2 10x51 1x1 0x2
+y190.00 0x2 1x1 16x6 1x2 10x51 1x1 0x2
+y196.00 0x2 1x1 16x6 1x2 10x51 1x1 0x2
+y202.00 0x2 1x1 17x6 1x2 10x51 1x1 0x2
+y208.00 0x2 1x1 18x6 1x2 10x51 1x1 0x2
+y214.00 0x2 1x1 19x6 1x2 10x51 1x1 0x2
+y220.00 0x2 1x1 20x6 1x2 10x51 1x1 0x2
+y226.00 0x2 1x1 20x6 1x2 10x51 1x1 0x2
+y232.00 0x2 1x1 20x6 1x2 10x51 1x1 0x2
+y238.00 0x2 1x1 21x6 1x2 10x51 1x1 0x2
+y244.00 0x2 1x1 22x6 1x2 10x51 1x1 0x2
+y250.00 0x2 1x1 23x6 1x2 10x51 1x1 0x2
+y256.00 0x2 1x1 24x6 1x2 10x51 1x1 0x2
+y262.00 0x2 1x1 24x6 1x2 10x51 1x1 0x2
+y268.00 0x2 1x1 24x6 1x2 10x51 1x1 0x2
+y274.00 0x2 1x1 24x6 1x54 0x2
+y280.00 0x2 1x1 25x6 1x54 0x2
+y286.00 0x2 1x1 26x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
+y292.00 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
+y298.00 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
+y304.00 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
+y310.00 0x2 1x1 32x6 1x3 27x1 28x11 27x1 29x11 27x1 30x11 27x1 31x11 27x1 1x2 0x2
+y316.00 0x2 1x1 33x6 1x54 0x2
+y322.00 0x2 1x1 33x6 1x3 34x11 1x1 35x13 1x26 0x2
+y328.00 0x2 1x10 34x11 1x1 35x13 1x26 0x2
+y334.00 0x2 1x1 36x6 1x3 34x11 1x1 35x13 1x26 0x2
+y340.00 0x2 1x1 36x6 1x3 34x11 1x1 35x13 1x26 0x2
+y346.00 0x2 1x1 36x6 1x3 34x11 1x1 35x13 1x26 0x2
+y352.00 0x2 1x1 36x6 1x54 0x2
+y358.00 0x2 1x1 36x6 1x54 0x2
+y364.00 0x65
+y370.00 0x58 37x5 0x2

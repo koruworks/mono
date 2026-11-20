@@ -18,18 +18,6 @@
 //! lease belongs to the person who borrowed a step, the session belongs to
 //! the run that created it — and the timeline records that control came
 //! back to the run before it records the end.
-//!
-//! **A Bot Run's Stop is recorded before its end is proven.** It is always
-//! the person's own Stop (a conversation's Stop, an Archive or Trash, the
-//! Bots API's `stop_task`), so the person's cancellation (`Cancel` and its
-//! `Cancelled` step) is written first; retirement (the attempt ended, the
-//! slot released, the admission settled) waits for proof that the process
-//! ended. `bot_stop_unconfirmed` therefore means "recorded as stopped by the
-//! person; the process's end not yet proven": the attempt stays unsettled
-//! (an Archive does not complete over a live process), and the process's
-//! exit, the actor's cleanup tick or a resent Stop retires it. Proving first
-//! let an exit between the terminate and the resend be recorded as the
-//! automatic `Interrupted` instead.
 
 use koru_delegate_core::{
     CancelReason, ControlState, RunAttemptId, RunEvent, RunHeader, RunId, RunStatus, StepKind,
@@ -44,12 +32,8 @@ use super::{Orchestrator, RunError};
 impl Orchestrator {
     /// End the run. Idempotent on a finished run.
     pub fn cancel(&mut self, run: RunId) -> Result<RunHeader, RunError> {
-        let bot = self.header(run)?.bot.is_some();
         let status = self.status(run)?;
         if status.is_terminal() {
-            if bot {
-                self.bot_retire_stopped(run)?;
-            }
             return self.header(run);
         }
         let human_holds_control = matches!(status.control(), Some(ControlState::Human { .. }));
@@ -58,8 +42,7 @@ impl Orchestrator {
             .attempt
             .as_ref()
             .map(|attempt| (attempt.id, attempt.session, attempt.orchestrator_turn));
-        if !bot
-            && !human_holds_control
+        if !human_holds_control
             && let (RunStatus::Running { .. }, Some((_, Some(session), Some(turn)))) =
                 (&status, live)
         {
@@ -122,9 +105,7 @@ impl Orchestrator {
                 reason: CancelReason::Run,
             }),
         )?;
-        if bot {
-            self.bot_retire_stopped(run)?;
-        } else if attempt.is_some() {
+        if attempt.is_some() {
             self.end_attempt(run, AttemptPhase::Ended, true)?;
         } else if let Some(row) = self.ports.store.current_attempt(run)?
             && row.is_live()
@@ -137,19 +118,6 @@ impl Orchestrator {
             self.ports.store.retire(run, row.generation)?;
         }
         self.header(run)
-    }
-
-    /// A Bot Run whose status is terminal (the person's cancellation just
-    /// recorded, or recorded by an earlier Stop, or the Run ended by itself):
-    /// end its process and retire it once that end is proven. Unproven, the
-    /// actor's cleanup tick keeps trying (`bot_cleanup_tick`) and the caller
-    /// is told `bot_stop_unconfirmed`, retryable.
-    fn bot_retire_stopped(&mut self, run: RunId) -> Result<(), RunError> {
-        if !self.bot_prove_end(run, true)? {
-            self.arm_bot_cleanup(run)?;
-            return Err(super::bots::refused("bot_stop_unconfirmed"));
-        }
-        self.bot_end_attempt(run, AttemptPhase::Ended, false)
     }
 
     /// A run cancelled while a person held control: the record that control

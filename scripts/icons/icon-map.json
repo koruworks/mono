@@ -1,4 +1,11 @@
 {
+  "ANCHOR": {
+    "filled": null,
+    "lucide": "anchor",
+    "remix": "Map/anchor-line",
+    "remix_filled": "Map/anchor-fill",
+    "tabler": "anchor"
+  },
   "ALIGN_CENTER": {
     "filled": null,
     "lucide": "align-center",

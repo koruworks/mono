@@ -222,6 +222,8 @@ pub struct Inputs<'a, P> {
     /// *Manage agent providers* under an agent that cannot run.
     pub manage: bool,
     pub footer: FooterOffer,
+    /// Optional read-only report, inside the same panel below model controls.
+    pub report: Option<super::report::Report>,
     pub place: Place,
 }
 

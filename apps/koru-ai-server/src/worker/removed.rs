@@ -153,7 +153,6 @@ impl WorkerCommand {
             let _ = reply.send(Err(failure));
         }
         match self {
-            Self::Bots { reply, .. } => answer(reply, failure),
             Self::WorkspaceCopyAdmission { reply, .. } => answer(reply, failure),
             Self::ClearUsage { reply, .. } => answer(reply, failure),
             Self::CreateChat { reply, .. } => answer(reply, failure),

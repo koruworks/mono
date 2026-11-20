@@ -248,6 +248,34 @@ impl Library {
             command: Box::new(save.command.clone()),
         })
     }
+    /// Bind an ordinary Memory page under the exact Library revision.
+    pub(crate) fn set_memory(&mut self, bot: &Bot, memory: Option<BotPage>) -> Option<Command> {
+        if !self.can_edit(bot)
+            || memory.as_ref().is_some_and(|page| {
+                page.workspace != bot.home_workspace
+                    || self.pages().contains(page)
+                    || self
+                        .held
+                        .as_ref()
+                        .is_some_and(|held| &held.role == page || held.knowledge.contains(page))
+            })
+            || self.held.as_ref()?.memory == memory
+        {
+            return None;
+        }
+        let request = BotRequestId::mint();
+        self.save = Some(Save {
+            request,
+            command: BotCommand::SetMemory {
+                request_id: request,
+                bot_id: bot.id,
+                expected_revision: bot.revision,
+                memory,
+            },
+            in_flight: false,
+        });
+        self.save(bot)
+    }
     pub(crate) fn unsent(&mut self, request: BotRequestId) {
         if self.owns(request) {
             self.save.as_mut().expect("owned").in_flight = false;
@@ -263,6 +291,40 @@ impl Library {
             return;
         }
         let save = self.save.as_ref().expect("owned");
+        if let BotCommand::SetMemory {
+            bot_id,
+            expected_revision,
+            memory,
+            ..
+        } = &save.command
+        {
+            match result {
+                Ok(BotResponse::Bot { bot })
+                    if bot.id == *bot_id && bot.revision == expected_revision.saturating_add(1) =>
+                {
+                    let memory = memory.clone();
+                    self.save = None;
+                    self.saved = true;
+                    self.notice = None;
+                    self.known_revision = self.known_revision.max(bot.revision);
+                    if let Some(held) = &mut self.held
+                        && held.revision <= bot.revision
+                    {
+                        held.revision = bot.revision;
+                        held.memory = memory;
+                    }
+                    self.reading = false;
+                    self.owe_read();
+                }
+                Err(Failure::Refused(code)) => {
+                    self.save = None;
+                    self.notice = Some(super::settings::refusal_words(&code));
+                    self.owe_read();
+                }
+                _ => self.unsent(request),
+            }
+            return;
+        }
         let BotCommand::SetKnowledge {
             bot_id,
             expected_revision,

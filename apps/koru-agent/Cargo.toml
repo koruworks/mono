@@ -9,7 +9,6 @@ description = "The Koru Agent: owns device integration, supervises the gateway, 
 
 [features]
 default = []
-bots-engine = ["koru-bots-engine/active"]
 
 # A library with a thin binary: the lifecycle gate needs
 # `CARGO_BIN_EXE_koru-agent`, which
@@ -24,7 +23,7 @@ name = "koru-agent"
 path = "src/main.rs"
 
 [dependencies]
-koru-bots-engine = { path = "../../crates/koru-bots-engine" }
+koru-bots-engine = { path = "../../crates/koru-bots-engine", features = ["provider-runtime"] }
 koru-store-wire = { path = "../../crates/koru-store-wire" }
 koru-socials-publisher = { path = "../../crates/koru-socials-publisher" }
 koru-features = { path = "../../crates/koru-features" }
@@ -358,4 +357,3 @@ koru-winres = { path = "../../crates/koru-winres" }
 [[test]]
 name = "bots_engine_process"
 harness = false
-required-features = ["bots-engine"]

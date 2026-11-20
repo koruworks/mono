@@ -102,6 +102,7 @@ pub struct Toast {
     /// *and* a way back. Never on a progress toast.
     secondary: Option<&'static str>,
     progress: Option<ProgressBar>,
+    monospace_digits: bool,
     /// A second paragraph under the message with answers of its own — see
     /// [`with_line`](Self::with_line). Never on a progress toast.
     line: Option<Line>,
@@ -136,6 +137,7 @@ impl Toast {
             action,
             secondary: None,
             progress: None,
+            monospace_digits: false,
             line: None,
             line_hover: None,
             line_focus: None,
@@ -222,6 +224,23 @@ impl Toast {
         self
     }
 
+    /// Keep changing counters in the code font while the surrounding message
+    /// uses the UI font. Retained when `set_progress` replaces the message.
+    pub fn with_monospace_digits(mut self) -> Self {
+        self.monospace_digits = true;
+        self
+    }
+
+    fn message_layout(&self, engine: &mut TextEngine, width: Option<f32>) -> Layout<Brush> {
+        if self.monospace_digits {
+            engine.numeric_layout(&self.message, MESSAGE, width)
+        } else if let Some(width) = width {
+            engine.simple_layout_wrapped(&self.message, MESSAGE, width)
+        } else {
+            engine.simple_layout(&self.message, MESSAGE)
+        }
+    }
+
     /// Update progress without restarting the toast's interaction state.
     pub fn set_progress(&mut self, message: String, progress: ProgressMode, now: Instant) {
         self.message = message;
@@ -272,11 +291,11 @@ impl Toast {
         engine: &mut TextEngine,
         max_w: f32,
     ) -> (Layout<Brush>, Option<Rect>, Option<Rect>, f32, f32) {
-        let natural = engine.simple_layout(&self.message, MESSAGE);
+        let natural = self.message_layout(engine, None);
         let message = if natural.width() <= max_w {
             natural
         } else {
-            engine.simple_layout_wrapped(&self.message, MESSAGE, max_w)
+            self.message_layout(engine, Some(max_w))
         };
         // A progress toast puts its action at the end of the bar rather than
         // treating it as the next word in the message paragraph.
@@ -309,7 +328,7 @@ impl Toast {
     /// Chip width and height for the current content and available band.
     fn size(&self, engine: &mut TextEngine, over_w: f32) -> (f32, f32) {
         let cap = MAX_W.min((over_w - MARGIN * 2.0).max(0.0));
-        let natural = engine.simple_layout(&self.message, MESSAGE);
+        let natural = self.message_layout(engine, None);
         let action_w = self
             .action
             .filter(|_| self.progress.is_none())

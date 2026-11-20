@@ -57,7 +57,6 @@ pub fn run() {
         println!("SKIP Bot process proof: requires --run --root");
         return;
     }
-    assert!(koru_bots_engine::ENABLED);
     assert_eq!(args.len(), 3);
     assert_eq!(args[0], "--run");
     assert_eq!(args[1], "--root");

@@ -274,6 +274,9 @@ fn context_library_resize_and_normal_toggle_restore_the_same_view_focus() {
     let _link = install(&mut v, &bot, vec![], None);
     let prior = match v.active_view() {
         TabView::Bot(view) => {
+            // The plain chat has no header. Retain a real Settings control
+            // while the floating context panel temporarily takes its keyboard.
+            view.set_settings_open(true);
             view.focus_header();
             view.focus()
         }

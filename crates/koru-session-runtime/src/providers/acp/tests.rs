@@ -286,8 +286,10 @@ fn submit_returns_while_live_and_keeps_caller_id_idempotent_even_after_finish() 
     assert_eq!(caps.delegation.resume, ResumeSupport::Unsupported);
     assert!(h.control.resume_token().is_none());
     let turn_id = AgentTurnId::mint();
+    assert!(h.control.submission_known_unsent(turn_id));
     let before = h.state.lock().unwrap().receives;
     h.control.submit(input(turn_id)).unwrap();
+    assert!(!h.control.submission_known_unsent(turn_id));
     assert_eq!(
         h.state.lock().unwrap().receives,
         before,
@@ -320,8 +322,17 @@ fn submit_returns_while_live_and_keeps_caller_id_idempotent_even_after_finish() 
     h.control.submit(input(turn_id)).unwrap();
     assert_eq!(h.state.lock().unwrap().prompts, 1);
     assert!(drain(&mut h.control).is_empty());
+    assert!(
+        !h.control.submission_known_unsent(turn_id),
+        "completed identities remain proof of possible dispatch"
+    );
     h.control.submit(input(AgentTurnId::mint())).unwrap();
     assert_eq!(h.state.lock().unwrap().prompts, 2);
+    h.control.shutdown().unwrap();
+    assert!(
+        !h.control.submission_known_unsent(AgentTurnId::mint()),
+        "a closed transport cannot prove a new send was safe"
+    );
 }
 
 #[test]

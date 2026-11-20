@@ -50,7 +50,7 @@ impl LiveEvents {
         let bytes = serde_json::to_vec(&observation)
             .map_err(|_| Error::InvalidRequest)?
             .len();
-        if bytes > koru_bot_client_wire::MAX_FRAME_BYTES / 2 {
+        if bytes > crate::limits::MAX_PAYLOAD_BYTES / 2 {
             return Err(Error::InputTooSmall);
         }
         while self.entries.len() >= 512 || self.bytes + bytes > 4 * 1024 * 1024 {
@@ -96,7 +96,7 @@ impl LiveEvents {
                 if entries.len() >= crate::messages::PAGE_LIMIT {
                     break;
                 }
-                if !entries.is_empty() && bytes + size > koru_bot_client_wire::MAX_FRAME_BYTES / 2 {
+                if !entries.is_empty() && bytes + size > crate::limits::MAX_PAYLOAD_BYTES / 2 {
                     break;
                 }
                 bytes += size;

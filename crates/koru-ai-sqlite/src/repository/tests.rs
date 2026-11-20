@@ -49,7 +49,7 @@ pub(super) fn chat(id: ChatId, offset: i64) -> Chat {
 #[test]
 fn shared_agent_settings_patch_is_atomic_on_late_failure_and_keeps_omitted_fields() {
     let mut repository = Repository::in_memory().unwrap();
-    let access = ChatReadAccess::ordinary();
+
     let id = ChatId::new();
     let original = chat(id, 0);
     repository.create_chat(&original).unwrap();
@@ -58,7 +58,7 @@ fn shared_agent_settings_patch_is_atomic_on_late_failure_and_keeps_omitted_field
     ).unwrap();
     assert!(
         repository
-            .patch_chat_agent_settings(id, Some("safe"), Some(true), &access)
+            .patch_chat_agent_settings(id, Some("safe"), Some(true))
             .is_err()
     );
     assert_eq!(repository.chat(id).unwrap(), Some(original.clone()));
@@ -67,27 +67,27 @@ fn shared_agent_settings_patch_is_atomic_on_late_failure_and_keeps_omitted_field
         .execute_batch("DROP TRIGGER reject_settings")
         .unwrap();
     let changed = repository
-        .patch_chat_agent_settings(id, Some("safe"), Some(true), &access)
+        .patch_chat_agent_settings(id, Some("safe"), Some(true))
         .unwrap()
         .unwrap();
     assert_eq!(changed.agent_mode.as_deref(), Some("safe"));
     assert_eq!(changed.agent_fast, Some(true));
     assert_eq!(changed.updated_at, original.updated_at);
     let partial = repository
-        .patch_chat_agent_settings(id, None, Some(false), &access)
+        .patch_chat_agent_settings(id, None, Some(false))
         .unwrap()
         .unwrap();
     assert_eq!(partial.agent_mode.as_deref(), Some("safe"));
     assert_eq!(partial.agent_fast, Some(false));
     assert_eq!(
         repository
-            .patch_chat_agent_settings(id, None, None, &access)
+            .patch_chat_agent_settings(id, None, None)
             .unwrap(),
         Some(partial)
     );
     assert!(
         repository
-            .patch_chat_agent_settings(ChatId::new(), Some("safe"), Some(true), &access)
+            .patch_chat_agent_settings(ChatId::new(), Some("safe"), Some(true))
             .unwrap()
             .is_none()
     );
@@ -1883,7 +1883,7 @@ fn usage_reports_nullable_provider_fields_and_survives_history_until_cleared() {
     assert!(repository.usage(None).unwrap().groups.is_empty());
 }
 
-fn staged(chat_id: ChatId, name: &str, offset: i64) -> koru_ai_core::AttachmentRecord {
+pub(super) fn staged(chat_id: ChatId, name: &str, offset: i64) -> koru_ai_core::AttachmentRecord {
     koru_ai_core::AttachmentRecord {
         chat_id,
         attachment: koru_ai_core::ChatAttachment {
@@ -2210,10 +2210,7 @@ fn a_v12_stores_chats_are_placed_by_what_they_last_read() {
         ))
         .unwrap();
     crate::db::prepare(&mut connection).unwrap();
-    let mut repository = Repository {
-        connection: connection.into(),
-        bot_replay_fail_after_commit: false,
-    };
+    let mut repository = Repository { connection };
 
     let evidence = repository.unplaced_chats().unwrap();
     assert_eq!(

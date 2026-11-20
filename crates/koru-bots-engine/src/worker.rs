@@ -43,6 +43,7 @@ pub enum Command {
     Status,
     Capacity,
     RefreshCapacity,
+    ClockChanged,
     Person(crate::person::Request),
     Attachment(crate::attachments::Request),
     Creation(crate::creation::Request),

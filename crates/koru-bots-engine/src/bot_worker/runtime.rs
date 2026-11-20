@@ -147,6 +147,29 @@ pub(super) fn run(
     let server = door::http::Server::start(Arc::clone(&registry))?;
     let workspace = crate::workspace::endpoint(&bootstrap.root, &bootstrap.segment)?;
     let paths = Arc::new(paths::Paths::default());
+    // Only paths are resolved here; actual bounded reads belong to sessions.
+    let instructions = std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            let directory = exe.parent()?;
+            let installation = if cfg!(target_os = "macos")
+                && directory.file_name().is_some_and(|name| name == "MacOS")
+            {
+                directory.parent()?.join("Resources")
+            } else {
+                directory.to_path_buf()
+            };
+            let settings = koru_settings::SettingsPaths::for_channel_root(
+                &bootstrap.root,
+                koru_channel::channel_root().as_deref(),
+                &bootstrap.segment,
+            );
+            Some(koru_delegate_preamble::session::Configuration::files(
+                installation,
+                settings.map(|paths| paths.session_instructions_file()),
+            ))
+        })
+        .unwrap_or_default();
     let factory: Arc<dyn ManagedProviderFactory> = Arc::new(Factory {
         registry: builtin_providers(paths.clone()),
         root: bootstrap.root.clone(),
@@ -233,16 +256,19 @@ pub(super) fn run(
                     ) {
                         continue;
                     }
-                    let port = Arc::new(ports::Port::new(
-                        client.clone(),
-                        reservation,
-                        configuration.selection.clone(),
-                        workspace.clone(),
-                        server.endpoint(),
-                        Arc::clone(&registry),
-                        pool.journal_database(),
-                        paths.clone(),
-                    ));
+                    let port = Arc::new(
+                        ports::Port::new(
+                            client.clone(),
+                            reservation,
+                            configuration.selection.clone(),
+                            workspace.clone(),
+                            server.endpoint(),
+                            Arc::clone(&registry),
+                            pool.journal_database(),
+                            paths.clone(),
+                        )
+                        .with_instructions(instructions.clone()),
+                    );
                     let request = ManagedProviderRequest {
                         provider: configuration.provider,
                         executable: Default::default(),

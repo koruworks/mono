@@ -627,7 +627,6 @@ fn ask_with(question: Question, known: Known) -> (MainView, Receiver<Command>, B
     let chat = koru_ai_ui::ChatId::new();
     let entries = |state| {
         vec![koru_ai_core::bots::BotActivity {
-            waiting: None,
             bot_id: bot.id,
             chat_id: chat,
             state,
@@ -1012,7 +1011,7 @@ fn renaming_window() -> (
     std::mem::forget(commands);
     let mut view = BotView::with_link(bot.id, bot.main_chat, link);
     view.know_bot_for_test(bot.clone());
-    view.listed_for_test(conversation_page(
+    let page = conversation_page(
         &bot,
         &[
             (
@@ -1026,16 +1025,34 @@ fn renaming_window() -> (
                 "Plan the launch",
             ),
         ],
-    ));
+    );
+    view.listed_for_test(page.clone());
     let tab = Tab::bot(view);
     let id = tab.id;
     v.tabs_mut().push(tab);
+    let (roster_link, roster_commands, roster_answers) = BotsLink::test_pair();
+    std::mem::forget(roster_commands);
+    std::mem::forget(roster_answers);
+    *v.explore.bots_mut() = crate::bots::BotsRoster::with_link(roster_link);
+    let home = v
+        .current_workspace()
+        .map(|id| WorkspaceId::from_uuid(id.as_uuid()));
+    v.explore.bots_mut().set_workspace(home);
+    v.show_navigator(crate::panes::explore::NavigatorMode::Bots);
+    v.explore
+        .bots_mut()
+        .listed_for_test(vec![bot.clone().into()]);
+    v.explore.bots_mut().conversations_for_test(bot.id, page);
+    v.sidebar
+        .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
     lay_out(&mut v, &workspace);
     (v, workspace, bot, other, id)
 }
 
-/// One frame of the window, as the shell draws it.
+/// The navigator's normal host pass, followed by a drawn frame. A navigator
+/// gesture requests a conversation; the host's maintain pass opens it.
 fn lay_out(v: &mut MainView, workspace: &koru_workspace::Workspace) {
+    v.maintain_bots();
     v.relayout();
     v.draw_frame(
         &mut vello::Scene::new(),
@@ -1057,9 +1074,11 @@ fn front_bot(v: &mut MainView) -> &mut BotView {
 
 /// The centre of `chat`'s row, in the window's coordinates.
 fn row_centre(v: &mut MainView, chat: koru_ai_ui::ChatId) -> (f32, f32) {
-    let at = v.focused_view_rect();
-    let row = front_bot(v).rename_rect(chat).expect("the row is drawn");
-    (at.x + row.x + row.w * 0.5, at.y + row.y + row.h * 0.5)
+    let row = v
+        .explore
+        .bot_conversation_label_rect(v.explore_area(), chat)
+        .expect("the conversation is below its Bot in the navigator");
+    (row.x + row.w * 0.5, row.y + row.h * 0.5)
 }
 
 /// Type `text` into whatever has the keyboard, as the shell hands keys.
@@ -1118,16 +1137,13 @@ fn a_bot_conversation_is_renamed_in_its_row_as_a_chat_is() {
         field.target,
         crate::mainview::workspace_rename::Target::BotChat { chat, .. } if chat == other
     ));
-    let at = v.focused_view_rect();
-    let local = front_bot(&mut v).rename_rect(other).expect("the row");
+    let row = v
+        .explore
+        .bot_conversation_label_rect(v.explore_area(), other)
+        .expect("the navigator row");
     assert_eq!(
         v.workspace_rename_row(),
-        Some(koru_draw::geometry::Rect::new(
-            at.x + local.x,
-            at.y + local.y,
-            local.w,
-            local.h
-        )),
+        Some(row),
         "the field stands over the row"
     );
     type_text(&mut v, ws, "Budget review");
@@ -1194,7 +1210,7 @@ fn a_rename_the_owner_would_refuse_is_not_offered_and_says_why() {
     let (mut v, mut workspace, _bot, other, _tab) = renaming_window();
 
     // An operation of the Bot on its way: an additional conversation's Trash.
-    // The header says so, which moves the list down: laid out again.
+    // The retained status notice says so; the navigator keeps its geometry.
     assert!(front_bot(&mut v).trash_conversation(other));
     lay_out(&mut v, &workspace);
     let ws = &mut workspace.ws;
@@ -1277,151 +1293,61 @@ fn a_refused_rename_says_the_owners_reason_and_the_row_keeps_its_name() {
     }
 }
 
-/// **The compact *Conversations* list takes the keyboard when it opens**
-/// (the fourth window run, at 940 × 620: Enter or a click on the header's
-/// *Conversations* showed the list in the conversation's place, and then
-/// Enter, Space, the arrows, Tab and typed letters did nothing until `F6`).
-/// Entered as a keyboard enters it, through `MainView::key`: `F6` to the
-/// tab, Tab to *Conversations*, Enter. The keyboard is on the open
-/// conversation's row; a typed letter leaves it there; the arrows move it;
-/// `F2` renames the row; Delete asks for its Trash; Escape closes the list
-/// and gives the keyboard back to *Conversations*; Tab leaves the list for
-/// the next stop and Shift+Tab comes back; Enter opens the row, and the
-/// conversation comes back with the keyboard. A click on *Conversations*
-/// gives the list the keyboard too.
+/// Conversation rows now live below their Bot in the navigator. The same
+/// keyboard reaches those rows, renames them, asks before Trash and opens them
+/// without reviving the removed header or compact conversation column.
 #[test]
-fn the_compact_conversations_list_takes_the_keyboard_when_it_opens() {
-    use crate::bots::view::list::{CONVERSATION_LIST, CONVERSATIONS_BUTTON};
+fn navigator_conversation_rows_keep_keyboard_rename_trash_and_open() {
     use winit::keyboard::NamedKey;
     let (mut v, mut workspace, bot, other, _tab) = renaming_window();
-    // The default window, the navigator open beside the tab.
     koru_workspace_host::View::set_viewport(&mut v, 940.0, 620.0);
-    if !v.sidebar.is_open() {
-        assert!(v.toggle_sidebar());
-    }
-    v.sidebar
-        .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
     lay_out(&mut v, &workspace);
     assert!(
-        front_bot(&mut v)
-            .focus_order()
-            .contains(&CONVERSATIONS_BUTTON),
-        "compact: the header offers Conversations"
+        !front_bot(&mut v).header_stop(),
+        "the chat has no header controls"
     );
-    let ws = &mut workspace.ws;
-    for _ in 0..8 {
-        if v.tab_holds_keyboard() {
+    assert!(!front_bot(&mut v).compact_list_shown());
+    // Start on the Bot row, then walk past its menu and main conversation.
+    v.chrome_focus = None;
+    v.explore.bots_mut().set_focus(bot.id);
+    koru_workspace_host::View::mouse_move(&mut v, -1.0, -1.0);
+    for _ in 0..6 {
+        if v.explore.bots().focused_conversation() == Some((bot.id, other)) {
             break;
         }
-        press(&mut v, ws, NamedKey::F6);
-    }
-    assert!(v.tab_holds_keyboard(), "F6 reaches the tab");
-    for _ in 0..8 {
-        if front_bot(&mut v).focus() == Some(CONVERSATIONS_BUTTON) {
-            break;
-        }
-        press(&mut v, ws, NamedKey::Tab);
-    }
-    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATIONS_BUTTON));
-
-    // Enter: the list, with the keyboard on the open conversation's row.
-    assert!(press(&mut v, ws, NamedKey::Enter));
-    assert!(front_bot(&mut v).compact_list_shown());
-    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(bot.main_chat));
-    type_text(&mut v, ws, "x");
-    assert_eq!(
-        front_bot(&mut v).list_keyboard_row(),
-        Some(bot.main_chat),
-        "a typed letter leaves the keyboard on the list"
-    );
-    press(&mut v, ws, NamedKey::ArrowDown);
-    if front_bot(&mut v).list_keyboard_row() == Some(bot.main_chat) {
-        press(&mut v, ws, NamedKey::ArrowUp);
+        assert!(press(&mut v, &mut workspace.ws, NamedKey::ArrowDown));
     }
     assert_eq!(
-        front_bot(&mut v).list_keyboard_row(),
-        Some(other),
-        "the arrows move"
+        v.explore.bots().focused_conversation(),
+        Some((bot.id, other))
     );
-
-    // F2 renames the row the keyboard is on; Escape puts the field away.
-    assert!(press(&mut v, ws, NamedKey::F2));
-    assert!(matches!(
-        v.workspace_rename.as_ref().map(|field| field.target),
-        Some(crate::mainview::workspace_rename::Target::BotChat { chat, .. }) if chat == other
-    ));
-    assert!(press(&mut v, ws, NamedKey::Escape));
+    assert!(press(&mut v, &mut workspace.ws, NamedKey::F2));
+    assert!(
+        matches!(v.workspace_rename.as_ref().map(|field| field.target),
+        Some(crate::mainview::workspace_rename::Target::BotChat { chat, .. }) if chat == other)
+    );
+    assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
     assert!(v.workspace_rename.is_none());
-    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(other));
-
-    // Delete asks for the row's Trash; Escape answers no.
-    assert!(press(&mut v, ws, NamedKey::Delete));
-    lay_out(&mut v, &workspace);
-    let ws = &mut workspace.ws;
-    v.drain_bot_lifecycle_asks();
-    assert!(matches!(
-        v.confirm.as_ref().map(|(_, subject)| subject),
-        Some(ConfirmSubject::TrashBotConversation { chat, .. }) if *chat == other
-    ));
-    assert!(press(&mut v, ws, NamedKey::Escape));
+    assert_eq!(
+        v.explore.bots().focused_conversation(),
+        Some((bot.id, other))
+    );
+    assert!(press(&mut v, &mut workspace.ws, NamedKey::Delete));
+    assert!(matches!(v.confirm.as_ref().map(|(_, subject)| subject),
+        Some(ConfirmSubject::TrashBotConversation { chat, .. }) if *chat == other));
+    assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
     assert!(v.confirm.is_none());
     assert_eq!(
-        front_bot(&mut v).focus(),
-        Some(CONVERSATION_LIST),
-        "the keyboard is back on the list"
+        v.explore.bots().focused_conversation(),
+        Some((bot.id, other))
     );
-
-    // Escape closes the list: the keyboard is back on Conversations.
-    assert!(press(&mut v, ws, NamedKey::Escape));
-    assert!(!front_bot(&mut v).compact_list_shown());
-    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATIONS_BUTTON));
-
-    // Tab leaves the list for the next stop, Shift+Tab comes back.
-    assert!(press(&mut v, ws, NamedKey::Enter));
-    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATION_LIST));
-    assert!(press(&mut v, ws, NamedKey::Tab));
-    let next = front_bot(&mut v).focus();
-    assert!(
-        next.is_some() && next != Some(CONVERSATION_LIST),
-        "Tab left the list: {next:?}"
-    );
-    assert!(koru_workspace_host::View::key(
-        &mut v,
-        ws,
-        &winit::keyboard::Key::Named(NamedKey::Tab),
-        None,
-        winit::keyboard::ModifiersState::SHIFT,
-    ));
-    assert_eq!(front_bot(&mut v).focus(), Some(CONVERSATION_LIST));
-
-    // Enter opens the row: the conversation is back, with the keyboard.
-    press(&mut v, ws, NamedKey::ArrowDown);
-    if front_bot(&mut v).list_keyboard_row() == Some(bot.main_chat) {
-        press(&mut v, ws, NamedKey::ArrowUp);
-    }
-    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(other));
-    assert!(press(&mut v, ws, NamedKey::Enter));
+    assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
     lay_out(&mut v, &workspace);
-    let ws = &mut workspace.ws;
     assert_eq!(front_bot(&mut v).chat_id(), other);
-    assert!(!front_bot(&mut v).compact_list_shown());
-    assert_eq!(front_bot(&mut v).focus(), None, "the composer's keyboard");
-
-    // A click on Conversations: the list has the keyboard too.
-    let at = v.focused_view_rect();
-    let button = front_bot(&mut v)
-        .with_frame(|_, frame| frame.node(CONVERSATIONS_BUTTON).map(|node| node.rect))
-        .expect("Conversations is drawn");
-    let (x, y) = (
-        at.x + button.x + button.w * 0.5,
-        at.y + button.y + button.h * 0.5,
-    );
-    koru_workspace_host::View::mouse_down(&mut v, ws, x, y, false);
-    koru_workspace_host::View::mouse_up(&mut v, ws);
-    assert!(front_bot(&mut v).compact_list_shown());
-    assert_eq!(front_bot(&mut v).list_keyboard_row(), Some(other));
+    assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
+    assert!(!v.explore.has_focus(), "Escape returns to the conversation");
+    assert_eq!(front_bot(&mut v).focus(), None);
 }
-
 /// **A conversation the tab has read and finds idle is known idle**, with
 /// no roster activity read at all (the fourth window run: the roster's read
 /// is fresh for 30 s and never refreshed on a timer, so the question for an

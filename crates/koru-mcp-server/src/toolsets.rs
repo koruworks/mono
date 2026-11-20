@@ -16,7 +16,7 @@
 //! the flag that turns it on, rather than rmcp's bare "tool not found".
 //!
 //! Koru AI reads [`crate::workspace_tool_catalog`], not this bridge, and filters
-//! its eligible tools independently. External Bot task tools are bridge-only.
+//! its eligible tools independently.
 
 use std::fmt;
 
@@ -40,20 +40,17 @@ pub enum Toolset {
     Tasks,
     /// Koru AI chats, read-only.
     Chat,
-    /// Discover, ask, read and stop local Bots.
-    Bots,
 }
 
 impl Toolset {
     /// Every toolset, in the order they are listed and named.
-    pub const ALL: [Toolset; 7] = [
+    pub const ALL: [Toolset; 6] = [
         Toolset::Core,
         Toolset::Docs,
         Toolset::Files,
         Toolset::Versions,
         Toolset::Tasks,
         Toolset::Chat,
-        Toolset::Bots,
     ];
 
     /// The name `--toolsets` takes.
@@ -65,7 +62,6 @@ impl Toolset {
             Toolset::Versions => "versions",
             Toolset::Tasks => "tasks",
             Toolset::Chat => "chat",
-            Toolset::Bots => "bots",
         }
     }
 
@@ -103,7 +99,6 @@ impl Toolset {
             ],
             Toolset::Tasks => &["list_tasks", "update_task"],
             Toolset::Chat => CHAT_TOOL_NAMES,
-            Toolset::Bots => crate::BOT_TOOL_NAMES,
         }
     }
 
@@ -256,7 +251,7 @@ impl fmt::Display for Toolsets {
 /// (see MCP.md). Growth past one is a decision to record in MCP.md's table,
 /// not a number to bump.
 #[cfg(test)]
-pub(crate) const BUDGETS: [(Toolset, usize); 7] = [
+pub(crate) const BUDGETS: [(Toolset, usize); 6] = [
     (Toolset::Core, 770),
     (Toolset::Docs, 15_010),
     (Toolset::Files, 2_500),
@@ -264,7 +259,6 @@ pub(crate) const BUDGETS: [(Toolset, usize); 7] = [
     (Toolset::Tasks, 3_410),
     (Toolset::Chat, 1_510),
     // M2 external task tools: 2783 measured bytes, about 11% headroom.
-    (Toolset::Bots, 3_100),
 ];
 
 /// What a `tools/list` reply line spends outside its tools: the JSON-RPC

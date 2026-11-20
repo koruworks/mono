@@ -55,7 +55,6 @@
 use koru_draw::el::{Frame, FrameCx, Interaction};
 use koru_draw::geometry::Rect;
 use koru_draw::scene;
-use koru_draw::theme::{Profile, Space};
 use koru_i18n::{Key as Words, fill, t};
 use koru_ui::icon_button::{self, Metrics};
 use koru_ui::popover::PopoverAlign;
@@ -227,27 +226,18 @@ impl ChatSurface {
             return shell.microphone_choice();
         }
         let mic = self.mic_button()?;
-        let width = Metrics::COMPACT.control_width();
-        let gap = Space::S0_5.px(Profile::Desktop);
-        Some(Rect::new(mic.x + mic.w + gap, mic.y, width, mic.h))
+        Some(Rect::new(mic.x + mic.w, mic.y, crate::BUTTON_H, mic.h))
     }
 
-    /// **The chevron**, where it shows: while the pointer is on it or on the
-    /// microphone, or its panel is open — never while recording.
+    /// The chevron stays visible beside the microphone, except while recording.
     pub(crate) fn mic_chooser_button(&self) -> Option<Rect> {
         if self.dictating() {
             return None;
         }
-        let slot = self.mic_chooser_slot()?;
-        let shown = self.dictation.microphone.open
-            || self
-                .mic_chooser_zone()
-                .is_some_and(|zone| zone.contains(self.pointer.0, self.pointer.1));
-        shown.then_some(slot)
+        self.mic_chooser_slot()
     }
 
-    /// Where the pointer shows the chevron: on the fixed microphone or in
-    /// its reserved lane to the right.
+    /// The microphone and its reserved chooser lane form one hover zone.
     pub(crate) fn mic_chooser_zone(&self) -> Option<Rect> {
         let slot = self.mic_chooser_slot()?;
         let mic = self.mic_button()?;
@@ -475,7 +465,10 @@ impl ChatSurface {
         }
         let open = self.dictation.microphone.open;
         self.microphone_chevron.set(open, Instant::now());
-        let metrics = Metrics::COMPACT;
+        let metrics = Metrics {
+            radius: chevron.h * 0.5,
+            ..Metrics::INLINE
+        };
         let chip = icon_button::hover_chip_with(chevron, metrics);
         let hovered = chevron.contains(self.pointer.0, self.pointer.1);
         let palette = koru_draw::theme::p();

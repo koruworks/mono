@@ -62,7 +62,7 @@ fn live_feed_bounds_memory_reports_gaps_and_checks_membership() {
     );
     let mut oversized = observation.clone();
     if let AgentEvent::MessageDelta { text, .. } = &mut oversized.event {
-        *text = "x".repeat(koru_bot_client_wire::MAX_FRAME_BYTES);
+        *text = "x".repeat(crate::limits::MAX_PAYLOAD_BYTES);
     }
     assert_eq!(events.push(oversized).err(), Some(Error::InputTooSmall));
     assert_eq!(events.next, 601);

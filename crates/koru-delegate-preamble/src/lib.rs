@@ -3,6 +3,10 @@
 //! The preamble a delegated agent reads before its first turn, and where it
 //! comes from.
 //!
+//! [`session`] provides the separate common orientation with a root-scoped
+//! user override. Both files share bounded reads and objective validation;
+//! the artifact resolver and its existing editor keep their original scope.
+//!
 //! D20 makes the preamble a Markdown file under `docs/prompts/`, shipped as
 //! a release asset **so that a person may edit it**. Editability is the whole
 //! reason it is a file rather than a string in this crate; the copy compiled
@@ -102,6 +106,7 @@ use std::{
 };
 
 mod notice;
+pub mod session;
 
 pub use notice::Notice;
 
@@ -135,9 +140,9 @@ pub const SIZE_LIMIT_BYTES: usize = 64 * 1024;
 /// Which copy the text came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
-    /// A file on disk, read and used as written — the copy beside the
-    /// executables, or, in a development build with nothing beside them,
-    /// the repository's own. **Two words, not three**: what this says is
+    /// A file on disk, read and used as written — a session override, the
+    /// copy beside the executables, or a development source. **Two words,
+    /// not three**: what this says is
     /// *your file is in force*, and which build a developer is running is
     /// not a distinction to put in front of a person.
     Edited,
@@ -148,7 +153,9 @@ pub enum Source {
 /// The preamble the worker hands to the provider, and how it was found.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Resolved {
-    /// The text, exactly as read — or [`BUNDLED`].
+    /// The text read, or the resolver's compiled default. The legacy artifact
+    /// resolver removes an initial UTF-8 byte-order mark; session text is
+    /// preserved verbatim.
     pub text: Cow<'static, str>,
     pub source: Source,
     /// Set only when an edited copy existed and could not be used; the
@@ -192,14 +199,27 @@ pub fn resolve(installation_dir: &Path) -> Resolved {
 /// which is what lets a test stand a temporary file in for it, and what makes
 /// `None` exactly a released build.
 fn resolve_within(installation_dir: &Path, repository_file: Option<&Path>) -> Resolved {
-    for path in [
-        Some(installation_dir.join(RELATIVE_PATH)),
-        repository_file.map(Path::to_path_buf),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        match read_edited(&path) {
+    resolve_candidates(
+        [
+            Some(installation_dir.join(RELATIVE_PATH)),
+            repository_file.map(Path::to_path_buf),
+        ]
+        .into_iter()
+        .flatten(),
+        BUNDLED,
+        read_edited,
+    )
+}
+
+/// The precedence and fallback rule shared by the two independent files.
+/// A reader is injected so callers' precedence tests need no filesystem.
+fn resolve_candidates(
+    paths: impl IntoIterator<Item = PathBuf>,
+    default: &'static str,
+    mut read: impl FnMut(&Path) -> Result<String, Fault>,
+) -> Resolved {
+    for path in paths {
+        match read(&path) {
             Ok(text) => {
                 return Resolved {
                     text: Cow::Owned(text),
@@ -213,10 +233,10 @@ fn resolve_within(installation_dir: &Path, repository_file: Option<&Path>) -> Re
             // Something is there and cannot be used. The search stops: a
             // person who edited this copy hears that their edit did not
             // take, instead of silently being handed another one.
-            Err(Fault::Rejected(notice)) => return bundled(Some(notice)),
+            Err(Fault::Rejected(notice)) => return bundled(default, Some(notice)),
         }
     }
-    bundled(None)
+    bundled(default, None)
 }
 
 /// The repository's own copy — [`SOURCE_PATH`], beside this crate's manifest
@@ -237,9 +257,9 @@ fn repository_file() -> Option<PathBuf> {
     None
 }
 
-fn bundled(notice: Option<Notice>) -> Resolved {
+fn bundled(default: &'static str, notice: Option<Notice>) -> Resolved {
     Resolved {
-        text: Cow::Borrowed(BUNDLED),
+        text: Cow::Borrowed(default),
         source: Source::Bundled,
         notice,
         path: None,
@@ -332,6 +352,14 @@ pub fn write(path: &Path, text: &str) -> Result<(), WriteFault> {
 /// The five objective checks, in the order they can be made: existence,
 /// readability, size, encoding, emptiness.
 fn read_edited(path: &Path) -> Result<String, Fault> {
+    let text = decode(read_bytes(path)?)?;
+    // Preserve the existing artifact editor's Notepad compatibility. The
+    // common session resolver deliberately retains every valid text byte.
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned())
+}
+
+/// A bounded source read, independent of either document's text or precedence.
+fn read_bytes(path: &Path) -> Result<Vec<u8>, Fault> {
     let mut file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::NotFound => return Err(Fault::Missing),
@@ -360,6 +388,12 @@ fn read_edited(path: &Path) -> Result<String, Fault> {
     {
         return Err(Fault::Rejected(Notice::Unreadable));
     }
+    Ok(bytes)
+}
+
+/// Objective validity only. A BOM alone is not content; a valid file is
+/// otherwise returned exactly as written, including its BOM and whitespace.
+fn decode(bytes: Vec<u8>) -> Result<String, Fault> {
     if bytes.len() > SIZE_LIMIT_BYTES {
         return Err(Fault::Rejected(Notice::Oversized {
             bytes: bytes.len() as u64,
@@ -367,15 +401,15 @@ fn read_edited(path: &Path) -> Result<String, Fault> {
         }));
     }
     let text = String::from_utf8(bytes).map_err(|_| Fault::Rejected(Notice::BadEncoding))?;
-    // A byte-order mark is an encoding artifact, not text: Notepad writes one
-    // by default, and handing `U+FEFF` to a provider as the first character
-    // of its instructions is nobody's edit. Stripping it is the only change
-    // ever made to what was read.
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    if text.trim().is_empty() {
+    if text
+        .strip_prefix('\u{feff}')
+        .unwrap_or(&text)
+        .trim()
+        .is_empty()
+    {
         return Err(Fault::Rejected(Notice::Empty));
     }
-    Ok(text.to_owned())
+    Ok(text)
 }
 
 #[cfg(test)]

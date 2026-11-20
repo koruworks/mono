@@ -15,8 +15,6 @@ mod bots;
 pub mod fixtures;
 pub use bots::BotAuthorityAdapter;
 mod chat_tools;
-pub mod native_effect;
-pub mod private_effect;
 mod store_context;
 mod store_tools;
 mod worker;
@@ -27,36 +25,7 @@ pub use store_tools::pinned::{PinnedPage, PinnedReadError, PinnedUnavailable, re
 pub use store_tools::{
     NativeStoreAuthority, StoreToolAdapter, native_document_title, native_store_backend,
 };
-pub use worker::bots::children::{
-    ASKABLE_LIMIT, CHILD_ASK_BUDGET, RunAskableBot, RunAskableRequest, RunChildAskItem,
-    RunChildAskPending, RunChildAskRequest, TURN_NOT_STARTED,
-};
-pub use worker::bots::client::mirror::BotMirror;
-pub use worker::bots::client::owner::{BotClientStream, BotOwnerServer};
-pub use worker::bots::decision_wait::{
-    BotDelegateDecisionWait, DecisionWaitDelegate, DecisionWaitPortError, DecisionWaitSubject,
-};
-pub use worker::bots::events::{BotEventDraft, BotEventSink, BotEvents, BotStreamTurnedAway};
-pub use worker::bots::memory::{
-    MemoryBaseEvidence, MemoryBaseSelection, MemoryEditBaseRequest, MemoryWriteAuthorityEvidence,
-    MemoryWriteAuthorityRequest, MemoryWriteSubjectEvidence, RunMemoryEnsureRequest,
-    RunMemoryEnsureResult, RunMemoryWriteSubjectRequest, memory_write_fingerprint,
-};
-pub use worker::bots::memory::{RunMemoryReadRequest, RunMemoryReadResult};
-pub use worker::bots::policy::{NativePolicyEvidence, NativePolicyRequest};
-pub use worker::bots::routine::model::{
-    RunBotSubject, RunRoutineCreate, RunRoutineOperation, RunRoutineRequest, RunRoutineResult,
-};
-pub use worker::bots::validate_agent_model_catalog;
-pub use worker::connections::ConnectionsSetup;
-pub use worker::connections::plan::{
-    PRIVATE_UNAVAILABLE, PrivateItemName, PrivateReadPlan, PrivateReadPlanRequest,
-    PrivateReadVerdict, PrivateSetupReason, ROUTINE_NOT_GRANTED,
-};
-pub use worker::native_recovery::{
-    NativeMutationGate, NativeRecoveryAdmission, NativeRecoveryRefusal,
-};
-pub use worker::routine_call::{RoutineCall, RoutineCallContext};
+pub use worker::catalog::validate_agent_model_catalog;
 pub use worker::{
     AiWorker, AiWorkerClient, AiWorkerInfo, WORKER_COMMAND_CAPACITY, WorkerConfig, WorkerError,
     WorkerExit, WorkerHandle, WorkerStatus,

@@ -225,11 +225,7 @@ impl BotView {
                 ActionStyle::Ghost,
                 self.library.loading(),
             )));
-        if self.memory_available() {
-            content.child(self.memory_section(engine))
-        } else {
-            content
-        }
+        content.child(self.memory_section(engine))
     }
 
     pub(super) fn library_action(&self, key: Key) -> Option<Action> {

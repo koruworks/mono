@@ -3940,7 +3940,7 @@ pub trait Editing {
             // host's id for the choice under the role its section named,
             // captioned by the choice's title. One with no target is the
             // caption as text, like every other spec that names nothing.
-            PillKind::Mention => match &spec.mention {
+            PillKind::Mention | PillKind::Bot(_) => match &spec.mention {
                 Some(target) => Attr::labelled(
                     target.role.clone(),
                     AttrValue::Text(target.id.clone()),

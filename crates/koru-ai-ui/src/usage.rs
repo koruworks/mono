@@ -4,12 +4,19 @@ use koru_ai_core::{AiSurface, AiUsage, AttemptStatus, UsageReport, UsageTotals};
 use koru_draw::theme::role;
 use koru_i18n::{Key, Lang};
 
-use crate::{ACTION_H, BLOCK_GAP, MessageLayout, PAD, USAGE_GAP};
+use crate::{ACTION_H, BLOCK_GAP, MessageLayout, USAGE_GAP};
 
 pub(crate) fn message_height(message: &MessageLayout) -> f32 {
+    // A tool-only response has folded all its words into the work header.
+    // Its receipt follows that header directly; an empty text layout, padding
+    // and an invisible action strip must not leave a second blank card there.
+    if message.folded_empty_answer() && message.usage.is_none() && message.sources.is_none() {
+        return 0.0;
+    }
     let actions = if message.role == koru_ai_core::ChatRole::Assistant
         && message.id.is_some()
         && message.state.is_terminal()
+        && !message.folded_empty_answer()
     {
         ACTION_H + 8.0
     } else {
@@ -23,10 +30,13 @@ pub(crate) fn message_height(message: &MessageLayout) -> f32 {
         .sources
         .as_ref()
         .map_or(0.0, |sources| sources.layout.height() + USAGE_GAP);
-    message_content_height(message) + usage + sources + PAD * 2.0 + actions
+    message_content_height(message) + usage + sources + message.padding() * 2.0 + actions
 }
 
 pub(crate) fn message_content_height(message: &MessageLayout) -> f32 {
+    if message.folded_empty_answer() {
+        return 0.0;
+    }
     if !message.attachments.is_empty() {
         // The person's own words, then their attachment pills; a message
         // of attachments only is its pill row alone.
@@ -229,6 +239,7 @@ mod tests {
         let now = Timestamp::from_millis(1);
         let chat_id = ChatId::new();
         ChatTranscript {
+            active_attempt: None,
             sources: Vec::new(),
             chat: Chat {
                 id: chat_id,

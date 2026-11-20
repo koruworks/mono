@@ -12,24 +12,6 @@ mod repository;
 #[cfg(feature = "fixtures")]
 pub use db::write_at_schema;
 pub use db::{OpenError, SCHEMA_VERSION, SUPERSEDED_DEVELOPMENT_SCHEMA};
-pub use repository::{
-    BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotChildReplayRollover, BotCreationScan,
-    BotDecisionCard, BotDecisionClosure, BotDecisionReplayRollover, BotHold, BotNativeDecisionLink,
-    BotTeamPauseRow, CLIENT_RECEIPT_KEEP_MS, CLIENT_RECEIPT_PRUNE_BATCH, ClientBotRequest,
-    ClientOutcome, ClientReceipt, ClientReceiptBegin, FEED_RECORD_TABLES, FEED_STARTS_KEPT,
-    FeedBody, FeedBotHome, FeedChat, FeedCounts, FeedItem, FeedKind, FeedMarker, FeedMessage,
-    FeedScan, HistoricalBotRun, KnownAttachmentDirs, LifecycleCapture, LifecycleMember,
-    LifecycleMemberDraft, LifecycleOperation, LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner,
-    RemovedAttachment, Repository, RoutineAccessRecoveryPage, RoutineDetailSnapshot,
-    RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject,
-    TeamPauseChange,
-};
-/// The copy this computer keeps of another computer's Bots (M8).
-pub use repository::{
-    MIRROR_COMMAND_KEEP_MS, MIRROR_COMMAND_PRUNE_BATCH, MIRROR_COMMAND_UNCONFIRMED_MS,
-    MirrorApplied, MirrorChange, MirrorCommand, MirrorCommandBegin, MirrorCommandState,
-    MirrorCounts, MirrorDeleted, MirrorOwner, MirrorPage, MirrorPlace, MirrorRefusal,
-    MirrorSubject,
-};
+pub use repository::{KnownAttachmentDirs, RemovedAttachment, Repository};
 
 pub const DATABASE_FILE: &str = "ai.db";

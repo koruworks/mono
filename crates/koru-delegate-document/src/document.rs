@@ -73,16 +73,16 @@ impl RunDocument {
         if run.get(K_SCHEMA).is_some() {
             return Err(RunDocumentError::AlreadyInitialized);
         }
+        if header.bot.is_some()
+            || matches!(
+                header.scope,
+                koru_delegate_core::WorkspaceScope::BotFolder { .. }
+            )
+        {
+            return Err(RunDocumentError::Malformed { part: Part::Header });
+        }
         let keys = header_to_keys(header)?;
-        // Every new Bot Run, Manual or Routine, is created at 6; ordinary
-        // Runs keep 3. Earlier Bot Runs (3, 4 and 5) stay readable and
-        // writable, and a committed projection upgrades them to 6.
-        let schema = if header.bot.is_some() {
-            RUN_BOT_DOCUMENT_SCHEMA_VERSION
-        } else {
-            RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION
-        };
-        run.insert(K_SCHEMA, schema)?;
+        run.insert(K_SCHEMA, RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION)?;
         for (key, value) in keys {
             run.insert(&key, value)?;
         }
@@ -112,7 +112,13 @@ impl RunDocument {
 
     fn writable(&self) -> Result<()> {
         match self.compatibility() {
-            Compatibility::Writable => self.validate_subject_cohort(),
+            Compatibility::Writable => {
+                let header = self.header()?;
+                if header.bot.is_some() {
+                    return Err(RunDocumentError::Malformed { part: Part::Header });
+                }
+                Ok(())
+            }
             Compatibility::TooNew { found, understood } => {
                 Err(RunDocumentError::ReadOnly { found, understood })
             }
@@ -344,48 +350,6 @@ impl RunDocument {
         self.commit_value(K_RESULTS, to_stored(&results, Part::Results)?)
     }
 
-    /// Register a verified native result once. A repeated operation must carry
-    /// precisely its original evidence; later page edits never rewrite history.
-    pub fn register_native_result(
-        &self,
-        reference: &koru_delegate_core::NativeResultReference,
-    ) -> Result<()> {
-        self.writable()?;
-        let mut header = self.header()?;
-        if header.bot.is_none() || !reference.valid() {
-            return Err(RunDocumentError::Malformed { part: Part::Header });
-        }
-        if let Some(existing) = header
-            .native_results
-            .iter()
-            .find(|r| r.operation_id == reference.operation_id)
-        {
-            return if existing == reference {
-                Ok(())
-            } else {
-                Err(RunDocumentError::Malformed { part: Part::Header })
-            };
-        }
-        header.native_results.push(reference.clone());
-        let stored = to_stored(&header.native_results, Part::Header)?;
-        let run = self.run();
-        run.insert("native_results", stored)?;
-        // A pinned version is a format 6 fact. A build that knows only an
-        // earlier format refuses the entry's unknown field, so an earlier
-        // document that receives one is stamped 6 in the same commit: that
-        // build then opens it read-only instead of meeting a field it cannot
-        // decode under a format it believes it may write.
-        if reference.version_id.is_some()
-            && self
-                .schema_version()
-                .is_some_and(|schema| schema < RUN_BOT_DOCUMENT_SCHEMA_VERSION)
-        {
-            run.insert(K_SCHEMA, RUN_BOT_DOCUMENT_SCHEMA_VERSION)?;
-        }
-        self.doc.commit();
-        Ok(())
-    }
-
     /// One gesture on a finished run (D44). A register: the last write on
     /// any device wins, and it converges however many write it.
     pub fn set_rating(&self, rating: &RunRating) -> Result<()> {
@@ -424,7 +388,3 @@ impl RunDocument {
         Ok(())
     }
 }
-
-mod bot_delivery;
-pub(crate) mod projection;
-pub(crate) mod source;

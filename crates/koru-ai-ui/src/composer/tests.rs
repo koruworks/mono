@@ -40,6 +40,120 @@ fn chip(composer: &mut ChatComposer, title: &str) -> DocumentId {
 }
 
 #[test]
+fn single_line_ink_is_centered_for_empty_and_typed_drafts() {
+    let mut composer = ChatComposer::new(None);
+    for draft in ["", "Hello", ""] {
+        composer.set_text(draft);
+        let h = PAD_TOP + line_height() + PAD_BOTTOM;
+        let text = Rect::new(20.0, 30.0, 500.0, h);
+        composer.place(text, Rect::new(0.0, 0.0, 600.0, 500.0));
+        let row = &composer.editor.body.rows[0];
+        let ink_center = composer.origin.1 + koru_editor::rowlayout::first_line_mid_y(row, row.y);
+        assert!((ink_center - (text.y + text.h * 0.5)).abs() < 0.5);
+    }
+}
+
+#[test]
+fn bot_mentions_keep_the_plain_composer_height_and_baseline() {
+    let mut composer = ChatComposer::new(None);
+    for width in [360.0, 720.0] {
+        composer.set_text("Ask CFO what is your role?");
+        let plain_height = composer.text_height(width - PAD_X * 2.0, 1, 8);
+        let plain_baseline = composer.editor.body.rows[0]
+            .layout
+            .get(0)
+            .unwrap()
+            .metrics()
+            .baseline;
+        composer.set_message(
+            &format!("Ask [[koru://bot/{CFO}#CFO]] what is your role?"),
+            |_| String::new(),
+        );
+        let height = composer.text_height(width - PAD_X * 2.0, 1, 8);
+        assert!(
+            (height - plain_height).abs() < 0.01,
+            "mentions must not enlarge a single line: {height} vs {plain_height}"
+        );
+        let text = Rect::new(20.0, 30.0, width, PAD_TOP + height + PAD_BOTTOM);
+        composer.place(text, Rect::new(0.0, 0.0, 800.0, 500.0));
+        let row = &composer.editor.body.rows[0];
+        assert!(!row.pills.is_empty());
+        assert_eq!(row.layout.len(), 1);
+        let baseline = row.layout.get(0).unwrap().metrics().baseline;
+        assert!((baseline - plain_baseline).abs() < 0.01);
+        let center = composer.origin.1 + koru_editor::rowlayout::first_line_mid_y(row, row.y);
+        assert!((center - (text.y + text.h * 0.5)).abs() < 0.5);
+        koru_editor::rowlayout::visit_pills(
+            row,
+            &composer.editor.view.engine.pills,
+            |_, _, visual, _, y, _, h| {
+                assert!(
+                    (composer.origin.1 + row.y + y + h * 0.5 - center).abs() < 0.5,
+                    "avatar and mention bounds share the surrounding text's center"
+                );
+                assert!(visual.icon_slot <= h);
+                assert!((h - plain_height).abs() < 0.01);
+            },
+        );
+    }
+}
+
+#[test]
+fn context_pages_share_the_plain_line_height_and_wrap_normally() {
+    let mut composer = ChatComposer::new(None);
+    for width in [360.0, 720.0] {
+        composer.set_text("Top News Today please read this");
+        let plain = composer.text_height(width - PAD_X * 2.0, 1, 8);
+        let baseline = composer.editor.body.rows[0]
+            .layout
+            .get(0)
+            .unwrap()
+            .metrics()
+            .baseline;
+        composer.set_text("");
+        chip(&mut composer, "Top News Today");
+        typed(&mut composer, "please read this");
+        let height = composer.text_height(width - PAD_X * 2.0, 1, 8);
+        assert!(
+            (height - plain).abs() < 0.01,
+            "a context page must not grow the line"
+        );
+        assert!(
+            (composer.editor.body.rows[0]
+                .layout
+                .get(0)
+                .unwrap()
+                .metrics()
+                .baseline
+                - baseline)
+                .abs()
+                < 0.01
+        );
+        composer.place(
+            Rect::new(20.0, 30.0, width, PAD_TOP + height + PAD_BOTTOM),
+            Rect::new(0.0, 0.0, 800.0, 500.0),
+        );
+        let row = &composer.editor.body.rows[0];
+        let center = composer.origin.1 + koru_editor::rowlayout::first_line_mid_y(row, row.y);
+        koru_editor::rowlayout::visit_pills(
+            row,
+            &composer.editor.view.engine.pills,
+            |_, _, _, _, y, _, h| {
+                assert!((composer.origin.1 + row.y + y + h * 0.5 - center).abs() < 0.5);
+            },
+        );
+        typed(
+            &mut composer,
+            " and explain the details of this page in a few paragraphs with the important facts included",
+        );
+        assert!(
+            composer.text_height(width - PAD_X * 2.0, 1, 8) > plain,
+            "long input still grows when it wraps"
+        );
+    }
+}
+
+#[test]
 fn a_chosen_document_sits_in_the_text_as_a_chip_and_leaves_as_its_link() {
     let mut composer = ChatComposer::new(None);
     typed(&mut composer, "Summarise ");
@@ -669,6 +783,10 @@ fn picker(composer: &ChatComposer) -> &koru_editor::components::entity_picker::E
 #[test]
 fn bot_mention_picked_from_the_picker_is_a_chip_stored_as_its_link() {
     let mut composer = ChatComposer::new(None);
+    composer.set_bot_faces(&std::collections::HashMap::from([(
+        uuid::Uuid::parse_str(CFO).unwrap(),
+        4,
+    )]));
     assert!(
         !composer.set_extras(&bots()),
         "nothing is drawn differently yet"
@@ -700,7 +818,7 @@ fn bot_mention_picked_from_the_picker_is_a_chip_stored_as_its_link() {
     // The chip reads `@CFO`, and never shows the id.
     let row = &composer.editor.body.rows[0];
     let info = row.pills.values().next().expect("the mention chip");
-    assert_eq!(info.kind, koru_draw::pill::PillKind::Mention);
+    assert_eq!(info.kind, koru_draw::pill::PillKind::Bot(4));
     assert_eq!(info.label, "@CFO");
     assert!(!row.text.contains(CFO));
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! **The owner controls of a Bot's Routines, as the pane holds them** (P4.3
-//! piece 4): turning one on, pausing it, testing it, saving its timing and
+//! piece 4): turning one on, pausing it, running it now, saving its timing and
 //! name, and changing its access.
 //!
 //! **Nothing here is a state the owner has not confirmed.** A control is one
@@ -14,20 +14,15 @@
 //! Routine; the pane sends one at a time for the whole list, so no answer
 //! can settle a control it was not sent for.
 //!
-//! **Hidden is cancelled.** Hiding the pane, or showing another Bot, drops
-//! what was pending: its answer is ignored, and the list is read again when
-//! the pane is next shown. No clock runs while it is hidden.
+//! Hiding the pane retires observations. An uncertain native command keeps
+//! its identity for the same Bot until its receipt is resolved. No clock
+//! runs while the pane is hidden.
 use super::*;
 use koru_ai_core::bots::{BotAccess, BotCommand, BotRequestId};
 use koru_delegate_core::{ScheduleId, SchedulePauseReason};
 use koru_delegate_schedule::{ScheduleName, ScheduleState};
 use koru_recurrence::RecurrenceRule;
 use std::collections::HashMap;
-
-/// One minute, the unit a Test claims.
-const MINUTE_MS: i64 = 60_000;
-/// How long after a Test's minute ended its history is read once more.
-const TEST_SETTLE_MS: i64 = 2_000;
 
 /// What the owner said instead of applying a control.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,15 +49,6 @@ impl Refusal {
             reasons: Vec::new(),
         }
     }
-
-    /// `routine_not_ready` with its reasons.
-    #[cfg(test)]
-    pub(crate) fn not_ready(reasons: &[&str]) -> Self {
-        Self {
-            failure: Failure::Refused("routine_not_ready".to_owned()),
-            reasons: reasons.iter().map(|reason| (*reason).to_owned()).collect(),
-        }
-    }
 }
 
 /// The control that is with the owner.
@@ -84,22 +70,14 @@ struct Pending {
     name: Option<ScheduleName>,
 }
 
-/// An accepted Test whose minute has not been seen in the history yet.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct Testing {
-    schedule: ScheduleId,
-    minute_ms: i64,
-    /// The one read after the minute ended has been asked for.
-    asked: bool,
-}
-
 /// The access choices of one paused Routine, open in its detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AccessForm {
     pub schedule: ScheduleId,
     pub access: BotAccess,
-    /// The pages the current grant selects: saving sends none.
+    /// The pages retained by the native grant.
     pub selected_pages: u16,
+    pages: Vec<koru_ai_core::bots::BotPage>,
     grant_revision: u64,
     /// One id for one attempt. Kept only to ask again after an answer that
     /// did not say the edit was refused.
@@ -151,11 +129,10 @@ impl Restored {
 /// What the pane draws of the controls.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Data {
+    pub native_retry: bool,
     pub pending: Option<(ScheduleId, Doing)>,
     pub checking: Option<ScheduleId>,
     pub notes: Vec<(ScheduleId, Vec<Words>)>,
-    /// A Test that waits for the next minute: the Routine and that minute.
-    pub test_wait: Option<(ScheduleId, i64)>,
     pub access: Option<AccessForm>,
     pub restored: Option<Restored>,
 }
@@ -179,12 +156,13 @@ impl Data {
 
 #[derive(Default)]
 pub(crate) struct Controls {
+    native_pending: Option<koru_api_client::bot_routines::Command>,
+    native_uncertain: bool,
+    native_unknown: bool,
     seq: u64,
     pending: Option<Pending>,
     checking: Option<ScheduleId>,
     notes: HashMap<ScheduleId, Vec<Words>>,
-    test_wait: Option<(ScheduleId, i64)>,
-    testing: Option<Testing>,
     access: Option<AccessForm>,
     timing: Option<TimingAnswer>,
     restored: Option<Restored>,
@@ -195,17 +173,28 @@ pub(crate) struct Controls {
 }
 
 impl Controls {
-    /// The same pane shown for another Bot, or shown again: nothing pending
-    /// survives, and no old answer can match a new control.
+    /// Observations retire when hidden. A native command that may have
+    /// committed retains its identity for the same Bot until its receipt returns.
     pub(super) fn retired(&self, keep_restored: bool) -> Self {
         Self {
             seq: self.seq,
+            pending: self
+                .pending
+                .clone()
+                .filter(|_| keep_restored && self.native_pending.is_some()),
+            native_pending: self.native_pending.clone().filter(|_| keep_restored),
+            native_uncertain: keep_restored && self.native_pending.is_some(),
+            native_unknown: keep_restored && self.native_pending.is_some(),
             restored: self.restored.clone().filter(|_| keep_restored),
             ..Self::default()
         }
     }
     pub(super) fn listed(&mut self) {
         self.checking = None;
+        self.notes.retain(|_, words| {
+            words.retain(|word| *word != Words::BotsRoutineErrPending);
+            !words.is_empty()
+        });
     }
     /// The Routine a form was open on is no longer the selected one.
     pub(super) fn close_forms(&mut self) {
@@ -238,11 +227,6 @@ fn paused_by_person(state: &ScheduleState) -> bool {
             ..
         }
     )
-}
-
-/// The start of the minute after `now_ms`: when a Test can be asked again.
-pub(crate) fn next_minute(now_ms: i64) -> i64 {
-    (now_ms.div_euclid(MINUTE_MS) + 1) * MINUTE_MS
 }
 
 impl Routines {
@@ -285,6 +269,7 @@ impl Routines {
             .collect();
         notes.sort_by_key(|(schedule, _)| schedule.as_uuid());
         Data {
+            native_retry: self.controls.native_uncertain || self.startup.uncertain,
             pending: self
                 .controls
                 .pending
@@ -292,7 +277,6 @@ impl Routines {
                 .map(|pending| (pending.schedule, pending.doing)),
             checking: self.controls.checking,
             notes,
-            test_wait: self.controls.test_wait,
             access: self.controls.access.clone(),
             restored: self.controls.restored.clone(),
         }
@@ -315,11 +299,39 @@ impl Routines {
         });
         self.controls.notes.remove(&schedule);
         self.changed();
+
         Some(Command::RoutineControl {
             seq: self.controls.seq,
             bot,
             schedule,
             command: Box::new(command),
+        })
+    }
+
+    fn send_native(
+        &mut self,
+        schedule: ScheduleId,
+        doing: Doing,
+        command: koru_api_client::bot_routines::Command,
+    ) -> Option<Command> {
+        let bot = self.bot?;
+        self.controls.seq = self.controls.seq.wrapping_add(1);
+        self.controls.pending = Some(Pending {
+            seq: self.controls.seq,
+            schedule,
+            doing,
+            name: None,
+        });
+        self.controls.notes.remove(&schedule);
+        self.controls.native_pending = Some(command.clone());
+        self.controls.native_uncertain = false;
+        self.controls.native_unknown = false;
+        self.changed();
+        Some(Command::NativeRoutineControl {
+            seq: self.controls.seq,
+            bot,
+            schedule,
+            command,
         })
     }
 
@@ -330,45 +342,42 @@ impl Routines {
             return None;
         }
         let (revision, state) = self.confirmed(schedule)?;
-        let (action, doing) = match state {
-            ScheduleState::Active { .. } => (BotRoutineLifecycleAction::Pause, Doing::Pausing),
-            ScheduleState::Paused { .. } => (BotRoutineLifecycleAction::Enable, Doing::TurningOn),
+        let (enabled, doing) = match state {
+            ScheduleState::Active { .. } => (false, Doing::Pausing),
+            ScheduleState::Paused { .. } => (true, Doing::TurningOn),
             _ => return None,
         };
-        let command = BotCommand::SetRoutineLifecycle {
-            bot_id: self.bot?,
-            schedule_id: schedule,
-            expected_definition_revision: revision,
-            action,
+        let command = koru_api_client::bot_routines::Command::Enable {
+            id: uuid::Uuid::new_v4(),
+            bot: self.bot?,
+            routine: schedule.as_uuid(),
+            revision,
+            enabled,
         };
-        self.send(schedule, doing, None, command)
+        self.send_native(schedule, doing, command)
     }
 
-    /// Whether Test is offered for the row: paused by a person, and nothing
-    /// waiting. A Routine that is on is never offered one.
+    /// Whether Run now supports the observed lifecycle: on or paused by a
+    /// person. Sending also checks pending controls.
     pub(crate) fn testable(&self, schedule: ScheduleId) -> bool {
-        self.confirmed(schedule)
-            .is_some_and(|(_, state)| paused_by_person(state))
+        self.confirmed(schedule).is_some_and(|(_, state)| {
+            matches!(state, ScheduleState::Active { .. }) || paused_by_person(state)
+        })
     }
 
-    /// **Test was pressed**: one Run of a paused Routine now.
+    /// **Run now was pressed**: one Run without changing the Routine's state.
     pub(crate) fn test_routine(&mut self, schedule: ScheduleId) -> Option<Command> {
-        if !self.may_control()
-            || !self.testable(schedule)
-            || self
-                .controls
-                .test_wait
-                .is_some_and(|(waiting, _)| waiting == schedule)
-        {
+        if !self.may_control() || !self.testable(schedule) {
             return None;
         }
         let (revision, _) = self.confirmed(schedule)?;
-        let command = BotCommand::TestRoutine {
-            bot_id: self.bot?,
-            schedule_id: schedule,
-            expected_definition_revision: revision,
+        let command = koru_api_client::bot_routines::Command::RunNow {
+            id: uuid::Uuid::new_v4(),
+            bot: self.bot?,
+            routine: schedule.as_uuid(),
+            revision,
         };
-        self.send(schedule, Doing::Testing, None, command)
+        self.send_native(schedule, Doing::Testing, command)
     }
 
     /// The selected Routine as last read, when its timing can be edited: its
@@ -471,10 +480,20 @@ impl Routines {
         let Some(held) = self.detail.held.clone() else {
             return false;
         };
+        let pages = {
+            let Some(snapshot) = self.detail.snapshot.as_ref().filter(|s| {
+                s.detail.schedule_id == held.schedule_id
+                    && s.detail.access.grant_revision == held.access.grant_revision
+            }) else {
+                return false;
+            };
+            snapshot.selected_pages.clone()
+        };
         self.controls.access = Some(AccessForm {
             schedule: held.schedule_id,
             access: held.access.access,
             selected_pages: held.access.selected_page_count,
+            pages,
             grant_revision: held.access.grant_revision,
             request: BotRequestId::mint(),
         });
@@ -512,19 +531,35 @@ impl Routines {
             return None;
         }
         let form = self.controls.access.clone()?;
+        if self.detail.selected != Some((self.bot?, form.schedule))
+            || !self.detail.data().navigable
+            || self.detail.snapshot.as_ref().is_none_or(|s| {
+                s.detail.schedule_id != form.schedule
+                    || s.detail.access.grant_revision != form.grant_revision
+            })
+        {
+            return None;
+        }
         let command = BotCommand::UpdateRoutineAccess {
             request_id: form.request,
             bot_id: self.bot?,
             schedule_id: form.schedule,
             expected_grant_revision: form.grant_revision,
             access: form.access,
-            selected_pages: Vec::new(),
+            selected_pages: form.pages,
         };
         self.send(form.schedule, Doing::SavingAccess, None, command)
     }
 
     /// The link took no command: nothing was sent, and nothing is pending.
     pub(crate) fn control_unsent(&mut self) {
+        if self.controls.native_pending.is_some() && self.controls.native_unknown {
+            self.controls.native_uncertain = true;
+            self.changed();
+            return;
+        }
+        self.controls.native_pending = None;
+        self.controls.native_uncertain = false;
         if let Some(pending) = self.controls.pending.take() {
             if pending.doing == Doing::SavingTiming {
                 self.controls.timing =
@@ -553,7 +588,7 @@ impl Routines {
         bot: BotId,
         schedule: ScheduleId,
         result: Result<BotResponse, Refusal>,
-        now_ms: i64,
+        _now_ms: i64,
     ) -> bool {
         if self.bot != Some(bot)
             || self
@@ -580,22 +615,6 @@ impl Routines {
                     self.controls.timing = Some(TimingAnswer::Applied);
                 }
             }
-            Ok(BotResponse::RoutineTest { test })
-                if pending.doing == Doing::Testing && test.schedule_id == schedule =>
-            {
-                self.controls.testing = Some(Testing {
-                    schedule,
-                    minute_ms: test.occurrence_ms,
-                    asked: false,
-                });
-                // Its history is where the result is: show it.
-                if self.expanded == Some(schedule) {
-                    self.detail.refresh(false);
-                } else {
-                    self.expanded = Some(schedule);
-                    self.detail.select(self.bot, self.expanded, self.visible);
-                }
-            }
             Ok(BotResponse::RoutineAccess { access })
                 if pending.doing == Doing::SavingAccess && access.schedule_id == schedule =>
             {
@@ -618,10 +637,102 @@ impl Routines {
             }
             // An answer to some other question says nothing of this one.
             Ok(_) => self.unknown(schedule, pending.doing),
-            Err(refusal) => self.refused(schedule, pending.doing, refusal, now_ms),
+            Err(refusal) => self.refused(schedule, pending.doing, refusal),
         }
         self.changed();
         true
+    }
+
+    pub(crate) fn retry_native(&mut self) -> Option<Command> {
+        if !self.visible || !self.controls.native_uncertain {
+            return None;
+        }
+        let pending = self.controls.pending.clone()?;
+        let command = self.controls.native_pending.clone()?;
+        self.controls.native_uncertain = false;
+        self.changed();
+        Some(Command::NativeRoutineControl {
+            seq: pending.seq,
+            bot: self.bot?,
+            schedule: pending.schedule,
+            command,
+        })
+    }
+    pub(crate) fn native_control_answer(
+        &mut self,
+        seq: u64,
+        bot: BotId,
+        schedule: ScheduleId,
+        result: Result<koru_api_client::bot_routines::Response, Refusal>,
+    ) -> bool {
+        use koru_api_client::bot_routines as wire;
+        if self.bot != Some(bot)
+            || self
+                .controls
+                .pending
+                .as_ref()
+                .is_none_or(|p| p.seq != seq || p.schedule != schedule)
+        {
+            return false;
+        }
+        let Some(command) = self.controls.native_pending.as_ref() else {
+            return false;
+        };
+        let request = match command {
+            wire::Command::Enable { id, .. } | wire::Command::RunNow { id, .. } => *id,
+            _ => return false,
+        };
+        let valid = matches!((&result,command),(Ok(wire::Response::Enabled {request:id,control,..}),wire::Command::Enable {enabled,..}) if *id==request && control.schedule_id==schedule
+            && control.action==if *enabled {BotRoutineControlAction::Enable}else{BotRoutineControlAction::Pause}
+            && matches!((*enabled,&control.state),(true,ScheduleState::Active {..})|(false,ScheduleState::Paused {..})))
+            || matches!((&result,command),(Ok(wire::Response::Started {request:id,occurrence,..}),wire::Command::RunNow {..}) if *id==request && occurrence.routine==schedule.as_uuid() && occurrence.manual);
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.failure == Failure::Unanswered || matches!(&e.failure,Failure::Refused(code) if matches!(code.as_str(),"engine_unavailable"|"storage_unavailable")))
+            || (result.is_ok() && !valid)
+        {
+            self.controls.native_uncertain = true;
+            self.controls.native_unknown = true;
+            self.changed();
+            return true;
+        }
+        self.controls.native_pending = None;
+        self.controls.native_uncertain = false;
+        self.controls.native_unknown = false;
+        match result {
+            Ok(wire::Response::Enabled {
+                control,
+                first_enabled,
+                ..
+            }) => {
+                let enabled = control.action == BotRoutineControlAction::Enable;
+                let changed = self.control_answer(
+                    seq,
+                    bot,
+                    schedule,
+                    Ok(BotResponse::RoutineControl { control }),
+                    0,
+                );
+                self.startup_offer |= changed && enabled && first_enabled;
+                changed
+            }
+            Ok(wire::Response::Started { .. }) => {
+                self.controls.pending = None;
+                // Exact history says queued, running, skipped or completed.
+                // Transport success alone does not claim execution.
+                if self.expanded == Some(schedule) {
+                    self.detail.refresh(false);
+                } else {
+                    self.expanded = Some(schedule);
+                    self.detail.select(self.bot, self.expanded, self.visible);
+                }
+                self.changed();
+                true
+            }
+            Err(error) => self.control_answer(seq, bot, schedule, Err(error), 0),
+            _ => false,
+        }
     }
 
     /// The owner confirmed a state: the row shows exactly it.
@@ -631,6 +742,14 @@ impl Routines {
         control: &BotRoutineControl,
         name: Option<ScheduleName>,
     ) {
+        if self
+            .confirmed(schedule)
+            .is_some_and(|(revision, _)| revision > control.definition_revision)
+        {
+            self.detail.refresh(false);
+            self.reread();
+            return;
+        }
         if let Some(page) = self.held.as_mut() {
             if let Some(item) = Rc::make_mut(page)
                 .items
@@ -655,7 +774,7 @@ impl Routines {
         if self.expanded == Some(schedule) {
             self.detail.refresh(false);
         }
-        // A Routine that was turned on has no Test and no access form.
+        // A Routine that was turned on has no access form.
         if matches!(control.state, ScheduleState::Active { .. }) {
             if self
                 .controls
@@ -664,13 +783,6 @@ impl Routines {
                 .is_some_and(|form| form.schedule == schedule)
             {
                 self.controls.access = None;
-            }
-            if self
-                .controls
-                .test_wait
-                .is_some_and(|(waiting, _)| waiting == schedule)
-            {
-                self.controls.test_wait = None;
             }
         }
     }
@@ -684,7 +796,7 @@ impl Routines {
         self.reread();
     }
 
-    fn refused(&mut self, schedule: ScheduleId, doing: Doing, refusal: Refusal, now_ms: i64) {
+    fn refused(&mut self, schedule: ScheduleId, doing: Doing, refusal: Refusal) {
         let code = match &refusal.failure {
             Failure::Unanswered => return self.unknown(schedule, doing),
             Failure::Refused(code) => code.as_str(),
@@ -704,10 +816,9 @@ impl Routines {
                 vec![Words::BotsRoutineErrChanged]
             }
             "routine_not_ready" => not_ready_words(&refusal.reasons),
-            // A wait the pane knows the length of, not an error.
-            "routine_test_minute_ending" | "routine_test_too_soon" if doing == Doing::Testing => {
-                self.controls.test_wait = Some((schedule, next_minute(now_ms)));
-                Vec::new()
+            "routine_control_pending" => {
+                self.reread();
+                vec![Words::BotsRoutineErrPending]
             }
             "routine_must_be_paused" if doing == Doing::SavingAccess => {
                 self.reread();
@@ -739,81 +850,21 @@ impl Routines {
     }
 
     /// The moment the pane next has something to do by the clock, in epoch
-    /// milliseconds: a Test's wait ending, or its minute ending. `None`
-    /// while hidden, and while nothing waits.
+    /// milliseconds. Native occurrence history owns the refresh deadline.
     pub(crate) fn control_deadline(&self) -> Option<i64> {
-        if !self.visible {
-            return None;
-        }
-        let wait = self.controls.test_wait.map(|(_, at)| at);
-        let test = self
-            .controls
-            .testing
-            .filter(|test| !test.asked)
-            .map(|test| test.minute_ms + MINUTE_MS + TEST_SETTLE_MS);
-        [wait, test].into_iter().flatten().min()
+        self.detail.follow_up_at()
     }
 
-    /// The clock reached `now_ms`. `true` when anything the pane draws
-    /// changed. Starts nothing by itself: a Test is pressed by a person.
     pub(crate) fn control_tick(&mut self, now_ms: i64) -> bool {
         if !self.visible {
             return false;
         }
-        let mut changed = false;
-        if self.controls.test_wait.is_some_and(|(_, at)| now_ms >= at) {
-            self.controls.test_wait = None;
-            changed = true;
-        }
-        if let Some(test) = self.controls.testing
-            && !test.asked
-            && now_ms >= test.minute_ms + MINUTE_MS + TEST_SETTLE_MS
-        {
-            if self.detail.selected.map(|(_, selected)| selected) == Some(test.schedule) {
-                // One read after the minute: its line is there, or the Test
-                // never started.
-                self.controls.testing = Some(Testing {
-                    asked: true,
-                    ..test
-                });
-                if !self.detail.refresh(false) && !self.detail.loading() {
-                    self.settle_test(false);
-                }
-            } else {
-                // The person looked elsewhere: nothing is claimed either way.
-                self.controls.testing = None;
-            }
-            changed = true;
-        }
+        let changed =
+            self.detail.follow_up_at().is_some_and(|at| now_ms >= at) && self.detail.refresh(false);
         if changed {
             self.changed();
         }
         changed
-    }
-
-    /// The selected detail answered: a Test's minute is in its history, or,
-    /// after the minute ended, the Test did not start.
-    pub(super) fn settle_test(&mut self, read: bool) {
-        let Some(test) = self.controls.testing else {
-            return;
-        };
-        if self.detail.selected.map(|(_, selected)| selected) != Some(test.schedule) {
-            return;
-        }
-        let seen = self.detail.held.as_ref().is_some_and(|held| {
-            matches!(&held.occurrences, RoutineOccurrenceHistoryObservation::Available { items, .. }
-                if items.iter().any(|line| line.occurrence_ms == test.minute_ms))
-        });
-        if seen {
-            self.controls.testing = None;
-        } else if test.asked {
-            self.controls.testing = None;
-            // A history that could not be read says nothing of the Test.
-            if read || self.detail.held.is_some() {
-                self.controls
-                    .note(test.schedule, vec![Words::BotsRoutineTestNotStarted]);
-            }
-        }
     }
 
     /// **A Restore or an Unarchive of this Bot finished**: what it said of
@@ -881,8 +932,7 @@ pub(crate) fn refusal_words(code: &str) -> Words {
             Words::BotsRoutineErrUnavailable
         }
         "routine_not_ready" => Words::BotsRoutineErrNotReady,
-        // Every Bot is paused (M8): turning a Routine on and Test are new
-        // work.
+        // Every Bot is paused: enabling a Routine and Run now request new work.
         crate::bots::team_pause::TEAM_PAUSED => Words::BotsTeamPausedShort,
         "routine_must_be_paused" => Words::BotsRoutineErrPauseToTest,
         // Shown as a wait on the button; said only where there is no button.

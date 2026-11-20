@@ -112,7 +112,7 @@ fn validate_pinned_fonts(fonts: &Path) -> Result<(), String> {
 }
 
 // The documents a running Koru reads beside its executables — the MCP model
-// contract and the delegated-agent preamble — are `koru_update::RELEASE_DOCUMENTS`,
+// contract and the artifact/session instructions — are `koru_update::RELEASE_DOCUMENTS`,
 // not a list here: that is the list `ReleaseFiles::validate` requires, and a
 // second spelling of it would be a package that fails its own validation the
 // day one entry moved. Named rather than globbed for the same reason as
@@ -140,6 +140,10 @@ const RELEASE_DOCUMENT_SOURCES: &[(&str, &str)] = &[
     (
         "docs/prompts/delegated-agent.md",
         "crates/koru-delegate-preamble/delegated-agent.md",
+    ),
+    (
+        "docs/prompts/session.md",
+        "crates/koru-delegate-preamble/session.md",
     ),
 ];
 
@@ -2316,7 +2320,11 @@ mod tests {
     fn every_runtime_document_is_explicit_and_present() {
         assert_eq!(
             koru_update::RELEASE_DOCUMENTS,
-            &["docs/mcp/README.md", "docs/prompts/delegated-agent.md"]
+            &[
+                "docs/mcp/README.md",
+                "docs/prompts/delegated-agent.md",
+                "docs/prompts/session.md",
+            ]
         );
         // The preamble's reader and the package agree on the path, in the
         // one place both can be named: the reader exports its constant, and
@@ -2338,6 +2346,11 @@ mod tests {
             release_document_source(koru_delegate_preamble::RELATIVE_PATH).unwrap(),
             koru_delegate_preamble::SOURCE_PATH,
             "the preamble is staged from the file its crate compiles in"
+        );
+        assert_eq!(
+            release_document_source(koru_delegate_preamble::session::RELATIVE_PATH).unwrap(),
+            koru_delegate_preamble::session::SOURCE_PATH,
+            "the common orientation is staged from its own compiled source"
         );
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

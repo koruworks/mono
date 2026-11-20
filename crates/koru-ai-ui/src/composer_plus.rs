@@ -159,6 +159,42 @@ impl ChatSurface {
         true
     }
 
+    pub fn set_bot_faces(&mut self, faces: std::collections::HashMap<uuid::Uuid, u8>) -> bool {
+        if self.bot_faces == faces {
+            return false;
+        }
+        self.bot_faces = faces;
+        self.message_layouts.clear();
+        self.composer.set_bot_faces(&self.bot_faces);
+        self.messages_dirty = true;
+        true
+    }
+
+    /// Paint-only identity and pose for this Bot's live working label.
+    pub fn set_working_bot(
+        &mut self,
+        face: u8,
+        name: &str,
+        pose: koru_draw::face::FacePose,
+    ) -> bool {
+        if let Some(bot) = &mut self.working_bot {
+            let changed = bot.face != face || bot.name != name || bot.pose != pose;
+            bot.face = face;
+            if bot.name != name {
+                bot.name = name.to_owned();
+            }
+            bot.pose = pose;
+            changed
+        } else {
+            self.working_bot = Some(crate::work_view::WorkingBot {
+                face,
+                name: name.to_owned(),
+                pose,
+            });
+            true
+        }
+    }
+
     fn plus_menu_at(&mut self, items: Vec<PlusItem>) {
         let button = self.plus_button();
         let wide = items

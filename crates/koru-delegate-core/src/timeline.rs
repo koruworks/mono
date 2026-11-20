@@ -183,7 +183,7 @@ pub enum StepKind {
         discovered: bool,
     },
     ControlReturned,
-    /// A Bot Run asked other Bots and waits for them (M6). No fields.
+    /// Stored legacy Bot marker. No current producer emits it.
     WaitingForBot,
     ArtifactRegistered,
     Completed,

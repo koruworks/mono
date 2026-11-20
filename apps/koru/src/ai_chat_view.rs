@@ -316,6 +316,7 @@ impl AiChatView {
     /// attachments ([`ChatSurface::deactivate`]): a Bot in Trash reads
     /// nothing, and its unsent words are there again on Restore.
     pub fn deactivate(&mut self) -> bool {
+        self.surface.close_bot_work();
         self.surface.deactivate()
     }
 
@@ -328,20 +329,6 @@ impl AiChatView {
     /// The conversation the owned surface is bound to.
     pub fn owned_conversation(&self) -> Option<&koru_ai_ui::OwnedConversation> {
         self.surface.owned()
-    }
-
-    /// **The conversation is shown from a saved copy** (`koru_ai_ui::owned`,
-    /// *A saved copy*): another computer runs it, and this is what its host
-    /// says it may send and what a refusal reads as. `None` for a
-    /// conversation this computer runs. `true` when what is drawn changed.
-    pub fn set_saved_copy(&mut self, copy: Option<koru_ai_ui::SavedCopy>) -> bool {
-        self.surface.set_saved_copy(copy)
-    }
-
-    /// What the conversation was told of its saved copy, for a test to read.
-    #[cfg(test)]
-    pub fn saved_copy(&self) -> Option<&koru_ai_ui::SavedCopy> {
-        self.surface.saved_copy()
     }
 
     // ---- A host-drawn empty transcript (`koru_ai_ui::owned`): a Bot tab
@@ -535,13 +522,26 @@ impl AiChatView {
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.surface.take_open_document_request()
     }
-    pub(crate) fn is_engine_owned(&self) -> bool {
-        self.surface.is_engine_owned()
-    }
     pub(crate) fn take_open_bot_conversation(
         &mut self,
     ) -> Option<(koru_ai_core::bots::BotId, String, koru_ai_core::ChatId)> {
         self.surface.take_open_bot_conversation()
+    }
+
+    pub(crate) fn set_bot_faces(
+        &mut self,
+        faces: std::collections::HashMap<uuid::Uuid, u8>,
+    ) -> bool {
+        self.surface.set_bot_faces(faces)
+    }
+
+    pub(crate) fn set_working_bot(
+        &mut self,
+        face: u8,
+        name: &str,
+        pose: koru_draw::face::FacePose,
+    ) -> bool {
+        self.surface.set_working_bot(face, name, pose)
     }
 
     pub fn take_place_document_request(&mut self) -> Option<koru_link::KoruLink> {

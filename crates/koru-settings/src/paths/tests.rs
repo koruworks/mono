@@ -34,6 +34,29 @@ fn two_roots_share_no_file() {
 }
 
 #[test]
+fn session_instructions_follow_the_injected_preferences_directory() {
+    let paths = SettingsPaths::from_resolved_files(
+        "/roaming/koru/preferences.conf".into(),
+        "/other/terminal.conf".into(),
+        "/local/desktop-v1.json".into(),
+        "/cache/state.json".into(),
+        "/state/windows.conf".into(),
+    );
+    assert_eq!(
+        paths.session_instructions_file(),
+        Path::new("/roaming/koru/prompts/session.md")
+    );
+    let ordinary = Path::new("/ordinary");
+    let isolated =
+        SettingsPaths::for_channel_root(Path::new("/isolated"), Some(ordinary), "test").unwrap();
+    assert_eq!(
+        isolated.session_instructions_file(),
+        Path::new("/isolated/settings/prompts/session.md")
+    );
+    assert!(!isolated.session_instructions_file().starts_with(ordinary));
+}
+
+#[test]
 fn each_file_has_the_name_its_current_owner_uses() {
     let paths = SettingsPaths::under_root(std::path::Path::new("/tmp/koru"));
     let name = |path: &std::path::Path| path.file_name().unwrap().to_string_lossy().into_owned();

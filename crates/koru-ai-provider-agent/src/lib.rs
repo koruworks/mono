@@ -53,7 +53,7 @@ pub mod mapping;
 /// Shared AI-owned conversation/context rendering for a fresh delegated turn.
 /// This does not start a session or add delegate-owned Run/file instructions.
 pub fn compose_delegated_prompt(request: &koru_ai_core::AiRequest) -> String {
-    turn::compose_prompt(request, true)
+    turn::compose_content(request, true)
 }
 pub use turn::{
     AGENT_OLDER_THAN_APP, check_path_references, delivers_natively, native_pictures,

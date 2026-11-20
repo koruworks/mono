@@ -676,7 +676,6 @@ impl WorkerState {
                 invocation,
                 answers,
             } => {
-                self.bot_next_message_ids.remove(&invocation);
                 self.next_message_rows.remove(&invocation);
                 if let Some(live) = self.agent_live.get_mut(&invocation) {
                     live.questions.clear();
@@ -703,7 +702,6 @@ impl WorkerState {
                 })
             }
             AgentActivityEvent::ApprovalExpired { invocation } => {
-                self.bot_next_message_ids.remove(&invocation);
                 // A set passed over here first has nothing left to expire.
                 if self.next_message_rows.remove(&invocation).is_none()
                     && matches!(
@@ -1024,7 +1022,6 @@ impl WorkerState {
         &mut self,
         activity: &ToolActivity,
     ) -> ApiResult<ToolDecisionResponse> {
-        self.bot_next_message_ids.remove(&activity.id);
         self.next_message_rows.remove(&activity.id);
         self.agent_live.remove(&activity.id);
         if let Some(agents) = &self.agents {
@@ -1053,7 +1050,6 @@ impl WorkerState {
         invocation: ToolInvocationId,
         publish_on: Option<InferenceAttemptId>,
     ) {
-        self.bot_next_message_ids.remove(&invocation);
         self.next_message_rows.remove(&invocation);
         self.agent_live.remove(&invocation);
         let at = Timestamp::now();
@@ -1111,7 +1107,6 @@ impl WorkerState {
             .map(|(invocation, _)| *invocation)
             .collect();
         for invocation in gone {
-            self.bot_next_message_ids.remove(&invocation);
             self.next_message_rows.remove(&invocation);
             self.agent_live.remove(&invocation);
         }
@@ -1147,10 +1142,11 @@ impl WorkerState {
     /// the agent takes the answers.
     pub(super) fn send_answers_turn(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: SendTurnRequest,
         next: koru_ai_core::NextMessageAnswers,
     ) -> ApiResult<AiResponseStream> {
+        authorize(&context, AiScope::Chat)?;
         if !request.markdown.trim().is_empty()
             || !request.attachment_ids.is_empty()
             || !request.explicit_refs.is_empty()
@@ -1161,10 +1157,10 @@ impl WorkerState {
                 false,
             ));
         }
-        let access = self.bot_read_access(&context)?;
+
         let chat = self
             .repository
-            .chat_with_access(request.chat_id, &access)
+            .chat(request.chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let activity = self
@@ -1172,18 +1168,6 @@ impl WorkerState {
             .tool_activity(next.invocation)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
-        let bot_answer = self.prepare_bot_answer(&context, &chat, &activity, &next)?;
-        if bot_answer.is_some()
-            && (request.web_search
-                || !request.skills.is_empty()
-                || request.system_prompt_override.is_some())
-        {
-            return Err(failure(
-                "unsupported_capability",
-                "Bot answers are submitted on their own, without additional tools or prompt overrides.",
-                false,
-            ));
-        }
         if activity.chat_id != chat.id
             || !is_agent_provider(&chat.current_model.provider)
             || !self.next_message_rows.contains_key(&activity.id)
@@ -1213,20 +1197,7 @@ impl WorkerState {
             .find(|message| message.role == ChatRole::User)
             .ok_or_else(|| failure("invalid_request", "The chat has no message.", false))?
             .id;
-        let context_anchor = if let Some(answer) = &bot_answer {
-            let prior = self
-                .repository
-                .attempt(answer.question.prior_attempt)
-                .map_err(ai_failure)?
-                .ok_or_else(invariant_failure)?;
-            if prior.chat_id != Some(chat.id) {
-                return Err(invariant_failure());
-            }
-            prior.assistant_message_id.ok_or_else(invariant_failure)?
-        } else {
-            user
-        };
-        if bot_answer.is_none() {
+        {
             let Some(agents) = self.agents.clone() else {
                 return Err(tool_not_resumable());
             };
@@ -1265,13 +1236,7 @@ impl WorkerState {
         let now = Timestamp::now();
         let assistant_id = MessageId::new();
         let attempt_id = InferenceAttemptId::new();
-        let reasoning = if bot_answer.is_some() {
-            request
-                .reasoning_override
-                .unwrap_or(chat.current_model.default_reasoning)
-        } else {
-            chat.current_model.default_reasoning
-        };
+        let reasoning = chat.current_model.default_reasoning;
         let assistant_message = Message {
             id: assistant_id,
             chat_id: chat.id,
@@ -1287,7 +1252,7 @@ impl WorkerState {
             created_at: now,
             completed_at: None,
         };
-        let mut provider_messages: Vec<AiRequestMessage> = messages
+        let provider_messages: Vec<AiRequestMessage> = messages
             .iter()
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
@@ -1300,14 +1265,6 @@ impl WorkerState {
                 attachments: Vec::new(),
             })
             .collect();
-        self.bot_answer_history(chat.id, &messages, &mut provider_messages)?;
-        if let Some(answer) = &bot_answer {
-            provider_messages.push(AiRequestMessage {
-                role: ChatRole::User,
-                markdown: koru_ai_core::render_prompt_text(&answer.prompt),
-                attachments: Vec::new(),
-            });
-        }
         let attempt = InferenceAttempt {
             id: attempt_id,
             operation_id: request.operation_id,
@@ -1348,23 +1305,7 @@ impl WorkerState {
             assistant_message,
             attempt: attempt.clone(),
         };
-        if let Some(answer) = &bot_answer {
-            self.prepare_bot_chat_turn(
-                &context,
-                &chat,
-                koru_ai_core::bots::replay::BotChatPreparation::AnsweredContinuation {
-                    retry: pending,
-                    question: answer.question.clone(),
-                },
-                request.destination_workspace,
-                "send",
-                &request,
-                &[],
-                Some(answer.previous),
-            )?;
-        } else {
-            self.repository.begin_retry(&pending).map_err(ai_failure)?;
-        }
+        self.repository.begin_retry(&pending).map_err(ai_failure)?;
         let (stream_sender, events) = sync_channel(STREAM_CAPACITY);
         self.streams.insert(
             attempt_id,
@@ -1375,14 +1316,7 @@ impl WorkerState {
         );
         let cancellation = Cancellation::default();
         self.cancellations.insert(attempt_id, cancellation.clone());
-        if bot_answer.is_some() {
-            if let Err(error) = self.finish_bot_answer(activity.id, attempt_id) {
-                self.interrupt_bot_chat(attempt_id);
-                return Err(error);
-            }
-        } else {
-            self.answer_attempts.insert(attempt_id, activity.id);
-        }
+        self.answer_attempts.insert(attempt_id, activity.id);
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -1400,42 +1334,24 @@ impl WorkerState {
                 agent_mode: chat.agent_mode.clone(),
                 agent_fast: chat.agent_fast,
                 agent_turn_reasoning: self.agent_turn_reasoning(&chat.current_model, reasoning),
-                agent_answers: bot_answer.is_none().then_some(next),
+                agent_answers: Some(next),
                 ..AiRequestOptions::default()
             },
         };
         self.work_started(attempt_id);
         let started_at = Timestamp::now();
-        // Bot answers capture their task pages against the asking assistant.
-        // Ordinary agent answers retain their existing context-free path.
-        let job = if bot_answer.is_some() {
-            self.prepare_context_job(
-                attempt_id,
-                context_anchor,
-                chat.id,
-                base_request,
-                Vec::new(),
-                &access,
-                request.replace_pinned_documents,
-                started_at,
-                cancellation,
-            )
-        } else {
-            Ok(ContextJob {
-                attempt_id,
-                user_message_id: context_anchor,
-                chat_id: chat.id,
-                profile: chat.profile_id,
-                bot_authority: self.bot_authority.clone(),
-                bot_memory: None,
-                request: base_request,
-                refs: Vec::new(),
-                known_documents: HashMap::new(),
-                replace_pinned_documents: false,
-                started_at,
-                cancellation,
-            })
-        };
+        let job = Ok(ContextJob {
+            attempt_id,
+            user_message_id: user,
+            chat_id: chat.id,
+            profile: chat.profile_id,
+            request: base_request,
+            refs: Vec::new(),
+            known_documents: HashMap::new(),
+            replace_pinned_documents: false,
+            started_at,
+            cancellation,
+        });
         match job {
             Ok(job) => match self.context_pool.try_submit(job) {
                 Ok(()) => self.work_admitted(attempt_id),
@@ -1791,7 +1707,8 @@ pub(super) fn readiness_reason(
         ExecutableAvailability::Failed { .. } => match row.failure.as_ref() {
             Some(failure) => match (failure.stage, failure.diagnostic) {
                 (_, D::Timeout) => reason::CHECK_TIMED_OUT,
-                (_, D::Spawn) | (S::Spawn | S::Version, D::UnexpectedExit) => {
+                (_, D::Spawn)
+                | (S::Spawn | S::Version | S::Initialize | S::Read, D::UnexpectedExit) => {
                     reason::FAILED_TO_START
                 }
                 (_, D::RuntimeUnavailable) => reason::RUNTIME_MISSING,
@@ -1808,32 +1725,6 @@ pub(super) fn with_reason(mut failure: Failure, reason: Option<&str>) -> Failure
         failure.details.insert("reason".into(), reason.into());
     }
     failure
-}
-
-/// A Bot command refused because its agent cannot run
-/// (`agent_models_failed` from the model discovery it asks first), with why
-/// as far as the session host's readiness row says now. The code and
-/// `retryable` stay as they were. An agent the row calls ready failed its
-/// listing; a readiness question that is not answered adds nothing.
-pub(super) fn explain_agent_refusal(
-    agents: &AgentSessions,
-    provider: &AiProviderId,
-    refusal: Failure,
-) -> Failure {
-    if refusal.code != "agent_models_failed" {
-        return refusal;
-    }
-    let Some(kind) = agent_kind_of(provider) else {
-        return refusal;
-    };
-    let Ok(readiness) = agents.readiness(&kind.kind) else {
-        return refusal;
-    };
-    let reason = readiness_reason(readiness.as_ref(), || {
-        koru_ai_provider_agent::agent_program_present(&kind)
-    })
-    .unwrap_or(koru_ai_wire::agent_readiness_reasons::LISTING_FAILED);
-    with_reason(refusal, Some(reason))
 }
 
 /// **A readiness row as a validation status and its closed code.**

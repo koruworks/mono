@@ -1127,8 +1127,9 @@ impl crate::ChatSurface {
         {
             return true;
         }
-        let name = (begun && self.attempt.is_some())
-            .then(|| self.agent_model_name(&agent, &requested_model));
+        let name = (begun
+            && (self.reply_busy() || self.managed.as_ref().is_some_and(|state| state.running())))
+        .then(|| self.agent_model_name(&agent, &requested_model));
         let mut model = koru_ai_core::ModelSelection {
             provider: agent,
             requested_model,

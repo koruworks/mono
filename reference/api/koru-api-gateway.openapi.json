@@ -938,7 +938,7 @@
               "reason": {
                 "allOf": [
                   {
-                    "$ref": "#/components/schemas/CancelReason2"
+                    "$ref": "#/components/schemas/CancelReason"
                   }
                 ],
                 "default": "run",
@@ -2514,7 +2514,7 @@
             "type": "string"
           },
           {
-            "description": "A Bot Run asked other Bots and waits for their requests to settle\n(M6). Set when the wait opens; cleared when the Run is resumed.",
+            "description": "Stored legacy Bot marker. No current transition creates or resumes it.",
             "enum": [
               "waiting_for_bot"
             ],
@@ -3594,20 +3594,6 @@
           },
           "state": {
             "$ref": "#/components/schemas/BotActivityState"
-          },
-          "waiting": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BotActivityWaiting"
-              },
-              {
-                "enum": [
-                  null
-                ],
-                "nullable": true
-              }
-            ],
-            "description": "Present exactly when `state` is `waiting`: the Bots asked and whether\nthis Bot is paused. Omitted otherwise, so an entry that does not wait\nserializes exactly as before the field existed."
           }
         },
         "required": [
@@ -3647,40 +3633,13 @@
             "type": "string"
           },
           {
-            "description": "An approval or a question card is open for the person. Takes\nprecedence over `running` and `waiting` when it holds.",
+            "description": "An approval or a question card is open for the person. Takes\nprecedence over `running` when it holds.",
             "enum": [
               "needs_you"
             ],
             "type": "string"
-          },
-          {
-            "description": "The reply asked other Bots and waits for their requests (M6). Takes\nprecedence over `running`. [`BotActivity::waiting`] says on whom.",
-            "enum": [
-              "waiting"
-            ],
-            "type": "string"
           }
         ]
-      },
-      "BotActivityWaiting": {
-        "description": "What a waiting conversation waits on: the Bots it asked whose requests are\nstill open, at most three, and whether its own Bot is paused (a paused\nBot's wait has no time limit and is shown as paused).",
-        "properties": {
-          "on": {
-            "items": {
-              "$ref": "#/components/schemas/BotId"
-            },
-            "maxItems": 3,
-            "type": "array"
-          },
-          "paused": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "on",
-          "paused"
-        ],
-        "type": "object"
       },
       "BotChatCursor": {
         "additionalProperties": false,
@@ -3794,195 +3753,6 @@
               "bot"
             ],
             "type": "string"
-          }
-        ]
-      },
-      "BotChildOrigin": {
-        "description": "The origin line of a child conversation: who asked for it.",
-        "properties": {
-          "child_request_id": {
-            "type": "string"
-          },
-          "outcome": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BotChildOutcome"
-              },
-              {
-                "enum": [
-                  null
-                ],
-                "nullable": true
-              }
-            ]
-          },
-          "parent_bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "parent_chat_id": {
-            "$ref": "#/components/schemas/ChatId"
-          },
-          "parent_name": {
-            "description": "The asking Bot's current name.",
-            "type": "string"
-          },
-          "state": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "child_request_id",
-          "parent_bot_id",
-          "parent_name",
-          "parent_chat_id",
-          "state"
-        ],
-        "type": "object"
-      },
-      "BotChildOutcome": {
-        "description": "How a settled request reads. Derived at read time: `timed_out` and\n`parent_stopped` from who settled it; the rest from how the child ended.",
-        "enum": [
-          "completed",
-          "failed",
-          "needed_you",
-          "canceled",
-          "timed_out",
-          "parent_stopped"
-        ],
-        "type": "string"
-      },
-      "BotChildProgress": {
-        "description": "Where the child of a request is, read from the child's own rows.",
-        "enum": [
-          "queued",
-          "running",
-          "needs_you",
-          "finished"
-        ],
-        "type": "string"
-      },
-      "BotChildRequestCard": {
-        "description": "One request card of a parent conversation. Host-fed display data.",
-        "properties": {
-          "child": {
-            "$ref": "#/components/schemas/BotChildProgress"
-          },
-          "child_chat_id": {
-            "$ref": "#/components/schemas/ChatId"
-          },
-          "child_request_id": {
-            "type": "string"
-          },
-          "clock": {
-            "type": "string"
-          },
-          "needs_you": {
-            "description": "The child has an approval or a question open for the person.",
-            "type": "boolean"
-          },
-          "outcome": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BotChildOutcome"
-              },
-              {
-                "enum": [
-                  null
-                ],
-                "nullable": true
-              }
-            ]
-          },
-          "parent_assistant_message_id": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/MessageId"
-              }
-            ],
-            "description": "The assistant message of the parent the card is drawn under."
-          },
-          "recipient_bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "recipient_name": {
-            "description": "The recipient's current name.",
-            "type": "string"
-          },
-          "result": {
-            "$ref": "#/components/schemas/BotChildResult"
-          },
-          "state": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "child_request_id",
-          "parent_assistant_message_id",
-          "recipient_bot_id",
-          "recipient_name",
-          "child_chat_id",
-          "state",
-          "child",
-          "clock",
-          "result",
-          "needs_you"
-        ],
-        "type": "object"
-      },
-      "BotChildResult": {
-        "description": "What a request handed over, as a count. Never a title.",
-        "oneOf": [
-          {
-            "description": "The request is open, or it settled without completing.",
-            "properties": {
-              "result": {
-                "enum": [
-                  "none"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result"
-            ],
-            "type": "object"
-          },
-          {
-            "description": "The child completed and saved this many pages (at most 20 are read).",
-            "properties": {
-              "pages": {
-                "format": "uint8",
-                "maximum": 255,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "result": {
-                "enum": [
-                  "saved"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "pages"
-            ],
-            "type": "object"
-          },
-          {
-            "description": "The child completed and saved no page.",
-            "properties": {
-              "result": {
-                "enum": [
-                  "no_page_saved"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result"
-            ],
-            "type": "object"
           }
         ]
       },
@@ -4197,36 +3967,6 @@
           },
           {
             "additionalProperties": false,
-            "description": "Start one Run of a paused Routine now, under the Routine's own\naccess, without turning it on. Answered `routine_test` once the\nSchedule's owner accepted the current minute; the Routine's history\nsays what the minute became.",
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "test_routine"
-                ],
-                "type": "string"
-              },
-              "expected_definition_revision": {
-                "format": "uint32",
-                "minimum": 1,
-                "type": "integer"
-              },
-              "schedule_id": {
-                "$ref": "#/components/schemas/ScheduleId"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "schedule_id",
-              "expected_definition_revision"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
             "description": "Replace one Routine's name and timing in one revision-checked commit,\nwhile it is on or paused. Its task, context and access are not\nchanged. Answered `routine_control`.",
             "properties": {
               "bot_id": {
@@ -4315,180 +4055,6 @@
           },
           {
             "additionalProperties": false,
-            "description": "Staged Memory status contract; unavailable until complete Memory integration.",
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "read_memory"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "ensure_memory"
-                ],
-                "type": "string"
-              },
-              "expected_revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "title": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "command",
-              "request_id",
-              "bot_id",
-              "expected_revision",
-              "title"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "retry_memory"
-                ],
-                "type": "string"
-              },
-              "creation_request": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "observed_state": {
-                "$ref": "#/components/schemas/BotMemoryState"
-              },
-              "observed_updated_at_ms": {
-                "format": "int64",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "creation_request",
-              "observed_state",
-              "observed_updated_at_ms"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "abandon_memory"
-                ],
-                "type": "string"
-              },
-              "creation_request": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "observed_state": {
-                "$ref": "#/components/schemas/BotMemoryState"
-              },
-              "observed_updated_at_ms": {
-                "format": "int64",
-                "type": "integer"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "creation_request",
-              "observed_state",
-              "observed_updated_at_ms"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "list_memory"
-                ],
-                "type": "string"
-              },
-              "cursor": {
-                "nullable": true,
-                "type": "string"
-              },
-              "limit": {
-                "format": "uint16",
-                "maximum": 20,
-                "minimum": 1,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "limit"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "read_memory_fact"
-                ],
-                "type": "string"
-              },
-              "cursor": {
-                "nullable": true,
-                "type": "string"
-              },
-              "fact_id": {
-                "$ref": "#/components/schemas/BotMemoryNodeId"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "fact_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
             "description": "Read Role and ordered Knowledge references under current owner authority.",
             "properties": {
               "bot_id": {
@@ -4546,12 +4112,26 @@
           },
           {
             "additionalProperties": false,
-            "description": "Bounded owner roster for the external task facade, without configuration.",
+            "description": "Bind an ordinary Memory page without changing Role, Knowledge or grants.",
             "properties": {
-              "after": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "set_memory"
+                ],
+                "type": "string"
+              },
+              "expected_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "memory": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/BotId"
+                    "$ref": "#/components/schemas/BotPage"
                   },
                   {
                     "enum": [
@@ -4561,64 +4141,15 @@
                   }
                 ]
               },
-              "command": {
-                "enum": [
-                  "list_task_bots"
-                ],
-                "type": "string"
-              },
-              "limit": {
-                "format": "uint16",
-                "maximum": 65535,
-                "minimum": 0,
-                "type": "integer"
-              },
-              "workspace": {
-                "$ref": "#/components/schemas/WorkspaceId"
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
               }
             },
             "required": [
               "command",
-              "workspace",
-              "limit"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "Read only the terminal assistant text of one exactly bound task.",
-            "properties": {
-              "attempt_id": {
-                "$ref": "#/components/schemas/InferenceAttemptId"
-              },
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "chat_id": {
-                "$ref": "#/components/schemas/ChatId"
-              },
-              "command": {
-                "enum": [
-                  "read_task_answer"
-                ],
-                "type": "string"
-              },
-              "offset": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "operation_id": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "command",
+              "request_id",
               "bot_id",
-              "chat_id",
-              "attempt_id",
-              "operation_id",
-              "offset"
+              "expected_revision"
             ],
             "type": "object"
           },
@@ -4642,92 +4173,6 @@
               "command",
               "request_id",
               "bot_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "chat_id": {
-                "$ref": "#/components/schemas/ChatId"
-              },
-              "command": {
-                "enum": [
-                  "start"
-                ],
-                "type": "string"
-              },
-              "destination": {
-                "$ref": "#/components/schemas/WorkspaceId"
-              },
-              "expected_revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "task": {
-                "$ref": "#/components/schemas/BotTask"
-              }
-            },
-            "required": [
-              "command",
-              "request_id",
-              "bot_id",
-              "chat_id",
-              "expected_revision",
-              "destination",
-              "task"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "chat_id": {
-                "$ref": "#/components/schemas/ChatId"
-              },
-              "command": {
-                "enum": [
-                  "continue"
-                ],
-                "type": "string"
-              },
-              "destination": {
-                "$ref": "#/components/schemas/WorkspaceId"
-              },
-              "expected_revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "previous_run": {
-                "$ref": "#/components/schemas/RunId"
-              },
-              "request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "task": {
-                "$ref": "#/components/schemas/BotTask"
-              }
-            },
-            "required": [
-              "command",
-              "request_id",
-              "bot_id",
-              "chat_id",
-              "expected_revision",
-              "destination",
-              "task",
-              "previous_run"
             ],
             "type": "object"
           },
@@ -4859,55 +4304,6 @@
           },
           {
             "additionalProperties": false,
-            "description": "The other computers of this person whose Bots this computer keeps a\ncopy of (M8, P8.3), with how current each copy is and that computer's\nteam pause as last received. Answered `linked_owners`. A computer\nthat keeps no copy answers an empty list.",
-            "properties": {
-              "command": {
-                "enum": [
-                  "list_linked_owners"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "command"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "The Bots of one such computer, as last received (M8, P8.3): each is\nthe `Bot` that computer's own `read` answers. With `workspace`, only\nthe Bots whose home is that workspace. Answered `linked_bots`. A\ncomputer this one keeps no copy of answers an empty list in the state\n`never`.",
-            "properties": {
-              "command": {
-                "enum": [
-                  "list_linked_bots"
-                ],
-                "type": "string"
-              },
-              "owner_device": {
-                "type": "string"
-              },
-              "workspace": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/WorkspaceId"
-                  },
-                  {
-                    "enum": [
-                      null
-                    ],
-                    "nullable": true
-                  }
-                ]
-              }
-            },
-            "required": [
-              "command",
-              "owner_device"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
             "properties": {
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -4949,48 +4345,6 @@
               "command",
               "request_id",
               "bot_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "access": {
-                "$ref": "#/components/schemas/BotAccess2"
-              },
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "create"
-                ],
-                "type": "string"
-              },
-              "config": {
-                "$ref": "#/components/schemas/BotConfig"
-              },
-              "home_workspace": {
-                "$ref": "#/components/schemas/WorkspaceId"
-              },
-              "request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "selected_pages": {
-                "items": {
-                  "$ref": "#/components/schemas/BotPage"
-                },
-                "type": "array"
-              }
-            },
-            "required": [
-              "command",
-              "request_id",
-              "bot_id",
-              "home_workspace",
-              "config",
-              "access",
-              "selected_pages"
             ],
             "type": "object"
           },
@@ -5293,77 +4647,6 @@
           },
           {
             "additionalProperties": false,
-            "description": "Permanently delete a trashed Bot, from its named Trash operation.",
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "purge_bot"
-                ],
-                "type": "string"
-              },
-              "expected_revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "source_request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              }
-            },
-            "required": [
-              "command",
-              "request_id",
-              "bot_id",
-              "expected_revision",
-              "source_request_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "chat_id": {
-                "$ref": "#/components/schemas/ChatId"
-              },
-              "command": {
-                "enum": [
-                  "purge_chat"
-                ],
-                "type": "string"
-              },
-              "expected_revision": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "source_request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              }
-            },
-            "required": [
-              "command",
-              "request_id",
-              "bot_id",
-              "chat_id",
-              "expected_revision",
-              "source_request_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
             "description": "Progress of one lifecycle operation, with per-member outcomes.",
             "properties": {
               "bot_id": {
@@ -5507,54 +4790,6 @@
             "required": [
               "command",
               "workspace"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "The request cards of one conversation of a Bot that asked other Bots\n(M6): one per child request its Runs made there, oldest first, at\nmost three per Run. Identities, states and counts only. Answered\n`child_requests`.",
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "chat_id": {
-                "$ref": "#/components/schemas/ChatId"
-              },
-              "command": {
-                "enum": [
-                  "list_child_requests"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "chat_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "Who asked for a conversation, when another Bot's request started it\n(M6). Answered `child_origin`, with no origin for any other\nconversation.",
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "chat_id": {
-                "$ref": "#/components/schemas/ChatId"
-              },
-              "command": {
-                "enum": [
-                  "read_child_origin"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "chat_id"
             ],
             "type": "object"
           },
@@ -5706,84 +4941,6 @@
             "required": [
               "command",
               "request_id"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "One Run of a Bot conversation, read through the execution owner: the\nRun that wrote reply `message_id` of `chat_id` (or the reply a branch\ncopied there), with a window of its history from entry `from`, `len`\nentries (1 to 500). Without `message_id`, the Run of a task started\nthrough the API (`start`/`continue`, which writes no reply) in\n`chat_id`, bound through the Bot's own admitted receipt; a reply's Run\nis read only through its reply. Answered `run` with the Run view\n`GET /v1/runs/{run}` answers, without `execution.session`: no\nstream, control or takeover handle.",
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "chat_id": {
-                "$ref": "#/components/schemas/ChatId"
-              },
-              "command": {
-                "enum": [
-                  "read_run"
-                ],
-                "type": "string"
-              },
-              "from": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "len": {
-                "format": "uint32",
-                "maximum": 500,
-                "minimum": 1,
-                "type": "integer"
-              },
-              "message_id": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/MessageId"
-                  },
-                  {
-                    "enum": [
-                      null
-                    ],
-                    "nullable": true
-                  }
-                ]
-              },
-              "run_id": {
-                "$ref": "#/components/schemas/RunId"
-              }
-            },
-            "required": [
-              "command",
-              "bot_id",
-              "chat_id",
-              "run_id",
-              "from",
-              "len"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "The person's own Stop for a task started through the API (`start` or\n`continue`), named by that operation's `request_id`, as\n`read_operation` names it. Its Run is stopped as a conversation's\nStop and Archive stop theirs: a queued Run never starts, a running one\nends even while a person holds its session; never the automatic\ninterruption. Answered `task_stop`. A Stop only reduces work, so no\nhold refuses it. A task a conversation message started is not this\ncommand's: `not_found`.",
-            "properties": {
-              "bot_id": {
-                "$ref": "#/components/schemas/BotId"
-              },
-              "command": {
-                "enum": [
-                  "stop_task"
-                ],
-                "type": "string"
-              },
-              "request_id": {
-                "$ref": "#/components/schemas/BotRequestId"
-              }
-            },
-            "required": [
-              "command",
-              "request_id",
-              "bot_id"
             ],
             "type": "object"
           }
@@ -6796,368 +5953,6 @@
           }
         ]
       },
-      "BotMemoryCounts": {
-        "additionalProperties": false,
-        "properties": {
-          "invalid": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "not_indexed": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "omitted_from_prompt": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "valid": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "valid",
-          "omitted_from_prompt",
-          "invalid",
-          "not_indexed"
-        ],
-        "type": "object"
-      },
-      "BotMemoryDetailChunk": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "description": "The shared MCP content projection, including typed attributes and runs.\nIt is not an editable complete node or a source of execution authority."
-          },
-          "kind": {
-            "type": "string"
-          },
-          "node_id": {
-            "$ref": "#/components/schemas/BotMemoryNodeId"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BotMemoryNodeId"
-              },
-              {
-                "enum": [
-                  null
-                ],
-                "nullable": true
-              }
-            ]
-          },
-          "range": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/BotMemoryTextRange"
-              },
-              {
-                "enum": [
-                  null
-                ],
-                "nullable": true
-              }
-            ]
-          }
-        },
-        "required": [
-          "node_id",
-          "kind",
-          "content"
-        ],
-        "type": "object"
-      },
-      "BotMemoryDetailPage": {
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "status": {
-                "enum": [
-                  "absent"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "status"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "chunks": {
-                "items": {
-                  "$ref": "#/components/schemas/BotMemoryDetailChunk"
-                },
-                "type": "array"
-              },
-              "complete": {
-                "type": "boolean"
-              },
-              "continuation": {
-                "nullable": true,
-                "type": "string"
-              },
-              "fact_id": {
-                "$ref": "#/components/schemas/BotMemoryNodeId"
-              },
-              "page": {
-                "$ref": "#/components/schemas/BotPage"
-              },
-              "status": {
-                "enum": [
-                  "observed"
-                ],
-                "type": "string"
-              },
-              "version": {
-                "$ref": "#/components/schemas/DocumentVersionId"
-              }
-            },
-            "required": [
-              "status",
-              "page",
-              "version",
-              "fact_id",
-              "chunks",
-              "complete"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "BotMemoryFactSummary": {
-        "additionalProperties": false,
-        "properties": {
-          "fact_id": {
-            "$ref": "#/components/schemas/BotMemoryNodeId"
-          },
-          "summary": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "fact_id",
-          "summary"
-        ],
-        "type": "object"
-      },
-      "BotMemoryListPage": {
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "status": {
-                "enum": [
-                  "absent"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "status"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "complete": {
-                "type": "boolean"
-              },
-              "continuation": {
-                "nullable": true,
-                "type": "string"
-              },
-              "counts": {
-                "$ref": "#/components/schemas/BotMemoryCounts"
-              },
-              "items": {
-                "items": {
-                  "$ref": "#/components/schemas/BotMemoryFactSummary"
-                },
-                "type": "array"
-              },
-              "page": {
-                "$ref": "#/components/schemas/BotPage"
-              },
-              "status": {
-                "enum": [
-                  "observed"
-                ],
-                "type": "string"
-              },
-              "version": {
-                "$ref": "#/components/schemas/DocumentVersionId"
-              }
-            },
-            "required": [
-              "status",
-              "page",
-              "version",
-              "counts",
-              "items",
-              "complete"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "BotMemoryNodeId": {
-        "description": "An ordinary Memory node's canonical UUID, preserving its original value and version.",
-        "format": "uuid",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-        "type": "string"
-      },
-      "BotMemoryRefusal": {
-        "enum": [
-          "owner_unavailable",
-          "store_unavailable",
-          "document_changed",
-          "document_moved",
-          "document_trashed",
-          "lifecycle_changed",
-          "origin_mismatch"
-        ],
-        "type": "string"
-      },
-      "BotMemoryState": {
-        "enum": [
-          "prepared",
-          "unconfirmed",
-          "bound",
-          "conflict",
-          "abandoned"
-        ],
-        "type": "string"
-      },
-      "BotMemoryStatus": {
-        "additionalProperties": false,
-        "properties": {
-          "bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "revision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "state": {
-            "$ref": "#/components/schemas/BotMemoryStatusState"
-          }
-        },
-        "required": [
-          "bot_id",
-          "revision",
-          "state"
-        ],
-        "type": "object"
-      },
-      "BotMemoryStatusState": {
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "can_create": {
-                "type": "boolean"
-              },
-              "status": {
-                "enum": [
-                  "not_started"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "status",
-              "can_create"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "can_abandon": {
-                "type": "boolean"
-              },
-              "can_retry": {
-                "type": "boolean"
-              },
-              "candidate": {
-                "$ref": "#/components/schemas/BotPage"
-              },
-              "creation_request": {
-                "$ref": "#/components/schemas/BotRequestId"
-              },
-              "observed_updated_at_ms": {
-                "format": "int64",
-                "type": "integer"
-              },
-              "refusal": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/BotMemoryRefusal"
-                  },
-                  {
-                    "enum": [
-                      null
-                    ],
-                    "nullable": true
-                  }
-                ]
-              },
-              "state": {
-                "$ref": "#/components/schemas/BotMemoryState"
-              },
-              "status": {
-                "enum": [
-                  "candidate"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "status",
-              "creation_request",
-              "candidate",
-              "state",
-              "observed_updated_at_ms",
-              "can_retry",
-              "can_abandon"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "BotMemoryTextRange": {
-        "additionalProperties": false,
-        "properties": {
-          "end_utf8": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "start_utf8": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "start_utf8",
-          "end_utf8"
-        ],
-        "type": "object"
-      },
       "BotOpenLifecycle": {
         "additionalProperties": false,
         "description": "A Bot's unfinished lifecycle operation as its read reports it: enough to\nresume it (the same command kind with this `request_id`) or to reverse it\n(a Restore naming it), with why it stopped when it is parked.",
@@ -7243,33 +6038,12 @@
         "type": "object"
       },
       "BotOperationKind": {
-        "oneOf": [
-          {
-            "enum": [
-              "update_access",
-              "start",
-              "continue",
-              "pause",
-              "resume",
-              "routine_occurrence"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "Identity reservation only, never an executable submission.",
-            "enum": [
-              "routine_draft"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "An edit of one Routine's own access (ai.db 23). Its receipt is read by\nthe Routine access owner, never as a Bot's pending change.",
-            "enum": [
-              "update_routine_access"
-            ],
-            "type": "string"
-          }
-        ]
+        "enum": [
+          "update_access",
+          "pause",
+          "resume"
+        ],
+        "type": "string"
       },
       "BotOperationStatus": {
         "enum": [
@@ -7438,6 +6212,26 @@
         ],
         "type": "object"
       },
+      "BotReplyPreview": {
+        "description": "A bounded read-only excerpt of an exact, completed collaboration reply.\nThe full response remains in its source conversation; this is never stored.",
+        "properties": {
+          "markdown": {
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/MessageId"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message",
+          "markdown",
+          "truncated"
+        ],
+        "type": "object"
+      },
       "BotRequestId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -7538,24 +6332,6 @@
           },
           {
             "properties": {
-              "result": {
-                "enum": [
-                  "routine_test"
-                ],
-                "type": "string"
-              },
-              "test": {
-                "$ref": "#/components/schemas/BotRoutineTest"
-              }
-            },
-            "required": [
-              "result",
-              "test"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
               "access": {
                 "$ref": "#/components/schemas/BotRoutineAccess"
               },
@@ -7569,60 +6345,6 @@
             "required": [
               "result",
               "access"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "result": {
-                "enum": [
-                  "memory_status"
-                ],
-                "type": "string"
-              },
-              "status": {
-                "$ref": "#/components/schemas/BotMemoryStatus"
-              }
-            },
-            "required": [
-              "result",
-              "status"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "page": {
-                "$ref": "#/components/schemas/BotMemoryListPage"
-              },
-              "result": {
-                "enum": [
-                  "memory_list"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "page"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "page": {
-                "$ref": "#/components/schemas/BotMemoryDetailPage"
-              },
-              "result": {
-                "enum": [
-                  "memory_detail"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "page"
             ],
             "type": "object"
           },
@@ -7659,42 +6381,6 @@
             "required": [
               "result",
               "receipt"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "page": {
-                "$ref": "#/components/schemas/BotSummaryPage"
-              },
-              "result": {
-                "enum": [
-                  "task_bots"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "page"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "answer": {
-                "$ref": "#/components/schemas/BotTaskAnswer"
-              },
-              "result": {
-                "enum": [
-                  "task_answer"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "answer"
             ],
             "type": "object"
           },
@@ -7847,54 +6533,6 @@
           },
           {
             "properties": {
-              "requests": {
-                "items": {
-                  "$ref": "#/components/schemas/BotChildRequestCard"
-                },
-                "type": "array"
-              },
-              "result": {
-                "enum": [
-                  "child_requests"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "requests"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "origin": {
-                "anyOf": [
-                  {
-                    "$ref": "#/components/schemas/BotChildOrigin"
-                  },
-                  {
-                    "enum": [
-                      null
-                    ],
-                    "nullable": true
-                  }
-                ]
-              },
-              "result": {
-                "enum": [
-                  "child_origin"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
               "creation": {
                 "$ref": "#/components/schemas/BotCreation"
               },
@@ -7930,42 +6568,6 @@
             "type": "object"
           },
           {
-            "properties": {
-              "result": {
-                "enum": [
-                  "run"
-                ],
-                "type": "string"
-              },
-              "view": {
-                "$ref": "#/components/schemas/RunView"
-              }
-            },
-            "required": [
-              "result",
-              "view"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "result": {
-                "enum": [
-                  "task_stop"
-                ],
-                "type": "string"
-              },
-              "stop": {
-                "$ref": "#/components/schemas/BotTaskStop"
-              }
-            },
-            "required": [
-              "result",
-              "stop"
-            ],
-            "type": "object"
-          },
-          {
             "description": "M8: the team pause after `pause_team`, `resume_team` or\n`read_team_pause`.",
             "properties": {
               "result": {
@@ -7983,57 +6585,8 @@
               "team"
             ],
             "type": "object"
-          },
-          {
-            "description": "M8: the answer to `list_linked_owners`.",
-            "properties": {
-              "owners": {
-                "items": {
-                  "$ref": "#/components/schemas/LinkedOwnerView"
-                },
-                "type": "array"
-              },
-              "result": {
-                "enum": [
-                  "linked_owners"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "owners"
-            ],
-            "type": "object"
-          },
-          {
-            "description": "M8: the answer to `list_linked_bots`.",
-            "properties": {
-              "linked": {
-                "$ref": "#/components/schemas/LinkedBotsView"
-              },
-              "result": {
-                "enum": [
-                  "linked_bots"
-                ],
-                "type": "string"
-              }
-            },
-            "required": [
-              "result",
-              "linked"
-            ],
-            "type": "object"
           }
         ]
-      },
-      "BotResultsState": {
-        "enum": [
-          "preparing",
-          "available",
-          "unavailable"
-        ],
-        "type": "string"
       },
       "BotRoleInput": {
         "description": "The Role a new Bot starts with.",
@@ -8113,6 +6666,145 @@
           "selected_page_count"
         ],
         "type": "object"
+      },
+      "BotRoutineCommand": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "claim_startup"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "before": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotRoutineOccurrenceCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "kind": {
+                "enum": [
+                  "history"
+                ],
+                "type": "string"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "routine"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "run_now"
+                ],
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "routine",
+              "revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "enable"
+                ],
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "routine",
+              "revision",
+              "enabled"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "BotRoutineControl": {
         "additionalProperties": false,
@@ -8709,69 +7401,38 @@
           }
         ]
       },
-      "BotRoutineTest": {
-        "additionalProperties": false,
-        "description": "A Test was accepted for this minute. It is not a claim and not a result:\nthe Routine's history says what the minute became.",
+      "BotRoutineOccurrence": {
         "properties": {
+          "card": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "definition_revision": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "manual": {
+            "type": "boolean"
+          },
+          "message": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "occurrence_ms": {
             "format": "int64",
             "type": "integer"
           },
-          "schedule_id": {
-            "$ref": "#/components/schemas/ScheduleId"
-          }
-        },
-        "required": [
-          "schedule_id",
-          "occurrence_ms"
-        ],
-        "type": "object"
-      },
-      "BotSummary": {
-        "properties": {
-          "bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "lifecycle": {
-            "$ref": "#/components/schemas/BotLifecycle"
-          },
-          "main_chat": {
-            "$ref": "#/components/schemas/ChatId"
-          },
-          "name": {
-            "type": "string"
-          },
-          "paused": {
-            "type": "boolean"
-          },
-          "revision": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "bot_id",
-          "name",
-          "main_chat",
-          "revision",
-          "paused",
-          "lifecycle"
-        ],
-        "type": "object"
-      },
-      "BotSummaryPage": {
-        "properties": {
-          "bots": {
-            "items": {
-              "$ref": "#/components/schemas/BotSummary"
-            },
-            "type": "array"
-          },
-          "next": {
+          "preview": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/BotId"
+                "$ref": "#/components/schemas/BotReplyPreview"
               },
               {
                 "enum": [
@@ -8780,157 +7441,209 @@
                 "nullable": true
               }
             ]
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "recorded_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reply": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "routine": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "updated_at_ms": {
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
-          "bots"
+          "id",
+          "routine",
+          "definition_revision",
+          "occurrence_ms",
+          "manual",
+          "state",
+          "recorded_at_ms",
+          "updated_at_ms"
         ],
         "type": "object"
       },
-      "BotTask": {
-        "additionalProperties": false,
+      "BotRoutineOccurrenceCursor": {
         "properties": {
-          "documents": {
+          "at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at_ms",
+          "id"
+        ],
+        "type": "object"
+      },
+      "BotRoutineResponse": {
+        "oneOf": [
+          {
+            "properties": {
+              "first_enabled": {
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "startup"
+                ],
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "first_enabled",
+              "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "history"
+                ],
+                "type": "string"
+              },
+              "snapshot": {
+                "$ref": "#/components/schemas/BotRoutineSnapshot"
+              }
+            },
+            "required": [
+              "kind",
+              "snapshot"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "started"
+                ],
+                "type": "string"
+              },
+              "occurrence": {
+                "$ref": "#/components/schemas/BotRoutineOccurrence"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "occurrence",
+              "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "control": {
+                "$ref": "#/components/schemas/BotRoutineControl"
+              },
+              "first_enabled": {
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "enabled"
+                ],
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "control",
+              "first_enabled",
+              "replayed"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotRoutineSnapshot": {
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/BotRoutineDetail"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineOccurrenceCursor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "occurrences": {
+            "items": {
+              "$ref": "#/components/schemas/BotRoutineOccurrence"
+            },
+            "type": "array"
+          },
+          "selected_pages": {
             "items": {
               "$ref": "#/components/schemas/BotPage"
             },
             "type": "array"
           },
-          "text": {
-            "type": "string"
+          "thread": {
+            "$ref": "#/components/schemas/ChatId"
           }
         },
         "required": [
-          "text",
-          "documents"
+          "detail",
+          "thread",
+          "selected_pages",
+          "occurrences"
         ],
         "type": "object"
-      },
-      "BotTaskAnswer": {
-        "description": "Internal owner projection. Run identity is for the facade's authorized\nresult read; it is never an external control handle.",
-        "properties": {
-          "markdown": {
-            "nullable": true,
-            "type": "string"
-          },
-          "message_id": {
-            "$ref": "#/components/schemas/MessageId"
-          },
-          "next_offset": {
-            "format": "uint64",
-            "minimum": 0,
-            "nullable": true,
-            "type": "integer"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RunId"
-              },
-              {
-                "enum": [
-                  null
-                ],
-                "nullable": true
-              }
-            ]
-          },
-          "status": {
-            "$ref": "#/components/schemas/AttemptStatus"
-          }
-        },
-        "required": [
-          "status",
-          "message_id"
-        ],
-        "type": "object"
-      },
-      "BotTaskResult": {
-        "properties": {
-          "confirmed_at_ms": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "document_id": {
-            "$ref": "#/components/schemas/DocumentId"
-          },
-          "title": {
-            "type": "string"
-          },
-          "version": {
-            "description": "The confirmed version, encoded as standard base64.",
-            "type": "string"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceId"
-          }
-        },
-        "required": [
-          "document_id",
-          "workspace",
-          "title",
-          "version",
-          "confirmed_at_ms"
-        ],
-        "type": "object"
-      },
-      "BotTaskStop": {
-        "additionalProperties": false,
-        "description": "The answer to a [`BotCommand::StopTask`]: the task's operation, its Run\nand what the Stop found.",
-        "properties": {
-          "bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "outcome": {
-            "$ref": "#/components/schemas/BotTaskStopOutcome"
-          },
-          "request_id": {
-            "$ref": "#/components/schemas/BotRequestId"
-          },
-          "run_id": {
-            "$ref": "#/components/schemas/RunId"
-          }
-        },
-        "required": [
-          "request_id",
-          "bot_id",
-          "run_id",
-          "outcome"
-        ],
-        "type": "object"
-      },
-      "BotTaskStopOutcome": {
-        "description": "What a [`BotCommand::StopTask`] found and did.",
-        "oneOf": [
-          {
-            "description": "The task was queued or running, and this Stop ended it.",
-            "enum": [
-              "stopped"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "The Stop was delivered and its execution owner recorded the person's\ncancellation, but the Run's end is not proven yet (its process may\nstill be exiting, or effects are still being drained). Ask again: a\nlater `stop_task` answers `already_settled` once it has settled, or\nsends the Stop again.",
-            "enum": [
-              "stopping"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "It had already ended (finished, failed, or stopped before): nothing\nwas sent.",
-            "enum": [
-              "already_settled"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "Its execution owner refused it before admitting it: it never ran.",
-            "enum": [
-              "never_admitted"
-            ],
-            "type": "string"
-          }
-        ]
       },
       "BotThreadActiveTurn": {
         "properties": {
@@ -9057,6 +7770,13 @@
           "bot_name": {
             "type": "string"
           },
+          "dispatches": {
+            "description": "Collaboration facts projected from dispatches and obligations, not\ninferred from the number of words messages in a thread.",
+            "items": {
+              "$ref": "#/components/schemas/BotThreadDispatch"
+            },
+            "type": "array"
+          },
           "document": {
             "anyOf": [
               {
@@ -9090,6 +7810,20 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "routine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotThreadRoutineResult"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "A single completed firing. Several cards may share one Routine thread."
           },
           "sequence": {
             "format": "uint64",
@@ -9189,6 +7923,40 @@
               "kind",
               "id",
               "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "rename"
+                ],
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread",
+              "revision",
+              "title"
             ],
             "type": "object"
           },
@@ -9648,6 +8416,60 @@
           "attachments",
           "references",
           "reply_to"
+        ],
+        "type": "object"
+      },
+      "BotThreadDispatch": {
+        "properties": {
+          "group": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "message": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin_reply": {
+            "description": "Reserved response of the exact originating turn, including while live.",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotReplyPreview"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Exact answered-by message, bounded for the origin's read-only preview."
+          },
+          "recipient": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "reply": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "message",
+          "recipient",
+          "name",
+          "state"
         ],
         "type": "object"
       },
@@ -10321,6 +9143,50 @@
           }
         ]
       },
+      "BotThreadRoutineResult": {
+        "properties": {
+          "at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "manual": {
+            "type": "boolean"
+          },
+          "occurrence": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotReplyPreview"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "reply": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "routine": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "routine",
+          "occurrence",
+          "at_ms",
+          "manual",
+          "reply"
+        ],
+        "type": "object"
+      },
       "BotThreadSnapshot": {
         "properties": {
           "conversation": {
@@ -10359,6 +9225,12 @@
           "paused": {
             "type": "boolean"
           },
+          "revision": {
+            "description": "Thread metadata revision, independent of model/settings changes.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "settings_revision": {
             "format": "uint64",
             "minimum": 0,
@@ -10381,6 +9253,7 @@
         },
         "required": [
           "conversation",
+          "revision",
           "settings_revision",
           "paused",
           "team_paused",
@@ -10700,25 +9573,6 @@
           }
         ]
       },
-      "CancelReason2": {
-        "description": "Why a managed turn is being cancelled.\n\nA takeover cancellation ends the step, not the job (D36). The reason\ntravels with the cancellation so the resulting `TurnCancelled` can say\nwhich one it was, and a consumer that reads only the event still knows\nwhether the run ended.",
-        "oneOf": [
-          {
-            "description": "The run itself is being cancelled: terminal for the run.",
-            "enum": [
-              "run"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "The turn ends so control can be handed over: never terminal.",
-            "enum": [
-              "takeover_boundary"
-            ],
-            "type": "string"
-          }
-        ]
-      },
       "CancelRunResponse": {
         "description": "`POST /v1/runs/{run}/cancel`: the header after the cancellation was\nasked for. During a turn the run is still `Running` until the provider\nanswers; the stream carries the end.",
         "properties": {
@@ -10940,6 +9794,239 @@
           {
             "additionalProperties": false,
             "properties": {
+              "action": {
+                "enum": [
+                  "create"
+                ],
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "documents": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "expected_bot_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "objective": {
+                "type": "string"
+              },
+              "recurrence": {
+                "$ref": "#/components/schemas/RecurrenceRule"
+              }
+            },
+            "required": [
+              "action",
+              "bot",
+              "expected_bot_revision",
+              "name",
+              "objective",
+              "recurrence",
+              "documents"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "edit"
+                ],
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "objective": {
+                "type": "string"
+              },
+              "recurrence": {
+                "$ref": "#/components/schemas/RecurrenceRule"
+              },
+              "revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "bot",
+              "routine",
+              "revision",
+              "name",
+              "objective",
+              "recurrence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "timing"
+                ],
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "recurrence": {
+                "$ref": "#/components/schemas/RecurrenceRule"
+              },
+              "revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "bot",
+              "routine",
+              "revision",
+              "name",
+              "recurrence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "enable"
+                ],
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "bot",
+              "routine",
+              "revision",
+              "enabled"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/CapturedBotPolicy"
+              },
+              "action": {
+                "enum": [
+                  "access"
+                ],
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "bot",
+              "routine",
+              "revision",
+              "access"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "run_now"
+                ],
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "bot",
+              "routine",
+              "revision"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Change2": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
               "kind": {
                 "enum": [
                   "join"
@@ -11134,6 +10221,37 @@
               "bot",
               "revision",
               "knowledge"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "memory"
+                ],
+                "type": "string"
+              },
+              "memory": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision"
             ],
             "type": "object"
           },
@@ -11950,6 +11068,20 @@
       },
       "ChatTranscript": {
         "properties": {
+          "active_attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InferenceAttempt"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The retained pending or streaming attempt for this chat's pending\nassistant message, including before any text or tool activity exists.\nIts model is the accepted turn's; `chat.current_model` is the next\nturn's choice. Absent on terminal history and older server responses."
+          },
           "agent_commands": {
             "description": "The live session's current command listing; an empty list is authoritative.\n`None` lets the composer use its short-lived bootstrap catalog.",
             "items": {
@@ -12163,6 +11295,55 @@
           {
             "additionalProperties": false,
             "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "claim_routine_startup"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/Change"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "routine"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "kind": {
                 "enum": [
                   "read"
@@ -12183,7 +11364,7 @@
             "additionalProperties": false,
             "properties": {
               "action": {
-                "$ref": "#/components/schemas/Change"
+                "$ref": "#/components/schemas/Change2"
               },
               "id": {
                 "format": "uuid",
@@ -12970,6 +12151,23 @@
       "CronExpression": {
         "description": "A canonical expression in Koru's bounded five-field cron dialect.",
         "type": "string"
+      },
+      "Cursor": {
+        "properties": {
+          "at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at_ms",
+          "id"
+        ],
+        "type": "object"
       },
       "CursorShape": {
         "enum": [
@@ -16635,165 +15833,6 @@
         ],
         "type": "object"
       },
-      "LinkedBotsView": {
-        "description": "The Bots of one other computer, as this computer last received them\n(M8).",
-        "properties": {
-          "bots": {
-            "items": {
-              "$ref": "#/components/schemas/Bot"
-            },
-            "type": "array"
-          },
-          "last_confirmed_at_ms": {
-            "format": "int64",
-            "nullable": true,
-            "type": "integer"
-          },
-          "owner_device": {
-            "type": "string"
-          },
-          "state": {
-            "$ref": "#/components/schemas/LinkedOwnerState"
-          }
-        },
-        "required": [
-          "owner_device",
-          "state",
-          "bots"
-        ],
-        "type": "object"
-      },
-      "LinkedOwnerState": {
-        "description": "How current this computer's copy of another computer's Bots is (M8).",
-        "oneOf": [
-          {
-            "description": "Nothing was received from that computer yet.",
-            "enum": [
-              "never"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "A subscription is open and the copy is up to date. Commands can be\nsent.",
-            "enum": [
-              "current"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "No subscription is open: the copy is what was last received, and no\ncommand can be sent.",
-            "enum": [
-              "stale"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "That computer and this one share no protocol version, or it sent a\ncopy format this build does not read.",
-            "enum": [
-              "unsupported"
-            ],
-            "type": "string"
-          },
-          {
-            "description": "That computer is no longer one of this person's linked computers. Its\ncopy is being deleted and is not read.",
-            "enum": [
-              "withdrawing"
-            ],
-            "type": "string"
-          }
-        ]
-      },
-      "LinkedOwnerView": {
-        "description": "One other computer of this person whose Bots this computer keeps a copy\nof (M8).",
-        "properties": {
-          "display_name": {
-            "description": "That computer's name, when this one knows it.",
-            "nullable": true,
-            "type": "string"
-          },
-          "last_confirmed_at_ms": {
-            "description": "When the copy was last known to be up to date.",
-            "format": "int64",
-            "nullable": true,
-            "type": "integer"
-          },
-          "owner_device": {
-            "description": "The computer that runs these Bots.",
-            "type": "string"
-          },
-          "state": {
-            "$ref": "#/components/schemas/LinkedOwnerState"
-          },
-          "team": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/TeamPauseView"
-              },
-              {
-                "enum": [
-                  null
-                ],
-                "nullable": true
-              }
-            ],
-            "description": "That computer's team pause as last received; absent until it sent\none."
-          },
-          "withheld_bots": {
-            "description": "How many of that computer's Bots are not copied, because their\nworkspace is kept on that computer only. No name is known here.",
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "owner_device",
-          "state",
-          "withheld_bots"
-        ],
-        "type": "object"
-      },
-      "ListBotsRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "cursor": {
-            "default": null,
-            "nullable": true,
-            "type": "string"
-          },
-          "limit": {
-            "format": "uint16",
-            "maximum": 65535,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceId"
-          }
-        },
-        "required": [
-          "workspace",
-          "limit"
-        ],
-        "type": "object"
-      },
-      "ListBotsResponse": {
-        "properties": {
-          "bots": {
-            "items": {
-              "$ref": "#/components/schemas/BotSummary"
-            },
-            "type": "array"
-          },
-          "next_cursor": {
-            "nullable": true,
-            "type": "string"
-          }
-        },
-        "required": [
-          "bots"
-        ],
-        "type": "object"
-      },
       "ListChatsResponse": {
         "properties": {
           "chats": {
@@ -19516,6 +18555,132 @@
           {
             "additionalProperties": false,
             "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "routine_creation"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "request"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/Change"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "routine_receipt"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "routines"
+                ],
+                "type": "string"
+              },
+              "limit": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "before": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "routine"
+                ],
+                "type": "string"
+              },
+              "limit": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "routine": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "routine",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "after": {
                 "format": "uuid",
                 "nullable": true,
@@ -19626,7 +18791,7 @@
             "additionalProperties": false,
             "properties": {
               "action": {
-                "$ref": "#/components/schemas/Change"
+                "$ref": "#/components/schemas/Change2"
               },
               "id": {
                 "format": "uuid",
@@ -20219,70 +19384,6 @@
           "session_id",
           "sequence",
           "bytes"
-        ],
-        "type": "object"
-      },
-      "ReadBotTaskRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "attempt_id": {
-            "$ref": "#/components/schemas/InferenceAttemptId"
-          },
-          "bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "cursor": {
-            "default": null,
-            "nullable": true,
-            "type": "string"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceId"
-          }
-        },
-        "required": [
-          "workspace",
-          "bot_id",
-          "request_id",
-          "attempt_id"
-        ],
-        "type": "object"
-      },
-      "ReadBotTaskResponse": {
-        "properties": {
-          "answer": {
-            "description": "None until terminal; terminal failures may contain a partial answer.",
-            "nullable": true,
-            "type": "string"
-          },
-          "attempt_id": {
-            "$ref": "#/components/schemas/InferenceAttemptId"
-          },
-          "next_cursor": {
-            "nullable": true,
-            "type": "string"
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/BotTaskResult"
-            },
-            "type": "array"
-          },
-          "results_state": {
-            "$ref": "#/components/schemas/BotResultsState"
-          },
-          "status": {
-            "$ref": "#/components/schemas/AttemptStatus"
-          }
-        },
-        "required": [
-          "attempt_id",
-          "status",
-          "results_state",
-          "results"
         ],
         "type": "object"
       },
@@ -21769,7 +20870,7 @@
         "type": "object"
       },
       "RoutineControlOutcome": {
-        "description": "Whether one revision-checked definition commit wrote, or was the exact\nreplay of the commit a lost reply already made.",
+        "description": "Native Routine control observations. These values carry no delegate command.",
         "enum": [
           "applied",
           "already_applied"
@@ -23254,7 +22355,7 @@
                 "nullable": true
               }
             ],
-            "description": "Present only in Bot Schedule2. Identity alone grants no execution or\npage access; the AI owner retains the independent Routine policy."
+            "description": "Retained Bot Schedule2 marker. Ordinary scheduling excludes these\ndefinitions; their bytes remain decodable and untouched."
           },
           "template": {
             "$ref": "#/components/schemas/DelegationTemplate"
@@ -25363,37 +24464,6 @@
         ],
         "type": "object"
       },
-      "StartBotTaskRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "document_ids": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/DocumentId"
-            },
-            "type": "array"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceId"
-          }
-        },
-        "required": [
-          "workspace",
-          "bot_id",
-          "request_id",
-          "text"
-        ],
-        "type": "object"
-      },
       "Status": {
         "description": "`GET /v1/status`.",
         "properties": {
@@ -25776,7 +24846,7 @@
             "type": "object"
           },
           {
-            "description": "A Bot Run asked other Bots and waits for them (M6). No fields.",
+            "description": "Stored legacy Bot marker. No current producer emits it.",
             "properties": {
               "step": {
                 "enum": [
@@ -25928,30 +24998,6 @@
             "type": "object"
           }
         ]
-      },
-      "StopBotTaskRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "attempt_id": {
-            "$ref": "#/components/schemas/InferenceAttemptId"
-          },
-          "bot_id": {
-            "$ref": "#/components/schemas/BotId"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "workspace": {
-            "$ref": "#/components/schemas/WorkspaceId"
-          }
-        },
-        "required": [
-          "workspace",
-          "bot_id",
-          "request_id",
-          "attempt_id"
-        ],
-        "type": "object"
       },
       "Stopping": {
         "description": "`POST /v1/shutdown`.",
@@ -30114,7 +29160,7 @@
     },
     "/v1/ai/bots": {
       "post": {
-        "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, selected Routine detail with current timing, configured destination, partial blockers and a replaceable local conversation page, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.",
+        "description": "Native engine configuration, revision-checked receipts, Library page bindings, Routine observations and controls, conversation references or lifecycle progress. New Routines are enabled by default. Library pages provide context without granting edit permission. Conversation history and messages use the Bot thread API; ordinary AI chats and Runs do not execute Bot work.",
         "operationId": "ai_bot_command",
         "requestBody": {
           "content": {
@@ -30135,7 +29181,7 @@
                 }
               }
             },
-            "description": "A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, selected Routine detail with current timing, configured destination, partial blockers and a replaceable local conversation page, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately."
+            "description": "Native engine configuration, revision-checked receipts, Library page bindings, Routine observations and controls, conversation references or lifecycle progress. New Routines are enabled by default. Library pages provide context without granting edit permission. Conversation history and messages use the Bot thread API; ordinary AI chats and Runs do not execute Bot work."
           },
           "400": {
             "content": {
@@ -30195,7 +29241,7 @@
             ]
           }
         ],
-        "summary": "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation, list current Routine observations or read one Routine's timing and local conversations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
+        "summary": "Create or configure an engine-owned Bot, manage its Library and Routines, pause, archive, trash or restore it, and list its conversations and activity"
       }
     },
     "/v1/ai/bots/engine": {
@@ -30282,15 +29328,15 @@
         "summary": "Read or change engine-owned Bots and conversations"
       }
     },
-    "/v1/ai/bots/list": {
+    "/v1/ai/bots/routines": {
       "post": {
-        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
-        "operationId": "ai_list_bots",
+        "description": "Exact occurrence identities and durable Run now or enable receipts. No legacy Run identity is created.",
+        "operationId": "bots_routine_command",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ListBotsRequest"
+                "$ref": "#/components/schemas/BotRoutineCommand"
               }
             }
           },
@@ -30301,11 +29347,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ListBotsResponse"
+                  "$ref": "#/components/schemas/BotRoutineResponse"
                 }
               }
             },
-            "description": "A bounded owner-authorized projection; no configuration or execution handles."
+            "description": "Exact occurrence identities and durable Run now or enable receipts. No legacy Run identity is created."
           },
           "400": {
             "content": {
@@ -30361,269 +29407,11 @@
         "security": [
           {
             "bearerAuth": [
-              "bots.read"
+              "bots.manage"
             ]
           }
         ],
-        "summary": "Authorized local Bot task operation: list_bots"
-      }
-    },
-    "/v1/ai/bots/tasks/read": {
-      "post": {
-        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
-        "operationId": "ai_read_bot_task",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReadBotTaskRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReadBotTaskResponse"
-                }
-              }
-            },
-            "description": "A bounded owner-authorized projection; no configuration or execution handles."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The request body or path identity is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The gateway bearer is absent or invalid"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The bearer lacks the operation's declared AI scope"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The operation conflicts with durable chat state"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The AI worker is unavailable or saturated"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": [
-              "bots.read"
-            ]
-          }
-        ],
-        "summary": "Authorized local Bot task operation: read_bot_task"
-      }
-    },
-    "/v1/ai/bots/tasks/start": {
-      "post": {
-        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
-        "operationId": "ai_start_bot_task",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StartBotTaskRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SendTurnAccepted"
-                }
-              }
-            },
-            "description": "A bounded owner-authorized projection; no configuration or execution handles."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The request body or path identity is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The gateway bearer is absent or invalid"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The bearer lacks the operation's declared AI scope"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The operation conflicts with durable chat state"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The AI worker is unavailable or saturated"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": [
-              "bots.run"
-            ]
-          }
-        ],
-        "summary": "Authorized local Bot task operation: start_bot_task"
-      }
-    },
-    "/v1/ai/bots/tasks/stop": {
-      "post": {
-        "description": "A bounded owner-authorized projection; no configuration or execution handles.",
-        "operationId": "ai_stop_bot_task",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/StopBotTaskRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CancelAttemptResponse"
-                }
-              }
-            },
-            "description": "A bounded owner-authorized projection; no configuration or execution handles."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The request body or path identity is invalid"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The gateway bearer is absent or invalid"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The bearer lacks the operation's declared AI scope"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The operation conflicts with durable chat state"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AiFailure"
-                }
-              }
-            },
-            "description": "The AI worker is unavailable or saturated"
-          }
-        },
-        "security": [
-          {
-            "bearerAuth": [
-              "bots.run"
-            ]
-          }
-        ],
-        "summary": "Authorized local Bot task operation: stop_bot_task"
+        "summary": "Read native Routine history or control a Routine"
       }
     },
     "/v1/ai/bots/threads": {
@@ -41809,7 +40597,7 @@
     },
     "/v1/runs/{run}/mcp": {
       "post": {
-        "description": "The endpoint a delegated provider is handed. Authenticated by the Run bearer and positively classified by the private execution owner; unknown authority never falls back to ordinary tools. One JSON-RPC message per POST, answered as application/json; a notification is 202; GET and DELETE are 405. Ordinary Runs expose create, create_version, get, read, search, attach_to_run, with definitions in x-mcp-tools. Bots expose only search_documents, read_document, create_document, edit_document; tools/list returns their shared narrowed schemas. Native writes require operation_id and report Saved only after durable Store verification and Run registration. The request limit is 64 KiB for ordinary Runs and 4 MiB for Bots.",
+        "description": "The endpoint a delegated provider is handed. Authenticated by the Run bearer and positively classified by the private execution owner; unknown authority never falls back to ordinary tools. One JSON-RPC message per POST, answered as application/json; a notification is 202; GET and DELETE are 405. Ordinary Runs expose create, create_version, get, read, search, attach_to_run, with definitions in x-mcp-tools. Bots use their engine-owned tool endpoint. The request limit is 64 KiB.",
         "operationId": "runs_mcp",
         "requestBody": {
           "content": {

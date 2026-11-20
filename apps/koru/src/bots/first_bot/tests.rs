@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use koru_ai_core::bots::{BotCommand, BotFolderChoice, managed_folder};
+use koru_ai_core::bots::{BotCommand, BotFolderChoice};
 use koru_ai_core::{AiProviderId, ModelSelection, ReasoningChoice};
 use koru_ai_ui::agent_catalog::config::picker::{Listing, Readiness};
 use koru_draw::brand::ProfileMark;
@@ -143,15 +143,9 @@ fn the_default_folder_is_the_owners_managed_folder_under_the_channel_root() {
     assert_eq!(
         folder,
         channel
-            .join("ai")
             .join("bots")
             .join(bot.to_storage())
-            .join("work")
-    );
-    // The same path the owner derives from its AI root.
-    assert_eq!(
-        folder,
-        managed_folder(&koru_channel::ai_root_under(&channel), bot)
+            .join("workspace")
     );
     assert!(folder.starts_with(&channel));
     // Per Bot: two Bots never share one.

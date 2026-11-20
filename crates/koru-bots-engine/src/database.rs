@@ -11,13 +11,21 @@ use crate::Error;
 pub const DATABASE_NAME: &str = "engine.db";
 const SCHEMA: Schema = Schema {
     database: DATABASE_NAME,
-    understood: 1,
-    migrations: &[Migration {
-        to: 1,
-        name: "001_engine.sql",
-        sql: include_str!("../migrations/001_engine.sql"),
-        columns: &[],
-    }],
+    understood: 2,
+    migrations: &[
+        Migration {
+            to: 1,
+            name: "001_engine.sql",
+            sql: include_str!("../migrations/001_engine.sql"),
+            columns: &[],
+        },
+        Migration {
+            to: 2,
+            name: "002_routines.sql",
+            sql: include_str!("../migrations/002_routines.sql"),
+            columns: &[],
+        },
+    ],
 };
 
 /// Owned by the engine actor. No connection is shared with a Bot worker.
@@ -53,7 +61,7 @@ pub struct Status {
     pub queued_turns: u64,
     pub inbox_depth: u64,
     pub workers: Vec<WorkerStatus>,
-    /// Routines are not composed until M3. None means no next due occurrence.
+    /// The next scheduled occurrence; None when every Routine is off.
     pub next_routine_at_ms: Option<i64>,
 }
 
@@ -119,6 +127,11 @@ fn status(connection: &Connection) -> Result<Status, Error> {
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    let next_routine_at_ms = transaction.query_row(
+        "SELECT MIN(next_due_ms) FROM routines WHERE enabled=1",
+        [],
+        |r| r.get(0),
+    )?;
     transaction.commit()?;
     Ok(Status {
         awake_bots,
@@ -126,7 +139,7 @@ fn status(connection: &Connection) -> Result<Status, Error> {
         queued_turns,
         inbox_depth,
         workers,
-        next_routine_at_ms: None,
+        next_routine_at_ms,
     })
 }
 

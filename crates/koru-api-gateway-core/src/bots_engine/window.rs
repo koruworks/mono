@@ -11,8 +11,9 @@ use uuid::Uuid;
 mod lifecycle;
 mod lists;
 mod management;
-mod threads;
 pub(super) mod readiness;
+mod routines;
+mod threads;
 
 fn model_view(configuration: &Configuration) -> Result<ModelSelection, Error> {
     let provider = koru_ai_provider_agent::agent_provider_kinds()
@@ -267,6 +268,9 @@ impl Gateway {
     }
     pub(super) fn window_command(&self, command: BotCommand) -> Result<BotResponse, Error> {
         let owner = self.authority.owner().map_err(authority_error)?;
+        if routines::handles(&command) {
+            return self.window_routines(owner, command);
+        }
         match command {
             BotCommand::CreateBotWithRole {
                 request_id,

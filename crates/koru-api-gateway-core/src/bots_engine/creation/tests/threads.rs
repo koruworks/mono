@@ -15,6 +15,65 @@ fn request(f: &Fixture, command: C) -> R {
         .ok()
         .unwrap()
 }
+
+#[test]
+fn native_rename_is_revision_checked_receipted_and_requires_bot_authority() {
+    let f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let read = || match request(
+        &f,
+        C::Read {
+            thread: bot.main_chat,
+        },
+    ) {
+        R::Read { snapshot } => snapshot,
+        _ => panic!("thread snapshot"),
+    };
+    let before = read();
+    let command = C::Rename {
+        id: Uuid::new_v4(),
+        thread: bot.main_chat,
+        revision: before.revision,
+        title: "News discussion".into(),
+    };
+    let denied = crate::GatewayPrincipal {
+        label: "synthetic".into(),
+        scopes: vec![],
+    };
+    assert!(matches!(
+        f.gateway
+            .thread_command(&denied, command.clone(), |_| Ok(())),
+        Err(Refusal::Engine(Error::NotAllowed))
+    ));
+    assert!(matches!(
+        request(&f, command.clone()),
+        R::Changed {
+            replayed: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        request(&f, command),
+        R::Changed { replayed: true, .. }
+    ));
+    let after = read();
+    assert_eq!(after.conversation.chat.title, "News discussion");
+    assert_eq!(after.revision, before.revision + 1);
+    assert_eq!(after.settings_revision, before.settings_revision);
+    let stale = C::Rename {
+        id: Uuid::new_v4(),
+        thread: bot.main_chat,
+        revision: before.revision,
+        title: "Stale title".into(),
+    };
+    assert!(matches!(
+        f.gateway.thread_command(&principal(), stale, |_| Ok(())),
+        Err(Refusal::Engine(Error::RevisionConflict))
+    ));
+    assert_eq!(read().conversation.chat.title, "News discussion");
+}
 #[test]
 fn typed_chat_uses_actual_message_identity_receipts_and_history() {
     let f = Fixture::new();

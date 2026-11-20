@@ -51,8 +51,8 @@ use super::inputs::{
 use super::paint::SearchPaint;
 use super::{
     FavoriteModel, Geometry, LIST_ROWS, PickerFocus, PickerState, RAIL_PAGE, ROW_H, RailEntry, Row,
-    TOOLTIP_CONTEXT_LOCKED, TOOLTIP_LOCKED, TOOLTIP_RAIL, TOOLTIP_REFRESH, context, geometry_with,
-    matches, rail_dividers, rail_height, rail_rects, readout, row_id, scroll_into_view, size,
+    TOOLTIP_CONTEXT_LOCKED, TOOLTIP_LOCKED, TOOLTIP_RAIL, TOOLTIP_REFRESH, context, matches,
+    rail_dividers, rail_height, rail_rects, readout, row_id, scroll_into_view, size,
     step_highlight, toggled, words_id,
 };
 use crate::effort::{self, Effort};
@@ -693,10 +693,32 @@ impl<'v, 'a, P: AgentId> Picker<'v, 'a, P> {
         let rail_h = rail_height(marks, rail_dividers(&rail).len());
         let place = self.inputs.place;
         let (w, h) = size(place.width, rail_h);
-        let panel =
-            PopoverShell::anchored(place.anchor, place.viewport, w, h, PopoverAlign::End).rect;
+        let report_h = self
+            .inputs
+            .report
+            .as_ref()
+            .map_or(0.0, |report| report.height(w));
+        let panel = PopoverShell::anchored(
+            place.anchor,
+            place.viewport,
+            w,
+            (h + report_h)
+                .min((place.viewport.h - 2.0 * theme::overlay::popover().viewport_inset).max(1.0)),
+            PopoverAlign::End,
+        )
+        .rect;
         // The footer as it is drawn: its pills are as wide as their words.
-        Some(geometry_with(panel, self.footer(), hide_rail))
+        let spec = Spec {
+            footer: self.footer(),
+            hide_rail,
+            report: self.inputs.report.clone(),
+            ..Spec::default()
+        };
+        let tree = elements::tree(&spec, Painted::default());
+        Some(elements::geometry_of(
+            &elements::layout(&tree, panel, FrameCx::root()),
+            panel,
+        ))
     }
 
     /// The first row a drag of the list's thumb to `y` shows, the thumb
@@ -817,6 +839,7 @@ impl<'v, 'a, P: AgentId> Picker<'v, 'a, P> {
         let searching = !query.is_empty();
         let lang = self.lang();
         Spec {
+            report: self.inputs.report.clone(),
             hide_rail,
             marks: rail
                 .iter()

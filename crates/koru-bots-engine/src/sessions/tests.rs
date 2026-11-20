@@ -14,6 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod instructions;
+
 #[derive(Clone, Copy)]
 enum Steering {
     Accepted,
@@ -292,6 +294,7 @@ impl AgentControl for Agent {
 }
 
 struct TestPort {
+    instructions: Mutex<koru_delegate_preamble::Resolved>,
     db: Mutex<Database>,
     bot: Uuid,
     worker: Uuid,
@@ -304,6 +307,9 @@ struct TestPort {
     question_answers: Mutex<crate::questions::Transient>,
 }
 impl Port for TestPort {
+    fn instructions(&self) -> koru_delegate_preamble::Resolved {
+        self.instructions.lock().unwrap().clone()
+    }
     fn input(&self, delivery: &Delivery) -> Result<crate::workspace::input::Prepared, Error> {
         use crate::workspace::input::{File, Prepared};
         let mut files = vec![];
@@ -502,6 +508,7 @@ impl Fixture {
         db.connection.execute("INSERT INTO participants(thread,participant,kind) VALUES (?1,'person','person'),(?1,?2,'bot')",rusqlite::params![thread.to_string(),bot.to_string()]).unwrap();
         let f = Self {
             port: Arc::new(TestPort {
+                instructions: Mutex::new(koru_delegate_preamble::session::bundled()),
                 db: Mutex::new(db),
                 bot,
                 worker: Uuid::new_v4(),
@@ -1103,7 +1110,7 @@ fn unqualified_provider_rebuilds_and_unreadable_context_never_launches() {
 #[test]
 fn current_context_and_delivery_share_one_input_budget() {
     let f = Fixture::new();
-    *f.port.context.lock().unwrap() = Some("r".repeat(MAX_INPUT_BYTES - 4096));
+    *f.port.context.lock().unwrap() = Some("r".repeat(MAX_INPUT_BYTES - 8192));
     f.run().unwrap();
     assert!(f.records.lock().unwrap().inputs[0].len() <= MAX_INPUT_BYTES);
     let f = Fixture::new();

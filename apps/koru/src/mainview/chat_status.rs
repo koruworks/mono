@@ -33,7 +33,6 @@ use std::time::Instant;
 use koru_ai_ui::{ChatId, MessageId};
 use koru_chats_ui::{ChatStatus, SeenBook};
 
-#[cfg(test)]
 use super::TabView;
 use super::{MainView, epoch_millis};
 
@@ -129,6 +128,8 @@ impl MainView {
         for (path, group) in self.panes.iter_groups_mut() {
             let active = group.active();
             for (index, tab) in group.tabs_mut().iter_mut().enumerate() {
+                let conversation_visible =
+                    !matches!(&tab.view, TabView::Bot(view) if !view.conversation_visible());
                 let Some(view) = tab.view.chat_view_mut() else {
                     continue;
                 };
@@ -138,7 +139,7 @@ impl MainView {
                 let Some(chat) = view.chat_id() else {
                     continue;
                 };
-                if index == active {
+                if index == active && conversation_visible {
                     looking.insert(chat);
                 }
                 let facts = open.entry(chat).or_default();
@@ -164,7 +165,7 @@ impl MainView {
         self.ai_chat.set_reduced_motion(reduced);
 
         // 2. Looks begun, continued and ended; news nobody was looking at.
-        let listed: HashMap<ChatId, i64> = self
+        let mut listed: HashMap<ChatId, i64> = self
             .explore
             .chats_mut()
             .chats()
@@ -172,12 +173,30 @@ impl MainView {
             .map(|chat| (chat.id, chat.updated_at.millis()))
             .collect();
         let was_looking = std::mem::take(&mut self.chats_looking);
+        let bot_chats: Vec<_> = self.explore.bots().conversation_metadata().collect();
+        let bot_arrivals = self.explore.bots_mut().take_conversation_arrivals();
+        listed.extend(bot_chats.iter().map(|(_, chat, at)| (*chat, *at)));
+        if open.values().any(|facts| facts.moved) {
+            self.explore.bots_mut().owe_activity();
+        }
         // A chat that came into view, and where its NEW divider goes: after
         // the message seen last, when something arrived since (D84). Read
         // before the look marks it seen.
         let mut came_into_view: Vec<(ChatId, Option<MessageId>)> = Vec::new();
-        let statuses = change_book(|book| {
+        let (statuses, unread_bots) = change_book(|book| {
             let mut moved = false;
+            // Match Chats' initial baseline: old unmarked history is seen,
+            // but subsequent activity in a closed conversation is unread.
+            for (_, chat, at) in &bot_chats {
+                if book.mark(*chat).is_none() {
+                    moved |= book.seen(*chat, *at, None);
+                }
+            }
+            for (chat, at) in &bot_arrivals {
+                if !looking.contains(chat) {
+                    moved |= book.arrived(*chat, *at, None);
+                }
+            }
             for (chat, facts) in &open {
                 if looking.contains(chat) {
                     if !was_looking.contains(chat) {
@@ -213,8 +232,13 @@ impl MainView {
                     ChatStatus::of(facts.working, facts.needs_you, unread(*chat)),
                 );
             }
-            (statuses, moved)
+            let unread_bots = bot_chats
+                .iter()
+                .filter_map(|(bot, chat, _)| unread(*chat).then_some(*bot))
+                .collect();
+            ((statuses, unread_bots), moved)
         });
+        changed |= self.explore.bots_mut().set_unread(unread_bots);
         self.chats_looking = looking;
         let divider_for = |chat: Option<ChatId>| {
             chat.and_then(|chat| {
@@ -259,6 +283,10 @@ impl MainView {
         if self.explore.showing_chats() {
             turning |= self.explore.chats_mut().animating();
         }
+        changed |= self.explore.bots_mut().set_reduced_motion(reduced);
+        turning |= self.sidebar.is_open()
+            && self.explore.showing_bots()
+            && self.explore.bots().animating();
         changed || turning
     }
 
@@ -284,6 +312,9 @@ impl MainView {
             }
         }
         turning |= self.explore.showing_chats() && self.explore.chats_turning();
+        turning |= self.sidebar.is_open()
+            && self.explore.showing_bots()
+            && self.explore.bots().animating();
         if turning {
             let at = Instant::now() + koru_chats_ui::status::FRAME;
             deadline = Some(deadline.map_or(at, |was| was.min(at)));

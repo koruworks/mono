@@ -10,8 +10,30 @@ use koru_draw::theme::{IconSize, Ink, Radius, Space, metrics, roles};
 
 pub(super) const TITLE: Key = Key::surface("explore", "heading");
 pub(super) const ACTIONS: Key = Key::surface("explore", "actions");
+pub(super) const BOTS_MORE: Key = Key::surface("explore", "bots-more");
 
 impl ExploreView {
+    pub(crate) fn bots_menu_anchor(
+        &self,
+        area: Rect,
+        bot: Option<koru_ai_core::bots::BotId>,
+    ) -> (f32, f32) {
+        let rect = bot
+            .and_then(|bot| {
+                self.bots.with_input_frame(
+                    self.above_footer(area),
+                    self.rows_top(area),
+                    |_, frame| {
+                        frame
+                            .node(crate::bots::roster::more_key(bot))
+                            .map(|node| node.rect)
+                    },
+                )
+            })
+            .unwrap_or_else(|| self.heading_part_rect(area, BOTS_MORE));
+        (rect.x + rect.w, rect.y + rect.h)
+    }
+
     fn heading_tree(&self, width: f32) -> El {
         let mut heading = row("Navigator heading")
             .pad_start(theme::Tagged::new(
@@ -63,6 +85,25 @@ impl ExploreView {
                     .child(spacer()),
             );
         }
+        if self.mode == NavigatorMode::Bots {
+            heading = heading.child(
+                boxed("Bots roster actions")
+                    .id(BOTS_MORE)
+                    .w(metrics::RAIL_SQUARE)
+                    .h(metrics::RAIL_SQUARE)
+                    .items_center()
+                    .hit()
+                    .focusable()
+                    .semantics(Role::Button)
+                    .name(koru_i18n::Key::A11yMoreActions)
+                    .action(Action::Click)
+                    .radius(Radius::M)
+                    .states(&crate::panes::sidebar::rail_elements::RAIL_SQUARE_STATES)
+                    .child(spacer())
+                    .child(icon(icons::DOTS_THREE, IconSize::Caption).decorative())
+                    .child(spacer()),
+            );
+        }
         heading
     }
 
@@ -101,7 +142,11 @@ impl ExploreView {
         let band = self.heading_band(area);
         let tree = self.heading_tree(band.w);
         let interaction = Interaction {
-            hot: self.actions_hover.then_some(ACTIONS),
+            hot: if self.bots_more_hover {
+                Some(BOTS_MORE)
+            } else {
+                self.actions_hover.then_some(ACTIONS)
+            },
             ..Interaction::default()
         };
         let frame = tree.layout(

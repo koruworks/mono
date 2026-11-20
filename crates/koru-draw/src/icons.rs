@@ -118,6 +118,8 @@ pub const THUMBS_DOWN: char = '\u{E48C}';
 pub const THUMBS_UP: char = '\u{E48E}';
 /// branch a conversation — `ph-git-branch`.
 pub const GIT_BRANCH: char = '\u{E278}';
+/// Work details — Phosphor's anchor, retained across all compiled packs.
+pub const ANCHOR: char = '\u{E514}';
 /// store a response durably — `ph-floppy-disk`.
 pub const FLOPPY_DISK: char = '\u{E248}';
 /// edit a link — `ph-pencil-simple`
@@ -571,7 +573,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 152] = [
+pub const ALL: [(&str, char); 153] = [
     ("GRAPH", GRAPH),
     ("TERMINAL", TERMINAL),
     ("TABLE_COMPACT", TABLE_COMPACT),
@@ -608,6 +610,7 @@ pub const ALL: [(&str, char); 152] = [
     ("THUMBS_DOWN", THUMBS_DOWN),
     ("THUMBS_UP", THUMBS_UP),
     ("GIT_BRANCH", GIT_BRANCH),
+    ("ANCHOR", ANCHOR),
     ("FLOPPY_DISK", FLOPPY_DISK),
     ("PENCIL", PENCIL),
     ("PASTE", PASTE),

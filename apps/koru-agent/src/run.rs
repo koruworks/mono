@@ -794,7 +794,7 @@ pub(crate) fn start_device_services(
     // attempt.
     // One independent capability per Agent lifetime, retained by both
     // supervisors across child restarts. Never a CLI argument or env var.
-    let bot_authority = koru_delegate_api::bots::BotDelegateAuthority::new(format!(
+    let run_authority = koru_delegate_api::authority::RunAuthorityCredential::new(format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
         uuid::Uuid::new_v4().simple()
@@ -803,13 +803,13 @@ pub(crate) fn start_device_services(
     crate::gateway_host::start(
         paths,
         local_device,
-        koru_network_bridge::BotDelegateAuthority::new(bot_authority.clone().into()),
+        koru_network_bridge::RunAuthorityCredential::new(run_authority.clone().into()),
     );
     // The delegate worker (D12), after the sessions and gateway workers
     // it reaches. Like the gateway's, its supervision returns at once;
     // the child waits for the gateway to publish on its own thread.
     crate::bots_host::start(paths).map_err(|error| StartError::Failed(error.to_string()))?;
-    if let Err(error) = crate::delegate_host::start(paths, local_device, bot_authority) {
+    if let Err(error) = crate::delegate_host::start(paths, local_device, run_authority) {
         tracing::error!(
             target: "koru::delegate_host",
             %error,
@@ -1217,6 +1217,7 @@ impl koru_window::WindowApp for Host {
             };
             let message = unsafe { &*(raw.cast::<MSG>()) };
             if message.message == WM_TIMECHANGE {
+                crate::bots_host::wake();
                 wakes.wake(crate::reminders::Command::DeviceZoneChanged);
                 if let Some(delegate) = &delegate {
                     delegate.wake();
@@ -1224,6 +1225,7 @@ impl koru_window::WindowApp for Host {
             } else if message.message == WM_POWERBROADCAST
                 && message.wParam.0 as u32 == PBT_APMRESUMEAUTOMATIC
             {
+                crate::bots_host::wake();
                 wakes.wake(crate::reminders::Command::Resume);
                 if let Some(delegate) = &delegate {
                     delegate.wake();

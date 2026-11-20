@@ -115,22 +115,6 @@ pub fn list_chats(
     request: ListChatsToolRequest,
     removed: &[ProfileId],
 ) -> Result<ListChatsToolResponse, AiError> {
-    list_chats_with_access(
-        persistence,
-        &crate::bots::ChatReadAccess::ordinary(),
-        lens,
-        request,
-        removed,
-    )
-}
-
-pub fn list_chats_with_access(
-    persistence: &dyn AiPersistence,
-    access: &crate::bots::ChatReadAccess,
-    lens: ChatAccessLens,
-    request: ListChatsToolRequest,
-    removed: &[ProfileId],
-) -> Result<ListChatsToolResponse, AiError> {
     let offset = offset_cursor(request.cursor.as_deref())?;
     let page_size = usize::from(
         request
@@ -140,7 +124,7 @@ pub fn list_chats_with_access(
     );
     let scope = profile_scope(persistence, lens)?;
     let visible = persistence
-        .chat_overviews_with_access(access)?
+        .chat_overviews()?
         .into_iter()
         .filter(|chat| lens_allows(lens, chat.chat_id, chat.private))
         .filter(|chat| scope.is_none_or(|profile| chat.profile_id == profile))
@@ -176,37 +160,18 @@ pub fn search_chats(
     request: SearchChatsToolRequest,
     removed: &[ProfileId],
 ) -> Result<SearchChatsToolResponse, AiError> {
-    search_chats_with_access(
-        persistence,
-        &crate::bots::ChatReadAccess::ordinary(),
-        lens,
-        request,
-        removed,
-    )
-}
-
-pub fn search_chats_with_access(
-    persistence: &dyn AiPersistence,
-    access: &crate::bots::ChatReadAccess,
-    lens: ChatAccessLens,
-    request: SearchChatsToolRequest,
-    removed: &[ProfileId],
-) -> Result<SearchChatsToolResponse, AiError> {
-    let page = persistence.search_with_access(
-        &AiSearchQuery {
-            text: request.query,
-            limit: request
-                .page_size
-                .unwrap_or(DEFAULT_SEARCH_PAGE_SIZE)
-                .clamp(1, MAX_SEARCH_PAGE_SIZE),
-            cursor: request.cursor,
-            visibility: lens,
-            // A calling chat's own profile is applied by the search itself.
-            profile: None,
-            removed_profiles: removed.to_vec(),
-        },
-        access,
-    )?;
+    let page = persistence.search(&AiSearchQuery {
+        text: request.query,
+        limit: request
+            .page_size
+            .unwrap_or(DEFAULT_SEARCH_PAGE_SIZE)
+            .clamp(1, MAX_SEARCH_PAGE_SIZE),
+        cursor: request.cursor,
+        visibility: lens,
+        // A calling chat's own profile is applied by the search itself.
+        profile: None,
+        removed_profiles: removed.to_vec(),
+    })?;
     Ok(SearchChatsToolResponse {
         hits: page
             .hits
@@ -228,23 +193,9 @@ pub fn read_chat(
     lens: ChatAccessLens,
     request: ReadChatToolRequest,
 ) -> Result<ReadChatToolResponse, AiError> {
-    read_chat_with_access(
-        persistence,
-        &crate::bots::ChatReadAccess::ordinary(),
-        lens,
-        request,
-    )
-}
-
-pub fn read_chat_with_access(
-    persistence: &dyn AiPersistence,
-    access: &crate::bots::ChatReadAccess,
-    lens: ChatAccessLens,
-    request: ReadChatToolRequest,
-) -> Result<ReadChatToolResponse, AiError> {
     let scope = profile_scope(persistence, lens)?;
     let chat = persistence
-        .chat_with_access(request.chat_id, access)?
+        .chat(request.chat_id)?
         .filter(|chat| lens_allows(lens, chat.id, chat.private))
         .filter(|chat| scope.is_none_or(|profile| chat.profile_id == profile))
         .ok_or_else(chat_not_found)?;

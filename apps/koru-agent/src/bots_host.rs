@@ -18,31 +18,59 @@ struct Child {
 
 static BOTS: OnceLock<WorkerHandle<Child>> = OnceLock::new();
 static AUTHORITY: OnceLock<String> = OnceLock::new();
+static WAKES: OnceLock<std::sync::mpsc::SyncSender<()>> = OnceLock::new();
+
+/// Native callbacks enqueue one edge; IPC/retry never runs on the window thread.
+pub fn wake() {
+    if let Some(sender) = WAKES.get() {
+        let _ = sender.try_send(());
+    }
+}
 
 /// Per-Agent lifetime, shared privately with its gateway across child restarts.
 /// A provider or Bot-worker bootstrap never receives this capability.
-pub fn authority() -> Option<String> {
-    koru_bots_engine::ENABLED.then(|| {
-        AUTHORITY
-            .get_or_init(|| {
-                format!(
-                    "{}{}",
-                    uuid::Uuid::new_v4().simple(),
-                    uuid::Uuid::new_v4().simple()
-                )
-            })
-            .clone()
-    })
+pub fn authority() -> String {
+    AUTHORITY
+        .get_or_init(|| {
+            format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            )
+        })
+        .clone()
 }
 
 pub fn start(paths: &Paths) -> Result<(), koru_bots_engine::Error> {
-    if !koru_bots_engine::ENABLED {
-        return Ok(());
-    }
     let root = paths.root().to_path_buf();
     let segment = crate::segment().to_owned();
     let endpoint = worker::endpoint(&root, &segment)?;
-    let authority = authority().ok_or(koru_bots_engine::Error::EngineDisabled)?;
+    let authority = authority();
+    let (wake_sender, wake_receiver) = std::sync::mpsc::sync_channel(1);
+    let wake_endpoint = endpoint.clone();
+    let wake_authority = authority.clone();
+    std::thread::Builder::new()
+        .name("koru-bots wakes".into())
+        .spawn(move || {
+            while wake_receiver.recv().is_ok() {
+                loop {
+                    if matches!(
+                        worker::request(&wake_endpoint, &wake_authority, Command::ClockChanged),
+                        Ok(Reply::Queued)
+                    ) {
+                        break;
+                    }
+                    // A pending native edge survives a supervised restart. All
+                    // repeated native events coalesce into this bounded ingress.
+                    match wake_receiver.recv_timeout(Duration::from_secs(1)) {
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                        _ => {}
+                    }
+                }
+            }
+        })
+        .map_err(|_| koru_bots_engine::Error::EngineUnavailable)?;
+    let _ = WAKES.set(wake_sender);
     let mut spec = WorkerSpec::new(
         "bots",
         move |_| {

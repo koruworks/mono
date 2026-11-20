@@ -55,19 +55,15 @@ use koru_ai_wire::{
 pub const WORKER_COMMAND_CAPACITY: usize = 64;
 pub const PROVIDER_QUEUE_CAPACITY: usize = 8;
 pub const PROVIDER_ADMIN_QUEUE_CAPACITY: usize = 8;
-/// Bot preparation's own lane (person-facing): requests waiting beside the
-/// one being prepared. One more is answered `ai_worker_saturated` at once.
-pub const PREPARATION_QUEUE_CAPACITY: usize = 8;
 pub const CONTEXT_QUEUE_CAPACITY: usize = 8;
 pub const EXPORT_QUEUE_CAPACITY: usize = 8;
 pub const TOOL_QUEUE_CAPACITY: usize = 8;
 pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
-pub(crate) mod bots;
-pub(crate) mod connections;
-pub(crate) mod native_recovery;
+pub(crate) mod catalog;
 mod removed;
+mod retired;
 
 use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
 use agents::{AttemptWork, Clearing, ClosingChat, agent_validation};
@@ -85,35 +81,13 @@ const COALESCE_BYTES: usize = 256;
 /// One number, on the wire: the composer caps what it sends by the same one.
 const MAX_CONTEXT_REFS: usize = koru_ai_wire::MAX_CONTEXT_REFS;
 const MAX_CONTEXT_PAYLOAD_BYTES: u64 = 4 * 1024 * 1024;
-const PROMPT_TEMPLATE_VERSION: &str = "koru-chat-v1";
+const PROMPT_TEMPLATE_VERSION: &str = "koru-chat-v2";
 const CHAT_PROMPT: &str = include_str!("../prompts/chat-v1.md");
 
+mod instructions;
+
 pub struct WorkerConfig {
-    legacy_bots: bool,
-    native_recovery: Option<native_recovery::NativeRecoveryConfig>,
-    bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
-    bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
-    /// The delegate reads behind the decision wait handshake (IPC16). No
-    /// production composition installs one yet, so every decision job refuses.
-    decision_wait_delegate: Option<Arc<dyn bots::decision_wait::DecisionWaitDelegate>>,
-    /// The Store's data root beside this AI root, which no Bot's selected
-    /// working folder may be (P1.8).
-    store_root: Option<PathBuf>,
-    /// What private connections are composed from (M5). No production
-    /// composition supplies one yet: no vendor adapter exists.
-    connections: Option<connections::ConnectionsSetup>,
-    /// The composed service, handed from `spawn` to the writer thread.
-    connections_hosted: Option<connections::Hosted>,
-    /// Which linked devices are clients of this computer's Bots (M8): the
-    /// admission port. Without it, or without a Bot authority, this worker
-    /// serves no linked desktop ([`WorkerHandle::bot_owner_server`]).
-    pub(crate) bot_admission: Option<Arc<dyn bots::client::owner::ClientAdmission>>,
-    /// The writer's half of what it publishes for linked devices' streams,
-    /// handed from `spawn` to the writer thread.
-    bot_client_hint: Option<bots::client::owner::WriterHint>,
-    /// Where the six diagnostic events of M8 go (`bots::events`). Without a
-    /// sink nothing is published.
-    pub(crate) bot_events: bots::events::BotEvents,
+    instructions: instructions::Source,
     root: PathBuf,
     channel: String,
     providers: ProviderRegistry,
@@ -133,117 +107,27 @@ pub struct WorkerConfig {
     pub(crate) test_repository_return: Option<SyncSender<Repository>>,
     #[cfg(test)]
     test_context_completion: Option<SyncSender<InferenceAttemptId>>,
-    #[cfg(test)]
-    test_bot_creation: Option<bots::CreationDriver>,
-    /// Bot preparation treats the runtime's model discovery as ready, for
-    /// tests that run a Bot command through real preparation with no
-    /// session host (the automatic picture re-send).
-    #[cfg(test)]
-    test_bot_runtime_ready: bool,
-    /// The lifecycle driver's first wait of a round without progress, for
-    /// tests that need an operation to park in a second instead of minutes.
-    #[cfg(test)]
-    test_lifecycle_unit: Option<Duration>,
-    /// This computer's current time zone name, for a floating Routine this
-    /// computer owns (P4.3, D5). Called on every read and never cached. No
-    /// composition installs one yet, so such a Routine reads `owner_local`.
-    owner_zone: Option<bots::routine::control::ZoneSource>,
-    /// The wall clock the Routine controls read, for tests of the Test
-    /// minute.
-    #[cfg(test)]
-    test_routine_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
 }
 
 impl WorkerConfig {
-    /// The new Bots engine owns Bots on this root. Ordinary AI chats stay
-    /// available; legacy Bot recovery, commands and M8 mirrors stay closed.
-    pub fn without_legacy_bots(mut self) -> Self {
-        self.legacy_bots = false;
-        self
-    }
-    /// The process host shares this same gate across AI-thread restarts.
-    pub fn with_native_effect_recovery(
+    /// Common session instruction files selected by the process composition.
+    /// The context worker reads them; this setter performs no filesystem I/O.
+    pub fn with_session_instructions(
         mut self,
-        store: koru_store_server::StoreWorkerClient,
-        gate: Arc<native_recovery::NativeMutationGate>,
+        installation: PathBuf,
+        override_file: Option<PathBuf>,
     ) -> Self {
-        self.native_recovery = Some(native_recovery::NativeRecoveryConfig { store, gate });
-        self
-    }
-    pub fn with_bot_delegate(
-        mut self,
-        delegate: Arc<dyn koru_delegate_api::bots::BotDelegatePort>,
-    ) -> Self {
-        self.bot_delegate = Some(delegate);
-        self
-    }
-    pub fn with_bot_authority(
-        mut self,
-        authority: Arc<dyn koru_ai_core::bots::BotAuthority>,
-    ) -> Self {
-        self.bot_authority = Some(authority);
-        self
-    }
-    /// The real delegate decision reads, once the delegate API provides them.
-    pub fn with_decision_wait_delegate(
-        mut self,
-        delegate: Arc<dyn bots::decision_wait::DecisionWaitDelegate>,
-    ) -> Self {
-        self.decision_wait_delegate = Some(delegate);
-        self
-    }
-    /// How this computer's current time zone name is read. The composition
-    /// that links the zone database supplies its system detection; without
-    /// one a floating Routine's zone stays `owner_local`.
-    pub fn with_owner_zone(mut self, zone: Arc<dyn Fn() -> Option<String> + Send + Sync>) -> Self {
-        self.owner_zone = Some(zone);
-        self
-    }
-    /// Host private connections (M5): the one qualified vendor adapter, the
-    /// credential store and the credential context. Without this, or without
-    /// a Bot delegate, the worker hosts none and every private read plans as
-    /// unavailable.
-    pub fn with_connections(mut self, setup: connections::ConnectionsSetup) -> Self {
-        self.connections = Some(setup);
-        self
-    }
-    /// Serve this computer's Bots to the linked devices the admission port
-    /// names as clients (M8). The port is read again for every message a
-    /// linked device sends, so a device it stops naming is refused at once.
-    pub fn with_bot_peers(mut self, peers: koru_store_server::BotPeers) -> Self {
-        self.bot_admission = Some(Arc::new(peers));
-        self
-    }
-    /// Publish the worker's Bot events (M8) to `sink`: the team pause, and
-    /// the streams and copies of linked computers. The sink must not block;
-    /// it is called on the writer.
-    pub fn with_bot_events(mut self, sink: Arc<dyn bots::events::BotEventSink>) -> Self {
-        self.bot_events = bots::events::BotEvents::new(sink);
-        self
-    }
-    /// The Store's data root, so a Bot's selected folder is never it.
-    pub fn with_store_root(mut self, store_root: PathBuf) -> Self {
-        self.store_root = Some(store_root);
+        self.instructions = instructions::Source::files(installation, override_file);
         self
     }
     pub fn new(root: PathBuf, channel: impl Into<String>, providers: ProviderRegistry) -> Self {
         Self {
-            legacy_bots: !koru_bots_engine::ENABLED,
+            instructions: instructions::Source::default(),
             root,
             channel: channel.into(),
             providers,
             provider_runtime: None,
             store_context: None,
-            bot_authority: None,
-            decision_wait_delegate: None,
-            store_root: None,
-            connections: None,
-            connections_hosted: None,
-            bot_admission: None,
-            bot_client_hint: None,
-            bot_events: bots::events::BotEvents::default(),
-            bot_delegate: None,
-            native_recovery: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -255,15 +139,6 @@ impl WorkerConfig {
             test_repository_return: None,
             #[cfg(test)]
             test_context_completion: None,
-            #[cfg(test)]
-            test_bot_creation: None,
-            #[cfg(test)]
-            test_bot_runtime_ready: false,
-            #[cfg(test)]
-            test_lifecycle_unit: None,
-            owner_zone: None,
-            #[cfg(test)]
-            test_routine_clock: None,
         }
     }
 
@@ -271,22 +146,12 @@ impl WorkerConfig {
         let channel = channel.into();
         let runtime = ProviderRuntime::with_os_vault(&channel)?;
         Ok(Self {
-            legacy_bots: !koru_bots_engine::ENABLED,
+            instructions: instructions::Source::default(),
             root,
             channel,
             providers: runtime.registry(),
             provider_runtime: Some(runtime),
             store_context: None,
-            bot_authority: None,
-            decision_wait_delegate: None,
-            store_root: None,
-            connections: None,
-            connections_hosted: None,
-            bot_admission: None,
-            bot_client_hint: None,
-            bot_events: bots::events::BotEvents::default(),
-            bot_delegate: None,
-            native_recovery: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -298,15 +163,6 @@ impl WorkerConfig {
             test_repository_return: None,
             #[cfg(test)]
             test_context_completion: None,
-            #[cfg(test)]
-            test_bot_creation: None,
-            #[cfg(test)]
-            test_bot_runtime_ready: false,
-            #[cfg(test)]
-            test_lifecycle_unit: None,
-            owner_zone: None,
-            #[cfg(test)]
-            test_routine_clock: None,
         })
     }
 
@@ -319,22 +175,12 @@ impl WorkerConfig {
         let channel = channel.into();
         let runtime = ProviderRuntime::new(None, credentials, openai_account)?;
         Ok(Self {
-            legacy_bots: !koru_bots_engine::ENABLED,
+            instructions: instructions::Source::default(),
             root,
             channel,
             providers: runtime.registry(),
             provider_runtime: Some(runtime),
             store_context: None,
-            bot_authority: None,
-            decision_wait_delegate: None,
-            store_root: None,
-            connections: None,
-            connections_hosted: None,
-            bot_admission: None,
-            bot_client_hint: None,
-            bot_events: bots::events::BotEvents::default(),
-            bot_delegate: None,
-            native_recovery: None,
             tool_executor: None,
             provider_threads: PROVIDER_THREADS,
             session_host: None,
@@ -346,15 +192,6 @@ impl WorkerConfig {
             test_repository_return: None,
             #[cfg(test)]
             test_context_completion: None,
-            #[cfg(test)]
-            test_bot_creation: None,
-            #[cfg(test)]
-            test_bot_runtime_ready: false,
-            #[cfg(test)]
-            test_lifecycle_unit: None,
-            owner_zone: None,
-            #[cfg(test)]
-            test_routine_clock: None,
         })
     }
 
@@ -457,8 +294,6 @@ pub enum WorkerExit {
     Panicked,
 }
 
-pub(crate) mod routine_call;
-
 pub struct AiWorker {
     config: WorkerConfig,
 }
@@ -468,67 +303,12 @@ impl AiWorker {
         Self { config }
     }
 
-    pub fn spawn(mut self) -> Result<WorkerHandle, WorkerError> {
-        let legacy_bots = self.config.legacy_bots;
-        if !self.config.legacy_bots {
-            self.config.bot_authority = None;
-            self.config.bot_delegate = None;
-            self.config.bot_admission = None;
-            self.config.decision_wait_delegate = None;
-            self.config.native_recovery = None;
-            self.config.connections = None;
-        }
+    pub fn spawn(self) -> Result<WorkerHandle, WorkerError> {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
-        let routine_calls = routine_call::RoutineCallGates::default();
-        let worker_routine_calls = routine_calls.clone();
         let attachments = AttachmentStore::new(&self.config.root);
         let store_context = self.config.store_context.clone();
-        let native_mutations = self
-            .config
-            .native_recovery
-            .as_ref()
-            .map(|config| config.gate.clone());
         let (ready_tx, ready_rx) = sync_channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
-        // Private connections (M5). The service's threads reach ai.db
-        // through this worker's own inbox and stop with its stop flag.
-        let hosted = connections::Hosted::compose(
-            self.config.connections.take(),
-            self.config.bot_delegate.clone(),
-            sender.clone(),
-            Arc::clone(&shutdown),
-        )
-        .map_err(|error| {
-            shutdown.store(true, Ordering::Release);
-            WorkerError::Startup(error)
-        })?;
-        self.config.connections_hosted = hosted.clone();
-        // Linked desktops (M8): what the writer publishes for their streams,
-        // and what an owner server is built from when this worker has a Bot
-        // authority and an admission port.
-        let (hint, head, feed_streams) = bots::client::owner::WriterHint::pair();
-        self.config.bot_client_hint = Some(hint);
-        let bot_owner = match (&self.config.bot_authority, &self.config.bot_admission) {
-            (Some(authority), Some(admission)) => Some(bots::client::owner::Parts {
-                sender: sender.clone(),
-                shutdown: Arc::clone(&shutdown),
-                authority: Arc::clone(authority),
-                admission: Arc::clone(admission),
-                head,
-                feed_streams,
-                events: self.config.bot_events.clone(),
-            }),
-            _ => None,
-        };
-        let bot_mirror_parts =
-            self.config
-                .bot_authority
-                .as_ref()
-                .map(|authority| bots::client::mirror::Parts {
-                    sender: sender.clone(),
-                    shutdown: Arc::clone(&shutdown),
-                    authority: Arc::clone(authority),
-                });
         let thread_shutdown = Arc::clone(&shutdown);
         let status = Arc::new(Mutex::new(WorkerStatus::Starting));
         let thread_status = Arc::clone(&status);
@@ -543,7 +323,6 @@ impl AiWorker {
                         provider_output,
                         Arc::clone(&thread_shutdown),
                         ready_tx,
-                        worker_routine_calls,
                     )
                 }));
                 // However the writer ended, nothing of it is left to serve
@@ -575,17 +354,9 @@ impl AiWorker {
             Ok(Ok(info)) => {
                 set_status(&status, WorkerStatus::Ready(info));
                 Ok(WorkerHandle {
-                    legacy_bots,
                     sender,
                     attachments,
                     store_context,
-                    native_mutations,
-                    routine_calls,
-                    connections: hosted,
-                    bot_owner,
-                    bot_owner_server: std::sync::OnceLock::new(),
-                    bot_mirror_parts,
-                    bot_mirror: std::sync::OnceLock::new(),
                     shutdown,
                     status,
                     join: Some(join),
@@ -614,19 +385,6 @@ impl AiWorker {
 }
 
 pub struct WorkerHandle {
-    legacy_bots: bool,
-    /// What the owner server of linked desktops is built from (M8), when
-    /// this worker has a Bot authority and an admission port.
-    pub(crate) bot_owner: Option<bots::client::owner::Parts>,
-    bot_owner_server: std::sync::OnceLock<bots::client::owner::BotOwnerServer>,
-    /// What the copy of other computers' Bots is built from (M8), when this
-    /// worker has a Bot authority. Nothing is built from it until
-    /// [`WorkerHandle::start_bot_mirror`] is called.
-    pub(crate) bot_mirror_parts: Option<bots::client::mirror::Parts>,
-    bot_mirror: std::sync::OnceLock<bots::client::mirror::BotMirror>,
-    connections: Option<connections::Hosted>,
-    routine_calls: routine_call::RoutineCallGates,
-    native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
     attachments: AttachmentStore,
     store_context: Option<Arc<dyn StoreContextPort>>,
@@ -646,75 +404,10 @@ impl std::fmt::Debug for WorkerHandle {
 impl WorkerHandle {
     pub fn client(&self) -> AiWorkerClient {
         AiWorkerClient {
-            legacy_bots: self.legacy_bots,
             sender: self.sender.clone(),
             attachments: self.attachments.clone(),
             store_context: self.store_context.clone(),
-            native_mutations: self.native_mutations.clone(),
-            routine_calls: self.routine_calls.clone(),
-            connections: self.connections.clone(),
         }
-    }
-
-    /// The engine that serves this computer's Bots to linked devices (M8),
-    /// or `None` when this worker has no Bot authority or was given no
-    /// admission port. One server for the life of the worker: its limits
-    /// count every stream. It runs a linked device's commands through this
-    /// worker's own client, the port a window's request goes through.
-    pub fn bot_owner_server(&self) -> Option<bots::client::owner::BotOwnerServer> {
-        let parts = self.bot_owner.as_ref()?;
-        Some(
-            self.bot_owner_server
-                .get_or_init(|| {
-                    bots::client::owner::BotOwnerServer::new(
-                        parts.clone(),
-                        Arc::new(self.client()),
-                        bots::client::owner::Timing::default(),
-                    )
-                })
-                .clone(),
-        )
-    }
-
-    /// Start keeping a copy of the Bots other computers of this person run
-    /// (M8), and answer the mirror. `egress` opens a stream to a linked
-    /// device; `peers` says which devices' Bots may be copied. `None` when
-    /// this worker has no Bot authority, or when this is called outside a
-    /// tokio runtime: the mirror's streams are tasks of the runtime it is
-    /// started in. A second call answers the mirror the first one started.
-    ///
-    /// **A worker for which this is never called dials no linked device,
-    /// opens no Bot stream and writes no copy table**, and answers the two
-    /// linked reads "no linked Bots". Whether it is called is the caller's
-    /// switch, in the composition.
-    pub fn start_bot_mirror(
-        &self,
-        egress: Arc<dyn koru_network_edge::NetworkEgress>,
-        peers: koru_store_server::BotPeers,
-    ) -> Option<bots::client::mirror::BotMirror> {
-        let parts = self.bot_mirror_parts.as_ref()?;
-        let runtime = tokio::runtime::Handle::try_current().ok()?;
-        Some(
-            self.bot_mirror
-                .get_or_init(|| {
-                    bots::client::mirror::BotMirror::start(
-                        parts.clone(),
-                        egress,
-                        Arc::new(peers),
-                        bots::client::mirror::Timing::default(),
-                        runtime,
-                    )
-                })
-                .clone(),
-        )
-    }
-
-    /// The linked computers' Bots for the routing port
-    /// (`koru_ai_client::Client::routed`), once
-    /// [`WorkerHandle::start_bot_mirror`] started a mirror; `None` before
-    /// that, and for good when it is never called.
-    pub fn linked_bots(&self) -> Option<Arc<dyn koru_ai_client::LinkedBots>> {
-        self.bot_mirror.get().map(|mirror| mirror.linked())
     }
 
     pub fn status(&self) -> WorkerStatus {
@@ -765,11 +458,6 @@ impl Drop for WorkerHandle {
 
 #[derive(Clone)]
 pub struct AiWorkerClient {
-    legacy_bots: bool,
-    /// The private connections this worker hosts (M5), if any.
-    connections: Option<connections::Hosted>,
-    routine_calls: routine_call::RoutineCallGates,
-    native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
     /// Where uploads are prepared and read, on the caller's own thread.
     attachments: AttachmentStore,
@@ -785,61 +473,6 @@ impl AiWorkerClient {
 }
 
 impl AiServerPort for AiWorkerClient {
-    fn bots(
-        &self,
-        context: RequestContext,
-        request: koru_ai_wire::BotCommand,
-    ) -> ApiResult<koru_ai_wire::BotResponse> {
-        if !self.legacy_bots {
-            return Err(bots::bot_failure(koru_ai_core::bots::BotError::Unavailable));
-        }
-        // A worker keeps no copy of another computer's Bots by itself: the
-        // two linked reads answer "no linked Bots" here. When a mirror runs
-        // the routing port answers them from the copy and they never reach
-        // this.
-        if let Some(answer) = bots::client::mirror::without_copy(&context, &request) {
-            return answer;
-        }
-        let (reply, response) = sync_channel(1);
-        if matches!(&request, koru_ai_wire::BotCommand::ReadRoutineDetail { .. }) {
-            let cancellation = Cancellation::default();
-            let _wait = bots::routine::listing::CancelOnDrop(cancellation.clone());
-            self.sender
-                .try_send(Envelope::RoutineDetail {
-                    command: WorkerCommand::Bots {
-                        context: context.into(),
-                        request,
-                        reply,
-                    },
-                    cancellation,
-                    deadline: Instant::now() + RESPONSE_TIMEOUT,
-                })
-                .map_err(queue_failure)?;
-            return receive_api(response);
-        }
-        if matches!(&request, koru_ai_wire::BotCommand::ReadRoutines { .. }) {
-            let cancellation = Cancellation::default();
-            let _wait = bots::routine::listing::CancelOnDrop(cancellation.clone());
-            self.sender
-                .try_send(Envelope::RoutineListing {
-                    command: WorkerCommand::Bots {
-                        context: context.into(),
-                        request,
-                        reply,
-                    },
-                    cancellation,
-                    deadline: Instant::now() + RESPONSE_TIMEOUT,
-                })
-                .map_err(queue_failure)?;
-            return receive_api(response);
-        }
-        self.send(WorkerCommand::Bots {
-            context: context.into(),
-            request,
-            reply,
-        })?;
-        receive_api(response)
-    }
     fn provider_settings(&self, context: RequestContext) -> ApiResult<ProviderSettingsResponse> {
         let (reply, response) = sync_channel(1);
         self.send(WorkerCommand::ProviderSettings {
@@ -1470,117 +1103,6 @@ impl AiServerPort for AiWorkerClient {
 }
 
 enum Envelope {
-    RoutineOccurrence(Box<bots::occurrence::Incoming>),
-    RoutineOccurrenceCompleted(Box<bots::occurrence::OccurrenceResult>),
-    DecisionWait(Box<bots::decision_wait::Incoming>),
-    DecisionRecorded {
-        view: Box<koru_delegate_api::bots::DecisionReceiptView>,
-        reply: SyncSender<ApiResult<()>>,
-    },
-    DecisionWaitCompleted(Box<bots::decision_wait::DecisionWaitResult>),
-    DecisionApplied(Box<bots::decision_wait::apply::ApplyResult>),
-    /// A test's own step on the writer, after the worker started (its
-    /// startup recovery has run), with the writer's state.
-    #[cfg(test)]
-    WithStateForFixture(Box<dyn FnOnce(&mut WorkerState) + Send>),
-    /// Read-only observation of production recovery for spawned-worker tests.
-    #[cfg(test)]
-    ReadRoutineCreationForFixture {
-        owner: koru_ai_core::bots::BotOwner,
-        bot: koru_ai_core::bots::BotId,
-        schedule: koru_delegate_core::ScheduleId,
-        reply: SyncSender<
-            Result<Option<koru_ai_core::bots::BotRoutineCreation>, koru_ai_core::bots::BotError>,
-        >,
-    },
-    /// Internal entry seam only. Production and normal client dispatch retain
-    /// the shared gate; all subsequent read authority checks are unchanged.
-    #[cfg(test)]
-    RunMemoryReadForFixture {
-        request: bots::memory::RunMemoryReadRequest,
-        reply: SyncSender<ApiResult<bots::memory::RunMemoryReadResult>>,
-        deadline: Instant,
-    },
-    #[cfg(test)]
-    RetireMemoryReadKeyForFixture {
-        reply: SyncSender<()>,
-    },
-    RoutineDetail {
-        command: WorkerCommand,
-        cancellation: Cancellation,
-        deadline: Instant,
-    },
-    RoutineDetailCompleted(bots::routine::detail::DetailResult),
-    RoutineControlCompleted(Box<bots::routine::control::ControlResult>),
-    RoutineListing {
-        command: WorkerCommand,
-        cancellation: Cancellation,
-        deadline: Instant,
-    },
-    RoutineListingCompleted(bots::routine::listing::ListingResult),
-    RunRoutine {
-        request: bots::routine::model::RunRoutineRequest,
-        reply: SyncSender<ApiResult<bots::routine::model::RunRoutineResult>>,
-    },
-    RunRoutineCompleted(Box<bots::routine::model::RunRoutineCompletion>),
-    /// One Bot asking others (M6): the ask, the askable list and the
-    /// child wait enrollment bridge.
-    Children(bots::children::Incoming),
-    ChildrenCompleted(Box<bots::children::Completion>),
-    RunMemoryRead {
-        request: bots::memory::RunMemoryReadRequest,
-        reply: SyncSender<ApiResult<bots::memory::RunMemoryReadResult>>,
-        deadline: Instant,
-    },
-    MemoryReadCompleted(bots::memory::read::MemoryReadResult),
-    RunMemoryWrite {
-        request: bots::memory::RunMemoryWriteSubjectRequest,
-        work: bots::memory::write::Work,
-        reply: SyncSender<ApiResult<bots::memory::write::WriteValue>>,
-        deadline: Instant,
-    },
-    MemoryWriteCompleted(bots::memory::write::MemoryWriteResult),
-    #[cfg(test)]
-    RetireMemoryWritesForFixture {
-        reply: SyncSender<()>,
-    },
-    NativeDrainWake,
-    NativeDrained(native_recovery::NativeDrainResult),
-    /// One transaction on ai.db's connection rows, asked for by the
-    /// connection service from its own thread (M5).
-    Connections(connections::StoreCall),
-    /// One short piece of work on the writer, asked for by the stream of a
-    /// linked device (M8): a feed read, a receipt, a watch.
-    BotClient(bots::client::owner::WriterCall),
-    /// The plan of one private read, or a Run's setup reason (M5).
-    PrivatePlan(connections::plan::Incoming),
-    NativePolicy {
-        request: bots::policy::NativePolicyRequest,
-        reply: SyncSender<ApiResult<bots::policy::NativePolicyEvidence>>,
-        deadline: Instant,
-    },
-    BotPolicyChecked(bots::BotPolicyResult),
-    BotBootChecked(bots::BotBootResult),
-    BotPolicyRecover {
-        restart: bool,
-    },
-    BotCoordinated(bots::BotCoordinationResult),
-    BotChatStep(bots::chat::StepResult),
-    BotResendProbed(bots::chat::ResendProbed),
-    BotLifecycleStep(bots::LifecycleResult),
-    BotInteraction(bots::chat::ControlResult),
-    BotInteractionRead(bots::chat::ControlReadResult),
-    BotSteer(bots::chat::SteerResult),
-    BotSteerRead(bots::chat::SteerReadResult),
-    BotChatRecover,
-    BotRecover,
-    BotPrepared {
-        command: Box<WorkerCommand>,
-        proof: ApiResult<bots::PreparedBotCommand>,
-    },
-    BotCreationPrepared(Box<bots::CreationPrepared>),
-    BotCreationStep(Box<bots::CreationLaneResult>),
-    BotCreationRead(Box<bots::CreationReadResult>),
     Command(WorkerCommand),
     Context(ContextResolution),
     Provider(AiEvent),
@@ -1606,54 +1128,42 @@ enum Envelope {
     /// The cleanup thread copied (or could not copy) a branch's attachment
     /// folders; the branch is committed or dropped on this.
     BranchCopied {
-        context: bots::CommandContext,
+        context: RequestContext,
         copy: Box<BranchCopy>,
         copied: bool,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
     },
-    /// The same, for a Bot branch: its commit is fenced again first.
-    BotBranchCopied {
-        pending: Box<bots::PendingBotBranch>,
-        copied: bool,
-    },
-    /// A Bot branch's owner authority was inspected again, off the writer.
-    BotBranchPrepared(bots::BotBranchPrepared),
 }
 
 enum WorkerCommand {
-    Bots {
-        context: bots::CommandContext,
-        request: koru_ai_wire::BotCommand,
-        reply: SyncSender<ApiResult<koru_ai_wire::BotResponse>>,
-    },
     Ping(SyncSender<()>),
     Info(SyncSender<AiWorkerInfo>),
     ProviderSettings {
-        context: bots::CommandContext,
+        context: RequestContext,
         reply: SyncSender<ApiResult<ProviderSettingsResponse>>,
     },
     SelectProvider {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: SelectProviderRequest,
         reply: SyncSender<ApiResult<ProviderSettingsResponse>>,
     },
     UpdateOpenAiSettings {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: UpdateOpenAiSettingsRequest,
         reply: SyncSender<ApiResult<OpenAiSettingsView>>,
     },
     UpdateOllamaSettings {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: UpdateOllamaSettingsRequest,
         reply: SyncSender<ApiResult<OllamaSettingsView>>,
     },
     ValidateProvider {
-        context: bots::CommandContext,
+        context: RequestContext,
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
     },
     DiscoverAgentModels {
-        context: bots::CommandContext,
+        context: RequestContext,
         provider: AiProviderId,
         /// Rebuild the agent's list before answering (the manual refresh).
         refresh: bool,
@@ -1661,214 +1171,214 @@ enum WorkerCommand {
     },
     /// What a local agent can be told to do by name in a folder (D121).
     DiscoverAgentCommands {
-        context: bots::CommandContext,
+        context: RequestContext,
         provider: AiProviderId,
         folder: Option<String>,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
     },
     PullOllamaModel {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: PullOllamaModelRequest,
         reply: SyncSender<ApiResult<ModelPullResponseStream>>,
     },
     CancelOllamaPull {
-        context: bots::CommandContext,
+        context: RequestContext,
         reply: SyncSender<ApiResult<CancelModelPullResponse>>,
     },
     CreateChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: CreateChatRequest,
         reply: SyncSender<ApiResult<CreateChatResponse>>,
     },
     ListChats {
-        context: bots::CommandContext,
+        context: RequestContext,
         profile: Option<koru_ai_core::ProfileId>,
         reply: SyncSender<ApiResult<ListChatsResponse>>,
     },
     ReadChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         reply: SyncSender<ApiResult<ChatTranscript>>,
     },
     RenameChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: RenameChatRequest,
         reply: SyncSender<ApiResult<RenameChatResponse>>,
     },
     PinChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: koru_ai_wire::PinChatRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::PinChatResponse>>,
     },
     UpdateChatModel {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: UpdateChatModelRequest,
         reply: SyncSender<ApiResult<UpdateChatModelResponse>>,
     },
     UpdateChatPrivacy {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: UpdateChatPrivacyRequest,
         reply: SyncSender<ApiResult<UpdateChatPrivacyResponse>>,
     },
     UpdateChatFolder {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: koru_ai_wire::UpdateChatFolderRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatFolderResponse>>,
     },
     UpdateChatAgentSettings {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: koru_ai_wire::UpdateChatAgentSettingsRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse>>,
     },
     ToolListChats {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: ListChatsToolRequest,
         reply: SyncSender<ApiResult<ListChatsToolResponse>>,
     },
     ToolSearchChats {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: SearchChatsToolRequest,
         reply: SyncSender<ApiResult<SearchChatsToolResponse>>,
     },
     ToolReadChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: ReadChatToolRequest,
         reply: SyncSender<ApiResult<ReadChatToolResponse>>,
     },
     UpdateChatToolPolicy {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: UpdateChatToolPolicyRequest,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
     AddChatWorkspaceGrants {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
     ReadChatToolPolicy {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         reply: SyncSender<ApiResult<ChatToolPolicyResponse>>,
     },
     Usage {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: Option<ChatId>,
         reply: SyncSender<ApiResult<UsageResponse>>,
     },
     DeleteChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         reply: SyncSender<ApiResult<DeleteChatResponse>>,
     },
     ClearHistory {
-        context: bots::CommandContext,
+        context: RequestContext,
         reply: SyncSender<ApiResult<ClearHistoryResponse>>,
     },
     ClearUsage {
-        context: bots::CommandContext,
+        context: RequestContext,
         reply: SyncSender<ApiResult<ClearUsageResponse>>,
     },
     Search {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: AiSearchRequest,
         reply: SyncSender<ApiResult<AiSearchResponse>>,
     },
     Feedback {
-        context: bots::CommandContext,
+        context: RequestContext,
         message: MessageId,
         request: FeedbackRequest,
         reply: SyncSender<ApiResult<FeedbackResponse>>,
     },
     BranchChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: BranchChatRequest,
         reply: SyncSender<ApiResult<BranchChatResponse>>,
     },
     SendTurn {
-        context: bots::CommandContext,
+        context: RequestContext,
         request: SendTurnRequest,
         reply: SyncSender<ApiResult<AiResponseStream>>,
     },
     ReadAttempt {
-        context: bots::CommandContext,
+        context: RequestContext,
         attempt: InferenceAttemptId,
         reply: SyncSender<ApiResult<AttemptResponse>>,
     },
     CancelAttempt {
-        context: bots::CommandContext,
+        context: RequestContext,
         attempt: InferenceAttemptId,
         reply: SyncSender<ApiResult<CancelAttemptResponse>>,
     },
     SteerAttempt {
-        context: bots::CommandContext,
+        context: RequestContext,
         attempt: InferenceAttemptId,
         request: koru_ai_wire::SteerAttemptRequest,
         reply: SyncSender<ApiResult<koru_ai_wire::SteerAttemptResponse>>,
     },
     ApproveToolCall {
-        context: bots::CommandContext,
+        context: RequestContext,
         tool: ToolInvocationId,
         decision: koru_ai_wire::ToolDecisionRequest,
         reply: SyncSender<ApiResult<ToolDecisionResponse>>,
     },
     DenyToolCall {
-        context: bots::CommandContext,
+        context: RequestContext,
         tool: ToolInvocationId,
         choice: Option<String>,
         reply: SyncSender<ApiResult<ToolDecisionResponse>>,
     },
     RetryTurn {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: RetryTurnRequest,
         reply: SyncSender<ApiResult<AiResponseStream>>,
     },
     ExportChat {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         request: ExportChatRequest,
         reply: SyncSender<ApiResult<ExportChatResponse>>,
     },
     ReadExport {
-        context: bots::CommandContext,
+        context: RequestContext,
         export: DocumentExportId,
         reply: SyncSender<ApiResult<ExportChatResponse>>,
     },
     AttachmentAdmission {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         attachment: ChatAttachmentId,
         reply: SyncSender<ApiResult<Option<AttachmentRecord>>>,
     },
     WorkspaceCopyAdmission {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         attachment: ChatAttachmentId,
         workspace: WorkspaceId,
         reply: SyncSender<ApiResult<koru_ai_core::ProfileId>>,
     },
     StageAttachment {
-        context: bots::CommandContext,
+        context: RequestContext,
         record: Box<AttachmentRecord>,
         reply: SyncSender<ApiResult<StageAnswer>>,
     },
     RemoveStagedAttachment {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         attachment: ChatAttachmentId,
         reply: SyncSender<ApiResult<koru_ai_sqlite::RemovedAttachment>>,
     },
     ResolveAttachments {
-        context: bots::CommandContext,
+        context: RequestContext,
         chat: ChatId,
         attachments: Vec<ChatAttachmentId>,
         reply: SyncSender<ApiResult<Vec<AttachmentRecord>>>,
@@ -1885,7 +1395,6 @@ enum WorkerCommand {
 impl WorkerCommand {
     fn diagnostic_name(&self) -> &'static str {
         match self {
-            Self::Bots { .. } => "bots",
             Self::Ping(_) => "ping",
             Self::Info(_) => "info",
             Self::ProviderSettings { .. } => "provider_settings",
@@ -1974,54 +1483,6 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
-    legacy_bots: bool,
-    /// Where the six diagnostic events of M8 go (`bots::events`).
-    bot_events: bots::events::BotEvents,
-    /// What the writer keeps for linked desktops (M8): this start, the
-    /// feed, the pages waiting for its budget, and the live watches.
-    bot_clients: bots::client::owner::Writer,
-    /// The private connections this worker hosts (M5), if any.
-    connections: Option<connections::Hosted>,
-    /// Attempts whose turn planned a private read: no tool input and no tool
-    /// output is kept for them (M5, contract 2.6).
-    private_attempts: HashSet<InferenceAttemptId>,
-    /// Why a Run's last private read needed the person, for their card.
-    private_setup: HashMap<koru_delegate_core::RunId, connections::plan::PrivateSetupReason>,
-    occurrences: bots::occurrence::OccurrenceDriver,
-    decision_waits: bots::decision_wait::DecisionWaitDriver,
-    bot_boot: bots::BootRecovery,
-    native_recovery: Option<native_recovery::NativeRecoveryConfig>,
-    native_drain_busy: bool,
-    bot_policy_pending: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
-    bot_policy_recovery: bots::policy::PolicyRecovery,
-    bot_chats: HashMap<InferenceAttemptId, bots::chat::LiveChat>,
-    bot_interactions: HashSet<ToolInvocationId>,
-    bot_steers: HashMap<Uuid, bots::chat::SteerBinding>,
-    bot_chat_recovery: Option<Option<InferenceAttemptId>>,
-    bot_coordination: HashSet<(koru_ai_core::bots::BotId, koru_ai_core::bots::BotRequestId)>,
-    bot_recovery_after: Option<i64>,
-    /// When the receipt recovery pass runs again after a receipt stayed owed.
-    bot_recovery_retry: bots::AdmissionRetry,
-    /// The last failed delivery of each pending pause, resume or access
-    /// change, for the Bot read (P1.7).
-    bot_delivery_answers: bots::DeliveryAnswers,
-    /// The lifecycle operations the writer is driving (P1.7).
-    bot_lifecycle: bots::LifecycleDriver,
-    /// The Bot creations the writer is driving, and their list (P1.8).
-    bot_creations: bots::CreationDriver,
-    creation_lane: bots::CreationLane,
-    memory_recovery: bots::memory::recovery::MemoryRecovery,
-    routine_recovery: bots::routine::RoutineRecovery,
-    routine_listings: bots::routine::listing::Listings,
-    routine_controls: bots::routine::control::RoutineControls,
-    memory_reads: bots::memory::read::MemoryReads,
-    memory_writes: bots::memory::write::MemoryWrites,
-    /// Refused Bot tasks owed their automatic re-send as files (O30).
-    bot_resends: bots::chat::Resends,
-    #[cfg(test)]
-    test_bot_runtime_ready: bool,
-    bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
-    bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
     repository: Repository,
     /// The worker's stop flag, the one the pools' threads watch too.
     shutdown: Arc<AtomicBool>,
@@ -2056,8 +1517,6 @@ struct WorkerState {
     /// chat (koru-ai D108): they outlive their reply, and another message
     /// in the chat passes them over.
     next_message_rows: HashMap<ToolInvocationId, ChatId>,
-    // A bounded subset of next_message_rows; definitions stay in agent_live.
-    bot_next_message_ids: HashSet<ToolInvocationId>,
     /// Replies that carry a set's answers, with the set's row.
     answer_attempts: HashMap<InferenceAttemptId, ToolInvocationId>,
     /// The dispatcher's own inbox, for reports that arrive from other threads.
@@ -2103,7 +1562,6 @@ fn run_worker(
     provider_output: SyncSender<Envelope>,
     shutdown: Arc<AtomicBool>,
     ready: SyncSender<Result<AiWorkerInfo, String>>,
-    routine_calls: routine_call::RoutineCallGates,
 ) -> Result<(), String> {
     let database = config.root.join(koru_ai_sqlite::DATABASE_FILE);
     #[cfg(any(test, feature = "fixtures"))]
@@ -2119,19 +1577,9 @@ fn run_worker(
         Repository::open(&database).map_err(|error| error.to_string())?,
         true,
     );
-    // This start is recorded before anything of this run writes a feed
-    // marker, the restart sweep below included: it is what lets a linked
-    // desktop's cursor from a history this database lost be refused.
-    let mut bot_clients = bots::client::owner::Writer::new(config.bot_client_hint.take());
-    if config.legacy_bots {
-        bot_clients.started(&mut repository);
-    }
-    let recovery = (if config.legacy_bots {
-        repository.recover_interrupted(Timestamp::now())
-    } else {
-        repository.recover_ordinary_interrupted(Timestamp::now())
-    })
-    .map_err(|error| error.public_message)?;
+    let recovery = repository
+        .recover_interrupted(Timestamp::now())
+        .map_err(|error| error.public_message)?;
     if let Some(runtime) = &config.provider_runtime {
         let mut settings = repository
             .settings()
@@ -2177,6 +1625,7 @@ fn run_worker(
     let agents = match config.session_host {
         Some(endpoint) => match AgentSessions::spawn(endpoint) {
             Ok(agents) => {
+                let agents = agents.with_session_instructions(config.instructions.clone());
                 for (id, provider) in agents.providers() {
                     registry.insert(id, provider);
                 }
@@ -2199,7 +1648,7 @@ fn run_worker(
     };
     let mut providers: Vec<String> = registry.ids().map(ToString::to_string).collect();
     providers.sort();
-    let mut capabilities = if registry.is_empty() {
+    let capabilities = if registry.is_empty() {
         Vec::new()
     } else {
         vec![
@@ -2209,21 +1658,6 @@ fn run_worker(
             "ai.usage".into(),
         ]
     };
-    if config.bot_authority.is_some() {
-        capabilities.push("bots.config.v1".into());
-        // Creating a Bot with its Role page and folder (P1.8).
-        capabilities.push("bots.creation.v1".into());
-    }
-    // The managed folder derives only from the BotId under this AI root.
-    #[cfg(test)]
-    let bot_creations = config.test_bot_creation.take().unwrap_or_else(|| {
-        bots::CreationDriver::new(config.root.clone(), Arc::new(bots::NativeFolders))
-            .with_store_root(config.store_root.clone())
-    });
-    #[cfg(not(test))]
-    let bot_creations =
-        bots::CreationDriver::new(config.root.clone(), Arc::new(bots::NativeFolders))
-            .with_store_root(config.store_root.clone());
     let provider_pool = ProviderPool::spawn(
         Arc::new(registry),
         provider_output.clone(),
@@ -2245,6 +1679,7 @@ fn run_worker(
     let placement_store = store_context.clone();
     let context_pool = ContextPool::spawn(
         store_context.clone(),
+        config.instructions,
         provider_output.clone(),
         Arc::clone(&shutdown),
         #[cfg(test)]
@@ -2255,7 +1690,7 @@ fn run_worker(
         provider_output.clone(),
         Arc::clone(&shutdown),
     )?;
-    let provider_admin = if config.provider_runtime.is_some() || config.bot_authority.is_some() {
+    let provider_admin = if config.provider_runtime.is_some() || agents.is_some() {
         Some(ProviderAdminPool::spawn(
             config.provider_runtime.clone(),
             agents.clone(),
@@ -2289,43 +1724,6 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
-        legacy_bots: config.legacy_bots,
-        bot_events: config.bot_events.clone(),
-        bot_clients,
-        connections: config.connections_hosted.take(),
-        private_attempts: HashSet::new(),
-        private_setup: HashMap::new(),
-        native_recovery: config.native_recovery,
-        native_drain_busy: false,
-        bot_chats: HashMap::new(),
-        bot_interactions: HashSet::new(),
-        bot_steers: HashMap::new(),
-        bot_chat_recovery: Some(None),
-        bot_coordination: HashSet::new(),
-        bot_policy_pending: HashSet::new(),
-        bot_policy_recovery: bots::policy::PolicyRecovery::default(),
-        bot_boot: Default::default(),
-        bot_recovery_after: Some(0),
-        bot_recovery_retry: Default::default(),
-        bot_delivery_answers: Default::default(),
-        bot_lifecycle: Default::default(),
-        bot_creations,
-        creation_lane: Default::default(),
-        memory_recovery: Default::default(),
-        routine_recovery: Default::default(),
-        routine_listings: Default::default(),
-        routine_controls: bots::routine::control::RoutineControls::new(config.owner_zone.take()),
-        occurrences: bots::occurrence::OccurrenceDriver::new(routine_calls),
-        decision_waits: bots::decision_wait::DecisionWaitDriver::new(
-            config.decision_wait_delegate.take(),
-        ),
-        memory_reads: Default::default(),
-        memory_writes: Default::default(),
-        bot_resends: Default::default(),
-        #[cfg(test)]
-        test_bot_runtime_ready: config.test_bot_runtime_ready,
-        bot_delegate: config.bot_delegate,
-        bot_authority: config.bot_authority,
         repository,
         shutdown: Arc::clone(&shutdown),
         provider_runtime: config.provider_runtime,
@@ -2350,7 +1748,6 @@ fn run_worker(
         agent_live: HashMap::new(),
         agent_rows: HashMap::new(),
         next_message_rows: HashMap::new(),
-        bot_next_message_ids: HashSet::new(),
         answer_attempts: HashMap::new(),
         output: provider_output.clone(),
         agent_views,
@@ -2365,14 +1762,6 @@ fn run_worker(
         retiring: true,
         removed: HashSet::new(),
     };
-    #[cfg(test)]
-    if let Some(clock) = config.test_routine_clock.take() {
-        state.routine_controls.set_clock(clock);
-    }
-    #[cfg(test)]
-    if let Some(unit) = config.test_lifecycle_unit {
-        state.bot_lifecycle = bots::LifecycleDriver::with_unit(unit);
-    }
     // **A deleted profile's chats go with it**, once its deletion is final,
     // before any command is served; a Store that does not answer leaves
     // them for the next pass, as placement does.
@@ -2382,35 +1771,9 @@ fn run_worker(
     // already reads documents through; a Store that does not answer leaves
     // them for the next pass.
     state.place_unplaced_chats();
-    if state.legacy_bots {
-        state.recover_bot_operations();
-        state.recover_bot_policy(false);
-        state.recover_bot_chats();
-        state.schedule_native_recovery();
-    }
     while !shutdown.load(Ordering::Acquire) {
-        if state.legacy_bots {
-            state.schedule_bot_boot();
-            state.schedule_native_recovery();
-            if state.bot_policy_recovery.due(Instant::now()) {
-                state.recover_bot_policy(false);
-            }
-            if state.bot_recovery_retry.due(Instant::now()) {
-                state.retry_bot_operations();
-            }
-        }
         state.drain_agent_commands();
-        if state.legacy_bots {
-            state.schedule_bot_chat_step();
-            state.schedule_bot_resends();
-            state.schedule_bot_lifecycle();
-            state.schedule_routine_access_recovery();
-            state.schedule_creation_lanes();
-            state.schedule_occurrence_recovery();
-        }
-        match state.next_envelope(&receiver) {
-            Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
-            Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
+        match receiver.recv_timeout(LOOP_INTERVAL) {
             Ok(Envelope::Command(command)) => {
                 let command_name = command.diagnostic_name();
                 let started = Instant::now();
@@ -2430,127 +1793,6 @@ fn run_worker(
                 );
             }
             Ok(Envelope::Context(resolution)) => state.handle_context_resolution(resolution),
-            #[cfg(test)]
-            Ok(Envelope::WithStateForFixture(work)) => work(&mut state),
-            #[cfg(test)]
-            Ok(Envelope::ReadRoutineCreationForFixture {
-                owner,
-                bot,
-                schedule,
-                reply,
-            }) => {
-                let _ = reply.send(state.repository.bot_routine_creation(owner, bot, schedule));
-            }
-            #[cfg(test)]
-            Ok(Envelope::RetireMemoryReadKeyForFixture { reply }) => {
-                state.memory_reads.invalidate();
-                let _ = reply.send(());
-            }
-            #[cfg(test)]
-            Ok(Envelope::RunMemoryReadForFixture {
-                request,
-                reply,
-                deadline,
-            }) => state.enqueue_run_memory_read(request, reply, deadline),
-            Ok(Envelope::RunMemoryRead {
-                request,
-                reply,
-                deadline,
-            }) => state.request_run_memory_read(request, reply, deadline),
-            Ok(Envelope::RoutineDetail {
-                command,
-                cancellation,
-                deadline,
-            }) => state.start_routine_detail(command, cancellation, deadline),
-            Ok(Envelope::RoutineDetailCompleted(result)) => state.complete_routine_detail(result),
-            Ok(Envelope::RoutineListing {
-                command,
-                cancellation,
-                deadline,
-            }) => state.start_routine_listing(command, cancellation, deadline),
-            Ok(Envelope::RoutineListingCompleted(result)) => state.complete_routine_listing(result),
-            Ok(Envelope::RoutineControlCompleted(result)) => {
-                state.complete_routine_control(*result)
-            }
-            Ok(Envelope::RunRoutine { request, reply }) => state.start_run_routine(request, reply),
-            Ok(Envelope::RunRoutineCompleted(result)) => state.complete_run_routine(result),
-            Ok(Envelope::Children(incoming)) => state.children(incoming),
-            Ok(Envelope::ChildrenCompleted(completion)) => state.children_completed(*completion),
-            Ok(Envelope::MemoryReadCompleted(result)) => state.complete_memory_read(result),
-            Ok(Envelope::RunMemoryWrite {
-                request,
-                work,
-                reply,
-                deadline,
-            }) => state.request_memory_write(request, work, reply, deadline),
-            Ok(Envelope::MemoryWriteCompleted(result)) => state.complete_memory_write(result),
-            #[cfg(test)]
-            Ok(Envelope::RetireMemoryWritesForFixture { reply }) => {
-                state.memory_writes.invalidate();
-                let _ = reply.send(());
-            }
-            Ok(Envelope::Connections(call)) => {
-                // The service's own thread waits for this answer; a panic in
-                // one transaction leaves the writer serving the next.
-                if catch_unwind(AssertUnwindSafe(|| call(&mut state.repository))).is_err() {
-                    tracing::error!(
-                        target: "koru_ai::connections",
-                        "a connection row transaction panicked; worker remains available"
-                    );
-                }
-            }
-            Ok(Envelope::BotClient(call)) => {
-                // A linked device's stream waits for this answer; a panic in
-                // one call leaves the writer serving the next.
-                if catch_unwind(AssertUnwindSafe(|| call(&mut state))).is_err() {
-                    tracing::error!(
-                        target: "koru_ai::bot_clients",
-                        "a linked device's call panicked; worker remains available"
-                    );
-                }
-            }
-            Ok(Envelope::PrivatePlan(incoming)) => state.handle_private_plan(incoming),
-            Ok(Envelope::NativePolicy {
-                request,
-                reply,
-                deadline,
-            }) => state.request_native_policy(request, reply, deadline),
-            Ok(Envelope::BotPolicyChecked(result)) => state.complete_bot_policy(result),
-            Ok(Envelope::BotBootChecked(result)) => state.complete_bot_boot(result),
-            Ok(Envelope::BotPolicyRecover { restart }) => {
-                if restart {
-                    state.request_bot_boot_refresh();
-                }
-                state.recover_bot_policy(restart);
-            }
-            Ok(Envelope::BotCoordinated(result)) => state.complete_bot_coordination(result),
-            Ok(Envelope::BotChatStep(result)) => state.complete_bot_chat_step(result),
-            Ok(Envelope::BotResendProbed(result)) => state.complete_bot_resend_probe(result),
-            Ok(Envelope::BotLifecycleStep(result)) => state.complete_bot_lifecycle(result),
-            Ok(Envelope::BotInteraction(result)) => state.complete_bot_interaction(result),
-            Ok(Envelope::BotInteractionRead(result)) => state.complete_bot_interaction_read(result),
-            Ok(Envelope::BotSteer(result)) => state.complete_bot_steer(result),
-            Ok(Envelope::BotSteerRead(result)) => state.complete_bot_steer_read(result),
-            Ok(Envelope::BotChatRecover) => state.recover_bot_chats(),
-            Ok(Envelope::BotRecover) => state.recover_bot_operations(),
-            Ok(Envelope::BotPrepared { command, proof }) => {
-                state.complete_bot_preparation(*command, proof)
-            }
-            Ok(Envelope::BotCreationPrepared(prepared)) => {
-                state.complete_bot_creation_preparation(*prepared)
-            }
-            Ok(Envelope::BotCreationStep(result)) => state.complete_creation_lane(*result),
-            Ok(Envelope::RoutineOccurrence(incoming)) => state.begin_routine_occurrence(*incoming),
-            Ok(Envelope::RoutineOccurrenceCompleted(result)) => {
-                state.complete_routine_occurrence(*result)
-            }
-            Ok(Envelope::DecisionWait(incoming)) => state.begin_decision_wait(*incoming),
-            Ok(Envelope::DecisionRecorded { view, reply }) => {
-                state.record_bot_decision(*view, reply)
-            }
-            Ok(Envelope::DecisionWaitCompleted(result)) => state.complete_decision_wait(*result),
-            Ok(Envelope::DecisionApplied(result)) => state.complete_decision_apply(*result),
-            Ok(Envelope::BotCreationRead(result)) => state.complete_bot_creation_read(*result),
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
             Ok(Envelope::Tools(resolution)) => state.handle_tool_resolution(resolution),
@@ -2567,10 +1809,6 @@ fn run_worker(
                 copied,
                 reply,
             }) => state.on_branch_copied(context, copy, copied, reply),
-            Ok(Envelope::BotBranchCopied { pending, copied }) => {
-                state.on_bot_branch_copied(pending, copied)
-            }
-            Ok(Envelope::BotBranchPrepared(prepared)) => state.complete_bot_branch(prepared),
             Ok(Envelope::PullFinished(id)) => {
                 if state
                     .ollama_pull
@@ -2586,9 +1824,6 @@ fn run_worker(
         }
     }
     state.cancel_active_for_shutdown();
-    state.routine_listings.invalidate();
-    state.occurrences.cancel_all();
-    state.decision_waits.cancel_all();
     if let Some(admin) = &mut state.provider_admin {
         admin.stop();
     }
@@ -2603,6 +1838,28 @@ fn run_worker(
     }
     tracing::info!("AI worker stopped");
     Ok(())
+}
+
+fn transcript_active_attempt(
+    chat: ChatId,
+    messages: &[Message],
+    attempts: &[InferenceAttempt],
+) -> Option<InferenceAttempt> {
+    // A chat has at most one pending assistant. Never offer a Stop target
+    // inferred from a tool row, a copied reply, or another chat's attempt.
+    let reply = messages.iter().find(|message| {
+        message.chat_id == chat
+            && message.role == ChatRole::Assistant
+            && message.state == MessageState::Pending
+    })?;
+    attempts
+        .iter()
+        .rev()
+        .find(|attempt| {
+            attempt.chat_id == Some(chat) && attempt.assistant_message_id == Some(reply.id)
+        })
+        .filter(|attempt| !attempt.status.is_terminal())
+        .cloned()
 }
 
 fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Vec<MessageUsage> {
@@ -2632,9 +1889,7 @@ fn attempt_usage(attempt: InferenceAttempt) -> Option<(MessageId, Option<Message
         || usage.completion_tokens.is_some()
         || usage.reasoning_tokens.is_some()
         || usage.total_tokens.is_some();
-    // A refused reply keeps the engine's own stable code (O36), read
-    // from the column `refuse_bot_input` stored it in. Only the closed
-    // engine codes cross; anything else in the column stays private.
+    // Only the closed engine stop codes can appear in the usage view.
     let stop_code = attempt
         .stop_reason
         .filter(|code| koru_ai_core::inference::is_engine_stop_code(code));
@@ -2651,42 +1906,6 @@ fn attempt_usage(attempt: InferenceAttempt) -> Option<(MessageId, Option<Message
     })
 }
 
-/// Each reply a Bot Run wrote names that Run in its usage entry, in message
-/// order; a reply with no entry yet gets one holding only the Run. Nothing
-/// changes for a transcript with no Bot Run.
-fn with_bot_runs(
-    usage: Vec<MessageUsage>,
-    messages: &[Message],
-    runs: Vec<(MessageId, koru_delegate_core::RunId)>,
-) -> Vec<MessageUsage> {
-    if runs.is_empty() {
-        return usage;
-    }
-    let runs: HashMap<_, _> = runs.into_iter().collect();
-    let mut entries: HashMap<_, _> = usage
-        .into_iter()
-        .map(|entry| (entry.message_id, entry))
-        .collect();
-    messages
-        .iter()
-        .filter_map(|message| {
-            let mut entry = entries.remove(&message.id);
-            if let Some(run) = runs.get(&message.id) {
-                entry
-                    .get_or_insert_with(|| MessageUsage {
-                        message_id: message.id,
-                        usage: AiUsage::default(),
-                        context: None,
-                        stop_code: None,
-                        run_id: None,
-                    })
-                    .run_id = Some(*run);
-            }
-            entry
-        })
-        .collect()
-}
-
 fn grant_targets_in_profile(
     catalog: &koru_ai_core::ProfileCatalog,
     profile: koru_ai_core::ProfileId,
@@ -2699,42 +1918,7 @@ fn grant_targets_in_profile(
 
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
-        if !self.legacy_bots && matches!(&command, WorkerCommand::Bots { .. }) {
-            command.refuse(bots::bot_failure(koru_ai_core::bots::BotError::Unavailable));
-            return;
-        }
-        if matches!(
-            &command,
-            WorkerCommand::Bots {
-                request: koru_ai_wire::BotCommand::ReadRoutineDetail { .. },
-                ..
-            }
-        ) {
-            self.start_routine_detail(
-                command,
-                Cancellation::default(),
-                Instant::now() + RESPONSE_TIMEOUT,
-            );
-            return;
-        }
-        if matches!(
-            &command,
-            WorkerCommand::Bots {
-                request: koru_ai_wire::BotCommand::ReadRoutines { .. },
-                ..
-            }
-        ) {
-            self.start_routine_listing(
-                command,
-                Cancellation::default(),
-                Instant::now() + RESPONSE_TIMEOUT,
-            );
-            return;
-        }
-        let Some(command) = self.prepare_bot_command(command) else {
-            return;
-        };
-        let Some(command) = self.guard_bot_command(command) else {
+        let Some(command) = retired::guard(&self.repository, command) else {
             return;
         };
         // **A removed profile's chats are hidden**: a command that names
@@ -2742,53 +1926,7 @@ impl WorkerState {
         let Some(command) = self.hide_removed_profiles(command) else {
             return;
         };
-        let Some(command) = self.handle_bot_interaction(command) else {
-            return;
-        };
-        let Some(command) = self.handle_bot_steering(command) else {
-            return;
-        };
         match command {
-            WorkerCommand::Bots {
-                context,
-                request:
-                    request @ (koru_ai_wire::BotCommand::ListMemory { .. }
-                    | koru_ai_wire::BotCommand::ReadMemoryFact { .. }),
-                reply,
-            } => self.read_owner_memory(context, request, reply),
-            WorkerCommand::Bots {
-                context,
-                request: request @ koru_ai_wire::BotCommand::ReadRun { .. },
-                reply,
-            } => self.read_bot_run(context, request, reply),
-            WorkerCommand::Bots {
-                context,
-                request:
-                    request @ (koru_ai_wire::BotCommand::ListChildRequests { .. }
-                    | koru_ai_wire::BotCommand::ReadChildOrigin { .. }),
-                reply,
-            } => self.read_child_cards(context, request, reply),
-            WorkerCommand::Bots {
-                context,
-                request: request @ koru_ai_wire::BotCommand::StopTask { .. },
-                reply,
-            } => self.stop_bot_task(context, request, reply),
-            // One owner control of a Routine (P4.3): answered once the
-            // Schedule's owner has, never by the writer alone.
-            WorkerCommand::Bots {
-                context,
-                request,
-                reply,
-            } if request.routine_control().is_some() => {
-                self.start_routine_control(context, request, reply)
-            }
-            WorkerCommand::Bots {
-                context,
-                request,
-                reply,
-            } => {
-                let _ = reply.send(self.bots(context, request));
-            }
             WorkerCommand::Ping(reply) => {
                 let _ = reply.send(());
             }
@@ -2970,9 +2108,9 @@ impl WorkerState {
                 context,
                 chat,
                 reply,
-            } => self.begin_delete_chat(context.request, chat, reply),
+            } => self.begin_delete_chat(context, chat, reply),
             WorkerCommand::ClearHistory { context, reply } => {
-                self.begin_clear_history(context.request, reply)
+                self.begin_clear_history(context, reply)
             }
             WorkerCommand::ClearUsage { context, reply } => {
                 let _ = reply.send(self.clear_usage(context));
@@ -3024,7 +2162,7 @@ impl WorkerState {
                 attempt,
                 request,
                 reply,
-            } => self.begin_steer_attempt(context.request, attempt, request, reply),
+            } => self.begin_steer_attempt(context, attempt, request, reply),
             WorkerCommand::ApproveToolCall {
                 context,
                 tool,
@@ -3118,10 +2256,7 @@ impl WorkerState {
         }
     }
 
-    fn provider_settings(
-        &self,
-        context: bots::CommandContext,
-    ) -> ApiResult<ProviderSettingsResponse> {
+    fn provider_settings(&self, context: RequestContext) -> ApiResult<ProviderSettingsResponse> {
         authorize(&context, AiScope::ManageProviders)?;
         self.require_provider_runtime()?;
         Ok(settings_view(&self.current_settings()?, &self.agent_views))
@@ -3129,7 +2264,7 @@ impl WorkerState {
 
     fn select_provider(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: SelectProviderRequest,
     ) -> ApiResult<ProviderSettingsResponse> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -3157,7 +2292,7 @@ impl WorkerState {
 
     fn update_openai_settings(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: UpdateOpenAiSettingsRequest,
     ) -> ApiResult<OpenAiSettingsView> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -3186,7 +2321,7 @@ impl WorkerState {
 
     fn update_ollama_settings(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: UpdateOllamaSettingsRequest,
     ) -> ApiResult<OllamaSettingsView> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -3220,7 +2355,7 @@ impl WorkerState {
 
     fn validate_provider(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
     ) {
@@ -3248,7 +2383,7 @@ impl WorkerState {
     /// dispatcher never waits on it.
     fn discover_agent_models(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         provider: AiProviderId,
         refresh: bool,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentModelsResponse>>,
@@ -3290,7 +2425,7 @@ impl WorkerState {
     /// this runs on a thread of its own and answers through the held reply.
     fn discover_agent_commands(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         provider: AiProviderId,
         folder: Option<String>,
         reply: SyncSender<ApiResult<koru_ai_wire::AgentCommandsResponse>>,
@@ -3319,7 +2454,7 @@ impl WorkerState {
 
     fn pull_ollama_model(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: PullOllamaModelRequest,
     ) -> ApiResult<ModelPullResponseStream> {
         authorize(&context, AiScope::ManageProviders)?;
@@ -3365,7 +2500,7 @@ impl WorkerState {
 
     fn cancel_ollama_pull(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
     ) -> ApiResult<CancelModelPullResponse> {
         authorize(&context, AiScope::ManageProviders)?;
         let cancelled = self.ollama_pull.take().is_some_and(|(_, _, cancellation)| {
@@ -3419,7 +2554,7 @@ impl WorkerState {
 
     fn create_chat(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: CreateChatRequest,
     ) -> ApiResult<CreateChatResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -3536,52 +2671,21 @@ impl WorkerState {
         );
     }
 
-    fn read_chat(
-        &self,
-        context: bots::CommandContext,
-        chat_id: ChatId,
-    ) -> ApiResult<ChatTranscript> {
+    fn read_chat(&self, context: RequestContext, chat_id: ChatId) -> ApiResult<ChatTranscript> {
         authorize(&context, AiScope::Chat)?;
-        let access = self.bot_read_access(&context)?;
+
         let chat = self
             .repository
-            .chat_with_access(chat_id, &access)
+            .chat(chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let messages = self.repository.messages(chat_id).map_err(ai_failure)?;
-        let mut usage = transcript_usage(
-            &messages,
-            self.repository
-                .attempts_for_chat(chat_id)
-                .map_err(ai_failure)?,
-        );
-        // A Bot conversation, which only its authorized owner reads (the
-        // label is filled from that proof alone): each reply names the Run
-        // `read_run` accepts for it.
-        if let Some(label) = &chat.bot {
-            let replies: Vec<MessageId> = messages
-                .iter()
-                .filter(|message| message.role == ChatRole::Assistant)
-                .map(|message| message.id)
-                .collect();
-            // The conversation is readable either way: the Runs are an index
-            // into another owner, so failing to name them answers the
-            // transcript without them (said once in the log), never refuses
-            // the person their conversation. A client reads absent as "no
-            // Run named"; asking again names them once the lookup works.
-            match self
-                .repository
-                .bot_reply_runs(label.bot_id, chat_id, &replies)
-            {
-                Ok(runs) => usage = with_bot_runs(usage, &messages, runs),
-                Err(error) => tracing::warn!(
-                    target: "koru_ai::bots",
-                    chat = %chat_id,
-                    error = ?error,
-                    "a Bot conversation's Runs could not be named; its transcript is answered without them"
-                ),
-            }
-        }
+        let attempts = self
+            .repository
+            .attempts_for_chat(chat_id)
+            .map_err(ai_failure)?;
+        let active_attempt = transcript_active_attempt(chat_id, &messages, &attempts);
+        let usage = transcript_usage(&messages, attempts);
         let mut sources = Vec::<MessageSources>::new();
         for (message_id, source) in self.repository.citations(chat_id).map_err(ai_failure)? {
             if let Some(group) = sources
@@ -3599,6 +2703,7 @@ impl WorkerState {
         let reasoning_control = self.reasoning_control(&chat.current_model);
         Ok(ChatTranscript {
             chat,
+            active_attempt,
             tool_policy: self
                 .repository
                 .chat_tool_policy(chat_id)
@@ -3636,7 +2741,7 @@ impl WorkerState {
 
     fn rename_chat(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: RenameChatRequest,
     ) -> ApiResult<RenameChatResponse> {
@@ -3654,25 +2759,10 @@ impl WorkerState {
                 false,
             ));
         }
-        // A Bot conversation (past the guard: its owner, `bots.manage`, its
-        // holds) is read through the owner's prepared proof, never the
-        // ordinary reader, which does not see it; it must be readable
-        // before anything is written.
-        let bot_access = if self
-            .repository
-            .bot_for_chat(chat_id)
-            .map_err(bots::bot_failure)?
-            .is_some()
-        {
-            let access = self.bot_read_access(&context)?;
-            self.repository
-                .chat_with_access(chat_id, &access)
-                .map_err(ai_failure)?
-                .ok_or_else(not_found)?;
-            Some(access)
-        } else {
-            None
-        };
+        self.repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
         if !self
             .repository
             .rename_chat(chat_id, title)
@@ -3680,12 +2770,11 @@ impl WorkerState {
         {
             return Err(not_found());
         }
-        let chat = match &bot_access {
-            Some(access) => self.repository.chat_with_access(chat_id, access),
-            None => self.repository.chat(chat_id),
-        }
-        .map_err(ai_failure)?
-        .ok_or_else(not_found)?;
+        let chat = self
+            .repository
+            .chat(chat_id)
+            .map_err(ai_failure)?
+            .ok_or_else(not_found)?;
         Ok(RenameChatResponse { chat })
     }
 
@@ -3695,7 +2784,7 @@ impl WorkerState {
     /// activity: the chat keeps its place among the others.
     fn pin_chat(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: koru_ai_wire::PinChatRequest,
     ) -> ApiResult<koru_ai_wire::PinChatResponse> {
@@ -3718,20 +2807,12 @@ impl WorkerState {
 
     fn update_chat_model(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: UpdateChatModelRequest,
     ) -> ApiResult<UpdateChatModelResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat_id))?;
-        if self
-            .repository
-            .bot_for_chat(chat_id)
-            .map_err(bots::bot_failure)?
-            .is_some()
-        {
-            return self.update_bot_chat_model(&context, chat_id, &request);
-        }
         // A local agent's running reply took its model and level when it was
         // sent, so a chat that keeps its agent may change either while it
         // runs, from its next message (koru-ai D70). Anything else waits.
@@ -3861,7 +2942,7 @@ impl WorkerState {
 
     fn update_chat_privacy(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: UpdateChatPrivacyRequest,
     ) -> ApiResult<UpdateChatPrivacyResponse> {
@@ -3933,7 +3014,7 @@ impl WorkerState {
     /// conversation that already happened elsewhere would be misdescribed.
     fn update_chat_folder(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: koru_ai_wire::UpdateChatFolderRequest,
     ) -> ApiResult<koru_ai_wire::UpdateChatFolderResponse> {
@@ -3991,20 +3072,12 @@ impl WorkerState {
     /// the agent's to say; one it does not offer is refused when sent.
     fn update_chat_agent_settings(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: koru_ai_wire::UpdateChatAgentSettingsRequest,
     ) -> ApiResult<koru_ai_wire::UpdateChatAgentSettingsResponse> {
         authorize(&context, AiScope::Chat)?;
         self.admit_chat_work(Some(chat_id))?;
-        if self
-            .repository
-            .bot_for_chat(chat_id)
-            .map_err(bots::bot_failure)?
-            .is_some()
-        {
-            return self.update_bot_chat_agent_settings(&context, chat_id, &request);
-        }
         let chat = self
             .repository
             .chat(chat_id)
@@ -4028,12 +3101,7 @@ impl WorkerState {
         }
         let chat = self
             .repository
-            .patch_chat_agent_settings(
-                chat_id,
-                request.mode.as_deref(),
-                request.fast,
-                &koru_ai_core::bots::ChatReadAccess::ordinary(),
-            )
+            .patch_chat_agent_settings(chat_id, request.mode.as_deref(), request.fast)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         Ok(koru_ai_wire::UpdateChatAgentSettingsResponse { chat })
@@ -4041,13 +3109,12 @@ impl WorkerState {
 
     fn tool_list_chats(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: ListChatsToolRequest,
     ) -> ApiResult<ListChatsToolResponse> {
         authorize(&context, AiScope::Chat)?;
-        koru_ai_core::chat_tools::list_chats_with_access(
+        koru_ai_core::chat_tools::list_chats(
             &self.repository,
-            &self.bot_read_access(&context)?,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
             &self.removed_profiles(),
@@ -4057,13 +3124,12 @@ impl WorkerState {
 
     fn tool_search_chats(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: SearchChatsToolRequest,
     ) -> ApiResult<SearchChatsToolResponse> {
         authorize(&context, AiScope::Chat)?;
-        koru_ai_core::chat_tools::search_chats_with_access(
+        koru_ai_core::chat_tools::search_chats(
             &self.repository,
-            &self.bot_read_access(&context)?,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
             &self.removed_profiles(),
@@ -4073,13 +3139,12 @@ impl WorkerState {
 
     fn tool_read_chat(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: ReadChatToolRequest,
     ) -> ApiResult<ReadChatToolResponse> {
         authorize(&context, AiScope::Chat)?;
-        koru_ai_core::chat_tools::read_chat_with_access(
+        koru_ai_core::chat_tools::read_chat(
             &self.repository,
-            &self.bot_read_access(&context)?,
             ChatAccessLens::ToolSurface { calling_chat: None },
             request,
         )
@@ -4094,7 +3159,7 @@ impl WorkerState {
 
     fn update_chat_tool_policy(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: UpdateChatToolPolicyRequest,
     ) -> ApiResult<ChatToolPolicyResponse> {
@@ -4117,7 +3182,7 @@ impl WorkerState {
 
     fn read_chat_tool_policy(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
     ) -> ApiResult<ChatToolPolicyResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -4131,7 +3196,7 @@ impl WorkerState {
 
     fn add_chat_workspace_grants(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: koru_ai_wire::AddChatWorkspaceGrantsRequest,
     ) -> ApiResult<ChatToolPolicyResponse> {
@@ -4162,31 +3227,20 @@ impl WorkerState {
         Ok(ChatToolPolicyResponse { policy })
     }
 
-    fn usage(
-        &self,
-        context: bots::CommandContext,
-        chat_id: Option<ChatId>,
-    ) -> ApiResult<UsageResponse> {
+    fn usage(&self, context: RequestContext, chat_id: Option<ChatId>) -> ApiResult<UsageResponse> {
         authorize(&context, AiScope::ReadUsage)?;
-        let access = self.bot_read_access(&context)?;
+
         if let Some(chat_id) = chat_id
-            && self
-                .repository
-                .chat_with_access(chat_id, &access)
-                .map_err(ai_failure)?
-                .is_none()
+            && self.repository.chat(chat_id).map_err(ai_failure)?.is_none()
         {
             return Err(not_found());
         }
         Ok(UsageResponse {
-            report: self
-                .repository
-                .usage_with_access(chat_id, &access)
-                .map_err(ai_failure)?,
+            report: self.repository.usage(chat_id).map_err(ai_failure)?,
         })
     }
 
-    fn clear_usage(&mut self, context: bots::CommandContext) -> ApiResult<ClearUsageResponse> {
+    fn clear_usage(&mut self, context: RequestContext) -> ApiResult<ClearUsageResponse> {
         authorize(&context, AiScope::ReadUsage)?;
         if !self.active_work.is_empty() {
             return Err(active_history_conflict());
@@ -4214,11 +3268,11 @@ impl WorkerState {
 
     fn search(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: AiSearchRequest,
     ) -> ApiResult<AiSearchResponse> {
         authorize(&context, AiScope::Chat)?;
-        let access = self.bot_read_access(&context)?;
+
         if request.profile.is_some() {
             self.retire_removed_profiles();
             self.place_unplaced_chats();
@@ -4250,17 +3304,14 @@ impl WorkerState {
         }
         let page = self
             .repository
-            .search_with_access(
-                &AiSearchQuery {
-                    text: request.text,
-                    limit: request.limit,
-                    cursor: request.cursor,
-                    visibility: ChatAccessLens::UserSurface,
-                    profile: request.profile,
-                    removed_profiles: self.removed_profiles(),
-                },
-                &access,
-            )
+            .search(&AiSearchQuery {
+                text: request.text,
+                limit: request.limit,
+                cursor: request.cursor,
+                visibility: ChatAccessLens::UserSurface,
+                profile: request.profile,
+                removed_profiles: self.removed_profiles(),
+            })
             .map_err(ai_failure)?;
         Ok(AiSearchResponse {
             page,
@@ -4270,7 +3321,7 @@ impl WorkerState {
 
     fn feedback(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         message_id: MessageId,
         request: FeedbackRequest,
     ) -> ApiResult<FeedbackResponse> {
@@ -4321,19 +3372,11 @@ impl WorkerState {
 
     fn branch_chat(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         source_chat: ChatId,
         request: BranchChatRequest,
     ) -> ApiResult<BranchPlan> {
         authorize(&context, AiScope::Chat)?;
-        // A Bot conversation branches into another conversation with that Bot.
-        if let Some(bot) = self
-            .repository
-            .bot_for_chat(source_chat)
-            .map_err(bots::bot_failure)?
-        {
-            return self.branch_bot_chat(context, bot, source_chat, request);
-        }
         attachments::require_ordinary_branch_destination(&self.repository, request.branch_chat_id)?;
         Self::require_branch_title(&request)?;
         if let Some(existing) = self
@@ -4504,12 +3547,12 @@ impl WorkerState {
 
     fn export_chat(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: ExportChatRequest,
     ) -> ApiResult<ExportChatResponse> {
         authorize(&context, AiScope::Chat)?;
-        let access = self.bot_read_access(&context)?;
+
         if request.destination.title.trim().is_empty() {
             return Err(failure(
                 "invalid_request",
@@ -4519,7 +3562,7 @@ impl WorkerState {
         }
         let chat = self
             .repository
-            .chat_with_access(chat_id, &access)
+            .chat(chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         // A reply is kept as a document in its chat's own profile, as it
@@ -4599,7 +3642,7 @@ impl WorkerState {
 
     fn read_export(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         export: DocumentExportId,
     ) -> ApiResult<ExportChatResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -4651,19 +3694,16 @@ impl WorkerState {
     /// profile's chats are in neither.
     fn list_chats(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         profile: Option<koru_ai_core::ProfileId>,
     ) -> ApiResult<ListChatsResponse> {
         authorize(&context, AiScope::Chat)?;
-        let access = self.bot_read_access(&context)?;
+
         if profile.is_some() {
             self.retire_removed_profiles();
             self.place_unplaced_chats();
         }
-        let mut chats = self
-            .repository
-            .chats_with_access(&access)
-            .map_err(ai_failure)?;
+        let mut chats = self.repository.chats().map_err(ai_failure)?;
         if let Some(profile) = profile {
             chats.retain(|chat| chat.profile_id == Some(profile));
         }
@@ -4673,11 +3713,11 @@ impl WorkerState {
 
     fn send_turn(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         request: SendTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
-        let bot_access = self.bot_read_access(&context)?;
+
         self.admit_chat_work(Some(request.chat_id))?;
         if let Some(existing) = self
             .repository
@@ -4691,7 +3731,6 @@ impl WorkerState {
                     false,
                 ));
             }
-            self.check_bot_chat_retry(&existing, request.destination_workspace, "send", &request)?;
             return replay_stream(&self.repository, existing);
         }
         // A set's answers sent as the next message (D108): a reply of its
@@ -4741,7 +3780,7 @@ impl WorkerState {
         let system_prompt = system_prompt_override.unwrap_or(CHAT_PROMPT).to_owned();
         let chat = self
             .repository
-            .chat_with_access(request.chat_id, &bot_access)
+            .chat(request.chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let attachments = self.attachments_for_send(&chat, &request.attachment_ids)?;
@@ -4831,13 +3870,9 @@ impl WorkerState {
                 attachments: history_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
-        self.bot_answer_history(chat.id, &existing_messages, &mut provider_messages)?;
-        // A Bot mentioned in a message to a Bot is said in words to its
-        // agent; the earlier messages above are history and read it as a
-        // name (`bots::chat::render_sent_message`).
         provider_messages.push(AiRequestMessage {
             role: ChatRole::User,
-            markdown: bots::chat::render_sent_message(&self.repository, chat.id, &request.markdown),
+            markdown: koru_ai_core::render_prompt_text(&request.markdown),
             attachments: self.attachment_inputs(&attachments),
         });
         let attempt = InferenceAttempt {
@@ -4880,19 +3915,7 @@ impl WorkerState {
             attempt: attempt.clone(),
             attachment_ids: request.attachment_ids.clone(),
         };
-        let is_bot = self.prepare_bot_chat_turn(
-            &context,
-            &chat,
-            koru_ai_core::bots::replay::BotChatPreparation::Turn(pending.clone()),
-            request.destination_workspace,
-            "send",
-            &request,
-            &request.skills,
-            None,
-        )?;
-        if !is_bot {
-            self.repository.begin_turn(&pending).map_err(ai_failure)?;
-        }
+        self.repository.begin_turn(&pending).map_err(ai_failure)?;
 
         let (stream_sender, events) = sync_channel(STREAM_CAPACITY);
         self.streams.insert(
@@ -4938,7 +3961,6 @@ impl WorkerState {
             chat.id,
             base_request,
             request.explicit_refs,
-            &bot_access,
             request.replace_pinned_documents,
             context_started_at,
             cancellation,
@@ -4964,12 +3986,12 @@ impl WorkerState {
 
     fn retry_turn(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         chat_id: ChatId,
         request: RetryTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
-        let bot_access = self.bot_read_access(&context)?;
+
         if let Some(existing) = self
             .repository
             .attempt_by_operation(request.operation_id)
@@ -4982,11 +4004,9 @@ impl WorkerState {
                     false,
                 ));
             }
-            self.check_bot_chat_retry(&existing, request.destination_workspace, "retry", &request)?;
             return replay_stream(&self.repository, existing);
         }
         // An automatic picture re-send is prepared only while still owed.
-        self.require_bot_resend_owed(request.operation_id)?;
         if request.explicit_refs.len() > MAX_CONTEXT_REFS {
             return Err(failure(
                 "invalid_request",
@@ -4996,7 +4016,7 @@ impl WorkerState {
         }
         let chat = self
             .repository
-            .chat_with_access(chat_id, &bot_access)
+            .chat(chat_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
         let messages = self.repository.messages(chat_id).map_err(ai_failure)?;
@@ -5025,31 +4045,18 @@ impl WorkerState {
                 false,
             ));
         }
-        let bot_id = self
-            .repository
-            .bot_for_chat(chat_id)
-            .map_err(bots::bot_failure)?;
-        if let Some(prior) = self
-            .repository
-            .attempt_for_message(failed.id)
-            .map_err(ai_failure)?
-        {
-            if prior.chat_id == Some(chat_id) {
-                bots::chat::require_interactive_predecessor(&self.repository, prior.id)?;
-            }
-        }
         let user = messages
             .iter()
             .rev()
             .find(|message| message.ordinal < failed.ordinal && message.role == ChatRole::User);
-        if user.is_none() && bot_id.is_none() {
+        if user.is_none() {
             return Err(failure(
                 "invalid_request",
                 "The response has no user message to retry.",
                 false,
             ));
         }
-        let mut user_message_id = user.map_or(failed.id, |message| message.id);
+        let user_message_id = user.map_or(failed.id, |message| message.id);
         let ordinal = messages.last().map_or(Ok(0), |message| {
             message.ordinal.checked_add(1).ok_or_else(invariant_failure)
         })?;
@@ -5080,7 +4087,7 @@ impl WorkerState {
         } else {
             HashMap::new()
         };
-        let mut provider_messages: Vec<_> = messages
+        let provider_messages: Vec<_> = messages
             .iter()
             .filter(|message| message.state == MessageState::Complete)
             .map(|message| AiRequestMessage {
@@ -5093,7 +4100,6 @@ impl WorkerState {
                 attachments: retried_attachments.remove(&message.id).unwrap_or_default(),
             })
             .collect();
-        self.bot_answer_history(chat_id, &messages, &mut provider_messages)?;
         let attempt = InferenceAttempt {
             id: attempt_id,
             operation_id: request.operation_id,
@@ -5128,59 +4134,11 @@ impl WorkerState {
             error_class: None,
             provider_response_id: None,
         };
-        let mut pending = PendingRetry {
+        let pending = PendingRetry {
             assistant_message,
             attempt: attempt.clone(),
         };
-        if bot_id.is_some() {
-            let prior = self
-                .repository
-                .attempts_for_chat(chat_id)
-                .map_err(ai_failure)?
-                .into_iter()
-                .find(|prior| prior.assistant_message_id == Some(failed.id))
-                .ok_or_else(not_found)?;
-            let receipt = self
-                .repository
-                .bot_submission_for_attempt(prior.id)
-                .map_err(ai_failure)?
-                .ok_or_else(not_found)?;
-            let original = &receipt.intent.submission;
-            if koru_ai_core::AnswersRecord::decode(&original.input.text).is_some_and(|record| {
-                record
-                    .answers
-                    .iter()
-                    .any(|answer| matches!(answer.value, koru_ai_core::AgentAnswerValue::Withheld))
-            }) {
-                return Err(failure(
-                    "questions_closed",
-                    "The secret answer is no longer available. Enter it again in a new Bot task.",
-                    false,
-                ));
-            }
-            user_message_id = bots::chat::retry_input(
-                &messages,
-                failed,
-                &original.input.text,
-                &mut provider_messages,
-            )?;
-            pending.attempt.message_count = provider_messages.len().try_into().unwrap_or(u32::MAX);
-            self.prepare_bot_chat_turn(
-                &context,
-                &chat,
-                koru_ai_core::bots::replay::BotChatPreparation::Retry {
-                    retry: pending,
-                    prior_attempt: prior.id,
-                },
-                request.destination_workspace,
-                "retry",
-                &request,
-                &[],
-                Some(original.request.run),
-            )?;
-        } else {
-            self.repository.begin_retry(&pending).map_err(ai_failure)?;
-        }
+        self.repository.begin_retry(&pending).map_err(ai_failure)?;
         let (stream_sender, events) = sync_channel(STREAM_CAPACITY);
         self.streams.insert(
             attempt_id,
@@ -5219,7 +4177,6 @@ impl WorkerState {
             chat_id,
             base_request,
             request.explicit_refs,
-            &bot_access,
             request.replace_pinned_documents,
             context_started_at,
             cancellation,
@@ -5249,7 +4206,6 @@ impl WorkerState {
         chat_id: ChatId,
         request: AiRequest,
         explicit_refs: Vec<ContextRef>,
-        bot_access: &koru_ai_core::bots::ChatReadAccess,
         replace_pinned_documents: bool,
         started_at: Timestamp,
         cancellation: Cancellation,
@@ -5259,7 +4215,7 @@ impl WorkerState {
         // linked from another chat is context only from the same profile.
         let profile = self
             .repository
-            .chat_with_access(chat_id, bot_access)?
+            .chat(chat_id)?
             .map(|chat| chat.profile_id)
             .unwrap_or_default();
         let pinned = if replace_pinned_documents {
@@ -5302,7 +4258,7 @@ impl WorkerState {
                     if seen_blocks.insert(block_id) {
                         let block = self
                             .repository
-                            .message_block_context_with_access(block_id, bot_access)?
+                            .message_block_context(block_id)?
                             .ok_or_else(|| {
                                 AiError::new(
                                     AiErrorClass::Storage,
@@ -5331,65 +4287,11 @@ impl WorkerState {
                 false,
             ));
         }
-        // Bot documents were captured before admission. Never resolve their
-        // current bodies here: the delegate materializes the exact Run pins.
-        let bot_pins = self.repository.bot_submission_for_attempt(attempt_id)?;
-        let bot_memory = match &bot_pins {
-            Some(receipt) => Some(BotMemoryContext::from_receipt(
-                &self.repository,
-                attempt_id,
-                chat_id,
-                receipt,
-            )?),
-            None if self.repository.is_bot_attempt(attempt_id)? => {
-                return Err(context_port_unavailable());
-            }
-            None => None,
-        };
-        if let Some(receipt) = bot_pins {
-            for reference in &mut refs {
-                if let PreparedContextRef::Document(document) = reference {
-                    let (workspace, version) = receipt
-                        .intent
-                        .submission
-                        .request
-                        .context
-                        .iter()
-                        .find_map(|pin| match pin {
-                            koru_delegate_core::RunContextItem::Document {
-                                workspace,
-                                document: id,
-                                version,
-                            } if *id == *document => Some((*workspace, *version)),
-                            _ => None,
-                        })
-                        .ok_or_else(context_port_unavailable)?;
-                    let label = known_documents
-                        .get(document)
-                        .map(|pin| pin.display_title.clone())
-                        .filter(|label| !label.is_empty())
-                        .unwrap_or_else(|| document.to_string());
-                    let owner = receipt.intent.submission.provenance.owner;
-                    *reference = PreparedContextRef::PinnedDocument {
-                        document: *document,
-                        display_title: label,
-                        workspace,
-                        version,
-                        owner: koru_ai_core::bots::BotOwner {
-                            user_scope: owner.user_scope,
-                            device: owner.device,
-                        },
-                    };
-                }
-            }
-        }
         Ok(ContextJob {
             attempt_id,
             user_message_id,
             chat_id,
             profile,
-            bot_authority: self.bot_authority.clone(),
-            bot_memory,
             request,
             refs,
             known_documents,
@@ -5425,12 +4327,6 @@ impl WorkerState {
             message_block_refs: Vec::new(),
             replace_pinned_documents: false,
         });
-        // A Bot task by its association, never by its guarded receipt read
-        // (which refuses a put-away Bot): it ends as a Bot task does.
-        if !matches!(self.repository.is_bot_attempt(attempt_id), Ok(false)) {
-            self.end_bot_context(attempt_id);
-            return;
-        }
         self.handle_provider_event(AiEvent::Failed {
             attempt_id,
             error,
@@ -5441,41 +4337,6 @@ impl WorkerState {
     fn handle_context_resolution(&mut self, resolution: ContextResolution) {
         let attempt_id = resolution.commit.attempt_id;
         self.work_returned(attempt_id);
-        // Whether this is a Bot task is decided by its association, read
-        // without the Bot's lifecycle guard. A Bot task never falls through
-        // to the ordinary provider route: if its receipt cannot be read (its
-        // Bot was archived or trashed meanwhile) it ends here. An
-        // association that cannot be read fails closed the same way.
-        if !matches!(self.repository.is_bot_attempt(attempt_id), Ok(false)) {
-            if !matches!(
-                self.repository.bot_submission_for_attempt(attempt_id),
-                Ok(Some(_))
-            ) {
-                self.end_bot_context(attempt_id);
-                return;
-            }
-            let result = self
-                .repository
-                .commit_context(&resolution.commit)
-                .and_then(|attempt| {
-                    if attempt.status.is_terminal() {
-                        return Err(context_port_unavailable());
-                    }
-                    resolution.result
-                })
-                .and_then(|request| {
-                    if request.attempt_id != attempt_id {
-                        return Err(context_port_unavailable());
-                    }
-                    let memory = resolution.bot_memory.ok_or_else(context_port_unavailable)?;
-                    memory.validate(&self.repository, attempt_id)?;
-                    self.start_bot_chat_context(request, memory.index)
-                });
-            if result.is_err() {
-                self.interrupt_bot_chat(attempt_id);
-            }
-            return;
-        }
         let outcome = if resolution.result.is_ok() {
             "ready"
         } else {
@@ -5511,6 +4372,28 @@ impl WorkerState {
         );
         if updated.status.is_terminal() {
             return;
+        }
+        if let Some(snapshot) = &resolution.orientation
+            && let Some(notice) = snapshot.notice
+        {
+            tracing::warn!(source = ?snapshot.source, ?notice,
+                "session instructions unavailable; using compiled default");
+            if let (Some(chat_id), Some(assistant_message_id)) =
+                (updated.chat_id, updated.assistant_message_id)
+            {
+                let notice = koru_ai_core::AgentNotice {
+                    id: koru_ai_core::AgentNoticeId::new(),
+                    attempt_id,
+                    chat_id,
+                    assistant_message_id,
+                    text: notice.message(koru_i18n::Lang::En),
+                    text_offset: None,
+                    created_at: Timestamp::now(),
+                };
+                if let Ok(notice) = self.repository.create_agent_notice(&notice) {
+                    self.publish_agent_notice(notice);
+                }
+            }
         }
         match resolution.result {
             Ok(request) => {
@@ -5553,7 +4436,7 @@ impl WorkerState {
 
     fn read_attempt(
         &self,
-        context: bots::CommandContext,
+        context: RequestContext,
         attempt: InferenceAttemptId,
     ) -> ApiResult<AttemptResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -5568,7 +4451,7 @@ impl WorkerState {
 
     fn cancel_attempt(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         attempt_id: InferenceAttemptId,
     ) -> ApiResult<CancelAttemptResponse> {
         authorize(&context, AiScope::Chat)?;
@@ -5586,26 +4469,8 @@ impl WorkerState {
             .attempt(attempt_id)
             .map_err(ai_failure)?
             .ok_or_else(not_found)?;
-        let bot = attempt.status != AttemptStatus::Complete
-            && self
-                .repository
-                .bot_submission_for_attempt(attempt_id)
-                .map_err(ai_failure)?
-                .is_some();
-        if bot
-            && self
-                .bot_ended_without_stop(attempt_id, attempt.status)
-                .map_err(ai_failure)?
-        {
-            // Automatic interruption or a native turn cancellation ended the
-            // attempt; the person's Stop is still the stronger owner command.
-            return self.stop_interrupted_bot_chat(attempt_id, attempt.status);
-        }
         if attempt.status.is_terminal() {
             return Ok(attempt.status);
-        }
-        if bot {
-            return self.stop_bot_chat(attempt_id);
         }
         if let Some(cancellation) = self.cancellations.get(&attempt_id) {
             cancellation.cancel();
@@ -6021,7 +4886,7 @@ impl WorkerState {
 
     fn approve_tool_call(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         invocation_id: ToolInvocationId,
         decision: koru_ai_wire::ToolDecisionRequest,
     ) -> ApiResult<ToolDecisionResponse> {
@@ -6126,7 +4991,7 @@ impl WorkerState {
 
     fn deny_tool_call(
         &mut self,
-        context: bots::CommandContext,
+        context: RequestContext,
         invocation_id: ToolInvocationId,
         choice: Option<String>,
     ) -> ApiResult<ToolDecisionResponse> {
@@ -6232,18 +5097,6 @@ impl WorkerState {
         let attempt_id = event.attempt_id();
         let terminal = event.is_terminal();
         let mut remove = terminal;
-        // The live role (M8): a linked desktop that watches this reply's
-        // conversation is handed the event too. Nothing is read or cloned
-        // unless somebody watches.
-        if self.bot_clients.live.any() {
-            let local = self
-                .streams
-                .get(&attempt_id)
-                .map(|stream| stream.next_sequence);
-            self.bot_clients
-                .live
-                .forward(&self.repository, attempt_id, local, &event, terminal);
-        }
         if let Some(stream) = self.streams.get_mut(&attempt_id) {
             let public = StreamEvent {
                 version: AI_STREAM_VERSION,
@@ -6379,70 +5232,6 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 }
 
 enum ProviderAdminJob {
-    RoutineMutation(bots::occurrence::OccurrenceJob),
-    RoutineRead(bots::occurrence::OccurrenceJob),
-    /// Decision wait enrollment: the Routine mutation lane, never a new queue.
-    DecisionWaitMutation(bots::decision_wait::DecisionWaitJob),
-    /// Decision wait reads: the bounded Run-read lane.
-    DecisionWaitRead(bots::decision_wait::DecisionWaitJob),
-    /// Koru's one save of an approved edit (O133): background administration,
-    /// beside native recovery; never a lane that answers a person.
-    DecisionApply(Box<bots::decision_wait::apply::ApplyJob>),
-    BotMemoryRead(bots::memory::read::MemoryReadJob),
-    BotRoutineListing(bots::routine::listing::ListingJob),
-    BotRoutineDetail(bots::routine::detail::DetailJob),
-    /// One owner control of a Routine (P4.3). It waits on the Schedule's
-    /// owner, so it runs on the interactive owner-call lane with a person's
-    /// approvals and steers, never on preparation's lane, which every other
-    /// Bot command needs.
-    BotRoutineControl(Box<bots::routine::control::ControlJob>),
-    /// A restart's repeat of an access edit's barrier install: background
-    /// administration, never a lane that answers a person.
-    BotRoutineAccessRecovery(Box<bots::routine::control::ControlJob>),
-    BotRoutineModel(Box<bots::routine::model::RunRoutineJob>),
-    /// One phase of a Run tool's ask (M6): its page checks or its
-    /// `RequestChild`. A caller waits on it, so it runs on preparation's lane.
-    BotChildAsk(Box<bots::children::AskJob>),
-    /// The restart scan's resend of a prepared ask: background.
-    BotChildResend(Box<bots::children::AskJob>),
-    /// The held child wait's `ReadBotChildWait`: background.
-    BotChildWaitRead(bots::chat::ChildWaitReadJob),
-    /// A conversation's request cards or origin line; answers its caller.
-    BotChildCards(bots::children::CardsJob),
-    BotMemoryWrite(bots::memory::write::MemoryWriteJob),
-    BotBoot(bots::BotBootJob),
-    BotChatRecovery(bots::chat::StepJob),
-    BotResendProbe(bots::chat::ResendProbe),
-    NativeDrain(native_recovery::NativeDrainJob),
-    BotPolicy(bots::BotPolicyJob),
-    #[cfg(test)]
-    BlockForFixture {
-        entered: SyncSender<()>,
-        release: Receiver<()>,
-    },
-    /// The same, held on preparation's own lane.
-    #[cfg(test)]
-    BlockPreparationForFixture {
-        entered: SyncSender<()>,
-        release: Receiver<()>,
-    },
-    BotChatControl(bots::chat::StepJob),
-    BotInteraction(bots::chat::ControlJob),
-    BotInteractionRead(bots::chat::ControlReadJob),
-    BotSteer(bots::chat::SteerJob),
-    BotSteerRead(bots::chat::SteerReadJob),
-    BotCoordinate(bots::BotCoordinationJob),
-    BotPrepare(bots::BotPreparationJob),
-    BotBranch(bots::BotBranchJob),
-    BotLifecycle(bots::LifecycleJob),
-    BotCreationPrepare(bots::CreationPreparationJob),
-    BotCreationStep(bots::CreationLaneJob),
-    BotCreationRead(bots::CreationReadJob),
-    /// A public Run read (P1.8 B1), on its own lane; it answers its caller
-    /// itself.
-    BotRunRead(bots::BotRunReadJob),
-    /// A task's Stop (P1.8), on its own lane; it answers its caller itself.
-    BotTaskStop(bots::BotTaskStopJob),
     Validate {
         provider: AiProviderId,
         reply: SyncSender<ApiResult<ProviderValidationResponse>>,
@@ -6461,70 +5250,9 @@ struct AdminSubmitError {
 }
 
 struct ProviderAdminPool {
-    /// Two admitted operations share one physical mutation thread and one
-    /// queued job. Their permits survive every phase and waiter cancellation.
-    routine_sender: Option<SyncSender<bots::occurrence::MutationWork>>,
-    routine_thread: Option<JoinHandle<()>>,
     sender: Option<SyncSender<ProviderAdminJob>>,
     thread: Option<JoinHandle<()>>,
-    control_sender: Option<SyncSender<bots::chat::StepJob>>,
-    interactive_sender: Option<SyncSender<ProviderAdminJob>>,
-    control_thread: Option<JoinHandle<()>>,
-    /// Bot and ordinary Memory creation's shared lane: steps wait on Store and
-    /// filesystem calls (individual Store waits use the existing 30 s timeout),
-    /// so multiple hops and decoding do not occupy the
-    /// shared administration queue that automatic interruptions, policy,
-    /// coordination, native drain and lifecycle use. The writer
-    /// keeps one serial/family slot across both families, so cancellation or
-    /// owner change cannot release a running step early. The queue stays at one.
-    creation_sender: Option<SyncSender<bots::CreationLaneJob>>,
-    creation_thread: Option<JoinHandle<()>>,
-    /// Public Run reads' own lane (P1.8 B1): each asks the execution owner,
-    /// within its deadline, so a slow or hung owner holds this lane and
-    /// nothing else of the Bot's (its preparation, chat reads, recovery).
-    /// A small queue; a full one is answered at once.
-    run_read_sender: Option<SyncSender<bots::occurrence::RunReadWork>>,
-    run_read_thread: Option<JoinHandle<()>>,
-    /// Preparation's own lane: every Bot command a person sends (reads
-    /// included) is prepared here, and so are the other hops a waiting
-    /// caller depends on (creation's preparation and read, the authority
-    /// read after an answered approval or a steer). Each inspects authority
-    /// and reads local state; none waits on background work, because no
-    /// background job (lifecycle, recovery, probes, the restart walk,
-    /// branch, policy, provider validation, model download) runs here.
-    prepare_sender: Option<SyncSender<ProviderAdminJob>>,
-    prepare_thread: Option<JoinHandle<()>>,
-    /// `stop_task`'s own lane (P1.8): each job makes at most a few bounded
-    /// execution-owner calls and no Store call, so neither the Stop lane a
-    /// person's conversation Stop, approvals and steers use, nor any other
-    /// lane, waits on it. A small queue; a full one is answered at once.
-    task_stop_sender: Option<SyncSender<bots::BotTaskStopJob>>,
-    task_stop_thread: Option<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
-}
-
-impl ProviderAdminJob {
-    /// The jobs on preparation's own lane: each is a hop a person's request
-    /// waits on, and none is background work.
-    fn preparation(&self) -> bool {
-        match self {
-            Self::BotPrepare(_)
-            | Self::BotRoutineListing(_)
-            | Self::BotRoutineDetail(_)
-            | Self::BotRoutineModel(_)
-            | Self::BotChildAsk(_)
-            | Self::BotChildCards(_)
-            | Self::BotMemoryRead(_)
-            | Self::BotMemoryWrite(_)
-            | Self::BotCreationPrepare(_)
-            | Self::BotCreationRead(_)
-            | Self::BotInteractionRead(_)
-            | Self::BotSteerRead(_) => true,
-            #[cfg(test)]
-            Self::BlockPreparationForFixture { .. } => true,
-            _ => false,
-        }
-    }
 }
 
 impl ProviderAdminPool {
@@ -6535,13 +5263,6 @@ impl ProviderAdminPool {
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self, String> {
         let (sender, receiver) = sync_channel(PROVIDER_ADMIN_QUEUE_CAPACITY);
-        let control_output = output.clone();
-        let creation_output = output.clone();
-        let prepare_output = output.clone();
-        let prepare_agents = agents.clone();
-        let routine_agents = agents.clone();
-        let routine_output = output.clone();
-        let run_read_output = output.clone();
         let thread_shutdown = Arc::clone(&shutdown);
         let thread = std::thread::Builder::new()
             .name("koru-ai-provider-admin".into())
@@ -6553,136 +5274,6 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
-                        ProviderAdminJob::RoutineMutation(_)
-                        | ProviderAdminJob::RoutineRead(_)
-                        | ProviderAdminJob::DecisionWaitMutation(_)
-                        | ProviderAdminJob::DecisionWaitRead(_) => {
-                            unreachable!("Routine occurrence lane dispatch")
-                        }
-                        ProviderAdminJob::BotChatRecovery(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotChatStep(job.run()),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotResendProbe(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotResendProbed(job.run()),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::NativeDrain(job) => {
-                            let result = job.run();
-                            send_admin_envelope(
-                                &output,
-                                Envelope::NativeDrained(result),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::DecisionApply(job) => {
-                            let result = job.run();
-                            send_admin_envelope(
-                                &output,
-                                Envelope::DecisionApplied(Box::new(result)),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotBoot(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotBootChecked(job.run()),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotPolicy(job) => {
-                            let result = job.run();
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotPolicyChecked(result),
-                                &thread_shutdown,
-                            );
-                        }
-                        #[cfg(test)]
-                        ProviderAdminJob::BlockForFixture { entered, release } => {
-                            let _ = entered.send(());
-                            let _ = release.recv();
-                        }
-                        #[cfg(test)]
-                        ProviderAdminJob::BlockPreparationForFixture { .. } => {
-                            unreachable!("preparation lane dispatch")
-                        }
-                        ProviderAdminJob::BotPrepare(_)
-                        | ProviderAdminJob::BotRoutineListing(_)
-                        | ProviderAdminJob::BotRoutineDetail(_)
-                        | ProviderAdminJob::BotRoutineModel(_)
-                        | ProviderAdminJob::BotChildAsk(_)
-                        | ProviderAdminJob::BotChildCards(_)
-                        | ProviderAdminJob::BotMemoryRead(_)
-                        | ProviderAdminJob::BotMemoryWrite(_)
-                        | ProviderAdminJob::BotCreationPrepare(_)
-                        | ProviderAdminJob::BotCreationRead(_)
-                        | ProviderAdminJob::BotInteractionRead(_)
-                        | ProviderAdminJob::BotSteerRead(_) => {
-                            unreachable!("preparation lane dispatch")
-                        }
-                        ProviderAdminJob::BotChildResend(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::ChildrenCompleted(Box::new(job.run())),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotChildWaitRead(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::ChildrenCompleted(Box::new(job.run())),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotCoordinate(job) => {
-                            let result = job.run();
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotCoordinated(result),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotChatControl(_)
-                        | ProviderAdminJob::BotInteraction(_)
-                        | ProviderAdminJob::BotSteer(_)
-                        | ProviderAdminJob::BotRoutineControl(_)
-                        | ProviderAdminJob::BotTaskStop(_) => {
-                            unreachable!("control lane dispatch")
-                        }
-                        ProviderAdminJob::BotLifecycle(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotLifecycleStep(job.run()),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotRoutineAccessRecovery(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::RoutineControlCompleted(Box::new(job.run())),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotBranch(job) => {
-                            send_admin_envelope(
-                                &output,
-                                Envelope::BotBranchPrepared(job.run()),
-                                &thread_shutdown,
-                            );
-                        }
-                        ProviderAdminJob::BotCreationStep(_) => {
-                            unreachable!("creation lane dispatch")
-                        }
-                        ProviderAdminJob::BotRunRead(_) => {
-                            unreachable!("run read lane dispatch")
-                        }
                         ProviderAdminJob::Validate { provider, reply } => {
                             let started = Instant::now();
                             let diagnostic_provider = provider.clone();
@@ -6765,431 +5356,17 @@ impl ProviderAdminPool {
                             );
                         }
                     }
-                    // Admission recovery may have yielded to a full bounded
-                    // admin queue. A freed slot, rather than a timer, retries it.
-                    send_admin_envelope(&output, Envelope::BotRecover, &thread_shutdown);
-                    send_admin_envelope(
-                        &output,
-                        Envelope::BotPolicyRecover { restart: false },
-                        &thread_shutdown,
-                    );
                 }
             })
             .map_err(|error| error.to_string())?;
-        // Stop/Reconcile must remain available while normal administration is
-        // downloading a model or waiting on Store authority. This is a bounded
-        // lane of the same pool, not a second execution owner.
-        let (control_sender, control_receiver) =
-            sync_channel::<bots::chat::StepJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
-        let (interactive_sender, interactive_receiver) =
-            sync_channel::<ProviderAdminJob>(PROVIDER_ADMIN_QUEUE_CAPACITY);
-        let (creation_sender, creation_receiver) = sync_channel::<bots::CreationLaneJob>(1);
-        let creation_shutdown = Arc::clone(&shutdown);
-        let creation_thread = std::thread::Builder::new()
-            .name("koru-ai-bot-creation".into())
-            .spawn(move || {
-                while !creation_shutdown.load(Ordering::Acquire) {
-                    let job = match creation_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(job) => job,
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    };
-                    send_admin_envelope(
-                        &creation_output,
-                        Envelope::BotCreationStep(Box::new(job.run())),
-                        &creation_shutdown,
-                    );
-                }
-            });
-        let creation_thread = match creation_thread {
-            Ok(thread) => thread,
-            Err(error) => {
-                drop(sender);
-                let _ = thread.join();
-                return Err(error.to_string());
-            }
-        };
-        let (run_read_sender, run_read_receiver) =
-            sync_channel::<bots::occurrence::RunReadWork>(bots::RUN_READ_QUEUE_CAPACITY);
-        let run_read_shutdown = Arc::clone(&shutdown);
-        let run_read_thread = match std::thread::Builder::new()
-            .name("koru-ai-provider-run-read".into())
-            .spawn(move || {
-                while !run_read_shutdown.load(Ordering::Acquire) {
-                    match run_read_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(job) => job.run(&run_read_output, &run_read_shutdown),
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-            }) {
-            Ok(thread) => thread,
-            Err(error) => {
-                drop(sender);
-                drop(creation_sender);
-                let _ = thread.join();
-                let _ = creation_thread.join();
-                return Err(error.to_string());
-            }
-        };
-        // At shutdown the jobs still queued here are dropped with the
-        // receiver, and with them each caller's reply: every waiting caller
-        // is answered `ai_unavailable` at once rather than left to time out.
-        let (prepare_sender, prepare_receiver) =
-            sync_channel::<ProviderAdminJob>(PREPARATION_QUEUE_CAPACITY);
-        let prepare_shutdown = Arc::clone(&shutdown);
-        let prepare_thread = match std::thread::Builder::new()
-            .name("koru-ai-provider-prepare".into())
-            .spawn(move || {
-                while !prepare_shutdown.load(Ordering::Acquire) {
-                    match prepare_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(job) => run_preparation(
-                            job,
-                            prepare_agents.as_ref(),
-                            &prepare_output,
-                            &prepare_shutdown,
-                        ),
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-            }) {
-            Ok(thread) => thread,
-            Err(error) => {
-                drop(sender);
-                drop(creation_sender);
-                drop(run_read_sender);
-                let _ = thread.join();
-                let _ = creation_thread.join();
-                let _ = run_read_thread.join();
-                return Err(error.to_string());
-            }
-        };
-        let (task_stop_sender, task_stop_receiver) =
-            sync_channel::<bots::BotTaskStopJob>(bots::TASK_STOP_QUEUE_CAPACITY);
-        let task_stop_shutdown = Arc::clone(&shutdown);
-        let task_stop_thread = match std::thread::Builder::new()
-            .name("koru-ai-provider-task-stop".into())
-            .spawn(move || {
-                while !task_stop_shutdown.load(Ordering::Acquire) {
-                    match task_stop_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(job) => job.run(),
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-            }) {
-            Ok(thread) => thread,
-            Err(error) => {
-                drop(sender);
-                drop(creation_sender);
-                drop(run_read_sender);
-                drop(prepare_sender);
-                let _ = thread.join();
-                let _ = creation_thread.join();
-                let _ = run_read_thread.join();
-                let _ = prepare_thread.join();
-                return Err(error.to_string());
-            }
-        };
-        let control_shutdown = Arc::clone(&shutdown);
-        let control_thread = match std::thread::Builder::new()
-            .name("koru-ai-provider-control".into())
-            .spawn(move || {
-                while !control_shutdown.load(Ordering::Acquire) {
-                    // Reconcile/Stop wins before the next interactive command.
-                    // Neither queue shares a worker with provider streams or
-                    // potentially slow model download/Store preparation.
-                    if let Ok(job) = control_receiver.try_recv() {
-                        send_admin_envelope(
-                            &control_output,
-                            Envelope::BotChatStep(job.run()),
-                            &control_shutdown,
-                        );
-                        continue;
-                    }
-                    if let Ok(job) = interactive_receiver.try_recv() {
-                        let event = match job {
-                            ProviderAdminJob::BotInteraction(job) => {
-                                Envelope::BotInteraction(job.run())
-                            }
-                            ProviderAdminJob::BotSteer(job) => Envelope::BotSteer(job.run()),
-                            ProviderAdminJob::BotRoutineControl(job) => {
-                                Envelope::RoutineControlCompleted(Box::new(job.run()))
-                            }
-                            _ => unreachable!("interactive queue dispatch"),
-                        };
-                        send_admin_envelope(&control_output, event, &control_shutdown);
-                        continue;
-                    }
-                    let job = match control_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(job) => job,
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    };
-                    if control_shutdown.load(Ordering::Acquire) {
-                        break;
-                    }
-                    send_admin_envelope(
-                        &control_output,
-                        Envelope::BotChatStep(job.run()),
-                        &control_shutdown,
-                    );
-                }
-            }) {
-            Ok(thread) => thread,
-            Err(error) => {
-                drop(sender);
-                drop(creation_sender);
-                drop(run_read_sender);
-                drop(prepare_sender);
-                drop(task_stop_sender);
-                let _ = thread.join();
-                let _ = creation_thread.join();
-                let _ = run_read_thread.join();
-                let _ = prepare_thread.join();
-                let _ = task_stop_thread.join();
-                return Err(error.to_string());
-            }
-        };
-        let (routine_sender, routine_receiver) = sync_channel::<bots::occurrence::MutationWork>(1);
-        let routine_shutdown = Arc::clone(&shutdown);
-        let routine_thread = match std::thread::Builder::new()
-            .name("koru-ai-routine-mutation".into())
-            .spawn(move || {
-                while !routine_shutdown.load(Ordering::Acquire) {
-                    match routine_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(work) => {
-                            work.run(&routine_output, routine_agents.as_ref(), &routine_shutdown)
-                        }
-                        Err(RecvTimeoutError::Timeout) => continue,
-                        Err(RecvTimeoutError::Disconnected) => break,
-                    }
-                }
-            }) {
-            Ok(thread) => thread,
-            Err(error) => {
-                drop(sender);
-                drop(creation_sender);
-                drop(run_read_sender);
-                drop(prepare_sender);
-                drop(task_stop_sender);
-                drop(control_sender);
-                drop(interactive_sender);
-                let _ = thread.join();
-                let _ = creation_thread.join();
-                let _ = run_read_thread.join();
-                let _ = prepare_thread.join();
-                let _ = task_stop_thread.join();
-                let _ = control_thread.join();
-                return Err(error.to_string());
-            }
-        };
         Ok(Self {
-            routine_sender: Some(routine_sender),
-            routine_thread: Some(routine_thread),
             sender: Some(sender),
             thread: Some(thread),
-            control_sender: Some(control_sender),
-            interactive_sender: Some(interactive_sender),
-            control_thread: Some(control_thread),
-            creation_sender: Some(creation_sender),
-            creation_thread: Some(creation_thread),
-            run_read_sender: Some(run_read_sender),
-            run_read_thread: Some(run_read_thread),
-            prepare_sender: Some(prepare_sender),
-            prepare_thread: Some(prepare_thread),
-            task_stop_sender: Some(task_stop_sender),
-            task_stop_thread: Some(task_stop_thread),
             shutdown,
         })
     }
 
     fn try_submit(&self, job: ProviderAdminJob) -> Result<(), AdminSubmitError> {
-        if matches!(
-            &job,
-            ProviderAdminJob::RoutineMutation(_) | ProviderAdminJob::DecisionWaitMutation(_)
-        ) {
-            let work = match job {
-                ProviderAdminJob::RoutineMutation(job) => {
-                    bots::occurrence::MutationWork::Routine(job)
-                }
-                ProviderAdminJob::DecisionWaitMutation(job) => {
-                    bots::occurrence::MutationWork::Decision(job)
-                }
-                _ => unreachable!("mutation lane classification"),
-            };
-            let Some(sender) = &self.routine_sender else {
-                return Err(AdminSubmitError {
-                    job: work.into_admin(),
-                    failure: unavailable_failure(),
-                });
-            };
-            return sender.try_send(work).map_err(|error| match error {
-                TrySendError::Full(work) => AdminSubmitError {
-                    job: work.into_admin(),
-                    failure: failure(
-                        "ai_worker_saturated",
-                        "The Routine mutation lane is busy. Try again.",
-                        true,
-                    ),
-                },
-                TrySendError::Disconnected(work) => AdminSubmitError {
-                    job: work.into_admin(),
-                    failure: unavailable_failure(),
-                },
-            });
-        }
-        if job.preparation() {
-            let Some(sender) = &self.prepare_sender else {
-                return Err(AdminSubmitError {
-                    job,
-                    failure: unavailable_failure(),
-                });
-            };
-            return sender.try_send(job).map_err(|error| match error {
-                TrySendError::Full(job) => AdminSubmitError {
-                    job,
-                    failure: failure(
-                        "ai_worker_saturated",
-                        "The Bot preparation queue is busy. Try again.",
-                        true,
-                    ),
-                },
-                TrySendError::Disconnected(job) => AdminSubmitError {
-                    job,
-                    failure: unavailable_failure(),
-                },
-            });
-        }
-        if let ProviderAdminJob::BotTaskStop(stop) = job {
-            let Some(sender) = &self.task_stop_sender else {
-                return Err(AdminSubmitError {
-                    job: ProviderAdminJob::BotTaskStop(stop),
-                    failure: unavailable_failure(),
-                });
-            };
-            return sender.try_send(stop).map_err(|error| match error {
-                TrySendError::Full(stop) => AdminSubmitError {
-                    job: ProviderAdminJob::BotTaskStop(stop),
-                    failure: failure(
-                        "ai_worker_saturated",
-                        "The Bot task Stop lane is busy. Try again.",
-                        true,
-                    ),
-                },
-                TrySendError::Disconnected(stop) => AdminSubmitError {
-                    job: ProviderAdminJob::BotTaskStop(stop),
-                    failure: unavailable_failure(),
-                },
-            });
-        }
-        if matches!(
-            &job,
-            ProviderAdminJob::BotInteraction(_)
-                | ProviderAdminJob::BotSteer(_)
-                | ProviderAdminJob::BotRoutineControl(_)
-        ) {
-            let Some(sender) = &self.interactive_sender else {
-                return Err(AdminSubmitError {
-                    job,
-                    failure: unavailable_failure(),
-                });
-            };
-            return sender.try_send(job).map_err(|error| match error {
-                TrySendError::Full(job) => AdminSubmitError {
-                    job,
-                    failure: failure(
-                        "ai_worker_saturated",
-                        "The Bot interaction queue is busy. Try again.",
-                        true,
-                    ),
-                },
-                TrySendError::Disconnected(job) => AdminSubmitError {
-                    job,
-                    failure: unavailable_failure(),
-                },
-            });
-        }
-        if let ProviderAdminJob::BotCreationStep(step) = job {
-            let Some(sender) = &self.creation_sender else {
-                return Err(AdminSubmitError {
-                    job: ProviderAdminJob::BotCreationStep(step),
-                    failure: unavailable_failure(),
-                });
-            };
-            return sender.try_send(step).map_err(|error| match error {
-                TrySendError::Full(step) => AdminSubmitError {
-                    job: ProviderAdminJob::BotCreationStep(step),
-                    failure: failure(
-                        "ai_worker_saturated",
-                        "The Bot creation lane is busy. Try again.",
-                        true,
-                    ),
-                },
-                TrySendError::Disconnected(step) => AdminSubmitError {
-                    job: ProviderAdminJob::BotCreationStep(step),
-                    failure: unavailable_failure(),
-                },
-            });
-        }
-        if matches!(
-            &job,
-            ProviderAdminJob::BotRunRead(_)
-                | ProviderAdminJob::RoutineRead(_)
-                | ProviderAdminJob::DecisionWaitRead(_)
-        ) {
-            let read = match job {
-                ProviderAdminJob::BotRunRead(read) => bots::occurrence::RunReadWork::Bot(read),
-                ProviderAdminJob::RoutineRead(read) => bots::occurrence::RunReadWork::Routine(read),
-                ProviderAdminJob::DecisionWaitRead(read) => {
-                    bots::occurrence::RunReadWork::Decision(read)
-                }
-                _ => unreachable!("Run read lane classification"),
-            };
-            let Some(sender) = &self.run_read_sender else {
-                return Err(AdminSubmitError {
-                    job: read.into_admin(),
-                    failure: unavailable_failure(),
-                });
-            };
-            return sender.try_send(read).map_err(|error| match error {
-                TrySendError::Full(read) => AdminSubmitError {
-                    job: read.into_admin(),
-                    failure: failure(
-                        "ai_worker_saturated",
-                        "The Bot Run read lane is busy. Try again.",
-                        true,
-                    ),
-                },
-                TrySendError::Disconnected(read) => AdminSubmitError {
-                    job: read.into_admin(),
-                    failure: unavailable_failure(),
-                },
-            });
-        }
-        if let ProviderAdminJob::BotChatControl(control) = job {
-            let Some(sender) = &self.control_sender else {
-                return Err(AdminSubmitError {
-                    job: ProviderAdminJob::BotChatControl(control),
-                    failure: unavailable_failure(),
-                });
-            };
-            return sender.try_send(control).map_err(|error| match error {
-                TrySendError::Full(control) => AdminSubmitError {
-                    job: ProviderAdminJob::BotChatControl(control),
-                    failure: failure(
-                        "ai_worker_saturated",
-                        "The Bot control queue is busy. Try again.",
-                        true,
-                    ),
-                },
-                TrySendError::Disconnected(control) => AdminSubmitError {
-                    job: ProviderAdminJob::BotChatControl(control),
-                    failure: unavailable_failure(),
-                },
-            });
-        }
         let Some(sender) = &self.sender else {
             return Err(AdminSubmitError {
                 job,
@@ -7201,7 +5378,7 @@ impl ProviderAdminPool {
                 job,
                 failure: failure(
                     "ai_worker_saturated",
-                    "The provider-management queue is busy. Try again.",
+                    "The AI provider queue is busy. Try again.",
                     true,
                 ),
             },
@@ -7214,78 +5391,11 @@ impl ProviderAdminPool {
 
     fn stop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
-        self.routine_sender.take();
         self.sender.take();
-        self.control_sender.take();
-        self.interactive_sender.take();
-        self.creation_sender.take();
-        self.run_read_sender.take();
-        self.prepare_sender.take();
-        self.task_stop_sender.take();
-        if let Some(thread) = self.routine_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.control_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.prepare_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.task_stop_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.creation_thread.take() {
-            let _ = thread.join();
-        }
-        if let Some(thread) = self.run_read_thread.take() {
-            let _ = thread.join();
-        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
     }
-}
-
-/// One job of preparation's own lane, its result sent to the writer.
-fn run_preparation(
-    job: ProviderAdminJob,
-    agents: Option<&AgentSessions>,
-    output: &SyncSender<Envelope>,
-    shutdown: &AtomicBool,
-) {
-    let envelope = match job {
-        ProviderAdminJob::BotRoutineListing(job) => Envelope::RoutineListingCompleted(job.run()),
-        ProviderAdminJob::BotRoutineDetail(job) => Envelope::RoutineDetailCompleted(job.run()),
-        ProviderAdminJob::BotRoutineModel(job) => Envelope::RunRoutineCompleted(job.run()),
-        ProviderAdminJob::BotChildAsk(job) => Envelope::ChildrenCompleted(Box::new(job.run())),
-        ProviderAdminJob::BotChildCards(job) => {
-            job.run();
-            return;
-        }
-        ProviderAdminJob::BotMemoryRead(job) => Envelope::MemoryReadCompleted(job.run()),
-        ProviderAdminJob::BotMemoryWrite(job) => Envelope::MemoryWriteCompleted(job.run()),
-        ProviderAdminJob::BotPrepare(job) => {
-            let (command, proof) = job.run(agents);
-            Envelope::BotPrepared {
-                command: Box::new(command),
-                proof,
-            }
-        }
-        ProviderAdminJob::BotCreationPrepare(job) => {
-            Envelope::BotCreationPrepared(Box::new(job.run(agents)))
-        }
-        ProviderAdminJob::BotCreationRead(job) => Envelope::BotCreationRead(Box::new(job.run())),
-        ProviderAdminJob::BotInteractionRead(job) => Envelope::BotInteractionRead(job.run()),
-        ProviderAdminJob::BotSteerRead(job) => Envelope::BotSteerRead(job.run()),
-        #[cfg(test)]
-        ProviderAdminJob::BlockPreparationForFixture { entered, release } => {
-            let _ = entered.send(());
-            let _ = release.recv();
-            return;
-        }
-        _ => unreachable!("preparation lane dispatch"),
-    };
-    send_admin_envelope(output, envelope, shutdown);
 }
 
 fn validate_provider_configuration(
@@ -7570,154 +5680,7 @@ fn send_admin_envelope(output: &SyncSender<Envelope>, envelope: Envelope, shutdo
 
 enum PreparedContextRef {
     Document(koru_ai_core::DocumentId),
-    PinnedDocument {
-        document: koru_ai_core::DocumentId,
-        display_title: String,
-        owner: koru_ai_core::bots::BotOwner,
-        workspace: WorkspaceId,
-        version: koru_delegate_core::DocumentVersionId,
-    },
     MessageBlock(MessageBlockContext),
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct BotMemoryContext {
-    capture: koru_ai_core::bots::BotLibraryCapture,
-    binding: Option<koru_ai_core::bots::BotMemoryBinding>,
-    home: koru_ai_core::WorkspaceId,
-    chat: ChatId,
-    operation: uuid::Uuid,
-}
-
-impl BotMemoryContext {
-    fn read(
-        repository: &Repository,
-        attempt: InferenceAttemptId,
-        chat: ChatId,
-    ) -> Result<Option<Self>, AiError> {
-        let Some(receipt) = repository.bot_submission_for_attempt(attempt)? else {
-            return if repository.is_bot_attempt(attempt)? {
-                Err(context_port_unavailable())
-            } else {
-                Ok(None)
-            };
-        };
-        Self::from_receipt(repository, attempt, chat, &receipt).map(Some)
-    }
-
-    fn from_receipt(
-        repository: &Repository,
-        attempt: InferenceAttemptId,
-        chat: ChatId,
-        receipt: &koru_ai_core::bots::BotSubmissionReceipt,
-    ) -> Result<Self, AiError> {
-        use koru_ai_core::bots::BotRepository;
-        let p = &receipt.intent.submission.provenance;
-        let row = repository
-            .attempt(attempt)?
-            .ok_or_else(context_port_unavailable)?;
-        if row.chat_id != Some(chat)
-            || p.chat_id != chat.as_uuid()
-            || p.ai_attempt_id != Some(attempt.as_uuid())
-            || row.assistant_message_id.map(|id| id.as_uuid()) != p.assistant_message_id
-        {
-            return Err(context_port_unavailable());
-        }
-        let bot = repository
-            .bot(p.bot)
-            .map_err(|_| context_port_unavailable())?
-            .ok_or_else(context_port_unavailable)?;
-        let owner = koru_ai_core::bots::BotOwner {
-            user_scope: p.owner.user_scope,
-            device: p.owner.device,
-        };
-        if bot.user_scope != owner.user_scope
-            || bot.owner_device != owner.device
-            || bot.home_workspace != receipt.intent.submission.workspace
-        {
-            return Err(context_port_unavailable());
-        }
-        let capture = repository
-            .bot_library_capture(owner, p.bot, p.submission)
-            .map_err(|_| context_port_unavailable())?
-            .ok_or_else(context_port_unavailable)?;
-        if capture.owner != owner
-            || capture.bot != p.bot
-            || capture.submission != p.submission
-            || capture.config_revision != p.config_revision
-        {
-            return Err(context_port_unavailable());
-        }
-        let binding = if matches!(
-            capture.memory,
-            koru_ai_core::bots::BotCapturedMemory::Captured { .. }
-        ) {
-            repository
-                .bot_library(owner, p.bot)
-                .map_err(|_| context_port_unavailable())?
-                .binding
-        } else {
-            // Once admitted, absence is historical even if Memory binds later.
-            None
-        };
-        if let koru_ai_core::bots::BotCapturedMemory::Captured {
-            page,
-            creation_request,
-            ..
-        } = &capture.memory
-        {
-            if !binding.as_ref().is_some_and(|binding| {
-                binding.owner == owner
-                    && binding.bot == p.bot
-                    && binding.page == *page
-                    && binding.creation_request == *creation_request
-            }) {
-                return Err(context_port_unavailable());
-            }
-        }
-        Ok(Self {
-            capture,
-            binding,
-            home: bot.home_workspace,
-            chat,
-            operation: row.operation_id,
-        })
-    }
-}
-
-struct BotMemoryResolution {
-    expected: BotMemoryContext,
-    index: koru_ai_core::bots::VerifiedMemoryIndex,
-    cancellation: Cancellation,
-}
-
-impl BotMemoryResolution {
-    fn validate(
-        &self,
-        repository: &Repository,
-        attempt: InferenceAttemptId,
-    ) -> Result<(), AiError> {
-        if self.cancellation.is_cancelled() {
-            return Err(AiError::new(
-                AiErrorClass::Cancelled,
-                "The AI request was cancelled.",
-                false,
-            ));
-        }
-        if BotMemoryContext::read(repository, attempt, self.expected.chat)?.as_ref()
-            != Some(&self.expected)
-            || self.index.capture != self.expected.capture
-        {
-            return Err(context_port_unavailable());
-        }
-        self.index
-            .validate_shape(self.expected.home)
-            .map_err(|_| context_port_unavailable())?;
-        if self.index.capture.index_digest != *blake3::hash(&self.index.bytes).as_bytes() {
-            return Err(context_port_unavailable());
-        }
-        Ok(())
-    }
 }
 
 struct ContextJob {
@@ -7726,8 +5689,6 @@ struct ContextJob {
     chat_id: ChatId,
     /// The chat's stored profile: whose documents it may read.
     profile: Option<koru_ai_core::ProfileId>,
-    bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
-    bot_memory: Option<BotMemoryContext>,
     request: AiRequest,
     refs: Vec<PreparedContextRef>,
     known_documents: HashMap<koru_ai_core::DocumentId, PinnedDocument>,
@@ -7737,9 +5698,9 @@ struct ContextJob {
 }
 
 struct ContextResolution {
+    orientation: Option<koru_delegate_preamble::Resolved>,
     commit: ContextCommit,
     result: Result<AiRequest, AiError>,
-    bot_memory: Option<BotMemoryResolution>,
 }
 
 struct ContextPool {
@@ -7750,6 +5711,7 @@ struct ContextPool {
 impl ContextPool {
     fn spawn(
         store: Option<Arc<dyn StoreContextPort>>,
+        instructions: instructions::Source,
         output: SyncSender<Envelope>,
         shutdown: Arc<AtomicBool>,
         #[cfg(test)] completion: Option<SyncSender<InferenceAttemptId>>,
@@ -7768,10 +5730,10 @@ impl ContextPool {
                     let started_at = job.started_at;
                     let message_count = job.request.messages.len().try_into().unwrap_or(u32::MAX);
                     let resolution = catch_unwind(AssertUnwindSafe(|| {
-                        resolve_context_job(store.as_deref(), job)
+                        resolve_context_job(store.as_deref(), &instructions, job)
                     }))
                     .unwrap_or_else(|_| ContextResolution {
-                        bot_memory: None,
+                        orientation: None,
                         commit: ContextCommit {
                             attempt_id,
                             started_at,
@@ -7936,6 +5898,7 @@ fn export_pool_stopped() -> AiError {
 
 fn resolve_context_job(
     store: Option<&dyn StoreContextPort>,
+    instructions: &instructions::Source,
     mut job: ContextJob,
 ) -> ContextResolution {
     let message_count = job.request.messages.len().try_into().unwrap_or(u32::MAX);
@@ -7944,7 +5907,7 @@ fn resolve_context_job(
     let mut document_refs = Vec::new();
     let mut message_block_refs = Vec::new();
     let mut payload_bytes = 0_u64;
-    let mut bot_memory = None;
+    let mut orientation = None;
     let result = (|| {
         for reference in job.refs {
             if job.cancellation.is_cancelled() {
@@ -7955,68 +5918,6 @@ fn resolve_context_job(
                 ));
             }
             match reference {
-                PreparedContextRef::PinnedDocument {
-                    document: document_id,
-                    display_title,
-                    owner,
-                    workspace,
-                    version,
-                } => {
-                    let revision = job
-                        .bot_authority
-                        .as_ref()
-                        .ok_or_else(context_port_unavailable)?
-                        .pinned_document_revision(
-                            owner,
-                            workspace,
-                            job.profile.ok_or_else(context_port_unavailable)?,
-                            document_id,
-                            version,
-                        )
-                        .map_err(|error| {
-                            if error == koru_ai_core::bots::BotError::ContextTooLarge {
-                                context_too_large()
-                            } else {
-                                AiError::new(
-                                    AiErrorClass::Storage,
-                                    "The captured Bot document revision is unavailable.",
-                                    matches!(
-                                        error,
-                                        koru_ai_core::bots::BotError::Unavailable
-                                            | koru_ai_core::bots::BotError::Storage
-                                    ),
-                                )
-                            }
-                        })?;
-                    if revision.0.len()
-                        > koru_store_core::ports::MAX_HISTORY_REVISION_BYTES as usize
-                    {
-                        return Err(context_too_large());
-                    }
-                    let now = Timestamp::now();
-                    let first_used_at = job
-                        .known_documents
-                        .remove(&document_id)
-                        .map_or(job.started_at, |known| known.first_used_at);
-                    pinned_documents.push(PinnedDocument {
-                        chat_id: job.chat_id,
-                        document_id,
-                        display_title: display_title.clone(),
-                        pinned: true,
-                        first_used_at,
-                        last_used_at: now,
-                    });
-                    document_refs.push(MessageDocumentRef {
-                        message_id: job.user_message_id,
-                        document_id,
-                        relation: DocumentRelation::Context,
-                        display_title,
-                        source_revision: Some(revision),
-                        used_at: now,
-                    });
-                    // Runtime-loaded file bytes are deliberately not included
-                    // in the known AI-assembled context measurement.
-                }
                 PreparedContextRef::Document(document_id) => {
                     let document = store
                         .ok_or_else(context_port_unavailable)?
@@ -8056,56 +5957,8 @@ fn resolve_context_job(
                 }
             }
         }
-        if let Some(expected) = job.bot_memory.take() {
-            if job.cancellation.is_cancelled() {
-                return Err(AiError::new(
-                    AiErrorClass::Cancelled,
-                    "The AI request was cancelled.",
-                    false,
-                ));
-            }
-            let index = job
-                .bot_authority
-                .as_ref()
-                .ok_or_else(context_port_unavailable)?
-                .replay_memory_index(
-                    expected.capture.owner,
-                    job.profile.ok_or_else(context_port_unavailable)?,
-                    expected.home,
-                    &expected.capture,
-                    expected.binding.as_ref(),
-                    &job.cancellation,
-                )
-                .map_err(|error| {
-                    if error
-                        == koru_ai_core::bots::MemoryAuthorityError::Authority(
-                            koru_ai_core::bots::BotError::ContextTooLarge,
-                        )
-                    {
-                        context_too_large()
-                    } else {
-                        AiError::new(
-                            AiErrorClass::Storage,
-                            "The captured Bot Memory is unavailable.",
-                            false,
-                        )
-                    }
-                })?;
-            if job.cancellation.is_cancelled() {
-                return Err(AiError::new(
-                    AiErrorClass::Cancelled,
-                    "The AI request was cancelled.",
-                    false,
-                ));
-            }
-            add_context_bytes(&mut payload_bytes, index.bytes.len())?;
-            bot_memory = Some(BotMemoryResolution {
-                expected,
-                index,
-                cancellation: job.cancellation.clone(),
-            });
-        }
         job.request.context = context;
+        orientation = instructions::apply(&mut job.request, || instructions.resolve());
         Ok(job.request)
     })();
     let completed_at = Timestamp::now();
@@ -8130,7 +5983,7 @@ fn resolve_context_job(
         message_block_refs.clear();
     }
     ContextResolution {
-        bot_memory,
+        orientation,
         commit: ContextCommit {
             attempt_id: job.attempt_id,
             started_at: job.started_at,
@@ -8452,11 +6305,6 @@ struct ProviderJob {
     queued_at: Instant,
 }
 
-enum ProviderWork {
-    Ordinary(ProviderJob),
-    Bot(bots::chat::StepJob),
-}
-
 struct ProviderTrace {
     attempt_id: InferenceAttemptId,
     provider: AiProviderId,
@@ -8507,7 +6355,7 @@ impl Drop for ProviderTrace {
 }
 
 struct ProviderPool {
-    sender: Option<SyncSender<ProviderWork>>,
+    sender: Option<SyncSender<ProviderJob>>,
     threads: Vec<JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
 }
@@ -8519,7 +6367,7 @@ impl ProviderPool {
         shutdown: Arc<AtomicBool>,
         thread_count: usize,
     ) -> Result<Self, String> {
-        let (sender, receiver) = sync_channel::<ProviderWork>(PROVIDER_QUEUE_CAPACITY);
+        let (sender, receiver) = sync_channel::<ProviderJob>(PROVIDER_QUEUE_CAPACITY);
         let receiver = Arc::new(Mutex::new(receiver));
         let mut threads = Vec::with_capacity(thread_count);
         for index in 0..thread_count {
@@ -8539,18 +6387,6 @@ impl ProviderPool {
                             Ok(job) => job,
                             Err(RecvTimeoutError::Timeout) => continue,
                             Err(RecvTimeoutError::Disconnected) => break,
-                        };
-                        let job = match job {
-                            ProviderWork::Ordinary(job) => job,
-                            ProviderWork::Bot(job) => {
-                                let result = job.run();
-                                send_context_envelope(
-                                    &output,
-                                    Envelope::BotChatStep(result),
-                                    &thread_shutdown,
-                                );
-                                continue;
-                            }
                         };
                         let attempt_id = job.request.attempt_id;
                         let outcome = catch_unwind(AssertUnwindSafe(|| {
@@ -8595,7 +6431,7 @@ impl ProviderPool {
         self.sender
             .as_ref()
             .ok_or_else(provider_stopped)?
-            .try_send(ProviderWork::Ordinary(job))
+            .try_send(job)
             .map_err(|error| match error {
                 TrySendError::Full(_) => {
                     tracing::debug!(
@@ -8619,12 +6455,6 @@ impl ProviderPool {
                     provider_stopped()
                 }
             })
-    }
-
-    fn try_submit_bot(&self, job: bots::chat::StepJob) -> bool {
-        self.sender
-            .as_ref()
-            .is_some_and(|sender| sender.try_send(ProviderWork::Bot(job)).is_ok())
     }
 
     fn stop(&mut self) {
@@ -8982,54 +6812,12 @@ fn replay_stream(
         .iter()
         .find(|message| message.id == assistant_id)
         .ok_or_else(not_found)?;
-    let bot_receipt = repository
-        .bot_submission_for_attempt(attempt.id)
-        .map_err(ai_failure)?;
-    let user_message_id = if let Some(receipt) = bot_receipt {
-        if let Some(origin) = assistant.origin_message_id {
-            let previous = messages
-                .iter()
-                .find(|message| message.id == origin)
-                .ok_or_else(not_found)?;
-            bots::chat::retry_anchor(&messages, previous, &receipt.intent.submission.input.text)?
-        } else if receipt
-            .intent
-            .submission
-            .provenance
-            .continued_from
-            .is_some()
-            && koru_ai_core::AnswersRecord::decode(&receipt.intent.submission.input.text).is_some()
-        {
-            // AnsweredContinuation adds no user bubble. Return the same
-            // preceding user anchor chosen by the shared answer launcher.
-            messages
-                .iter()
-                .rev()
-                .find(|message| {
-                    message.role == ChatRole::User && message.ordinal < assistant.ordinal
-                })
-                .map(|message| message.id)
-                .ok_or_else(not_found)?
-        } else {
-            messages
-                .iter()
-                .find(|message| {
-                    message.role == ChatRole::User
-                        && message.ordinal.checked_add(1) == Some(assistant.ordinal)
-                })
-                .map(|message| message.id)
-                .ok_or_else(not_found)?
-        }
-    } else {
-        messages
-            .iter()
-            .find(|message| {
-                message.role == ChatRole::User
-                    && message.ordinal.checked_add(1) == Some(assistant.ordinal)
-            })
-            .map(|message| message.id)
-            .ok_or_else(not_found)?
-    };
+    let user_message_id = messages
+        .iter()
+        .rev()
+        .find(|message| message.role == ChatRole::User && message.ordinal < assistant.ordinal)
+        .map(|message| message.id)
+        .ok_or_else(not_found)?;
     Ok(AiResponseStream {
         accepted: SendTurnAccepted {
             attempt_id: attempt.id,
@@ -9312,111 +7100,3 @@ fn lock_status(status: &Mutex<WorkerStatus>) -> std::sync::MutexGuard<'_, Worker
 
 #[cfg(test)]
 mod tests;
-
-impl WorkerCommand {
-    fn bot_context(&self) -> Option<&bots::CommandContext> {
-        match self {
-            Self::ProviderSettings { context, .. } => Some(context),
-            Self::SelectProvider { context, .. } => Some(context),
-            Self::UpdateOpenAiSettings { context, .. } => Some(context),
-            Self::UpdateOllamaSettings { context, .. } => Some(context),
-            Self::ValidateProvider { context, .. } => Some(context),
-            Self::DiscoverAgentModels { context, .. } => Some(context),
-            Self::DiscoverAgentCommands { context, .. } => Some(context),
-            Self::PullOllamaModel { context, .. } => Some(context),
-            Self::CancelOllamaPull { context, .. } => Some(context),
-            Self::CreateChat { context, .. } => Some(context),
-            Self::ListChats { context, .. } => Some(context),
-            Self::ReadChat { context, .. } => Some(context),
-            Self::RenameChat { context, .. } => Some(context),
-            Self::PinChat { context, .. } => Some(context),
-            Self::UpdateChatModel { context, .. } => Some(context),
-            Self::UpdateChatPrivacy { context, .. } => Some(context),
-            Self::UpdateChatFolder { context, .. } => Some(context),
-            Self::UpdateChatAgentSettings { context, .. } => Some(context),
-            Self::ToolListChats { context, .. } => Some(context),
-            Self::ToolSearchChats { context, .. } => Some(context),
-            Self::ToolReadChat { context, .. } => Some(context),
-            Self::UpdateChatToolPolicy { context, .. } => Some(context),
-            Self::AddChatWorkspaceGrants { context, .. } => Some(context),
-            Self::ReadChatToolPolicy { context, .. } => Some(context),
-            Self::Usage { context, .. } => Some(context),
-            Self::DeleteChat { context, .. } => Some(context),
-            Self::ClearHistory { context, .. } => Some(context),
-            Self::ClearUsage { context, .. } => Some(context),
-            Self::Search { context, .. } => Some(context),
-            Self::Feedback { context, .. } => Some(context),
-            Self::BranchChat { context, .. } => Some(context),
-            Self::SendTurn { context, .. } => Some(context),
-            Self::ReadAttempt { context, .. } => Some(context),
-            Self::CancelAttempt { context, .. } => Some(context),
-            Self::SteerAttempt { context, .. } => Some(context),
-            Self::ApproveToolCall { context, .. } => Some(context),
-            Self::DenyToolCall { context, .. } => Some(context),
-            Self::RetryTurn { context, .. } => Some(context),
-            Self::ExportChat { context, .. } => Some(context),
-            Self::ReadExport { context, .. } => Some(context),
-            Self::AttachmentAdmission { context, .. } => Some(context),
-            Self::WorkspaceCopyAdmission { context, .. } => Some(context),
-            Self::StageAttachment { context, .. } => Some(context),
-            Self::RemoveStagedAttachment { context, .. } => Some(context),
-            Self::ResolveAttachments { context, .. } => Some(context),
-            Self::Bots { context, .. } => Some(context),
-            _ => None,
-        }
-    }
-}
-
-impl WorkerCommand {
-    fn bot_context_mut(&mut self) -> Option<&mut bots::CommandContext> {
-        match self {
-            Self::ProviderSettings { context, .. } => Some(context),
-            Self::SelectProvider { context, .. } => Some(context),
-            Self::UpdateOpenAiSettings { context, .. } => Some(context),
-            Self::UpdateOllamaSettings { context, .. } => Some(context),
-            Self::ValidateProvider { context, .. } => Some(context),
-            Self::DiscoverAgentModels { context, .. } => Some(context),
-            Self::DiscoverAgentCommands { context, .. } => Some(context),
-            Self::PullOllamaModel { context, .. } => Some(context),
-            Self::CancelOllamaPull { context, .. } => Some(context),
-            Self::CreateChat { context, .. } => Some(context),
-            Self::ListChats { context, .. } => Some(context),
-            Self::ReadChat { context, .. } => Some(context),
-            Self::RenameChat { context, .. } => Some(context),
-            Self::PinChat { context, .. } => Some(context),
-            Self::UpdateChatModel { context, .. } => Some(context),
-            Self::UpdateChatPrivacy { context, .. } => Some(context),
-            Self::UpdateChatFolder { context, .. } => Some(context),
-            Self::UpdateChatAgentSettings { context, .. } => Some(context),
-            Self::ToolListChats { context, .. } => Some(context),
-            Self::ToolSearchChats { context, .. } => Some(context),
-            Self::ToolReadChat { context, .. } => Some(context),
-            Self::UpdateChatToolPolicy { context, .. } => Some(context),
-            Self::AddChatWorkspaceGrants { context, .. } => Some(context),
-            Self::ReadChatToolPolicy { context, .. } => Some(context),
-            Self::Usage { context, .. } => Some(context),
-            Self::DeleteChat { context, .. } => Some(context),
-            Self::ClearHistory { context, .. } => Some(context),
-            Self::ClearUsage { context, .. } => Some(context),
-            Self::Search { context, .. } => Some(context),
-            Self::Feedback { context, .. } => Some(context),
-            Self::BranchChat { context, .. } => Some(context),
-            Self::SendTurn { context, .. } => Some(context),
-            Self::ReadAttempt { context, .. } => Some(context),
-            Self::CancelAttempt { context, .. } => Some(context),
-            Self::SteerAttempt { context, .. } => Some(context),
-            Self::ApproveToolCall { context, .. } => Some(context),
-            Self::DenyToolCall { context, .. } => Some(context),
-            Self::RetryTurn { context, .. } => Some(context),
-            Self::ExportChat { context, .. } => Some(context),
-            Self::ReadExport { context, .. } => Some(context),
-            Self::AttachmentAdmission { context, .. } => Some(context),
-            Self::WorkspaceCopyAdmission { context, .. } => Some(context),
-            Self::StageAttachment { context, .. } => Some(context),
-            Self::RemoveStagedAttachment { context, .. } => Some(context),
-            Self::ResolveAttachments { context, .. } => Some(context),
-            Self::Bots { context, .. } => Some(context),
-            _ => None,
-        }
-    }
-}

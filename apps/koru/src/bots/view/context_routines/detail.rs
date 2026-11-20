@@ -8,7 +8,6 @@ use crate::schedule_words::{ScheduleProjection, schedule_words};
 use koru_i18n::time::LocaleFormat;
 
 pub(crate) const REFRESH_DETAIL: Key = Key::surface(SURFACE, "detail-refresh");
-pub(crate) const NEXT_HISTORY: Key = Key::surface(SURFACE, "detail-history-next");
 pub(crate) const EDIT_TIMING: Key = Key::surface(SURFACE, "detail-edit-timing");
 pub(crate) const CHANGE_ACCESS: Key = Key::surface(SURFACE, "detail-change-access");
 pub(crate) const ACCESS_DEFAULT: Key = Key::surface(SURFACE, "detail-access-default");
@@ -16,9 +15,8 @@ pub(crate) const ACCESS_WORKSPACE: Key = Key::surface(SURFACE, "detail-access-wo
 pub(crate) const ACCESS_SAVE: Key = Key::surface(SURFACE, "detail-access-save");
 pub(crate) const ACCESS_CANCEL: Key = Key::surface(SURFACE, "detail-access-cancel");
 pub(crate) const OLDER_HISTORY: Key = Key::surface(SURFACE, "detail-occurrences-older");
-/// One past minute's conversation, by the minute.
-pub(crate) fn history_key(occurrence_ms: i64) -> Key {
-    Key::model(u128::from(occurrence_ms as u64), "routine-history")
+pub(crate) fn occurrence_key(id: uuid::Uuid) -> Key {
+    Key::model(id.as_u128(), "routine-occurrence")
 }
 pub(super) fn access_key(access: BotAccess) -> Key {
     match access {
@@ -51,25 +49,24 @@ fn form(all: &Data) -> Option<&control::AccessForm> {
 fn access_offered(all: &Data) -> bool {
     all.access_changeable && all.controllable() && form(all).is_none()
 }
-/// The history lines whose conversation is on this computer.
-fn openable(detail: &BotRoutineDetail) -> impl Iterator<Item = (i64, uuid::Uuid)> + '_ {
-    let items = match &detail.occurrences {
-        RoutineOccurrenceHistoryObservation::Available { items, .. } => items.as_slice(),
-        _ => &[],
-    };
-    items.iter().filter_map(|line| {
-        line.conversation
-            .as_ref()
-            .filter(|row| row.conversation == BotRoutineConversationVisibility::Available)
-            .map(|row| (line.occurrence_ms, row.chat_id))
-    })
-}
 pub(super) fn keys(all: &Data, enabled_only: bool) -> Vec<Key> {
     let data = &all.detail;
     if data.selected.is_none() {
         return vec![];
     }
     let mut keys = Vec::new();
+    if let Some(snapshot) = &data.snapshot {
+        keys.extend(
+            snapshot
+                .occurrences
+                .iter()
+                .filter(|o| o.message.is_some() && (!enabled_only || data.navigable))
+                .map(|o| occurrence_key(o.id)),
+        );
+        if snapshot.next.is_some() && (!enabled_only || !data.loading) {
+            keys.push(OLDER_HISTORY);
+        }
+    }
     if let Some(detail) = &data.held {
         if matches!(detail.live, RoutineDetailLive::Current { .. }) {
             if !enabled_only || all.timing {
@@ -81,49 +78,17 @@ pub(super) fn keys(all: &Data, enabled_only: bool) -> Vec<Key> {
         }
         if form(all).is_some() {
             if !enabled_only || !all.controls.busy() {
-                keys.extend([ACCESS_DEFAULT, ACCESS_WORKSPACE, ACCESS_SAVE, ACCESS_CANCEL]);
+                keys.extend([ACCESS_DEFAULT, ACCESS_WORKSPACE, ACCESS_CANCEL]);
+                if !enabled_only || data.navigable {
+                    keys.push(ACCESS_SAVE);
+                }
             }
-        }
-        keys.extend(
-            openable(detail)
-                .filter(|_| !enabled_only || data.navigable)
-                .map(|(minute, _)| history_key(minute)),
-        );
-        if matches!(
-            &detail.occurrences,
-            RoutineOccurrenceHistoryObservation::Available {
-                next_before_occurrence_ms: Some(_),
-                ..
-            }
-        ) && (!enabled_only || !data.loading)
-        {
-            keys.push(OLDER_HISTORY);
         }
     }
     if !enabled_only || !data.loading {
         keys.push(REFRESH_DETAIL);
     }
-    if let Some(detail) = &data.held {
-        if let RoutineLocalHistoryObservation::Available {
-            items,
-            next_before_occurrence_ms,
-        } = &detail.local_history
-        {
-            if next_before_occurrence_ms.is_some() && (!enabled_only || !data.loading) {
-                keys.push(NEXT_HISTORY);
-            }
-            keys.extend(
-                items
-                    .iter()
-                    .filter(|r| {
-                        !enabled_only
-                            || (data.navigable
-                                && r.conversation == BotRoutineConversationVisibility::Available)
-                    })
-                    .map(|r| chat_key(r.chat_id)),
-            );
-        }
-    }
+
     keys
 }
 pub(super) fn action(all: &Data, key: Key) -> Option<Action> {
@@ -133,7 +98,6 @@ pub(super) fn action(all: &Data, key: Key) -> Option<Action> {
     }
     match key {
         REFRESH_DETAIL => return Some(Action::RefreshDetail),
-        NEXT_HISTORY => return Some(Action::NextHistory),
         OLDER_HISTORY => return Some(Action::OlderHistory),
         EDIT_TIMING => return Some(Action::EditTiming),
         CHANGE_ACCESS => return Some(Action::ChangeAccess),
@@ -143,27 +107,16 @@ pub(super) fn action(all: &Data, key: Key) -> Option<Action> {
         ACCESS_CANCEL => return Some(Action::CancelAccess),
         _ => {}
     }
-    let held = data.held.as_ref()?;
-    if let Some((_, chat)) = openable(held).find(|(minute, _)| history_key(*minute) == key) {
-        return ChatId::parse(&chat.to_string()).map(Action::Open);
+    if let Some(snapshot) = &data.snapshot {
+        if snapshot
+            .occurrences
+            .iter()
+            .any(|o| o.message.is_some() && occurrence_key(o.id) == key)
+        {
+            return Some(Action::Open(snapshot.thread));
+        }
     }
-    let RoutineLocalHistoryObservation::Available { items, .. } = &held.local_history else {
-        return None;
-    };
-    let chat = items.iter().find(|r| chat_key(r.chat_id) == key)?.chat_id;
-    ChatId::parse(&chat.to_string()).map(Action::Open)
-}
-/// One history line's words: when, and what the minute became.
-fn history_words(lang: Lang, line: &RoutineOccurrenceLine) -> String {
-    let words = match (line.test, line.outcome) {
-        (false, RoutineOccurrenceOutcome::Ran) => Words::BotsRoutineRan,
-        (false, RoutineOccurrenceOutcome::Missed) => Words::BotsRoutineMissed,
-        (false, RoutineOccurrenceOutcome::SkippedBusy) => Words::BotsRoutineSkippedBusy,
-        (true, RoutineOccurrenceOutcome::Ran) => Words::BotsRoutineTestRan,
-        (true, RoutineOccurrenceOutcome::Missed) => Words::BotsRoutineTestMissed,
-        (true, RoutineOccurrenceOutcome::SkippedBusy) => Words::BotsRoutineTestSkippedBusy,
-    };
-    fill(t(lang, words), &[&date(lang, line.occurrence_ms)])
+    None
 }
 pub(super) fn content(all: &Data, surface: &Surface, engine: &mut TextEngine, lang: Lang) -> El {
     let data = &all.detail;
@@ -334,92 +287,65 @@ pub(super) fn content(all: &Data, surface: &Surface, engine: &mut TextEngine, la
                 .name(Words::BotsRoutineHistoryTitle)
                 .role(roles::UI),
         );
-        match &detail.occurrences {
-            RoutineOccurrenceHistoryObservation::Unavailable {} => {
-                content = content.child(line(t(lang, Words::BotsRoutineHistoryUnavailable)))
+        if let Some(snapshot) = &data.snapshot {
+            if snapshot.occurrences.is_empty() {
+                content = content.child(line(t(lang, Words::BotsRoutineNothingRan)));
             }
-            RoutineOccurrenceHistoryObservation::Available {
-                items,
-                next_before_occurrence_ms,
-            } => {
-                if items.is_empty() {
-                    content = content.child(line(t(lang, Words::BotsRoutineNothingRan)));
-                }
-                for item in items {
-                    let words = history_words(lang, item);
-                    let here = item.conversation.as_ref().is_some_and(|row| {
-                        row.conversation == BotRoutineConversationVisibility::Available
-                    });
-                    content = content.child(if here {
-                        row("Routine history line").child(
-                            surface
-                                .button(
-                                    engine,
-                                    history_key(item.occurrence_ms),
-                                    words.clone(),
-                                    !data.navigable,
-                                )
-                                .name_text(fill(
-                                    t(lang, Words::BotsRoutineConversation),
-                                    &[&words],
-                                )),
-                        )
-                    } else {
-                        line(words)
-                    });
-                }
-                if next_before_occurrence_ms.is_some() {
-                    content = content.child(row("Older Routine history").child(surface.button(
-                        engine,
-                        OLDER_HISTORY,
-                        t(lang, Words::BotsRoutineHistoryOlder).into(),
-                        data.loading,
-                    )));
-                }
-            }
-        }
-        content = content.child(line(t(lang, Words::BotsRoutineLocalConversations)));
-        match &detail.local_history {
-            RoutineLocalHistoryObservation::Unavailable {} => {
-                content = content.child(line(t(lang, Words::BotsRoutineHistoryUnavailable)))
-            }
-            RoutineLocalHistoryObservation::Available {
-                items,
-                next_before_occurrence_ms,
-            } => {
-                if items.is_empty() {
-                    content = content.child(line(t(lang, Words::BotsRoutineHistoryEmpty)));
-                }
-                for reference in items {
-                    let enabled = data.navigable
-                        && reference.conversation == BotRoutineConversationVisibility::Available;
-                    content = content.child(
-                        row("Local Routine conversation").child(
-                            surface
-                                .button(
-                                    engine,
-                                    chat_key(reference.chat_id),
-                                    date(lang, reference.occurrence_ms),
-                                    !enabled,
-                                )
-                                .name_text(fill(
-                                    t(lang, Words::BotsRoutineConversation),
-                                    &[&date(lang, reference.occurrence_ms)],
-                                )),
+            for item in &snapshot.occurrences {
+                let date = date(lang, item.occurrence_ms);
+                let words = match item.state.as_str() {
+                    "missed" => fill(t(lang, Words::BotsRoutineMissed), &[&date]),
+                    "skipped" => fill(t(lang, Words::BotsRoutineSkippedBusy), &[&date]),
+                    state => format!(
+                        "{} · {}{}",
+                        date,
+                        t(
+                            lang,
+                            match state {
+                                "queued" => Words::RunStatusCreated,
+                                "running" => Words::RunStatusRunning,
+                                "needs_you" => Words::ChatsStatusNeedsYou,
+                                "answered" => Words::RunStatusCompleted,
+                                "cancelled" => Words::RunStatusCancelled,
+                                _ => Words::RunStatusFailed,
+                            }
                         ),
+                        if item.manual {
+                            format!(" · {}", t(lang, Words::BotsRoutineRunNow))
+                        } else {
+                            String::new()
+                        }
+                    ),
+                };
+                let mut entry = col("Routine occurrence").gap(Space::S1);
+                entry = entry.child(line(words));
+                if let Some(preview) = &item.preview {
+                    // This is the exact historical reply, never the thread's
+                    // newest answer. The conversation link opens its full log.
+                    entry = entry.child(
+                        text(&preview.markdown)
+                            .named("Routine result preview")
+                            .role(roles::UI)
+                            .wrap(),
                     );
-                    if reference.conversation == BotRoutineConversationVisibility::Unavailable {
-                        content = content.child(line(t(lang, Words::BotsConversationUnavailable)));
-                    }
                 }
-                if next_before_occurrence_ms.is_some() {
-                    content = content.child(row("Next local conversations").child(surface.button(
+                if item.message.is_some() {
+                    entry = entry.child(row("Open Routine conversation").child(surface.button(
                         engine,
-                        NEXT_HISTORY,
-                        t(lang, Words::BotsRoutineMoreConversations).into(),
-                        data.loading,
+                        occurrence_key(item.id),
+                        t(lang, Words::BotsChildOpenConversation).into(),
+                        !data.navigable,
                     )));
                 }
+                content = content.child(entry);
+            }
+            if snapshot.next.is_some() {
+                content = content.child(row("Older Routine occurrences").child(surface.button(
+                    engine,
+                    OLDER_HISTORY,
+                    t(lang, Words::BotsRoutineHistoryOlder).into(),
+                    data.loading,
+                )));
             }
         }
     }
@@ -468,7 +394,7 @@ fn access_form(
                 .selected(form.access == access),
         );
     }
-    let mut group = col("Routine access form")
+    let group = col("Routine access form")
         .semantics(Role::Group)
         .name(Words::BotsRoutineChangeAccess)
         .gap(Space::S1)
@@ -481,12 +407,7 @@ fn access_form(
             (BotAccess::Workspace, None) => t(lang, Words::BotsRoutineAccessAnyPageHome).to_owned(),
         }))
         .child(line(t(lang, Words::BotsRoutineAccessStartsDefault)));
-    if form.selected_pages > 0 {
-        group = group.child(line(fill(
-            t(lang, Words::BotsRoutineAccessClearsPages),
-            &[&form.selected_pages.to_string()],
-        )));
-    }
+
     group.child(
         row("Routine access actions")
             .gap(Space::S1)
@@ -503,7 +424,7 @@ fn access_form(
                         },
                     )
                     .into(),
-                    saving,
+                    saving || !all.detail.navigable,
                 ),
             )
             .child(surface.button(

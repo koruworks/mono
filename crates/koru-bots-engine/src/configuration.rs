@@ -164,7 +164,8 @@ impl Database {
             let turn = uuid::Uuid::new_v4().to_string();
             let details = serde_json::to_vec(&serde_json::json!({"setup_failure":code}))
                 .map_err(|_| Error::InvalidRequest)?;
-            tx.execute("INSERT INTO turns(id,thread,bot,session,grant,state,generation,worker_incarnation,details,created_at_ms) SELECT ?1,?2,id,?3,access,'needs_you',(SELECT COALESCE(MAX(generation),0)+1 FROM turns WHERE bot=?4 AND thread=?2),?5,?6,?7 FROM bots WHERE id=?4",params![turn,thread.to_string(),session.map(|id|id.to_string()),who.bot.to_string(),who.incarnation.to_string(),details,now])?;
+            let grant = crate::routines::grant(&tx, who.bot, thread)?;
+            tx.execute("INSERT INTO turns(id,thread,bot,session,grant,state,generation,worker_incarnation,details,created_at_ms) SELECT ?1,?2,id,?3,?8,'needs_you',(SELECT COALESCE(MAX(generation),0)+1 FROM turns WHERE bot=?4 AND thread=?2),?5,?6,?7 FROM bots WHERE id=?4",params![turn,thread.to_string(),session.map(|id|id.to_string()),who.bot.to_string(),who.incarnation.to_string(),details,now,grant])?;
             turn
         };
         let content = crate::messages::Content {

@@ -110,17 +110,6 @@ fn room(document: DocumentId) -> String {
 }
 
 impl RunDocuments for StoreDocuments {
-    fn publication_open(
-        &mut self,
-        workspace: WorkspaceId,
-        document: DocumentId,
-    ) -> PortResult<Box<dyn koru_delegate_runtime::RunDocumentOpen>> {
-        Ok(Box::new(PublicationOpen {
-            client: self.client.clone(),
-            workspace,
-            document,
-        }))
-    }
     fn create(&mut self, workspace: WorkspaceId, header: &RunHeader) -> PortResult<DocumentId> {
         let document = RunDocument::create(header)?;
         let initial_update = document.export_updates_since(&VersionVector::default())?;
@@ -155,16 +144,23 @@ impl RunDocuments for StoreDocuments {
             .snapshot(workspace, document)
             .map_err(|error| store_error("snapshot", error))?;
         let doc = RunDocument::from_snapshot(&snapshot)?;
+        let header = doc.header()?;
+        if header.bot.is_some()
+            || matches!(
+                header.scope,
+                koru_delegate_core::WorkspaceScope::BotFolder { .. }
+            )
+        {
+            return Err(store_error("unknown_run", "the Run is unavailable"));
+        }
         // The snapshot is the Store's own: everything in it is acknowledged.
         let acked = doc.version();
         let link = Link::join(&self.client, document, &doc, acked)?;
         Ok(Box::new(StoreHandle {
             client: self.client.clone(),
-            workspace,
             document,
             doc,
             link,
-            projection: koru_delegate_document::RunProjectionStaging::default(),
         }))
     }
 
@@ -192,6 +188,14 @@ impl RunDocuments for StoreDocuments {
                 continue;
             };
             if let Ok(header) = document.header() {
+                if header.bot.is_some()
+                    || matches!(
+                        header.scope,
+                        koru_delegate_core::WorkspaceScope::BotFolder { .. }
+                    )
+                {
+                    continue;
+                }
                 runs.push(ListedRun {
                     document: entry.id,
                     header,
@@ -201,17 +205,6 @@ impl RunDocuments for StoreDocuments {
         }
         runs.sort_by_key(|listed| listed.header.created_at_ms);
         Ok(runs)
-    }
-}
-
-struct PublicationOpen {
-    client: Client,
-    workspace: WorkspaceId,
-    document: DocumentId,
-}
-impl koru_delegate_runtime::RunDocumentOpen for PublicationOpen {
-    fn open(self: Box<Self>) -> PortResult<Box<dyn RunDocumentHandle>> {
-        StoreDocuments::new(self.client).open(self.workspace, self.document)
     }
 }
 
@@ -445,43 +438,14 @@ impl Link {
 
 struct StoreHandle {
     client: Client,
-    workspace: WorkspaceId,
     document: DocumentId,
     doc: RunDocument,
     link: Link,
-    projection: koru_delegate_document::RunProjectionStaging,
-}
-
-mod projection;
-
-#[cfg(test)]
-pub(crate) fn projection_fixture() -> (RunDocument, koru_delegate_runtime::RunProjectionIntent) {
-    projection::tests::fixture()
 }
 
 impl RunDocumentHandle for StoreHandle {
     fn document(&self) -> &RunDocument {
         &self.doc
-    }
-
-    fn prepare_decision_projection(
-        &mut self,
-        intent: &koru_delegate_runtime::RunProjectionIntent,
-    ) -> PortResult<koru_delegate_core::decisions::DecisionPreparedProjection> {
-        self.prepare_projection(intent)
-    }
-    fn apply_prepared_projection(
-        &mut self,
-        prepared: &koru_delegate_core::decisions::DecisionPreparedProjection,
-    ) -> PortResult<koru_delegate_runtime::AppliedRunProjection> {
-        self.apply_projection(prepared)
-    }
-    fn discard_prepared_projection(
-        &mut self,
-        transition: koru_delegate_core::decisions::DecisionTransitionId,
-    ) -> PortResult<()> {
-        self.projection.discard(transition)?;
-        Ok(())
     }
 
     fn absorb(&mut self) -> PortResult<bool> {
@@ -493,7 +457,22 @@ impl RunDocumentHandle for StoreHandle {
     }
 
     fn settle(&mut self) -> PortResult<()> {
-        settle_link(&self.client, self.document, &self.doc, &mut self.link)
+        match self.link.settle(&self.doc) {
+            Ok(()) => Ok(()),
+            Err(first) => {
+                // The same one reconnect a commit gets: rejoin at the last
+                // acknowledged version, resend what is above it, wait again.
+                tracing::info!(
+                    target: "koru::delegate",
+                    code = %first.code,
+                    "the sync socket failed a settle; rejoining once"
+                );
+                let acked = self.link.acked.clone();
+                self.link = Link::join(&self.client, self.document, &self.doc, acked)?;
+                self.link.commit(&self.doc)?;
+                self.link.settle(&self.doc)
+            }
+        }
     }
 
     fn commit(
@@ -516,30 +495,6 @@ impl RunDocumentHandle for StoreHandle {
                 self.link = Link::join(&self.client, self.document, &self.doc, acked)?;
                 self.link.commit(&self.doc)
             }
-        }
-    }
-}
-
-fn settle_link(
-    client: &Client,
-    document: DocumentId,
-    doc: &RunDocument,
-    link: &mut Link,
-) -> PortResult<()> {
-    match link.settle(doc) {
-        Ok(()) => Ok(()),
-        Err(first) => {
-            // The same one reconnect a commit gets: rejoin at the last
-            // acknowledged version, resend what is above it, wait again.
-            tracing::info!(
-                target: "koru::delegate",
-                code = %first.code,
-                "the sync socket failed a settle; rejoining once"
-            );
-            let acked = link.acked.clone();
-            *link = Link::join(client, document, doc, acked)?;
-            link.commit(doc)?;
-            link.settle(doc)
         }
     }
 }

@@ -2,9 +2,9 @@
 use super::*;
 use rusqlite::params;
 mod input_budget;
+mod presentation;
 mod scripted;
 mod steering;
-mod presentation;
 
 pub(crate) struct Fixture {
     pub(crate) db: Database,
@@ -529,7 +529,7 @@ fn pause_accepts_work_and_authorization_precedes_receipt_replay() {
 }
 
 #[test]
-fn receipt_uses_existing_wire_codec_and_object_order_does_not_change_identity() {
+fn receipt_round_trips_and_object_order_does_not_change_identity() {
     let mut f = Fixture::new();
     let mut envelope = f.envelope("work");
     envelope.references = vec![serde_json::from_str(r#"{"a":1,"b":2}"#).unwrap()];
@@ -537,17 +537,10 @@ fn receipt_uses_existing_wire_codec_and_object_order_does_not_change_identity() 
     envelope.references = vec![serde_json::from_str(r#"{"b":2,"a":1}"#).unwrap()];
     let replay = f.db.accept_message(&f.person, &envelope, 2).unwrap();
     assert!(replay.replayed);
-    let frame = koru_bot_client_wire::encode_body(&replay.wire(envelope.id).unwrap()).unwrap();
-    let koru_bot_client_wire::WireMessage::Receipt(receipt) =
-        koru_bot_client_wire::decode_body(&frame).unwrap()
-    else {
-        panic!("receipt")
-    };
-    assert!(receipt.replayed);
-    assert_eq!(
-        receipt.response.unwrap().parse::<Accepted>().unwrap(),
-        first.answer
-    );
+    let encoded = serde_json::to_vec(&replay).unwrap();
+    let decoded: Receipt<Accepted> = serde_json::from_slice(&encoded).unwrap();
+    assert!(decoded.replayed);
+    assert_eq!(decoded.answer, first.answer);
 }
 
 #[test]

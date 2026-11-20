@@ -332,18 +332,6 @@ impl MainView {
     ) -> Tab {
         let mut view = BotView::opened_on(bot, chat, block);
         view.set_home_name(self.workspace_name(bot.home));
-        // Another computer's Bot (M8): the tab opens saying what the
-        // roster's row just said of its copy, and reads it itself from
-        // there on.
-        let linked = self.explore.bots().linked();
-        if let Some(computer) = linked.computer_of(bot.id) {
-            view.know_copy(
-                computer.device,
-                computer.state,
-                computer.last_confirmed_at_ms,
-            );
-            view.set_computer_names(linked.names());
-        }
         Tab::bot(view)
     }
 
@@ -809,42 +797,6 @@ impl MainView {
         true
     }
 
-    pub(super) fn drain_bot_memory_asks(&mut self) -> bool {
-        let TabView::Bot(view) = &mut self.tabs_mut().active_mut().view else {
-            return false;
-        };
-        let Some(ask) = view.take_memory_ask() else {
-            return false;
-        };
-        let lang = crate::format::lang();
-        self.confirm = Some((
-            koru_ui::Confirm::localized(
-                koru_i18n::t(lang, koru_i18n::Key::BotsMemoryAbandonTitle).to_owned(),
-                koru_i18n::t(lang, koru_i18n::Key::BotsMemoryAbandonBody).to_owned(),
-                koru_i18n::t(lang, koru_i18n::Key::BotsAbandon).to_owned(),
-                koru_i18n::t(lang, koru_i18n::Key::BotsDialogCancel),
-            ),
-            super::trash::ConfirmSubject::AbandonBotMemory(ask),
-        ));
-        true
-    }
-
-    pub(super) fn settle_bot_memory_ask(
-        &mut self,
-        ask: &crate::bots::view::memory::Ask,
-        confirmed: bool,
-    ) {
-        for (_, group) in self.panes.iter_groups_mut() {
-            for tab in group.iter_tabs_mut() {
-                if let TabView::Bot(view) = &mut tab.view {
-                    if view.settle_memory_ask(ask, confirmed) {
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
     /// **Ask before a creation is abandoned** — a create tab's or the
     /// roster's Unfinished row's Abandon: nothing is deleted, and what it
     /// leaves stays where it is.
@@ -874,7 +826,7 @@ impl MainView {
         true
     }
 
-    /// **Ask before every Bot is paused** (Bots M8, contract 6.1): what the
+    /// **Ask before every Bot is paused**: what the
     /// pause holds and that running work keeps going. A reversible change
     /// that stops nothing, so it is not a destructive answer; Cancel is
     /// still where the keyboard starts.
@@ -1003,10 +955,8 @@ impl MainView {
             .any(|tab| matches!(tab.view, TabView::Bot(_)))
             .then(|| self.bot_agent_settings());
         let roster = self.explore.bots();
-        // Which device this is, for a tab to tell another computer's Bot
-        // from one of its own (M8).
+        // Device identity keeps native mention choices scoped to this worker.
         let here = self.this_device;
-        let mut remote = false;
         let mut work_moved = false;
         let mut moved = false;
         let mut created = false;
@@ -1027,6 +977,7 @@ impl MainView {
                     // A conversation's work moved (started, stopped, asked):
                     // the roster's activity is read again (S10).
                     work_moved |= view.take_status_moved();
+                    work_moved |= view.take_conversation_roster_dirty();
                     if index == active
                         && let Some(bot) = view.bot()
                     {
@@ -1055,11 +1006,8 @@ impl MainView {
                     {
                         view.set_home_name(name.clone());
                     }
-                    // Another computer's Bot (M8): which device this is,
-                    // and the name the window knows that computer by.
+                    // Native mention reads compare the registered device.
                     view.set_here(here);
-                    moved |= view.set_computer_names(roster.linked().names());
-                    remote |= view.copy().is_some();
                     // A create tab that just became its new Bot's (S8):
                     // the roster lists it.
                     created |= view.take_created();
@@ -1100,11 +1048,7 @@ impl MainView {
         if work_moved {
             self.explore.bots_mut().owe_activity();
         }
-        // A tab on another computer's Bot names that computer: the Agent's
-        // device list is asked for, once per connection.
-        if remote {
-            self.request_device_names_if_needed();
-        }
+        // A newly created Bot needs a fresh lifecycle listing.
         if created {
             self.explore.bots_mut().owe_lifecycle_refresh();
             moved = true;
@@ -1127,6 +1071,11 @@ impl MainView {
             moved |= self.explore.bots_mut().know_creation(creation);
         }
         moved |= self.explore.bots_mut().know_titles(conversation_titles);
+        let current = match &self.tabs().active_tab().view {
+            TabView::Bot(view) => view.bot().map(|bot| (bot, view.chat_id())),
+            _ => None,
+        };
+        moved |= self.explore.bots_mut().set_current_conversation(current);
         moved || placed || recorded
     }
 }

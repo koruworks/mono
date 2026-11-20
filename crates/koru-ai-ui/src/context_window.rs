@@ -3,23 +3,8 @@
 //! The composer model mark's context report. A current-window percentage is
 //! shown only when the agent reports both used and available tokens.
 
-use std::time::Instant;
-
-use koru_draw::el::{El, ElState, FrameCx, Leaf, col, leaf, row, spacer, text};
-use koru_draw::geometry::Rect;
-use koru_draw::text::TextEngine;
-use koru_draw::theme::{self, Ink, Metric, Space, roles};
-use koru_i18n::{Key, Lang, fill, t};
-use koru_ui::popover::{PopoverAlign, PopoverShell};
-use koru_ui::progress_bar::{ProgressBar, ProgressMode};
-use vello::Scene;
-use vello::kurbo::Affine;
-
 use crate::{ChatSurface, usage};
-
-const PANEL_W: Metric = Metric::new("CONTEXT_WINDOW_W", 330.0);
-const PANEL_H: Metric = Metric::new("CONTEXT_WINDOW_H", 174.0);
-const BAR_H: Metric = Metric::new("CONTEXT_WINDOW_BAR_H", 6.0);
+use koru_i18n::{Key, Lang, fill, t};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Snapshot {
@@ -79,106 +64,39 @@ fn precise_count(tokens: u64) -> String {
     }
 }
 
-struct Bar(Option<f32>);
-
-impl Leaf for Bar {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (0.0, BAR_H.value)
-    }
-
-    fn paint(
-        &self,
-        canvas: &mut Scene,
-        root: Affine,
-        _engine: &mut TextEngine,
-        at: Rect,
-        _cx: &FrameCx,
-        _state: ElState,
-    ) {
-        ProgressBar::new(
-            ProgressMode::Determinate(self.0.unwrap_or(0.0)),
-            Instant::now(),
-        )
-        .draw(canvas, root, at, Instant::now(), 1.0);
-    }
-}
-
-fn tree(snapshot: &Snapshot, lang: Lang) -> El {
-    let mut panel = col("ContextWindow")
-        .pad_x(Space::S3)
-        .pad_top(Space::S3)
-        .pad_bottom(Space::S3)
-        .gap(Space::S2)
-        .child(
-            row("Context summary")
-                .child(
-                    text(t(lang, Key::AiContextWindowTitle))
-                        .named("Context heading")
-                        .role(roles::ROW)
-                        .ink(Ink::Primary),
-                )
-                .child(spacer())
-                .child(
-                    text(snapshot.counts())
-                        .named("Context counts")
-                        .role(roles::META)
-                        .ink(Ink::Secondary),
-                ),
-        )
-        .child(
-            leaf("Context progress", Bar(snapshot.fraction()))
-                .decorative()
-                .h(BAR_H),
-        )
-        .child(
-            text(snapshot.summary(lang))
-                .named("Context usage")
-                .role(roles::META)
-                .ink(Ink::Secondary)
-                .truncate(),
-        );
-    if let Some(size) = snapshot.size {
-        panel = panel.child(
-            text(fill(
+impl Snapshot {
+    pub(crate) fn report(&self, lang: Lang) -> koru_agent_config_ui::picker::report::Report {
+        let mut details = Vec::new();
+        if let Some(size) = self.size {
+            details.push(fill(
                 t(lang, Key::AiContextWindowLimit),
                 &[&usage::compact(size)],
-            ))
-            .named("Context limit")
-            .role(roles::META)
-            .ink(Ink::Secondary),
-        );
-    }
-    if let Some(input) = snapshot.last_input {
-        panel = panel.child(
-            text(fill(
+            ));
+        }
+        if let Some(input) = self.last_input {
+            details.push(fill(
                 t(lang, Key::AiContextWindowLastInput),
                 &[&usage::compact(input)],
-            ))
-            .named("Last input")
-            .role(roles::META)
-            .ink(Ink::Secondary),
-        );
-    }
-    if let Some(tokens) = snapshot.total_processed {
-        panel = panel.child(
-            text(fill(
+            ));
+        }
+        if let Some(tokens) = self.total_processed {
+            details.push(fill(
                 t(lang, Key::AiContextWindowTotal),
                 &[&usage::compact(tokens)],
-            ))
-            .named("Total processed")
-            .role(roles::META)
-            .ink(Ink::Secondary),
-        );
-    }
-    panel.child(
-        text(fill(
+            ));
+        }
+        details.push(fill(
             t(lang, Key::AiContextWindowAttached),
-            &[&snapshot.attached.to_string()],
-        ))
-        .named("Attached items")
-        .role(roles::META)
-        .ink(Ink::Secondary),
-    )
+            &[&self.attached.to_string()],
+        ));
+        koru_agent_config_ui::picker::report::Report {
+            heading: t(lang, Key::AiContextWindowTitle).to_owned(),
+            counts: self.counts(),
+            summary: self.summary(lang),
+            fraction: self.fraction(),
+            details,
+        }
+    }
 }
 
 impl ChatSurface {
@@ -242,37 +160,6 @@ impl ChatSurface {
             model: self.chip_label(),
         })
     }
-
-    pub(crate) fn context_window_panel(&self) -> Option<PopoverShell> {
-        if !self.context_window_open {
-            return None;
-        }
-        let indicator = self.context_indicator_button()?;
-        let recipe = theme::overlay::popover();
-        let width = PANEL_W
-            .value
-            .min((self.viewport.w - recipe.viewport_inset * 2.0).max(1.0));
-        Some(PopoverShell::anchored(
-            indicator,
-            self.viewport,
-            width,
-            PANEL_H.value,
-            PopoverAlign::Start,
-        ))
-    }
-
-    pub(crate) fn draw_context_window(&mut self, canvas: &mut Scene, root: Affine) {
-        let (Some(shell), Some(snapshot)) =
-            (self.context_window_panel(), self.context_window_snapshot())
-        else {
-            return;
-        };
-        let tree = tree(&snapshot, self.lang);
-        let frame = crate::model_picker::layout_elements(&tree, shell.rect, FrameCx::root());
-        shell.draw_containing(canvas, root, |canvas, root| {
-            frame.paint(&tree, canvas, root, &mut self.engine);
-        });
-    }
 }
 
 #[cfg(test)]
@@ -307,16 +194,18 @@ mod tests {
             model: "6.1 Terra".into(),
         };
         assert_eq!(snapshot.counts(), "173.7k/258.4k");
-        let tree = tree(&snapshot, Lang::En);
+        let report = snapshot.report(Lang::En);
+        let tree = report.tree();
+        let height = report.height(330.0);
         let frame = crate::model_picker::layout_elements(
             &tree,
-            Rect::new(0.0, 0.0, PANEL_W.value, PANEL_H.value),
-            FrameCx::root(),
+            koru_draw::geometry::Rect::new(0.0, 0.0, 330.0, height),
+            koru_draw::el::FrameCx::root(),
         );
         let bar = frame.rect_of("Context progress").expect("progress bar");
-        assert!(bar.w >= PANEL_W.value - 2.0 * Space::S3.px(theme::Profile::Desktop) - 1.0);
-        assert_eq!(bar.h, BAR_H.value);
-        let attached = frame.rect_of("Attached items").expect("attached items");
-        assert!(attached.y + attached.h <= PANEL_H.value);
+        assert!(bar.w >= 305.0);
+        assert_eq!(bar.h, 6.0);
+        assert_eq!(report.details.len(), 4);
+        assert!(height > bar.h);
     }
 }

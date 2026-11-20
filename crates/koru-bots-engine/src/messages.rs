@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 pub const DELIVERY_LIMIT: usize = 32;
 pub const HISTORY_LIMIT: usize = 200;
-pub const PAGE_LIMIT: usize = koru_bot_client_wire::limits::MAX_PAGE_ENTRIES as usize;
+pub const PAGE_LIMIT: usize = crate::limits::MAX_PAGE_ENTRIES;
 pub const RETENTION_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 /// Only a carrier that has authenticated/vouched the caller may construct this
@@ -84,26 +84,6 @@ pub struct Accepted {
 pub struct Receipt<T> {
     pub answer: T,
     pub replayed: bool,
-}
-
-impl<T: Serialize> Receipt<T> {
-    /// Uses the established Bot protocol's durable receipt and frame codec.
-    /// Thread sequence is not a feed cursor.
-    pub fn wire(&self, command: Uuid) -> Result<koru_bot_client_wire::WireMessage, Error> {
-        Ok(koru_bot_client_wire::WireMessage::Receipt(
-            koru_bot_client_wire::Receipt {
-                request_id: command,
-                outcome: koru_bot_client_wire::Outcome::Completed,
-                response: Some(
-                    koru_bot_client_wire::JsonObject::from_serialize(&self.answer)
-                        .map_err(|_| Error::InvalidRequest)?,
-                ),
-                failure: None,
-                replayed: self.replayed,
-                feed_cursor: None,
-            },
-        ))
-    }
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]

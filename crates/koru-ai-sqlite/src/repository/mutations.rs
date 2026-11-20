@@ -7,6 +7,7 @@ pub(super) fn begin_retry_on(
     transaction: &Connection,
     retry: &PendingRetry,
 ) -> Result<InferenceAttempt, AiError> {
+    require_ordinary_chat(transaction, retry.assistant_message.chat_id)?;
     if retry.assistant_message.role != ChatRole::Assistant
         || retry.assistant_message.state != MessageState::Pending
         || retry.attempt.assistant_message_id != Some(retry.assistant_message.id)
@@ -32,13 +33,6 @@ pub(super) fn begin_retry_on(
             ],
         )
         .map_err(storage_failed)?;
-    bots::client_feed::touch_turn(
-        transaction,
-        retry.assistant_message.chat_id,
-        &[retry.assistant_message.id],
-        true,
-    )
-    .map_err(storage_failed)?;
     Ok(retry.attempt.clone())
 }
 
@@ -47,6 +41,7 @@ pub(super) fn begin_turn_on(
     turn: &PendingTurn,
 ) -> Result<InferenceAttempt, AiError> {
     validate_turn(turn)?;
+    require_ordinary_chat(transaction, turn.user_message.chat_id)?;
     if let Some(existing) = query_attempt(
         &transaction,
         "operation_id",
@@ -78,13 +73,6 @@ pub(super) fn begin_turn_on(
         .map_err(storage_failed)?;
     // The message, the pending reply and the conversation, which is now
     // running: one lookup of the conversation for the three.
-    bots::client_feed::touch_turn(
-        transaction,
-        turn.user_message.chat_id,
-        &[turn.user_message.id, turn.assistant_message.id],
-        true,
-    )
-    .map_err(storage_failed)?;
     Ok(turn.attempt.clone())
 }
 

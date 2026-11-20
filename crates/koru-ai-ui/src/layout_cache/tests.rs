@@ -24,6 +24,7 @@ fn surface_with_reply() -> ChatSurface {
     );
     let mut surface = ChatSurface::new();
     surface.transcript = Some(ChatTranscript {
+        active_attempt: None,
         sources: vec![MessageSources {
             message_id: reply,
             sources: vec![

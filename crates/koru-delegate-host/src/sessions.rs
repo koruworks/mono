@@ -36,8 +36,6 @@ use koru_session_protocol::{
 };
 use koru_session_wire::SubscriptionUpdate;
 
-mod decision;
-
 const PRODUCT: &str = "koru-delegate";
 /// The grid a delegated session is created with. Nobody looks at it until
 /// a person takes control, and a window resizes it then.
@@ -93,31 +91,6 @@ pub fn offer() -> ProtocolOffer {
         },
         capabilities: CapabilitySet::new(capabilities),
     }
-}
-
-/// Extra interactive capabilities are offered only for Bot creation.
-/// Controller connections may answer them without enabling questions in
-/// ordinary sessions, whose creation offer remains unchanged.
-///
-/// `path-references` lets a Bot's first input name local files and folders
-/// as an ordinary chat's does (O30). It is negotiation only: the input
-/// already carries the field, the host only checks the capability before
-/// accepting one, and Koru never reads what a reference names.
-fn bot_offer() -> ProtocolOffer {
-    let mut offered = offer();
-    let mut capabilities: Vec<_> = offered.capabilities.iter().cloned().collect();
-    capabilities.extend(
-        [
-            capability::MANAGED_QUESTIONS,
-            capability::CONDITIONAL_TURN_STEERING,
-            capability::BEGIN_PENDING_INPUT,
-            capability::PATH_REFERENCES,
-        ]
-        .into_iter()
-        .map(|name| CapabilityName::from_str(name).expect("built-in capability")),
-    );
-    offered.capabilities = CapabilitySet::new(capabilities);
-    offered
 }
 
 fn connect(endpoint: &koru_ipc::Endpoint) -> Result<SessionClient, ClientError> {
@@ -271,13 +244,6 @@ impl HostSessions {
 }
 
 impl Sessions for HostSessions {
-    fn subscribe_decision(
-        &mut self,
-        session: SessionId,
-        after: &koru_delegate_core::decisions::DecisionSourceFrontiers,
-    ) -> PortResult<Box<dyn SessionEvents>> {
-        self.decision_stream(session, after)
-    }
     fn supports_delegation(&self) -> bool {
         self.unary.supports_delegation()
     }
@@ -320,19 +286,8 @@ impl Sessions for HostSessions {
         })?;
         let size = GridSize::new(COLUMNS, ROWS)
             .map_err(|code| PortError::new(Port::Sessions, code.as_str(), "grid"))?;
-        let bot_client = if launch.is_bot {
-            Some(
-                SessionClient::connect(&self.endpoint, PRODUCT, bot_offer())
-                    .map_err(|error| session_error("connect", error))?,
-            )
-        } else {
-            None
-        };
-        let client = match &bot_client {
-            Some(client) => client,
-            None => self.unary()?,
-        };
-        let summary = client
+        let summary = self
+            .unary()?
             .create_delegated(
                 launch.key,
                 launch.profile,
@@ -378,8 +333,7 @@ impl Sessions for HostSessions {
         if self.controllers.contains_key(&session) {
             return Ok(());
         }
-        let client = SessionClient::connect(&self.endpoint, PRODUCT, bot_offer())
-            .map_err(|error| session_error("connect", error))?;
+        let client = connect(&self.endpoint).map_err(|error| session_error("connect", error))?;
         let generation = ViewportGeneration::new(1).expect("one");
         let (lease, render) = client
             .attach_live(session, generation, COLUMNS, 1)
@@ -430,111 +384,6 @@ impl Sessions for HostSessions {
         Ok(result.turn_id)
     }
 
-    fn bot_submit(&mut self, session: SessionId, input: PendingInput) -> PortResult<AgentTurnId> {
-        let controller = self.controller(session)?;
-        controller
-            .client
-            .begin_pending_input(session, controller.lease, input)
-            .map(|result| result.turn_id)
-            .map_err(|error| session_error("bot_begin", error))
-    }
-
-    fn bot_steer(
-        &mut self,
-        session: SessionId,
-        turn: AgentTurnId,
-        input: PendingInput,
-    ) -> PortResult<AgentTurnId> {
-        let controller = self.controller(session)?;
-        controller
-            .client
-            .steer_pending_input(session, controller.lease, turn, input)
-            .map(|result| result.turn_id)
-            .map_err(|error| session_error("bot_steer", error))
-    }
-
-    fn bot_answer_approval(
-        &mut self,
-        session: SessionId,
-        key: IdempotencyKey,
-        approval: koru_session_protocol::ApprovalId,
-        decision: koru_session_protocol::ApprovalDecision,
-        choice: Option<koru_session_protocol::ApprovalChoiceId>,
-    ) -> PortResult<()> {
-        let controller = self.controller(session)?;
-        controller
-            .client
-            .answer_approval(session, controller.lease, key, approval, decision, choice)
-            .map_err(|error| session_error("bot_approval", error))
-    }
-    fn bot_answer_questions(
-        &mut self,
-        session: SessionId,
-        request: koru_session_protocol::QuestionRequestId,
-        answers: Vec<koru_session_protocol::QuestionAnswer>,
-    ) -> PortResult<()> {
-        let controller = self.controller(session)?;
-        controller
-            .client
-            .answer_questions(
-                session,
-                controller.lease,
-                IdempotencyKey::mint(),
-                request,
-                Some(answers),
-            )
-            .map_err(|error| session_error("bot_questions", error))
-    }
-    fn bot_skip_questions(
-        &mut self,
-        session: SessionId,
-        request: koru_session_protocol::QuestionRequestId,
-    ) -> PortResult<()> {
-        let controller = self.controller(session)?;
-        controller
-            .client
-            .answer_questions(
-                session,
-                controller.lease,
-                IdempotencyKey::mint(),
-                request,
-                None,
-            )
-            .map_err(|error| session_error("bot_questions", error))
-    }
-    fn bot_ingest_attachment(
-        &mut self,
-        session: SessionId,
-        id: koru_session_protocol::AttachmentId,
-        source: koru_session_protocol::AttachmentSource,
-        data: String,
-    ) -> PortResult<koru_session_protocol::Attachment> {
-        let controller = self.controller(session)?;
-        controller
-            .client
-            .ingest_attachment_base64(session, controller.lease, id, source, data)
-            .map_err(|error| session_error("bot_attachment", error))
-    }
-    fn bot_remove_attachment(
-        &mut self,
-        session: SessionId,
-        id: koru_session_protocol::AttachmentId,
-    ) -> PortResult<koru_session_protocol::Attachment> {
-        let controller = self.controller(session)?;
-        controller
-            .client
-            .remove_attachment(session, controller.lease, id)
-            .map_err(|error| session_error("bot_attachment", error))
-    }
-    fn bot_attachments(
-        &mut self,
-        session: SessionId,
-    ) -> PortResult<Vec<koru_session_protocol::Attachment>> {
-        self.unary()?
-            .attachments(session)
-            .map_err(|error| session_error("bot_attachments", error))
-    }
-
     fn cancel_turn(
         &mut self,
         session: SessionId,
@@ -552,28 +401,6 @@ impl Sessions for HostSessions {
                 reason,
             )
             .map_err(|error| session_error("cancel", error))
-    }
-
-    fn terminate_owned(&mut self, session: SessionId) -> PortResult<()> {
-        // attach_live refuses a human-held controller. A cached stale lease is
-        // checked again by the session owner when it receives this command.
-        self.attach(session)?;
-        let controller = self.controllers.remove(&session).ok_or_else(|| {
-            PortError::new(
-                Port::Sessions,
-                "bot_delivery_pending",
-                "A current controller is required.",
-            )
-        })?;
-        controller
-            .client
-            .command(SessionCommand {
-                idempotency_key: IdempotencyKey::mint(),
-                session_id: session,
-                controller_lease: controller.lease,
-                action: RawCommand::Terminate,
-            })
-            .map_err(|error| session_error("terminate_owned", error))
     }
 
     fn terminate(&mut self, session: SessionId) -> PortResult<()> {

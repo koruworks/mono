@@ -62,13 +62,6 @@ const PAGE: usize = 200;
 const WATCH_POLL: Duration = Duration::from_secs(1);
 
 pub enum Command {
-    BotDrain,
-    /// Wake only; the bounded worker completion channel owns the value.
-    PublicationWake,
-    Bot {
-        command: koru_delegate_api::bots::BotCommand,
-        reply: mpsc::SyncSender<Response>,
-    },
     Stop {
         why: &'static str,
     },
@@ -77,20 +70,6 @@ pub enum Command {
         scope: ScopeIdentity,
         authored_scope: koru_delegate_core::WorkspaceScope,
         reply: mpsc::SyncSender<PortResult<ScheduleAdmission>>,
-    },
-    RoutineBegin {
-        prepared: Box<koru_delegate_core::RoutinePrepared>,
-        admission: koru_delegate_core::BotAdmissionBarrier,
-        proof: koru_delegate_core::FreshBotPolicyProof,
-        scope: ScopeIdentity,
-        authored_scope: koru_delegate_core::WorkspaceScope,
-        deadline: Instant,
-        cancelled: Arc<AtomicBool>,
-        reply: mpsc::SyncSender<PortResult<ScheduleAdmission>>,
-    },
-    RoutineRelease {
-        run: RunId,
-        reply: mpsc::SyncSender<PortResult<()>>,
     },
     ScheduleFinish {
         run: RunId,
@@ -174,13 +153,8 @@ pub enum Command {
     },
 }
 
-mod bots;
-mod child_resume;
-mod decision_resume;
-mod publication;
-mod routine;
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;
 
 struct Watcher {
     next_index: u64,
@@ -194,8 +168,6 @@ struct Watcher {
 struct Pump {
     stop: Arc<AtomicBool>,
     epoch: uuid::Uuid,
-    /// Present only for a decision producer: its single delivery permit.
-    permit: Option<mpsc::SyncSender<()>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,15 +192,9 @@ fn failed_created_start_disposition(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ScheduleLease {
-    Ordinary(RunId),
-    Routine(RunId),
-}
-
 pub struct Actor {
     orchestrator: Orchestrator,
-    schedule_admission: Option<ScheduleLease>,
+    schedule_admission: Option<RunId>,
     claimed_schedule_retries: Vec<ScheduledScopeReservation>,
     deferred_restart_starts: VecDeque<RunId>,
     deferred_restart_retry_at: Option<Instant>,
@@ -237,49 +203,9 @@ pub struct Actor {
     deferred_starts: VecDeque<Command>,
     commands: mpsc::Sender<Command>,
     device: DeviceId,
-    bot_queue_cursor: u64,
-    pub(crate) legacy_bots: bool,
-    bot_drain_pending: bool,
-    bot_drain_again: bool,
     pumps: HashMap<RunId, Pump>,
     watchers: HashMap<RunId, Vec<Watcher>>,
     active: Arc<AtomicU32>,
-    publication_worker: Option<crate::publication::PublicationWorker>,
-    publication_ack: Option<koru_delegate_runtime::AppliedRunProjection>,
-    /// The last Run a physical publication workflow was started for.
-    publication_cursor: Option<RunId>,
-    /// Runs whose last publication workflow failed, and the instant (one
-    /// ordinary TICK later) before which they are not started again. Memory
-    /// only; bounded by the publication candidates.
-    publication_retry_at: HashMap<RunId, Instant>,
-    /// The last Run offered to the decision resume driver (O123 rotation).
-    decision_resume_cursor: Option<RunId>,
-    /// Whether the last resume turn found an open decision wait (or none has
-    /// run yet, or a Bot command may have opened one): keeps the maintenance
-    /// tick alive so the next Run is offered.
-    decision_resume_pending: bool,
-    /// Every resume turn, as tests observe it.
-    #[cfg(test)]
-    resume_log: Vec<decision_resume::ResumeTurnRecord>,
-    /// The last child wait offered to the child driver (M6 rotation).
-    child_resume_cursor: Option<koru_delegate_sqlite::ChildWaitCursor>,
-    /// Whether the last child turn found an open child wait (or none has run
-    /// yet, or a Bot command may have opened one).
-    child_resume_pending: bool,
-    /// An ask was just admitted (`RequestChild`): the loop takes its next
-    /// maintenance turn now instead of at the next tick, so the wait's
-    /// driver begins (the enrollment, then Koru's stop of the asking
-    /// session) without up to five seconds of delay. It only brings the
-    /// turn forward; the driver takes the same steps under the same checks.
-    child_wait_opened: bool,
-    /// When the child clocks are next sampled. `None` while no child wait is
-    /// open and no child Stop is owed.
-    child_clock_at: Option<Instant>,
-    /// Every child driver turn and clock tick, as tests observe them.
-    #[cfg(test)]
-    child_log: Vec<child_resume::ChildTurn>,
-    #[cfg(test)]
-    child_ticks: Vec<koru_delegate_runtime::ChildClockTick>,
 }
 
 impl Actor {
@@ -301,32 +227,9 @@ impl Actor {
             deferred_starts: VecDeque::new(),
             commands,
             device,
-            bot_queue_cursor: 0,
-            legacy_bots: !koru_bots_engine::ENABLED,
-            bot_drain_pending: false,
-            bot_drain_again: false,
             pumps: HashMap::new(),
             watchers: HashMap::new(),
             active: Arc::new(AtomicU32::new(0)),
-            publication_worker: None,
-            publication_ack: None,
-            publication_cursor: None,
-            publication_retry_at: HashMap::new(),
-            decision_resume_cursor: None,
-            // A restart may find waits a previous process left open.
-            decision_resume_pending: true,
-            #[cfg(test)]
-            resume_log: Vec::new(),
-            child_resume_cursor: None,
-            // A restart may find child waits a previous process left open,
-            // and their clocks are adopted on the first tick.
-            child_resume_pending: true,
-            child_wait_opened: false,
-            child_clock_at: Some(Instant::now()),
-            #[cfg(test)]
-            child_log: Vec::new(),
-            #[cfg(test)]
-            child_ticks: Vec::new(),
         }
     }
 
@@ -340,7 +243,7 @@ impl Actor {
     }
 
     fn may_finish_schedule(&self, run: RunId) -> bool {
-        self.schedule_admission == Some(ScheduleLease::Ordinary(run))
+        self.schedule_admission == Some(run)
             || (self.schedule_admission.is_none()
                 && self
                     .claimed_schedule_retries
@@ -478,15 +381,7 @@ impl Actor {
                 tracing::error!(target: "koru::delegate", %error, "restart could not classify the ledger");
             }
         }
-        if self.legacy_bots
-            && let Err(error) = self
-                .orchestrator
-                .recover_unused_bot_reservations(self.device)
-        {
-            tracing::warn!(target: "koru::delegate", %error, "unused Bot reservations remain held");
-        }
         self.count_active();
-        self.wake_bots();
     }
 
     fn reserve_restart_claims(&mut self, claims: &mut Vec<ScheduledScopeReservation>) {
@@ -538,7 +433,6 @@ impl Actor {
             .orchestrator
             .has_unsettled()
             .then(|| Instant::now() + SETTLE_POLL);
-        let mut bot_budget_at: Option<Instant> = None;
         let mut stopping = false;
         let mut stop_requested = false;
         let mut scheduler_stopped = false;
@@ -565,51 +459,13 @@ impl Actor {
                 settle_at = (!durable).then(|| Instant::now() + SETTLE_POLL);
             }
             if publication_at.is_some_and(|deadline| deadline <= now) {
-                // A step taken offers the next turn now rather than a tick later.
-                let stepped = self.maintenance_tick();
-                if stepped {
-                    // A step may have handed a Run to the cleanup owner (a
-                    // decision that expired, O157). Its cleanup is due now,
-                    // not at whatever budget deadline was computed before.
-                    bot_budget_at = None;
+                if let Err(error) = self.orchestrator.retry_publications(64) {
+                    tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
                 }
-                publication_at = if stepped {
-                    Some(Instant::now())
-                } else {
-                    self.publications_pending().then(|| Instant::now() + TICK)
-                };
+                publication_at = self.publications_pending().then(|| Instant::now() + TICK);
             }
 
-            if self.child_clock_at.is_some_and(|deadline| deadline <= now) {
-                // The child clocks (M6): count, fold, time out, reach the
-                // children. A request that timed out may free a slot or make
-                // a parent resumable, so the other deadlines look again.
-                self.child_clock_at = self.child_clock_tick();
-                if publication_at.is_none() && self.publications_pending() {
-                    publication_at = Some(Instant::now());
-                }
-                bot_budget_at = None;
-            }
-            if bot_budget_at.is_some_and(|deadline| deadline <= now) {
-                let mut released = false;
-                for run in self.orchestrator.bot_budget_runs() {
-                    released |= self.orchestrator.bot_budget_tick(run).unwrap_or(false);
-                }
-                bot_budget_at = None;
-                if released {
-                    self.wake_bots();
-                }
-            }
-            if bot_budget_at.is_none() {
-                bot_budget_at = self
-                    .orchestrator
-                    .bot_budget_delay_ms()
-                    .unwrap_or(Some(1000))
-                    .map(|delay| Instant::now() + Duration::from_millis(delay));
-            }
             let wait = [
-                bot_budget_at,
-                self.child_clock_at,
                 publication_at,
                 watched_at,
                 settle_at,
@@ -649,20 +505,10 @@ impl Actor {
                 }
                 Ok(command) => {
                     self.handle(command);
-                    bot_budget_at = None;
-                    if self.child_clock_at.is_none() && self.child_resume_pending {
-                        // A command may have opened a child wait.
-                        self.child_clock_at = Some(Instant::now());
-                    }
                     if !self.watchers.is_empty() && watched_at.is_none() {
                         watched_at = Some(Instant::now() + WATCH_POLL);
                     }
                     if publication_at.is_none() && self.publications_pending() {
-                        publication_at = Some(Instant::now());
-                    }
-                    if self.take_child_wait_opened() {
-                        // An ask was admitted: its driver's first step is
-                        // due now, not at a tick already scheduled.
                         publication_at = Some(Instant::now());
                     }
                     if settle_at.is_none() && self.orchestrator.has_unsettled() {
@@ -679,48 +525,8 @@ impl Actor {
         for pump in self.pumps.values() {
             pump.stop.store(true, Ordering::Release);
         }
-        // A clean stop folds every running child clock first (M6).
-        self.fold_child_clocks_for_stop();
-        self.shutdown_publication();
         // What was sent is acknowledged before this process is gone.
         self.orchestrator.settle_all();
-    }
-
-    /// Whether an ask was admitted since the last look; reading it clears it.
-    fn take_child_wait_opened(&mut self) -> bool {
-        std::mem::take(&mut self.child_wait_opened)
-    }
-
-    /// One maintenance tick: the retained acknowledgment, one publication
-    /// step, bus retries, then one Run's decision wait (O123 rotation).
-    /// Returns whether that Run took a step.
-    fn maintenance_tick(&mut self) -> bool {
-        self.retry_publication_ack();
-        self.drive_publication();
-        if let Err(error) = self.orchestrator.retry_publications(64) {
-            tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
-        }
-        let mut stepped = matches!(
-            self.advance_decision_resume(),
-            decision_resume::ResumeTurn::Stepped(..)
-        );
-        // One Run's child wait per turn, rotating (M6).
-        stepped |= matches!(
-            self.advance_child_resume(),
-            child_resume::ChildTurn::Stepped(..)
-        );
-        self.sync_decision_authorities();
-        self.sync_child_authorities();
-        stepped
-    }
-
-    /// Republish every open decision wait this process tracks, from the
-    /// ledger (O147), so a settled or closed wait lifts its fence and a
-    /// restart seeds it. A failure keeps the previous, fenced value.
-    pub(super) fn sync_decision_authorities(&mut self) {
-        if let Err(error) = self.orchestrator.sync_decision_authorities() {
-            tracing::warn!(target: "koru::delegate", %error, "decision wait classification not refreshed");
-        }
     }
 
     /// The answer to a person's request, once the run's commits are
@@ -734,66 +540,8 @@ impl Actor {
     }
 
     fn handle(&mut self, command: Command) {
-        if self.refuse_ordinary_bot_route(&command) {
-            return;
-        }
         match command {
-            Command::BotDrain => self.drain_one_bot(),
-            Command::PublicationWake => self.drain_publication_completions(),
-            Command::Bot { command, reply } => {
-                let queue_changed = matches!(
-                    command,
-                    koru_delegate_api::bots::BotCommand::Submit { .. }
-                        | koru_delegate_api::bots::BotCommand::Barrier { .. }
-                        // A team value may have opened every queued task.
-                        | koru_delegate_api::bots::BotCommand::TeamBarrier { .. }
-                        | koru_delegate_api::bots::BotCommand::Stop { .. }
-                        | koru_delegate_api::bots::BotCommand::Interrupt { .. }
-                        // An admitted ask queued up to three child Runs.
-                        | koru_delegate_api::bots::BotCommand::RequestChild { .. }
-                );
-                let response = match self.bot_command(command) {
-                    Ok(reply) => Response::Bot(reply),
-                    Err(failure) => Response::Failure(failure),
-                };
-                let _ = reply.send(response);
-                // A decision command may have opened, answered or closed a
-                // wait; its classification follows the ledger.
-                self.sync_decision_authorities();
-                self.decision_resume_pending = true;
-                // The same for a child wait (M6).
-                self.sync_child_authorities();
-                self.child_resume_pending = true;
-                if queue_changed {
-                    self.wake_bots();
-                }
-            }
             Command::Stop { .. } | Command::ScheduleStopped => {}
-            Command::RoutineBegin {
-                prepared,
-                admission,
-                proof,
-                scope,
-                authored_scope,
-                deadline,
-                cancelled,
-                reply,
-            } => {
-                self.begin_routine(
-                    *prepared,
-                    admission,
-                    proof,
-                    scope,
-                    authored_scope,
-                    deadline,
-                    cancelled,
-                    reply,
-                );
-            }
-            Command::RoutineRelease { run, reply } => {
-                let result = self.release_routine(run);
-                let _ = reply.send(result);
-            }
             Command::ScheduleBegin {
                 run,
                 scope,
@@ -819,7 +567,7 @@ impl Actor {
                 {
                     Ok(ScheduleAdmission::Busy(holder))
                 } else {
-                    self.schedule_admission = Some(ScheduleLease::Ordinary(run));
+                    self.schedule_admission = Some(run);
                     Ok(ScheduleAdmission::Granted)
                 };
                 let _ = reply.send(result);
@@ -831,10 +579,6 @@ impl Actor {
                 authored_scope,
                 reply,
             } => {
-                if matches!(self.schedule_admission, Some(ScheduleLease::Routine(_))) {
-                    let _ = reply.send(Err(routine::refused("admission_phase")));
-                    return;
-                }
                 let result = if self.may_finish_schedule(run) {
                     let identity = scope.identity.clone();
                     let result = ScheduleEffects::finish(
@@ -864,13 +608,11 @@ impl Actor {
                 let _ = reply.send(result);
                 self.drain_deferred_starts();
                 self.drain_deferred_restart_starts();
-                self.wake_bots();
             }
             Command::ScheduleAbort { run } => {
-                if self.schedule_admission == Some(ScheduleLease::Ordinary(run)) {
+                if self.schedule_admission == Some(run) {
                     self.schedule_admission = None;
                     self.drain_deferred_starts();
-                    self.wake_bots();
                 }
             }
             Command::ScheduleReconcile {
@@ -878,10 +620,6 @@ impl Actor {
                 authored_scope,
                 reply,
             } => {
-                if matches!(self.schedule_admission, Some(ScheduleLease::Routine(_))) {
-                    let _ = reply.send(Err(routine::refused("admission_phase")));
-                    return;
-                }
                 let run = claim.run;
                 let identity = self
                     .orchestrator
@@ -903,7 +641,6 @@ impl Actor {
                 };
                 let _ = reply.send(result);
                 self.drain_deferred_restart_starts();
-                self.wake_bots();
             }
             Command::Create { request, reply } => {
                 if self.schedule_admission.is_some() {
@@ -978,23 +715,6 @@ impl Actor {
                     }
                 };
                 let run = request.run;
-                // Scope/schedule refusal above stays cheap. Before an actual
-                // create, also reject an imported Bot Run with no local ledger.
-                match self.orchestrator.is_bot_run(run, Some(request.workspace)) {
-                    Ok(true) => {
-                        let _ = reply.send(Response::Failure(Failure::new(
-                            "bot_private_route_required",
-                            "Bot records require the private owner route.",
-                            false,
-                        )));
-                        return;
-                    }
-                    Ok(false) | Err(RunError::UnknownRun) => {}
-                    Err(error) => {
-                        let _ = reply.send(Response::Failure(failure_of(&error)));
-                        return;
-                    }
-                }
                 let scope = request.scope.clone();
                 let response = match self.create(request) {
                     Ok(created) => Response::Created(created),
@@ -1169,47 +889,17 @@ impl Actor {
                 self.notify(run);
             }
             Command::Update { run, epoch, update } => {
-                // Already queued old-pump updates cannot enter a replacement
-                // decision producer or mutate its retained source frontier.
                 if self.pumps.get(&run).is_none_or(|pump| pump.epoch != epoch) {
                     return;
                 }
-                if self
-                    .pumps
-                    .get(&run)
-                    .is_some_and(|pump| pump.permit.is_some())
-                {
-                    let was_active = self.orchestrator.bot_budget_runs().contains(&run);
-                    self.decision_update(run, epoch, update);
-                    self.notify(run);
-                    if was_active && !self.orchestrator.bot_budget_runs().contains(&run) {
-                        self.wake_bots();
-                    }
-                    return;
-                }
-                let was_active = self.orchestrator.bot_budget_runs().contains(&run);
                 match self.orchestrator.handle(run, update) {
                     Ok(HandleOutcome::Continue) => {}
                     Ok(HandleOutcome::Ended) => self.stop_pump(run),
                     Err(error) => {
-                        // A Bot Run's interruption is absorbing: the person's
-                        // later turns, gaps and handback on the borrowed session
-                        // are expected refusals there, not news.
-                        let absorbing = self.orchestrator.header(run).is_ok_and(|header| {
-                            header.bot.is_some()
-                                && matches!(header.status, RunStatus::Interrupted { .. })
-                        });
-                        if absorbing {
-                            tracing::debug!(target: "koru::delegate", run = ?run, %error, "an update to an interrupted Bot Run was refused");
-                        } else {
-                            tracing::warn!(target: "koru::delegate", run = ?run, %error, "an update was refused");
-                        }
+                        tracing::warn!(target: "koru::delegate", run = ?run, %error, "an update was refused");
                     }
                 }
                 self.notify(run);
-                if was_active && !self.orchestrator.bot_budget_runs().contains(&run) {
-                    self.wake_bots();
-                }
             }
             Command::PumpEnded { run, epoch } => {
                 if self.pumps.get(&run).is_none_or(|pump| pump.epoch != epoch) {
@@ -1217,21 +907,11 @@ impl Actor {
                 }
                 self.pumps.remove(&run);
                 self.count_active();
-                self.wake_bots();
             }
         }
     }
 
     fn publications_pending(&self) -> bool {
-        // Exclusive Runs keep the existing coalesced maintenance tick alive so
-        // owed projections, observations and producer reconnects progress.
-        if self.publication_ack.is_some()
-            || self.decision_resume_pending
-            || self.child_resume_pending
-            || !self.orchestrator.publication_candidates().is_empty()
-        {
-            return true;
-        }
         match self
             .orchestrator
             .ports()
@@ -1528,14 +1208,7 @@ impl Actor {
             });
         match spawned {
             Ok(_) => {
-                self.pumps.insert(
-                    run,
-                    Pump {
-                        stop,
-                        epoch,
-                        permit: None,
-                    },
-                );
+                self.pumps.insert(run, Pump { stop, epoch });
             }
             Err(error) => {
                 tracing::error!(target: "koru::delegate", run = ?run, %error, "the run's stream could not be pumped");
@@ -1577,9 +1250,6 @@ impl Actor {
         let mut documents = std::collections::BTreeMap::new();
         let mut sessions = std::collections::BTreeMap::new();
         for entry in listed {
-            if entry.header.bot.is_some() {
-                continue;
-            }
             documents.insert(entry.header.run, entry.document);
             match entry.trashed_at_ms {
                 Some(trashed_at_ms) => trashed.push(TrashedRun {
@@ -1623,12 +1293,6 @@ impl Actor {
         };
         let header = match self.orchestrator.header(run) {
             Ok(header) => header,
-            Err(error) if error.publication_pending() => {
-                // Temporary ownership transfer is not a closed Run. Keep each
-                // watcher's exact delivery cursor for the returned handle.
-                self.watchers.insert(run, watchers);
-                return;
-            }
             Err(_) => {
                 for watcher in watchers {
                     let _ = watcher.sink.try_send(RunStreamItem::Closed);
@@ -1721,25 +1385,6 @@ fn wire_item(item: WindowItem) -> TimelineItem {
 }
 
 pub fn failure_of(error: &RunError) -> Failure {
-    if error.publication_pending() {
-        return Failure::new(
-            "publication_pending",
-            "The Run publication is still in progress.",
-            true,
-        );
-    }
-    if let RunError::Port(port) = error {
-        if matches!(
-            port.code.as_str(),
-            "bot_retained_state" | "bot_retention_inconsistent" | "bot_retention_unavailable"
-        ) {
-            return Failure::new(
-                port.code.clone(),
-                port.detail.clone(),
-                port.code == "bot_retention_unavailable",
-            );
-        }
-    }
     let retryable = matches!(error, RunError::Port(_));
     let message = match error {
         RunError::UnknownRun => "No run by that id exists on this device.".to_owned(),

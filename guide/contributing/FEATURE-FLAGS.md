@@ -1,15 +1,23 @@
 # Product feature flags
 
-The Bots engine rollout uses a separate **compile-time** Cargo feature:
-`cargo build -p koru-agent --features bots-engine`. It is off by default during
-implementation and has no environment override. An enabled build claims its
-root permanently for the new engine; a legacy build refuses to serve that root.
-Use a fresh disposable `--root`: the two new version-1 databases are still
-development-only. The shared Bot chat now supports engine messages, requests,
-side-thread/output cards, Join and Branch. Routines and connections remain later
-work; enabling the feature does not enable the old scheduler alongside it.
+The native engine is the only Bot runtime. Ordinary builds and root-stack
+launchers include it; there is no `bots-engine` or `active` Cargo selector.
+The UI flags below control visibility, not runtime selection. Native Bot chat
+supports messages, requests, read-only exchanges and output cards. Routines
+support scheduling, Run now, conversational triggering and repeated runs in the
+same named conversation. Bot branching is absent from the UI; connections remain
+later work. There is no old scheduler or saved-copy runtime alongside the engine.
 `koru-agent bots --root <path>` reads its database diagnostic without starting
 the engine. The existing UI flags below do not select a Bot implementation.
+
+On Windows, `& .\scripts\dev\bots-engine-review.ps1` in PowerShell builds the engine review into its own
+`target/bots-engine-review` directory and opens a fresh disposable root.
+Use `-BuildOnly` to prepare it and `-NoBuild` to launch without rebuilding.
+Ordinary development launchers use the same native runtime. Do not delete
+running executables: the Agent verifies their on-disk identity for Bot access.
+Fresh-root reviews start with empty Bot/Routine data; there is no conversion of
+an older Bot database. Use the prepared build with `-NoBuild` to begin another
+fresh review without rebuilding or deleting any existing database.
 
 **What a build shows.** Decided by the maintainers on 2026-10-08: the next release of
 Koru shows documents, files and terminal/shell session tabs — plus Welcome,

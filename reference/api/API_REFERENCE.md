@@ -560,35 +560,11 @@ Read or change engine-owned Bots and conversations
 
 Returns: An owner-scoped read, revision-checked durable receipt, or explicit live-feed gap. Available only when the supervised Bots engine is composed; no legacy data is read.
 
-## POST `/v1/ai/bots/list`
-
-Authorized local Bot task operation: list_bots
-
-Returns: A bounded owner-authorized projection; no configuration or execution handles.
-
-## POST `/v1/ai/bots/tasks/start`
-
-Authorized local Bot task operation: start_bot_task
-
-Returns: A bounded owner-authorized projection; no configuration or execution handles.
-
-## POST `/v1/ai/bots/tasks/read`
-
-Authorized local Bot task operation: read_bot_task
-
-Returns: A bounded owner-authorized projection; no configuration or execution handles.
-
-## POST `/v1/ai/bots/tasks/stop`
-
-Authorized local Bot task operation: stop_bot_task
-
-Returns: A bounded owner-authorized projection; no configuration or execution handles.
-
 ## POST `/v1/ai/bots`
 
-Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation, list current Routine observations or read one Routine's timing and local conversations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task
+Create or configure an engine-owned Bot, manage its Library and Routines, pause, archive, trash or restore it, and list its conversations and activity
 
-Returns: A durable configuration, bounded Library references or immutable Knowledge-save receipt, immutable Routine creation receipt or current creation status, bounded Routine observations with retained grant summaries and recent local conversation references, selected Routine detail with current timing, configured destination, partial blockers and a replaceable local conversation page, authorized listing, bounded page of conversations, running and Needs-you activity, new conversation reference, admission operation, lifecycle progress, bounded Run history without its session, or task Stop outcome. Routine observations are not execution or permission authority; unavailable live state and local history remain explicit. Knowledge provides context for new tasks and does not grant edit permission. Conversation history uses Chat reads; execution is coordinated separately.
+Returns: Native engine configuration, revision-checked receipts, Library page bindings, Routine observations and controls, conversation references or lifecycle progress. New Routines are enabled by default. Library pages provide context without granting edit permission. Conversation history and messages use the Bot thread API; ordinary AI chats and Runs do not execute Bot work.
 
 ## GET `/v1/ai/providers/settings`
 
@@ -877,6 +853,12 @@ Returns: The original bytes, with the stored media type and the file name as an 
 Read a picture attachment's thumbnail
 
 Returns: A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.
+
+## POST `/v1/ai/bots/routines`
+
+Read native Routine history or control a Routine
+
+Returns: Exact occurrence identities and durable Run now or enable receipts. No legacy Run identity is created.
 
 ## POST `/v1/ai/bots/threads`
 

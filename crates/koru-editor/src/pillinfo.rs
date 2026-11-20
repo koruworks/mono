@@ -125,12 +125,15 @@ pub fn info_for(ws: &WorkspaceDoc, attr: &Attr) -> PillInfo {
             .filter(|label| !label.is_empty())
             .unwrap_or(MENTION_WITHOUT_A_LABEL);
         return PillInfo {
-            kind: PillKind::Mention,
+            kind: PillKind::Bot(0),
             label: format!("@{name}"),
             dangling: false,
             trashed: false,
             url: None,
-            entity: None,
+            entity: match &attr.value {
+                AttrValue::Text(id) => Some(id.clone()),
+                _ => None,
+            },
         };
     }
     if attr.role == koru_core::attributes::ROLE_SCHEDULE {
@@ -410,9 +413,9 @@ mod tests {
             "CFO".to_owned(),
         );
         let info = info_for(&ws(), &labelled);
-        assert_eq!(info.kind, PillKind::Mention);
+        assert_eq!(info.kind, PillKind::Bot(0));
         assert_eq!(info.label, "@CFO");
-        assert_eq!(info.entity, None);
+        assert_eq!(info.entity.as_deref(), Some(id));
         let bare = Attr::new(koru_core::attributes::ROLE_BOT, AttrValue::Text(id.into()));
         let info = info_for(&ws(), &bare);
         assert_eq!(info.label, "@bot");

@@ -29,8 +29,3 @@ base64.workspace = true
 blake3.workspace = true
 sha2.workspace = true
 uuid.workspace = true
-
-[dev-dependencies]
-# The real ai.db writer on an in-memory database: the flows are tested
-# against the rows and constraints production has, not a second model of them.
-koru-ai-sqlite = { path = "../koru-ai-sqlite", features = ["fixtures"] }

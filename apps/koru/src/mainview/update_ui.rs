@@ -623,8 +623,16 @@ impl MainView {
         );
         let mut y = banner.y + TITLE_H;
         for line in lines.into_iter().take(LINES_MAX) {
-            let line = self.engine.elided(&line, theme::role::meta(), text_w);
-            let layout = self.engine.simple_layout(&line, theme::role::meta());
+            let layout = if report.stage == UpdateStage::Downloading {
+                // Measure and elide with the same mixed fonts that we draw.
+                let line = self
+                    .engine
+                    .numeric_elided(&line, theme::role::meta(), text_w);
+                self.engine.numeric_layout(&line, theme::role::meta(), None)
+            } else {
+                let line = self.engine.elided(&line, theme::role::meta(), text_w);
+                self.engine.simple_layout(&line, theme::role::meta())
+            };
             scene::draw_layout(scene, root, &layout, banner.x + 18.0, y, Some(p.text_dim));
             y += 19.0;
         }

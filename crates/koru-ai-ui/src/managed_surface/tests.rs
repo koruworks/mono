@@ -5,6 +5,94 @@ use crate::reader::Reader;
 use std::sync::mpsc::{Receiver, SyncSender};
 
 #[test]
+fn a_new_native_question_stays_after_the_previous_answer_while_waiting() {
+    let (mut surface, _, _) = surface();
+    let state = surface.managed.as_mut().unwrap();
+    let mut first = crate::managed::tests::message(1, uuid::Uuid::new_v4());
+    first.sender = "person:fixture".into();
+    first.content.body = "Tell me a joke".into();
+    let mut reply = crate::managed::tests::message(2, uuid::Uuid::new_v4());
+    reply.content.body = "A short joke.".into();
+    reply.content.in_reply_to = Some(first.id);
+    let mut next = crate::managed::tests::message(3, uuid::Uuid::new_v4());
+    next.sender = "person:fixture".into();
+    next.content.body = "What is the news?".into();
+    let expected = [first.id, reply.id, next.id].map(MessageId::from_uuid);
+    for message in [first, reply, next] {
+        state.ingest(message);
+    }
+    surface.transcript = Some(state.transcript());
+    surface.rebuild_messages(640.0);
+    let shown: Vec<_> = surface
+        .message_layouts
+        .iter()
+        .filter_map(|m| m.id)
+        .collect();
+    assert_eq!(&shown[..3], &expected);
+    surface.rebuild_messages(480.0);
+    let shown: Vec<_> = surface
+        .message_layouts
+        .iter()
+        .filter_map(|m| m.id)
+        .collect();
+    assert_eq!(
+        &shown[..3],
+        &expected,
+        "resizing must preserve engine order"
+    );
+}
+
+#[test]
+fn native_instruction_notice_reaches_the_existing_visible_status_surface() {
+    let (mut surface, _, _) = surface();
+    let state = surface.managed.as_ref().unwrap();
+    let mut entry = crate::managed::tests::event(state, 1, None);
+    entry.observation.event = koru_ai_wire::bot_threads::AgentEvent::Notice {
+        turn_id: entry.observation.turn.id.to_string().parse().unwrap(),
+        text: "Edited instructions were unavailable; built-in instructions were used.".into(),
+    };
+    let update = managed::Refreshed {
+        navigation: Default::default(),
+        snapshot: state.snapshot.clone(),
+        messages: vec![],
+        after: state.after,
+        feed: managed::Feed {
+            boot: uuid::Uuid::new_v4(),
+            cursor: 1,
+            gap: false,
+            entries: vec![entry],
+        },
+        questions: vec![],
+        attention: Default::default(),
+    };
+    assert!(surface.managed_refreshed(update));
+    assert_eq!(
+        surface.status.as_deref(),
+        Some("Edited instructions were unavailable; built-in instructions were used.")
+    );
+    assert!(surface.managed.as_ref().unwrap().notice.is_none());
+}
+
+#[test]
+fn assigning_the_window_profile_never_lists_ordinary_chats_for_a_bot() {
+    let (mut surface, commands, _) = surface();
+    let profile = koru_ai_core::ProfileId::new();
+    surface.transcript.as_mut().unwrap().chat.profile_id = Some(profile);
+    assert!(surface.set_profile(Some(profile)));
+    assert!(commands.try_recv().is_err());
+    assert!(!surface.queue_command(Command::ListChats(Some(profile))));
+    assert!(surface.status.is_none());
+    assert!(surface.activate_send_button());
+    assert!(matches!(
+        commands.try_recv().unwrap(),
+        Command::Engine {
+            command: C::Stop { .. },
+            ..
+        }
+    ));
+}
+
+#[test]
 fn attachment_send_keeps_ids_and_receipt_identity_on_the_engine_carrier() {
     let (mut surface, _, _) = surface();
     let thread = surface.managed.as_ref().unwrap().thread();
@@ -184,6 +272,41 @@ fn uncertain_send_reuses_id_after_rebinding_and_never_clears_other_chat() {
 }
 
 #[test]
+fn changing_native_model_keeps_the_actual_running_turn_and_stop_target() {
+    let (mut surface, commands, _) = surface();
+    let state = surface.managed.as_ref().unwrap();
+    let thread = state.thread();
+    let actual = state.primary_turn().unwrap();
+    let turns = serde_json::to_value(&state.snapshot.turns).unwrap();
+    let mut next = state.snapshot.conversation.chat.current_model.clone();
+    next.requested_model = "next-model".into();
+    let revision = state.snapshot.settings_revision + 1;
+    assert!(surface.managed_reply(
+        thread,
+        R::Settings {
+            request: uuid::Uuid::new_v4(),
+            revision,
+            model: next.clone(),
+            mode: None,
+            fast: None,
+            replayed: false,
+        }
+    ));
+    assert_eq!(
+        serde_json::to_value(&surface.managed.as_ref().unwrap().snapshot.turns).unwrap(),
+        turns
+    );
+    assert_eq!(
+        surface.transcript.as_ref().unwrap().chat.current_model,
+        next
+    );
+    assert_eq!(surface.send_mode(), queue::SendMode::Stop);
+    assert!(surface.status.is_none());
+    assert!(surface.activate_send_button());
+    assert!(commands.try_iter().any(|command| matches!(command, Command::Engine { command: C::Stop { turn, .. }, .. } if (turn.id, turn.generation, turn.worker, turn.session) == (actual.id, actual.generation, actual.worker, actual.session))));
+}
+
+#[test]
 fn hidden_surface_has_no_poll_deadline_or_new_jobs() {
     let (mut surface, commands, _updates) = surface();
     surface.deactivate();
@@ -254,6 +377,5 @@ fn history_loading_is_bounded_and_local_blocks_offer_no_durable_link() {
         })
         .count();
     assert_eq!(reads, 1);
-    assert_eq!(surface.response_action_count(), 2);
     assert!(surface.managed.as_ref().unwrap().history_pending);
 }

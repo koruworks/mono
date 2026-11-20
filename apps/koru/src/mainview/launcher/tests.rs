@@ -31,7 +31,7 @@ fn the_launcher_opens_as_a_modal() {
     let ask = v.launcher.as_ref().unwrap();
     assert_eq!(
         ask.kinds.iter().map(|k| k.letter()).collect::<String>(),
-        "dtcasi"
+        "dtcbasi"
     );
 }
 
@@ -94,6 +94,27 @@ fn d_opens_a_new_document_tab() {
     assert_eq!(v.tabs().len(), tabs + 1);
     assert!(v.tabs().active_tab().draft.is_some(), "a draft document");
     assert_eq!(v.blockers(), Blockers::None);
+}
+
+#[test]
+fn bot_from_either_creation_menu_opens_the_same_dialog() {
+    use crate::mainview::context_menu::{self, MenuAction, MenuSubject};
+    let (mut v, mut w) = on_document();
+    let tabs = v.tabs().len();
+    assert!(context_menu::shown(context_menu::new_tab_items()).contains(&MenuAction::NewBot));
+    assert!(v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::NewBot));
+    assert!(v.new_bot_open());
+    assert_eq!(
+        v.tabs().len(),
+        tabs,
+        "opening the draft does not create a Bot"
+    );
+    v.first_bot.dialog = None;
+    v.open_launcher();
+    assert!(letter(&mut v, &mut w, "b", ModifiersState::empty()));
+    assert!(v.launcher.is_none());
+    assert!(v.new_bot_open());
+    assert_eq!(v.tabs().len(), tabs);
 }
 
 /// **T opens Today with the caret in Add a task** when no Tasks page was
@@ -338,7 +359,9 @@ fn every_tile_and_the_footer_read_their_own_words() {
             .iter()
             .map(|t| t.label.as_str())
             .collect::<Vec<_>>(),
-        ["Document", "Task", "Chat", "Agent", "Shell", "Import"]
+        [
+            "Document", "Task", "Chat", "Bot", "Agent", "Shell", "Import"
+        ]
     );
     assert!(
         launcher

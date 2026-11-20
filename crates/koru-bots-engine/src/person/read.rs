@@ -80,10 +80,10 @@ fn page<T: Serialize>(
         let key = id(key)?;
         let item = get(key)?;
         let size = encode(&item)?.len();
-        if size > koru_bot_client_wire::MAX_FRAME_BYTES / 2 {
+        if size > crate::limits::MAX_PAYLOAD_BYTES / 2 {
             return Err(Error::InputTooSmall);
         }
-        if bytes + size > koru_bot_client_wire::MAX_FRAME_BYTES / 2 {
+        if bytes + size > crate::limits::MAX_PAYLOAD_BYTES / 2 {
             more = true;
             break;
         }
@@ -96,6 +96,15 @@ fn page<T: Serialize>(
 pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, Error> {
     let c = &db.connection;
     match query {
+        Query::RoutineCreation { bot, request } => value(db.routine_creation(who, bot, request)?),
+        Query::RoutineReceipt { id, action } => value(db.routine_receipt(who, id, &action)?),
+        Query::Routines { bot, after, limit } => value(db.routines(who, bot, after, limit)?),
+        Query::Routine {
+            bot,
+            routine,
+            before,
+            limit,
+        } => value(db.routine(who, bot, routine, before, limit)?),
         Query::ConversationSettings { bot, thread } => {
             owner(c, who, bot)?;
             messages::authorize_thread(c, who, thread)?;

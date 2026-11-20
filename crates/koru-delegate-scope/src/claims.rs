@@ -49,9 +49,6 @@ pub enum StartOrigin {
     /// the scope. Later edits, retirement, or another holder appearing do
     /// not revoke the durable claim.
     ClaimedSchedule { schedule: ScheduleRef },
-    /// Constructed only after the execution owner validates durable Bot
-    /// admission. The discriminator itself is not an authority credential.
-    Bot { bot: koru_delegate_core::BotId },
 }
 
 /// One held scope.
@@ -138,9 +135,7 @@ impl ScopeClaims {
         roots: &dyn ScopeRoots,
         origin: StartOrigin,
     ) -> Admission {
-        if matches!(scope, WorkspaceScope::BotFolder { .. })
-            != matches!(origin, StartOrigin::Bot { .. })
-        {
+        if matches!(scope, WorkspaceScope::BotFolder { .. }) {
             return Admission::Refused(ScopeRefusal::NotAdmissible);
         }
         match ScopeIdentity::resolve(scope, run, roots) {
@@ -170,7 +165,6 @@ impl ScopeClaims {
             .collect();
         let busy = BusyWarning::from_holders(holders);
         match (origin, busy) {
-            (StartOrigin::Bot { .. }, Some(_)) => Admission::Refused(ScopeRefusal::Busy),
             (StartOrigin::Scheduled { schedule }, Some(busy)) => {
                 Admission::Skipped { schedule, busy }
             }

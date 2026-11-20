@@ -38,8 +38,10 @@
 //!   Agent with no device network, gateway or delegate, which on a desktop is
 //!   a window that says sync is unavailable. On a server it would be a process
 //!   that runs and does nothing, so [`run_server`] refuses to start.
-//! - **The delegate is woken on a fixed tick** ([`DELEGATE_TICK`]), because
-//!   the native sleep and time-change wakes belong to the window loop.
+//! - **A fixed tick watches time** ([`DELEGATE_TICK`]), because the native
+//!   sleep and time-change wakes belong to the window loop. The legacy
+//!   delegate wakes each tick; Bots wake only after a clock or zone change
+//!   or a long interruption, leaving their idle deadline clock alone.
 //! - **A termination signal stops it**, without a question, once, and within
 //!   a bound ([`STOP_PATIENCE`]).
 //!
@@ -59,6 +61,8 @@ use koru_window::WindowApp as _;
 use crate::event::{AgentEvent, Mailbox};
 use crate::run::{self, StartError};
 use crate::{Agent, Paths};
+
+mod routine_clock;
 
 /// How often the loop wakes the delegate's scheduler.
 ///
@@ -197,15 +201,11 @@ pub(crate) fn supervise(agent: &mut impl Supervised, inbox: &mut impl Inbox) -> 
         if stop_deadline.is_some_and(|deadline| inbox.now() >= deadline) {
             return ServerExit::StopTimedOut;
         }
-        let until = [
-            Some(next_tick),
-            agent.maintenance_deadline(),
-            stop_deadline,
-        ]
-        .into_iter()
-        .flatten()
-        .min()
-        .unwrap_or(next_tick);
+        let until = [Some(next_tick), agent.maintenance_deadline(), stop_deadline]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(next_tick);
         match inbox.wait(until) {
             Waited::Message(Message::Event(event)) => agent.wake(*event),
             Waited::Message(Message::Stop(signal)) => {
@@ -252,6 +252,7 @@ struct AgentUnderLoop {
     /// `None` when the delegate could not be supervised; there is then no
     /// scheduler to be late.
     delegate_wakes: Option<crate::delegate_host::DelegateWakeIngress>,
+    routine_clock: Option<routine_clock::RoutineClock>,
 }
 
 impl Supervised for AgentUnderLoop {
@@ -302,6 +303,11 @@ impl Supervised for AgentUnderLoop {
         if let Some(delegate) = &self.delegate_wakes {
             // Nonblocking and coalesced: it sets an edge and returns.
             delegate.wake();
+        }
+        if let Some(clock) = &mut self.routine_clock
+            && clock.changed(routine_clock::Sample::now())
+        {
+            crate::bots_host::wake();
         }
     }
 }
@@ -447,6 +453,9 @@ pub fn run_server(paths: Paths) -> Result<ServerExit, StartError> {
         &mut AgentUnderLoop {
             agent,
             delegate_wakes,
+            routine_clock: Some(routine_clock::RoutineClock::new(
+                routine_clock::Sample::now(),
+            )),
         },
         &mut ChannelInbox { receiver },
     );
@@ -552,7 +561,9 @@ async fn signals(ready: mpsc::SyncSender<Result<(), String>>, stop: mpsc::Sender
 
 #[cfg(not(any(unix, windows)))]
 async fn signals(ready: mpsc::SyncSender<Result<(), String>>, _stop: mpsc::Sender<Message>) {
-    let _ = ready.send(Err("this platform has no termination signal Koru handles".into()));
+    let _ = ready.send(Err(
+        "this platform has no termination signal Koru handles".into()
+    ));
 }
 
 #[cfg(test)]

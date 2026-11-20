@@ -1,79 +1,29 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! AI-owned admission receipts. No live controller or transcript lives here.
+//! Bot control views shared with the native window adapter.
 use super::*;
-use koru_delegate_core::{BotAdmissionBarrier, BotAdmissionView, BotSubmission, RunId};
-#[cfg(test)]
-mod tests;
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct BotTask {
-    pub text: String,
-    pub documents: Vec<BotPage>,
-}
-impl std::fmt::Debug for BotTask {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("BotTask([REDACTED])")
-    }
-}
-impl BotTask {
-    pub fn validate(&self, workspace: WorkspaceId) -> Result<(), BotError> {
-        koru_delegate_core::Objective::new(&self.text).map_err(|_| BotError::Invalid)?;
-        if self.documents.len() > 16
-            || self.documents.iter().any(|p| p.workspace != workspace)
-            || self
-                .documents
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                != self.documents.len()
-        {
-            return Err(BotError::Invalid);
-        }
-        Ok(())
-    }
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum BotOperationKind {
     UpdateAccess,
-    Start,
-    Continue,
     Pause,
     Resume,
-    /// Identity reservation only, never an executable submission.
-    RoutineDraft,
-    RoutineOccurrence,
-    /// An edit of one Routine's own access (ai.db 23). Its receipt is read by
-    /// the Routine access owner, never as a Bot's pending change.
-    UpdateRoutineAccess,
 }
 impl BotOperationKind {
     pub fn token(self) -> &'static str {
         match self {
             Self::UpdateAccess => "update_access",
-            Self::Start => "start",
-            Self::Continue => "continue",
             Self::Pause => "pause",
             Self::Resume => "resume",
-            Self::RoutineDraft => "routine_draft",
-            Self::RoutineOccurrence => "routine_occurrence",
-            Self::UpdateRoutineAccess => "update_routine_access",
         }
     }
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "update_access" => Some(Self::UpdateAccess),
-            "start" => Some(Self::Start),
-            "continue" => Some(Self::Continue),
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
-            "routine_draft" => Some(Self::RoutineDraft),
-            "routine_occurrence" => Some(Self::RoutineOccurrence),
-            "update_routine_access" => Some(Self::UpdateRoutineAccess),
             _ => None,
         }
     }
@@ -119,233 +69,4 @@ pub struct BotPendingChange {
     /// execution owner could not be reached). Omitted when there was none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_answer: Option<String>,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotSubmissionIntent {
-    pub version: u32,
-    pub submission: BotSubmission,
-}
-impl BotSubmissionIntent {
-    /// Refuse a new continuation of a canonical, validated Routine receipt.
-    /// Exact operation replay must be resolved before calling this guard.
-    /// This classifies the attempted submission, never its chat association.
-    pub fn require_interactive_continuation(&self) -> Result<(), BotError> {
-        if self.submission.provenance.routine.is_some() {
-            Err(BotError::RoutineRetryUnsupported)
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn validate(&self) -> Result<(), BotError> {
-        if self.version != 1 || !self.submission.valid() {
-            return Err(BotError::Invalid);
-        }
-        self.validate_size()
-    }
-
-    /// Explicit receipt-owner cohort validation. This does not make a draft
-    /// runnable or prove that a Routine's durable claim has been linked.
-    pub fn validate_for_kind(&self, kind: BotOperationKind) -> Result<(), BotError> {
-        let p = &self.submission.provenance;
-        let version = match kind {
-            BotOperationKind::Start if p.continued_from.is_none() => 1,
-            BotOperationKind::Continue if p.continued_from.is_some() => 1,
-            BotOperationKind::RoutineOccurrence if p.continued_from.is_none() => 2,
-            _ => return Err(BotError::Invalid),
-        };
-        if self.version != version || !self.submission.valid_for_version(version) {
-            return Err(BotError::Invalid);
-        }
-        self.validate_size()
-    }
-
-    fn validate_size(&self) -> Result<(), BotError> {
-        let bytes = serde_json::to_vec(self).map_err(|_| BotError::Invalid)?;
-        if bytes.len() > 4 * 1024 * 1024 {
-            return Err(BotError::Invalid);
-        }
-        Ok(())
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BotAdmissionRefusal {
-    Rejected,
-    Capacity,
-    Stale,
-    Invalid,
-    Unavailable,
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum BotExecutionOutcome {
-    Accepted {
-        version: u32,
-        admission: BotAdmissionView,
-    },
-    Rejected {
-        version: u32,
-        reason: BotAdmissionRefusal,
-    },
-    RefusalFence {
-        version: u32,
-        round: u32,
-        barrier: BotAdmissionBarrier,
-        acknowledged: bool,
-        reason: BotAdmissionRefusal,
-    },
-}
-impl BotExecutionOutcome {
-    pub fn validate(&self, intent: &BotSubmissionIntent) -> Result<(), BotError> {
-        let p = &intent.submission.provenance;
-        self.validate_identity(
-            p.owner,
-            p.bot,
-            p.submission,
-            intent.submission.request.run,
-            p.config_revision,
-        )
-    }
-
-    /// Normalized identity validation only. This does not validate or authorize
-    /// a captured submission; full readers still validate their entire intent.
-    pub fn validate_identity(
-        &self,
-        owner: koru_delegate_core::BotOwner,
-        bot: BotId,
-        request: BotRequestId,
-        run: RunId,
-        config_revision: u64,
-    ) -> Result<(), BotError> {
-        match self {
-            Self::Accepted {
-                version: 1,
-                admission,
-            } if admission.run == run
-                && admission.key.owner == owner
-                && admission.key.bot == bot
-                && admission.key.request == request
-                && admission.queue_sequence > 0
-                && admission.fence.as_ref().is_none_or(|f| {
-                    f.owner == owner
-                        && f.bot == bot
-                        && f.run == admission.run
-                        && f.generation.get() > 0
-                }) =>
-            {
-                Ok(())
-            }
-            Self::Rejected { version: 1, .. } => Ok(()),
-            Self::RefusalFence {
-                version: 1,
-                round,
-                barrier,
-                ..
-            } if *round > 0
-                && barrier.owner == owner
-                && barrier.bot == bot
-                && barrier.epoch > config_revision
-                && barrier.epoch <= i64::MAX as u64 =>
-            {
-                Ok(())
-            }
-            _ => Err(BotError::Invalid),
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BotPauseIntent {
-    pub version: u32,
-    pub barrier: BotAdmissionBarrier,
-    pub expected_revision: u64,
-}
-impl BotPauseIntent {
-    pub fn validate(&self) -> Result<(), BotError> {
-        if self.version != 1
-            || self.expected_revision == 0
-            || self.expected_revision >= i64::MAX as u64
-            || self.barrier.epoch != self.expected_revision + 1
-        {
-            return Err(BotError::Invalid);
-        }
-        Ok(())
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum BotReceiptStage {
-    Prepared,
-    Accepted,
-    Rejected,
-    Completed,
-}
-impl BotReceiptStage {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "prepared" => Some(Self::Prepared),
-            "accepted" => Some(Self::Accepted),
-            "rejected" => Some(Self::Rejected),
-            "completed" => Some(Self::Completed),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BotSubmissionReceipt {
-    pub intent: BotSubmissionIntent,
-    pub fingerprint: String,
-    pub kind: BotOperationKind,
-    pub stage: BotReceiptStage,
-    pub outcome: Option<BotExecutionOutcome>,
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BotPauseReceipt {
-    pub intent: BotPauseIntent,
-    pub fingerprint: String,
-    pub stage: BotReceiptStage,
-    pub acknowledged: bool,
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BotAdmissionReceipt {
-    Submission(BotSubmissionReceipt),
-    Pause(BotPauseReceipt),
-}
-impl BotAdmissionReceipt {
-    pub fn operation(&self) -> BotOperation {
-        match self {
-            Self::Submission(r) => {
-                let p = &r.intent.submission.provenance;
-                BotOperation {
-                    request_id: p.submission,
-                    bot_id: p.bot,
-                    kind: r.kind,
-                    run_id: Some(r.intent.submission.request.run),
-                    status: match r.stage {
-                        BotReceiptStage::Prepared => BotOperationStatus::Pending,
-                        BotReceiptStage::Rejected => BotOperationStatus::Rejected,
-                        _ => BotOperationStatus::Accepted,
-                    },
-                }
-            }
-            Self::Pause(r) => BotOperation {
-                request_id: r.intent.barrier.request,
-                bot_id: r.intent.barrier.bot,
-                kind: if r.intent.barrier.paused {
-                    BotOperationKind::Pause
-                } else {
-                    BotOperationKind::Resume
-                },
-                run_id: None,
-                status: if r.acknowledged {
-                    BotOperationStatus::Accepted
-                } else if r.stage == BotReceiptStage::Rejected {
-                    BotOperationStatus::Rejected
-                } else {
-                    BotOperationStatus::Pending
-                },
-            },
-        }
-    }
 }

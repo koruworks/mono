@@ -7,15 +7,6 @@ use koru_ai_wire::bot_threads::{Command as C, Response as R};
 pub(crate) mod tests;
 
 impl ChatSurface {
-    pub(super) fn response_action_count(&self) -> usize {
-        // Engine blocks are local layout keys, not durable chat-block links.
-        // Store and durable block links still need their engine command paths.
-        if self.managed.is_some() {
-            2
-        } else {
-            RESPONSE_ACTIONS
-        }
-    }
     pub(crate) fn managed_line(&self) -> Option<&'static str> {
         let state = self.managed.as_ref()?;
         let key = if state.retry_send {
@@ -35,6 +26,7 @@ impl ChatSurface {
     }
 
     pub(crate) fn leave_managed(&mut self) {
+        self.close_bot_work();
         self.managed_cards.clear();
         if let Some(mut state) = self.managed.take() {
             let thread = state.thread();
@@ -57,18 +49,11 @@ impl ChatSurface {
         let bot = state.snapshot.conversation.label.bot_id;
         let chat = &state.snapshot.conversation.chat;
         let command = match command {
-            Command::Branch(id, request) if id == thread => {
-                if state.navigation.pending.is_some() {
-                    return None;
-                }
-                C::Branch {
-                    id: request.branch_chat_id.as_uuid(),
-                    thread,
-                    branch: request.branch_chat_id,
-                    through: request.through_message_id.as_uuid(),
-                    title: request.title,
-                }
-            }
+            Command::Branch(..)
+            | Command::Engine {
+                command: C::Branch { .. },
+                ..
+            } => return None,
             Command::Send(request) => {
                 // These inputs need their engine carrier before they can be
                 // admitted. Never silently discard part of a person's send.
@@ -201,14 +186,31 @@ impl ChatSurface {
     }
 
     pub(crate) fn managed_refreshed(&mut self, update: managed::Refreshed) -> bool {
+        let previous_status = self.chat_status(false);
         let Some(state) = &mut self.managed else {
             return false;
         };
+        if update.snapshot.conversation.chat.id != state.thread() {
+            return false;
+        }
+        let arrivals = update
+            .messages
+            .iter()
+            .filter(|message| {
+                message.sequence > state.after
+                    && message.kind == "words"
+                    && message.sender.parse::<uuid::Uuid>().is_ok()
+            })
+            .count() as u32;
         let changed = state.refresh(update, Instant::now());
+        if let Some(notice) = state.notice.take() {
+            self.status = Some(notice);
+        }
         if !changed {
             return false;
         }
-        if state.history_changed {
+        let history_changed = state.history_changed;
+        if history_changed {
             let mut next = state.transcript();
             if let Some(old) = &self.transcript
                 && old.chat.current_model == next.chat.current_model
@@ -225,6 +227,12 @@ impl ChatSurface {
             self.transcript = Some(next);
         } else if let Some(transcript) = &mut self.transcript {
             transcript.chat = state.snapshot.conversation.chat.clone();
+        }
+        self.replies_finished = self.replies_finished.saturating_add(arrivals);
+        // The host refreshes the roster on activity, including a fast reply
+        // whose start and finish both happened between two observations.
+        if history_changed || previous_status != self.chat_status(false) {
+            self.note_activity();
         }
         self.messages_dirty = true;
         true
@@ -543,7 +551,7 @@ impl ChatSurface {
                     markdown: live.text.clone(),
                     display: live.text.clone(),
                     links: vec![],
-                    wrap_width: message_wrap_width(ChatRole::Assistant, width),
+                    wrap_width: bot_presentation::wrap_width(ChatRole::Assistant, width, true),
                     usage_text: None,
                     sources: vec![],
                     blocks,

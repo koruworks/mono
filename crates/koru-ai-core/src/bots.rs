@@ -13,7 +13,6 @@ pub use admission::*;
 
 pub mod lifecycle;
 pub mod policy;
-pub mod replay;
 pub use lifecycle::*;
 pub use policy::*;
 pub mod avatar;
@@ -22,8 +21,6 @@ pub mod creation;
 pub use creation::*;
 pub mod library;
 pub use library::*;
-pub mod memory;
-pub use memory::*;
 pub mod routines;
 pub use routines::*;
 pub mod children;
@@ -156,82 +153,11 @@ pub struct BotOwner {
     pub device: DeviceId,
 }
 
-/// Immutable allowlist supplied only after fresh owner checks. Not a public DTO.
-#[derive(Clone, Debug, Default)]
-pub struct ChatReadAccess {
-    allowed_bot_chats: Vec<ChatId>,
-}
-impl ChatReadAccess {
-    pub fn ordinary() -> Self {
-        Self::default()
-    }
-    pub fn authorized(chats: Vec<ChatId>) -> Self {
-        Self {
-            allowed_bot_chats: chats,
-        }
-    }
-    pub fn is_ordinary(&self) -> bool {
-        self.allowed_bot_chats.is_empty()
-    }
-    pub fn json(&self) -> String {
-        serde_json::to_string(&self.allowed_bot_chats).expect("UUID serialization")
-    }
-}
-
-/// Whether a Bot whose home is a workspace may be copied to the person's
-/// linked desktops (M8, D22).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HomeCopy {
-    /// The workspace, and its Profile, may leave this computer.
-    Copied,
-    /// The workspace, or its Profile, is kept on this computer only. A Bot
-    /// that lives there is never copied: no record of it, of its
-    /// conversations or of its messages is built.
-    LocalOnly,
-}
-
 /// Fresh authority from the same root's Store and validated supervisor bootstrap.
 pub trait BotAuthority: Send + Sync {
     fn owner(&self) -> Result<BotOwner, BotError>;
     fn workspace(&self, workspace: WorkspaceId) -> Result<ProfileId, BotError>;
     fn page(&self, page: &BotPage) -> Result<(), BotError>;
-    /// Whether Bots whose home is `workspace` may be copied to linked
-    /// desktops: the **stored** choice of where the workspace is kept,
-    /// capped by its Profile's. A choice somebody made and a default nobody
-    /// changed count alike.
-    ///
-    /// It never asks what the workspace is admitted to right now: a
-    /// workspace that is only fenced for a moment is still copied.
-    ///
-    /// An authority that cannot answer says so, and its caller withholds the
-    /// Bot: the default answers `Unavailable`, so an authority that does not
-    /// implement this copies nothing.
-    fn home_copy(&self, _workspace: WorkspaceId) -> Result<HomeCopy, BotError> {
-        Err(BotError::Unavailable)
-    }
-    /// Exact captured history metadata, under current owner and reader-profile
-    /// authority. Called off the AI writer; never resolves current body content.
-    fn pinned_document_revision(
-        &self,
-        _owner: BotOwner,
-        _workspace: WorkspaceId,
-        _reader: ProfileId,
-        _document: DocumentId,
-        _version: koru_delegate_core::DocumentVersionId,
-    ) -> Result<crate::StoreRevision, BotError> {
-        Err(BotError::Unavailable)
-    }
-    /// Trusted preparation only: capture immutable history under fresh current
-    /// authority. Public callers cannot supply the returned version identities.
-    fn capture(
-        &self,
-        _owner: BotOwner,
-        _workspace: WorkspaceId,
-        _profile: ProfileId,
-        _pages: &[BotPage],
-    ) -> Result<Vec<koru_delegate_core::RunContextItem>, BotError> {
-        Err(BotError::Unavailable)
-    }
     /// One bounded command's authority inspection; adapters batch this under one Store lock.
     fn inspect(
         &self,
@@ -257,162 +183,6 @@ pub trait BotAuthority: Send + Sync {
     /// `Unavailable` whenever the page may or may not have been written.
     fn create_role_page(&self, _seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
         Err(BotError::Unavailable)
-    }
-
-    /// Off-writer ordinary Memory creation/reconciliation under current Store
-    /// authority. A cancellation does not prove an earlier write was undone.
-    fn prepare_memory_page(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _identity: &BotMemoryIdentity,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<PreparedMemoryPage, MemoryAuthorityError> {
-        Err(BotError::Unavailable.into())
-    }
-
-    /// Private bounded current-state observation for an independently validated
-    /// Bound creation. It grants no execution authority and creates no content.
-    fn read_routine_overview(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _identity: &BotRoutineCreationIdentity,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<RoutineOverviewObservation, BotError> {
-        Err(BotError::Unavailable)
-    }
-
-    fn read_routine_detail(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _identity: &BotRoutineCreationIdentity,
-        _observed_at_ms: i64,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<RoutineDetailObservation, BotError> {
-        Err(BotError::Unavailable)
-    }
-
-    /// Current complete Schedule definition and human/Profile proof, performed
-    /// off-writer against the canonical physical candidate and retained origin.
-    fn verify_routine_definition(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _identity: &BotRoutineCreationIdentity,
-        _definition: &koru_delegate_schedule::ScheduleDefinition,
-        _owner_handoff: Option<koru_delegate_core::HandoffId>,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<(), BotError> {
-        Err(BotError::Unavailable)
-    }
-
-    /// The same proof for an owner Test only: the live definition must be
-    /// the offered one and exactly Paused(Manual). The caller has matched its
-    /// own expectation of that Test first; a paused definition is never
-    /// accepted because it merely arrived.
-    fn verify_routine_test_definition(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _identity: &BotRoutineCreationIdentity,
-        _definition: &koru_delegate_schedule::ScheduleDefinition,
-        _owner_handoff: Option<koru_delegate_core::HandoffId>,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<(), BotError> {
-        Err(BotError::Unavailable)
-    }
-
-    /// The selected Routine's observation with one page of its Schedule's
-    /// own firings: those below `before`, the newest `limit`. The default
-    /// reads no firings.
-    #[allow(clippy::too_many_arguments)]
-    fn read_routine_detail_page(
-        &self,
-        owner: BotOwner,
-        reader: ProfileId,
-        identity: &BotRoutineCreationIdentity,
-        observed_at_ms: i64,
-        _before: Option<i64>,
-        _limit: u8,
-        cancellation: &crate::Cancellation,
-    ) -> Result<(RoutineDetailObservation, RoutineFiringsObservation), BotError> {
-        self.read_routine_detail(owner, reader, identity, observed_at_ms, cancellation)
-            .map(|observation| (observation, RoutineFiringsObservation::Unavailable))
-    }
-
-    /// Private off-writer creation/reconciliation after the delegate has
-    /// acknowledged the exact deny-only route. Never launch authority.
-    fn prepare_routine_document(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _identity: &BotRoutineCreationIdentity,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<PreparedRoutineDocument, BotError> {
-        Err(BotError::Unavailable)
-    }
-
-    fn capture_memory(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _binding: &BotMemoryBinding,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<PreparedMemoryCapture, MemoryAuthorityError> {
-        Err(BotError::Unavailable.into())
-    }
-
-    fn replay_memory_index(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _home: WorkspaceId,
-        _capture: &BotLibraryCapture,
-        _binding: Option<&BotMemoryBinding>,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
-        Err(BotError::Unavailable.into())
-    }
-
-    fn read_memory_page(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _binding: &BotMemoryBinding,
-        _snapshot: MemorySnapshot,
-        _position: MemoryReadPosition,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<MemoryPageResult, MemoryAuthorityError> {
-        Err(BotError::Unavailable.into())
-    }
-
-    /// Encoded evidence for a trusted off-writer Memory edit job only. The job
-    /// must validate P3c history integrity before deriving a bounded recipe;
-    /// these bytes must never enter the AI writer or gateway.
-    fn memory_edit_history(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _binding: &BotMemoryBinding,
-        _version: koru_delegate_core::DocumentVersionId,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<koru_store_core::ports::BoundedDocumentVersion, MemoryAuthorityError> {
-        Err(BotError::Unavailable.into())
-    }
-
-    /// Read-only exact creation-origin proof, never creation or latest-state
-    /// fallback. Only an unchanged original seed can supply this edit base.
-    fn memory_original_seed_history(
-        &self,
-        _owner: BotOwner,
-        _reader: ProfileId,
-        _identity: &BotMemoryIdentity,
-        _binding: &BotMemoryBinding,
-        _cancellation: &crate::Cancellation,
-    ) -> Result<koru_store_core::ports::BoundedDocumentVersion, MemoryAuthorityError> {
-        Err(BotError::Unavailable.into())
     }
 }
 
@@ -466,16 +236,6 @@ pub enum BotCommand {
         expected_definition_revision: u32,
         action: BotRoutineLifecycleAction,
     },
-    /// Start one Run of a paused Routine now, under the Routine's own
-    /// access, without turning it on. Answered `routine_test` once the
-    /// Schedule's owner accepted the current minute; the Routine's history
-    /// says what the minute became.
-    TestRoutine {
-        bot_id: BotId,
-        schedule_id: koru_delegate_core::ScheduleId,
-        #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-        expected_definition_revision: u32,
-    },
     /// Replace one Routine's name and timing in one revision-checked commit,
     /// while it is on or paused. Its task, context and access are not
     /// changed. Answered `routine_control`.
@@ -502,39 +262,6 @@ pub enum BotCommand {
         #[cfg_attr(feature = "schema", schemars(length(max = 1024)))]
         selected_pages: Vec<BotPage>,
     },
-    /// Staged Memory status contract; unavailable until complete Memory integration.
-    ReadMemory {
-        bot_id: BotId,
-    },
-    EnsureMemory {
-        request_id: BotRequestId,
-        bot_id: BotId,
-        expected_revision: u64,
-        title: String,
-    },
-    RetryMemory {
-        bot_id: BotId,
-        creation_request: BotRequestId,
-        observed_state: BotMemoryState,
-        observed_updated_at_ms: i64,
-    },
-    AbandonMemory {
-        bot_id: BotId,
-        creation_request: BotRequestId,
-        observed_state: BotMemoryState,
-        observed_updated_at_ms: i64,
-    },
-    ListMemory {
-        bot_id: BotId,
-        cursor: Option<String>,
-        #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 20)))]
-        limit: u16,
-    },
-    ReadMemoryFact {
-        bot_id: BotId,
-        fact_id: BotMemoryNodeId,
-        cursor: Option<String>,
-    },
     /// Read Role and ordered Knowledge references under current owner authority.
     ReadLibrary {
         bot_id: BotId,
@@ -547,41 +274,16 @@ pub enum BotCommand {
         expected_revision: u64,
         pages: Vec<BotPage>,
     },
-    /// Bounded owner roster for the external task facade, without configuration.
-    ListTaskBots {
-        workspace: WorkspaceId,
-        after: Option<BotId>,
-        limit: u16,
-    },
-    /// Read only the terminal assistant text of one exactly bound task.
-    ReadTaskAnswer {
+    /// Bind an ordinary Memory page without changing Role, Knowledge or grants.
+    SetMemory {
+        request_id: BotRequestId,
         bot_id: BotId,
-        chat_id: ChatId,
-        attempt_id: crate::InferenceAttemptId,
-        #[cfg_attr(feature = "schema", schemars(with = "String"))]
-        operation_id: uuid::Uuid,
-        offset: u64,
+        expected_revision: u64,
+        memory: Option<BotPage>,
     },
     CreateChat {
         request_id: BotRequestId,
         bot_id: BotId,
-    },
-    Start {
-        request_id: BotRequestId,
-        bot_id: BotId,
-        chat_id: ChatId,
-        expected_revision: u64,
-        destination: WorkspaceId,
-        task: BotTask,
-    },
-    Continue {
-        request_id: BotRequestId,
-        bot_id: BotId,
-        chat_id: ChatId,
-        expected_revision: u64,
-        destination: WorkspaceId,
-        task: BotTask,
-        previous_run: koru_delegate_core::RunId,
     },
     Pause {
         request_id: BotRequestId,
@@ -613,22 +315,6 @@ pub enum BotCommand {
     /// The team pause of this person on this computer (M8). Answered
     /// `team_pause`.
     ReadTeamPause {},
-    /// The other computers of this person whose Bots this computer keeps a
-    /// copy of (M8, P8.3), with how current each copy is and that computer's
-    /// team pause as last received. Answered `linked_owners`. A computer
-    /// that keeps no copy answers an empty list.
-    ListLinkedOwners {},
-    /// The Bots of one such computer, as last received (M8, P8.3): each is
-    /// the `Bot` that computer's own `read` answers. With `workspace`, only
-    /// the Bots whose home is that workspace. Answered `linked_bots`. A
-    /// computer this one keeps no copy of answers an empty list in the state
-    /// `never`.
-    ListLinkedBots {
-        #[cfg_attr(feature = "schema", schemars(with = "String"))]
-        owner_device: DeviceId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        workspace: Option<WorkspaceId>,
-    },
     ReadOperation {
         request_id: BotRequestId,
         bot_id: BotId,
@@ -636,14 +322,6 @@ pub enum BotCommand {
     ReconcileOperation {
         request_id: BotRequestId,
         bot_id: BotId,
-    },
-    Create {
-        request_id: BotRequestId,
-        bot_id: BotId,
-        home_workspace: WorkspaceId,
-        config: BotConfig,
-        access: BotAccess,
-        selected_pages: Vec<BotPage>,
     },
     Read {
         bot_id: BotId,
@@ -713,20 +391,6 @@ pub enum BotCommand {
         expected_revision: u64,
         source_request_id: BotRequestId,
     },
-    /// Permanently delete a trashed Bot, from its named Trash operation.
-    PurgeBot {
-        request_id: BotRequestId,
-        bot_id: BotId,
-        expected_revision: u64,
-        source_request_id: BotRequestId,
-    },
-    PurgeChat {
-        request_id: BotRequestId,
-        bot_id: BotId,
-        chat_id: ChatId,
-        expected_revision: u64,
-        source_request_id: BotRequestId,
-    },
     /// Progress of one lifecycle operation, with per-member outcomes.
     ReadLifecycleOperation {
         request_id: BotRequestId,
@@ -758,21 +422,6 @@ pub enum BotCommand {
     /// need the person, at most 200, read from durable AI state.
     ListActivity {
         workspace: WorkspaceId,
-    },
-    /// The request cards of one conversation of a Bot that asked other Bots
-    /// (M6): one per child request its Runs made there, oldest first, at
-    /// most three per Run. Identities, states and counts only. Answered
-    /// `child_requests`.
-    ListChildRequests {
-        bot_id: BotId,
-        chat_id: ChatId,
-    },
-    /// Who asked for a conversation, when another Bot's request started it
-    /// (M6). Answered `child_origin`, with no origin for any other
-    /// conversation.
-    ReadChildOrigin {
-        bot_id: BotId,
-        chat_id: ChatId,
     },
     /// Create a Bot together with its Role page and working folder (P1.8).
     /// Answered with the creation's progress; the same request and input
@@ -812,66 +461,13 @@ pub enum BotCommand {
     AbandonBotCreation {
         request_id: BotRequestId,
     },
-    /// One Run of a Bot conversation, read through the execution owner: the
-    /// Run that wrote reply `message_id` of `chat_id` (or the reply a branch
-    /// copied there), with a window of its history from entry `from`, `len`
-    /// entries (1 to 500). Without `message_id`, the Run of a task started
-    /// through the API (`start`/`continue`, which writes no reply) in
-    /// `chat_id`, bound through the Bot's own admitted receipt; a reply's Run
-    /// is read only through its reply. Answered `run` with the Run view
-    /// `GET /v1/runs/{run}` answers, without `execution.session`: no
-    /// stream, control or takeover handle.
-    ReadRun {
-        bot_id: BotId,
-        chat_id: ChatId,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        message_id: Option<crate::MessageId>,
-        run_id: koru_delegate_core::RunId,
-        from: u64,
-        #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 500)))]
-        len: u32,
-    },
-    /// The person's own Stop for a task started through the API (`start` or
-    /// `continue`), named by that operation's `request_id`, as
-    /// `read_operation` names it. Its Run is stopped as a conversation's
-    /// Stop and Archive stop theirs: a queued Run never starts, a running one
-    /// ends even while a person holds its session; never the automatic
-    /// interruption. Answered `task_stop`. A Stop only reduces work, so no
-    /// hold refuses it. A task a conversation message started is not this
-    /// command's: `not_found`.
-    StopTask {
-        request_id: BotRequestId,
-        bot_id: BotId,
-    },
 }
 
-/// The most history entries one [`BotCommand::ReadRun`] window carries: the
-/// Run view's own bound.
-pub const BOT_RUN_WINDOW_LIMIT: u32 = 500;
-
 impl BotCommand {
-    /// The shared staged Memory capability, independent of command mutation/read.
-    pub fn is_memory(&self) -> bool {
-        matches!(
-            self,
-            Self::ReadMemory { .. }
-                | Self::EnsureMemory { .. }
-                | Self::RetryMemory { .. }
-                | Self::AbandonMemory { .. }
-                | Self::ListMemory { .. }
-                | Self::ReadMemoryFact { .. }
-        )
-    }
-
     /// An owner control of one Routine (P4.3): its Bot and its Schedule.
     pub fn routine_control(&self) -> Option<(BotId, koru_delegate_core::ScheduleId)> {
         match self {
             Self::SetRoutineLifecycle {
-                bot_id,
-                schedule_id,
-                ..
-            }
-            | Self::TestRoutine {
                 bot_id,
                 schedule_id,
                 ..
@@ -898,8 +494,6 @@ impl BotCommand {
             Self::Restore { .. } => BotLifecycleKind::Restore,
             Self::TrashChat { .. } => BotLifecycleKind::TrashChat,
             Self::RestoreChat { .. } => BotLifecycleKind::RestoreChat,
-            Self::PurgeBot { .. } => BotLifecycleKind::PurgeBot,
-            Self::PurgeChat { .. } => BotLifecycleKind::PurgeChat,
             _ => return None,
         })
     }
@@ -925,32 +519,14 @@ pub enum BotResponse {
     RoutineControl {
         control: BotRoutineControl,
     },
-    RoutineTest {
-        test: BotRoutineTest,
-    },
     RoutineAccess {
         access: BotRoutineAccess,
-    },
-    MemoryStatus {
-        status: BotMemoryStatus,
-    },
-    MemoryList {
-        page: BotMemoryListPage,
-    },
-    MemoryDetail {
-        page: BotMemoryDetailPage,
     },
     Library {
         library: BotLibraryView,
     },
     KnowledgeSaved {
         receipt: BotKnowledgeReceipt,
-    },
-    TaskBots {
-        page: BotSummaryPage,
-    },
-    TaskAnswer {
-        answer: BotTaskAnswer,
     },
     Lifecycle {
         operation: BotLifecycleProgress,
@@ -976,119 +552,17 @@ pub enum BotResponse {
     Activity {
         activity: BotActivityPage,
     },
-    ChildRequests {
-        requests: Vec<BotChildRequestCard>,
-    },
-    ChildOrigin {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        origin: Option<BotChildOrigin>,
-    },
     Creation {
         creation: BotCreation,
     },
     Creations {
         page: BotCreationPage,
     },
-    Run {
-        view: koru_delegate_core::RunView,
-    },
-    TaskStop {
-        stop: BotTaskStop,
-    },
     /// M8: the team pause after `pause_team`, `resume_team` or
     /// `read_team_pause`.
     TeamPause {
         team: TeamPauseView,
     },
-    /// M8: the answer to `list_linked_owners`.
-    LinkedOwners {
-        owners: Vec<LinkedOwnerView>,
-    },
-    /// M8: the answer to `list_linked_bots`.
-    LinkedBots {
-        linked: LinkedBotsView,
-    },
-}
-
-/// How current this computer's copy of another computer's Bots is (M8).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum LinkedOwnerState {
-    /// Nothing was received from that computer yet.
-    Never,
-    /// A subscription is open and the copy is up to date. Commands can be
-    /// sent.
-    Current,
-    /// No subscription is open: the copy is what was last received, and no
-    /// command can be sent.
-    Stale,
-    /// That computer and this one share no protocol version, or it sent a
-    /// copy format this build does not read.
-    Unsupported,
-    /// That computer is no longer one of this person's linked computers. Its
-    /// copy is being deleted and is not read.
-    Withdrawing,
-}
-
-impl LinkedOwnerState {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Never => "never",
-            Self::Current => "current",
-            Self::Stale => "stale",
-            Self::Unsupported => "unsupported",
-            Self::Withdrawing => "withdrawing",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        Some(match value {
-            "never" => Self::Never,
-            "current" => Self::Current,
-            "stale" => Self::Stale,
-            "unsupported" => Self::Unsupported,
-            "withdrawing" => Self::Withdrawing,
-            _ => return None,
-        })
-    }
-}
-
-/// One other computer of this person whose Bots this computer keeps a copy
-/// of (M8).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct LinkedOwnerView {
-    /// The computer that runs these Bots.
-    #[cfg_attr(feature = "schema", schemars(with = "String"))]
-    pub owner_device: DeviceId,
-    /// That computer's name, when this one knows it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub display_name: Option<String>,
-    pub state: LinkedOwnerState,
-    /// When the copy was last known to be up to date.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_confirmed_at_ms: Option<i64>,
-    /// That computer's team pause as last received; absent until it sent
-    /// one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub team: Option<TeamPauseView>,
-    /// How many of that computer's Bots are not copied, because their
-    /// workspace is kept on that computer only. No name is known here.
-    pub withheld_bots: u32,
-}
-
-/// The Bots of one other computer, as this computer last received them
-/// (M8).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct LinkedBotsView {
-    #[cfg_attr(feature = "schema", schemars(with = "String"))]
-    pub owner_device: DeviceId,
-    pub state: LinkedOwnerState,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_confirmed_at_ms: Option<i64>,
-    pub bots: Vec<Bot>,
 }
 
 /// The team pause of one person on one computer (M8). A team that was never
@@ -1151,68 +625,6 @@ impl TeamPauseStage {
     }
 }
 
-/// Internal owner projection. Run identity is for the facade's authorized
-/// result read; it is never an external control handle.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct BotTaskAnswer {
-    pub status: crate::AttemptStatus,
-    pub message_id: crate::MessageId,
-    pub run_id: Option<RunId>,
-    pub markdown: Option<String>,
-    pub next_offset: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct BotSummary {
-    pub bot_id: BotId,
-    pub name: String,
-    pub main_chat: ChatId,
-    pub revision: u64,
-    pub paused: bool,
-    pub lifecycle: BotLifecycle,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct BotSummaryPage {
-    pub bots: Vec<BotSummary>,
-    pub next: Option<BotId>,
-}
-
-/// What a [`BotCommand::StopTask`] found and did.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum BotTaskStopOutcome {
-    /// The task was queued or running, and this Stop ended it.
-    Stopped,
-    /// The Stop was delivered and its execution owner recorded the person's
-    /// cancellation, but the Run's end is not proven yet (its process may
-    /// still be exiting, or effects are still being drained). Ask again: a
-    /// later `stop_task` answers `already_settled` once it has settled, or
-    /// sends the Stop again.
-    Stopping,
-    /// It had already ended (finished, failed, or stopped before): nothing
-    /// was sent.
-    AlreadySettled,
-    /// Its execution owner refused it before admitting it: it never ran.
-    NeverAdmitted,
-}
-
-/// The answer to a [`BotCommand::StopTask`]: the task's operation, its Run
-/// and what the Stop found.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct BotTaskStop {
-    pub request_id: BotRequestId,
-    pub bot_id: BotId,
-    pub run_id: RunId,
-    pub outcome: BotTaskStopOutcome,
-}
-
 /// The most conversations one [`BotCommand::ListActivity`] reply names.
 pub const BOT_ACTIVITY_LIMIT: usize = 200;
 
@@ -1224,11 +636,8 @@ pub enum BotActivityState {
     /// A reply is in progress: queued for the Bot or executing.
     Running,
     /// An approval or a question card is open for the person. Takes
-    /// precedence over `running` and `waiting` when it holds.
+    /// precedence over `running` when it holds.
     NeedsYou,
-    /// The reply asked other Bots and waits for their requests (M6). Takes
-    /// precedence over `running`. [`BotActivity::waiting`] says on whom.
-    Waiting,
 }
 
 /// One conversation with work in it.
@@ -1238,11 +647,6 @@ pub struct BotActivity {
     pub bot_id: BotId,
     pub chat_id: ChatId,
     pub state: BotActivityState,
-    /// Present exactly when `state` is `waiting`: the Bots asked and whether
-    /// this Bot is paused. Omitted otherwise, so an entry that does not wait
-    /// serializes exactly as before the field existed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub waiting: Option<BotActivityWaiting>,
 }
 
 /// A workspace's Bot activity, ordered by Bot and then conversation.
@@ -1373,78 +777,6 @@ pub struct BotChatReference {
     pub chat_id: ChatId,
 }
 
-/// Closed, bounded receipt vocabulary. Role creation is coordinated in the UI plan;
-/// its Store intent must already be durable before the first create call.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum BotReceiptOutcome {
-    ChatCreated {
-        version: u32,
-        reference: BotChatReference,
-    },
-    AccessPolicy {
-        version: u32,
-        bot: Bot,
-        barrier: koru_delegate_core::BotPolicyBarrier,
-    },
-    Configuration {
-        version: u32,
-        bot: Bot,
-    },
-    RoleCreation {
-        version: u32,
-        bot: BotId,
-        store_request: uuid::Uuid,
-        destination: WorkspaceId,
-        request_fingerprint: String,
-        verified_page: Option<BotPage>,
-        verified_version: Option<Vec<u8>>,
-    },
-    /// A Bot created together with its Role page and folder (P1.8 §1's
-    /// stored receipt format addition). Version 2 only.
-    CreationV2 {
-        version: u32,
-        creation: BotCreationRecord,
-    },
-}
-
-impl BotReceiptOutcome {
-    pub fn validate(&self) -> Result<(), BotError> {
-        match self {
-            Self::ChatCreated { version: 1, .. } => Ok(()),
-            Self::AccessPolicy {
-                version: 1,
-                bot,
-                barrier,
-            } => validate_access_policy(bot, barrier),
-            Self::Configuration { version: 1, .. } => Ok(()),
-            Self::RoleCreation {
-                version: 1,
-                destination,
-                verified_page,
-                verified_version,
-                request_fingerprint,
-                ..
-            } if request_fingerprint.len() == 64
-                && verified_page
-                    .as_ref()
-                    .is_none_or(|page| page.workspace == *destination)
-                && verified_page.is_some() == verified_version.is_some()
-                && verified_version
-                    .as_ref()
-                    .is_none_or(|version| !version.is_empty() && version.len() <= 65536) =>
-            {
-                Ok(())
-            }
-            Self::CreationV2 {
-                version: 2,
-                creation,
-            } => creation.validate(),
-            _ => Err(BotError::Invalid),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotError {
     Invalid,
@@ -1491,25 +823,6 @@ impl BotError {
             Self::TeamRevisionConflict => "team_revision_conflict",
         }
     }
-}
-
-pub trait BotRepository {
-    fn bot(&self, id: BotId) -> Result<Option<Bot>, BotError>;
-    fn bots(&self, scope: UserScopeId, workspace: WorkspaceId) -> Result<Vec<Bot>, BotError>;
-    fn save_bot(
-        &mut self,
-        bot: &Bot,
-        profile: ProfileId,
-        request: BotRequestId,
-        fingerprint: &str,
-        expected: Option<u64>,
-    ) -> Result<Bot, BotError>;
-    fn bot_receipt(
-        &self,
-        scope: UserScopeId,
-        request: BotRequestId,
-        fingerprint: &str,
-    ) -> Result<Option<Bot>, BotError>;
 }
 
 pub fn validate_config(config: &BotConfig, workspace: WorkspaceId) -> Result<(), BotError> {

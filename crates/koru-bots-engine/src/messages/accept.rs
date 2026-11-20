@@ -35,7 +35,7 @@ impl Database {
     ) -> Result<Receipt<Accepted>, Error> {
         if envelope.id.is_nil()
             || envelope.to.is_nil()
-            || encode(envelope)?.len() > koru_bot_client_wire::MAX_FRAME_BYTES
+            || encode(envelope)?.len() > crate::limits::MAX_PAYLOAD_BYTES
         {
             return Err(Error::InvalidRequest);
         }

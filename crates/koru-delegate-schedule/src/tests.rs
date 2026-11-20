@@ -91,16 +91,16 @@ fn routine_addition_preserves_ordinary_definition_json_bytes() {
 #[test]
 fn routine_association_has_strict_identity_and_no_authority_fields() {
     use koru_delegate_core::{BotId, BotOwner, BotRequestId};
-    let association = RoutineAssociation::new(
-        BotOwner {
+    let association = RoutineAssociation {
+        owner: BotOwner {
             user_scope: serde_json::from_value(serde_json::json!(v4(4).to_string())).unwrap(),
             device: device_id(5),
         },
-        BotId::from_uuid(v4(6)),
-        WorkspaceId::from_uuid(v4(2)),
-        BotRequestId::from_uuid(v4(7)),
-    )
-    .unwrap();
+        bot: BotId::from_uuid(v4(6)),
+        home: WorkspaceId::from_uuid(v4(2)),
+        creation_request: BotRequestId::from_uuid(v4(7)),
+    };
+    assert!(association.valid());
     let encoded = serde_json::to_value(association).unwrap();
     assert_eq!(encoded.as_object().unwrap().len(), 4);
     assert_eq!(
@@ -115,15 +115,6 @@ fn routine_association_has_strict_identity_and_no_authority_fields() {
         ..association
     };
     assert!(!invalid.valid());
-    assert!(
-        RoutineAssociation::new(
-            invalid.owner,
-            invalid.bot,
-            invalid.home,
-            invalid.creation_request
-        )
-        .is_none()
-    );
 }
 
 #[test]

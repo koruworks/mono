@@ -146,7 +146,8 @@ impl InlineObject {
             | PillKind::File
             | PillKind::Run
             | PillKind::Schedule
-            | PillKind::SchedulePaused => Role::Link,
+            | PillKind::SchedulePaused
+            | PillKind::Bot(_) => Role::Link,
             PillKind::Contact
             | PillKind::Date
             | PillKind::Quote

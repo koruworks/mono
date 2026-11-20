@@ -128,6 +128,12 @@ impl MainView {
                 true
             }
             Outcome::OpenForm => self.new_bot_into_tab(),
+            Outcome::ManageAgents => {
+                // Keep name, avatar and runtime on the same draft while the
+                // person configures their agents in the existing settings tab.
+                self.new_bot_into_tab_preserving_defaults(true);
+                self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
+            }
         }
     }
 
@@ -136,12 +142,20 @@ impl MainView {
     /// create form on the same draft when the person asked for it, or
     /// closed the dialog while the owner may hold the creation.
     fn new_bot_into_tab(&mut self) -> bool {
+        self.new_bot_into_tab_preserving_defaults(false)
+    }
+
+    fn new_bot_into_tab_preserving_defaults(&mut self, preserve_defaults: bool) -> bool {
         let Some(dialog) = self.first_bot.dialog.take() else {
             return false;
         };
         self.first_bot.empty.blur();
         self.record_jump();
-        self.tabs_mut().push(Tab::bot(dialog.into_tab()));
+        self.tabs_mut().push(Tab::bot(if preserve_defaults {
+            dialog.into_setup_tab()
+        } else {
+            dialog.into_tab()
+        }));
         self.mark_tab_widths_stale();
         true
     }

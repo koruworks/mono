@@ -425,7 +425,7 @@ pub fn open_for_pill(
         PillKind::Skill => Overlay::None,
         // A mention is a choice from the host's list: nothing to edit in
         // place, and Backspace removes it whole.
-        PillKind::Mention => Overlay::None,
+        PillKind::Mention | PillKind::Bot(_) => Overlay::None,
         // Fall back to today only if the pill somehow has no stored date.
         PillKind::Date => Overlay::Date(DatePicker::for_pill(
             trigger,

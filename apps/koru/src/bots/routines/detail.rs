@@ -5,6 +5,8 @@ use koru_delegate_core::ScheduleId;
 
 #[derive(Default)]
 pub(crate) struct Detail {
+    pub snapshot: Option<Rc<koru_api_client::bot_routines::Snapshot>>,
+    native_before: Option<koru_api_client::bot_routines::Cursor>,
     pub selected: Option<(BotId, ScheduleId)>,
     pub held: Option<Rc<BotRoutineDetail>>,
     pub notice: Option<Words>,
@@ -14,10 +16,10 @@ pub(crate) struct Detail {
     epoch: u64,
     asking: Option<(u64, u64)>,
     owed: bool,
-    before: Option<i64>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Data {
+    pub snapshot: Option<Rc<koru_api_client::bot_routines::Snapshot>>,
     pub selected: Option<(BotId, ScheduleId)>,
     pub held: Option<Rc<BotRoutineDetail>>,
     pub notice: Option<Words>,
@@ -68,14 +70,38 @@ impl Detail {
             seq: self.seq,
             bot,
             schedule,
-            before: self.before,
+            native_before: self.native_before.clone(),
         })
     }
     pub fn loading(&self) -> bool {
         self.asking.is_some() || self.owed
     }
+    /// Only the visible first page follows actual unfinished work or its next
+    /// due instant. No hidden polling or document work runs on this clock.
+    pub fn follow_up_at(&self) -> Option<i64> {
+        if !self.visible || self.loading() || self.stale || self.native_before.is_some() {
+            return None;
+        }
+        let snapshot = self.snapshot.as_ref()?;
+        let earliest = snapshot.detail.observed_at_ms.saturating_add(2_000);
+        if snapshot
+            .occurrences
+            .iter()
+            .any(|o| matches!(o.state.as_str(), "queued" | "running" | "needs_you"))
+        {
+            return Some(earliest);
+        }
+        match &snapshot.detail.live {
+            RoutineDetailLive::Current {
+                next: RoutineNextObservation::Exact { at_ms },
+                ..
+            } => Some(earliest.max(at_ms.saturating_add(1_000))),
+            _ => None,
+        }
+    }
     pub fn data(&self) -> Data {
         Data {
+            snapshot: self.snapshot.clone(),
             selected: self.selected,
             held: self.held.clone(),
             notice: self.notice,
@@ -87,27 +113,23 @@ impl Detail {
     pub fn unsent(&mut self) {
         self.asking = None;
         self.held = None;
+        self.snapshot = None;
         self.notice = Some(Words::BotsRoutinesUnavailable);
     }
     pub fn refresh(&mut self, next: bool) -> bool {
         if !self.visible || self.selected.is_none() || self.loading() {
             return false;
         }
-        let before = if next {
-            match &self.held.as_ref().map(|d| &d.local_history) {
-                Some(RoutineLocalHistoryObservation::Available {
-                    next_before_occurrence_ms,
-                    ..
-                }) => *next_before_occurrence_ms,
-                _ => None,
-            }
+
+        let cursor = if next {
+            self.snapshot.as_ref().and_then(|s| s.next.clone())
         } else {
             None
         };
-        if next && before.is_none() {
+        if next && cursor.is_none() {
             return false;
         }
-        self.before = before;
+        self.native_before = cursor;
         self.owed = true;
         self.stale = self.held.is_some();
         self.notice = None;
@@ -115,23 +137,7 @@ impl Detail {
     }
     /// The page of history before the oldest line shown.
     pub fn older(&mut self) -> bool {
-        if !self.visible || self.selected.is_none() || self.loading() {
-            return false;
-        }
-        let Some(before) = self.held.as_ref().and_then(|d| match &d.occurrences {
-            RoutineOccurrenceHistoryObservation::Available {
-                next_before_occurrence_ms,
-                ..
-            } => *next_before_occurrence_ms,
-            _ => None,
-        }) else {
-            return false;
-        };
-        self.before = Some(before);
-        self.owed = true;
-        self.stale = self.held.is_some();
-        self.notice = None;
-        true
+        self.refresh(true)
     }
     pub fn answer(
         &mut self,
@@ -171,48 +177,41 @@ impl Detail {
         true
     }
     pub fn can_open(&self, chat: ChatId) -> bool {
-        self.data().navigable
-            && self.held.as_ref().is_some_and(|detail| {
-                let listed = |item: &BotRoutineLocalConversation| {
-                    item.chat_id == chat.as_uuid()
-                        && item.conversation == BotRoutineConversationVisibility::Available
-                };
-                let local = match &detail.local_history {
-                    RoutineLocalHistoryObservation::Available { items, .. } => {
-                        items.iter().any(listed)
-                    }
-                    _ => false,
-                };
-                // A history line's conversation is the same checked row.
-                let history = match &detail.occurrences {
-                    RoutineOccurrenceHistoryObservation::Available { items, .. } => items
-                        .iter()
-                        .filter_map(|line| line.conversation.as_ref())
-                        .any(listed),
-                    _ => false,
-                };
-                local || history
-            })
+        self.data().navigable && self.snapshot.as_ref().is_some_and(|s| s.thread == chat)
     }
-}
-pub(crate) fn detailed(reply: Result<BotResponse, Said>) -> Result<BotRoutineDetail, ReadFailure> {
-    match reply {
-        Ok(response @ BotResponse::RoutineDetail { .. }) => {
-            validate_routine_detail_bytes(&response)
-                .map_err(|_| ReadFailure::Other(Failure::Unanswered))?;
-            let BotResponse::RoutineDetail { reply } = response else {
-                unreachable!()
-            };
-            if reply.detail.bot_revision == 0
-                || reply.detail.bot_revision > i64::MAX as u64
-                || matches!(&reply.detail.local_history,RoutineLocalHistoryObservation::Available{items,..} if items.len()>16)
-                || matches!(&reply.detail.occurrences,RoutineOccurrenceHistoryObservation::Available{items,..} if items.len()>16)
+    pub fn native_answer(
+        &mut self,
+        seq: u64,
+        bot: BotId,
+        schedule: ScheduleId,
+        result: Result<koru_api_client::bot_routines::Snapshot, ReadFailure>,
+    ) -> bool {
+        let result = result.and_then(|snapshot| {
+            if snapshot.detail.bot_id != bot
+                || snapshot.detail.schedule_id != schedule
+                || snapshot.thread.as_uuid().is_nil()
+                || snapshot.occurrences.len() > 16
+                || snapshot.occurrences.iter().any(|o| {
+                    o.routine != schedule.as_uuid()
+                        || o.preview.as_ref().is_some_and(|p| {
+                            Some(p.message.as_uuid()) != o.reply
+                                || p.markdown.len() > koru_ai_core::bots::BotReplyPreview::MAX_BYTES
+                        })
+                })
             {
                 return Err(ReadFailure::Other(Failure::Unanswered));
             }
-            Ok(reply.detail)
+            Ok(snapshot)
+        });
+        let snapshot = result.as_ref().ok().cloned();
+        let matched = self.answer(seq, bot, schedule, result.map(|s| s.detail));
+        if matched {
+            self.snapshot = if self.held.is_some() {
+                snapshot.map(Rc::new)
+            } else {
+                None
+            };
         }
-        Err(said) => Err(ReadFailure::Other(Failure::of(said))),
-        _ => Err(ReadFailure::Other(Failure::Unanswered)),
+        matched
     }
 }

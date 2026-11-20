@@ -12,6 +12,30 @@ struct Fixture {
     bot: Bot,
 }
 
+#[test]
+fn an_authoritatively_idle_open_chat_clears_its_old_activity_mark() {
+    use koru_chats_ui::ChatStatus;
+    let mut f = listed(&[]);
+    let chat = f.bot.main_chat;
+    let other = ChatId::new();
+    let activity = std::collections::HashMap::from([
+        (chat, ChatStatus::Working),
+        (other, ChatStatus::Working),
+    ]);
+    f.view.set_activity(&activity);
+    assert_eq!(
+        f.view.conversations.surface.status(chat),
+        ChatStatus::Working
+    );
+    f.view.conversation_mut().unwrap().pretend_read(chat);
+    assert!(f.view.set_activity(&activity));
+    assert_eq!(f.view.conversations.surface.status(chat), ChatStatus::Idle);
+    assert_eq!(
+        f.view.conversations.surface.status(other),
+        ChatStatus::Working
+    );
+}
+
 /// A restored Bot tab over a link the test answers, not shown.
 fn fixture() -> Fixture {
     let (link, commands, answers) = BotsLink::test_pair();
@@ -38,22 +62,19 @@ impl Fixture {
                 }
                 Command::ListChats { .. } | Command::ReadLibrary { .. } => continue,
                 Command::List { .. }
+                | Command::RoutineStartup { .. }
+                | Command::NativeRoutineControl { .. }
                 | Command::RoutineControl { .. }
                 | Command::ReadRoutines { .. }
                 | Command::ReadRoutineDetail { .. }
                 | Command::RoutineLabel { .. }
-                | Command::Memory(_)
                 | Command::Write { .. }
                 | Command::Label { .. }
                 | Command::Activity { .. }
                 | Command::TeamPause { .. }
                 | Command::SetTeamPause { .. }
                 | Command::Lifecycle { .. }
-                | Command::TrashedChats { .. }
-                | Command::ChildRequests { .. }
-                | Command::ChildOrigin { .. }
-                | Command::Linked { .. }
-                | Command::LinkedOwner { .. } => {
+                | Command::TrashedChats { .. } => {
                     panic!("a Bot tab only reads its Bot here")
                 }
             }
@@ -241,114 +262,51 @@ fn the_bots_refusal_words_are_handed_to_the_chat_and_match_the_settings() {
     }
 }
 
-/// **The header says what the service said, and its one control is
-/// *Settings***: the name, *Paused*, where the work goes and the home-only
-/// limit, in that nesting under the tab; no line in it is a pointer target.
-/// While the Bot is being read it says so, claims no Bot and offers no
-/// *Settings*.
 #[test]
-fn the_header_is_words_in_its_tree_and_no_control() {
+fn the_chat_retains_loading_notices_but_removes_the_identity_header() {
     let mut f = fixture();
-    // Wide enough for the conversation column: no *Conversations* button.
-    f.view.set_viewport(800.0, 480.0);
     f.view.shown_pass(None);
-    let words: Vec<String> = f.view.header_lines().into_iter().map(|l| l.2).collect();
     assert_eq!(
-        words,
-        [t(f.view.lang, Words::BotsBotLoading)],
-        "loading, no Bot"
+        f.view
+            .header_lines()
+            .iter()
+            .map(|line| line.2.as_str())
+            .collect::<Vec<_>>(),
+        vec![t(f.view.lang, Words::BotsBotLoading)]
     );
     let seq = f.asked();
     f.answer(seq, f.bot.id, Ok(f.bot.clone()));
-    f.view.set_home_name(Some("Research".into()));
-
-    let keys: Vec<Key> = f.view.header_lines().into_iter().map(|l| l.0).collect();
-    // The main conversation is the one shown: the header says so (S8).
-    assert_eq!(keys, [NAME, PAUSED, MAIN_MARK, SAVES, LIMIT]);
-    assert_eq!(
-        f.view.saves_in(),
-        Some(koru_i18n::fill(
-            t(f.view.lang, Words::BotsSavesTo),
-            &["Research"]
-        ))
-    );
+    assert!(f.view.header_lines().is_empty());
     f.view.with_frame(|_, frame| {
-        let header = frame.node(HEADER).expect("a header").rect;
-        let conversation = frame.node(CONVERSATION).expect("a conversation").rect;
-        assert!(header.h > 0.0);
-        assert!(
-            conversation.y >= header.y + header.h - 0.5,
-            "the conversation sits below the header"
-        );
-        for key in [NAME, PAUSED, SAVES, LIMIT] {
-            let rect = frame.node(key).expect("every line laid out").rect;
-            assert!(
-                rect.y >= header.y && rect.y + rect.h <= header.y + header.h + 0.5,
-                "{key:?} nested in the header"
-            );
-            assert_eq!(
-                frame.hit_at(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5),
-                None,
-                "no control under {key:?}"
-            );
+        for key in [
+            NAME,
+            PAUSED,
+            MAIN_MARK,
+            SAVES,
+            LIMIT,
+            region::SETTINGS_BUTTON,
+            actions::ACTIONS_BUTTON,
+        ] {
+            assert!(!frame.contains(key), "removed header control {key:?}");
         }
-        let targets: Vec<Key> = frame
-            .hits()
-            .into_iter()
-            .map(|hit| hit.key)
-            .filter(|key| {
-                frame
-                    .node(*key)
-                    .is_some_and(|node| node.rect.y + node.rect.h <= header.y + header.h + 0.5)
-            })
-            .collect();
-        assert_eq!(
-            targets,
-            [actions::ACTIONS_BUTTON, region::SETTINGS_BUTTON],
-            "the header's controls: the lifecycle's ⋯ (S14), then Settings"
-        );
-        assert!(
-            frame.named("Bot tab").next().is_some()
-                && frame.named("Bot header").next().is_some()
-                && frame.named("Bot conversation").next().is_some(),
-            "the tab, its header and its conversation are named elements"
-        );
+        assert_eq!(frame.node(HEADER).unwrap().rect.h, 0.0);
+        assert!(frame.contains(CONVERSATION));
     });
 }
 
-/// The conversation is placed where the frame puts it, so a press on the
-/// header never reaches the chat and a press below it does — the chat
-/// keeps the tab's coordinates, offset by the header.
 #[test]
-fn the_conversation_sits_below_the_header_in_the_tabs_coordinates() {
-    let mut f = fixture();
-    // Wide enough for the conversation column beside it.
-    f.view.set_viewport(800.0, 480.0);
-    f.view.shown_pass(None);
-    let seq = f.asked();
-    f.answer(seq, f.bot.id, Ok(f.bot.clone()));
-    let (header, conversation) = f.view.with_frame(|_, frame| {
-        (
-            frame.node(HEADER).unwrap().rect,
-            f.view.conversation_area(frame),
-        )
-    });
-    assert!(!f.view.on_conversation(conversation.x + 1.0, header.y + 1.0));
-    assert!(
-        f.view
-            .on_conversation(conversation.x + 1.0, conversation.y + 1.0)
-    );
-    // Left of it is the conversation column (S8), not the chat.
-    assert!(
-        conversation.x > 0.0,
-        "the column sits left of the conversation"
-    );
-    assert!(
-        !f.view
-            .on_conversation(conversation.x - 1.0, conversation.y + 1.0)
-    );
-    assert!(f.view.place_conversation(conversation));
-    assert!(!f.view.place_conversation(conversation), "placed once");
+fn the_chat_uses_the_full_tab_without_header_or_side_columns() {
+    let mut f = listed(&[]);
+    for width in [320.0, 628.0, 1000.0] {
+        f.view.set_viewport(width, 600.0);
+        f.view.with_frame(|_, frame| {
+            let chat = f.view.conversation_area(frame);
+            assert!(chat.x.abs() < 0.5 && chat.y.abs() < 0.5, "{chat:?}");
+            assert!((chat.w - width).abs() < 0.5, "{chat:?}");
+            assert!(!frame.contains(list::CONVERSATIONS));
+            assert!(!frame.contains(list::CONVERSATIONS_BUTTON));
+        });
+    }
 }
 
 /// **A Bot's conversation offers local path references and nothing else
@@ -381,12 +339,8 @@ fn a_bot_tab_offers_path_references_and_nothing_else_the_owner_refuses() {
     );
 }
 
-/// **An archived Bot says so in words beside its name** (P1.7), from the
-/// Bot's own `lifecycle`: a line of the header, nested in it, published to
-/// a screen reader and no control — never color alone. An active Bot says
-/// nothing of it, and a read that finds it active again takes it away.
 #[test]
-fn an_archived_bot_says_so_in_words_beside_its_name() {
+fn an_archived_bot_retains_its_recovery_notice_without_the_identity_header() {
     let mut f = fixture();
     f.view.shown_pass(None);
     let seq = f.asked();
@@ -394,56 +348,13 @@ fn an_archived_bot_says_so_in_words_beside_its_name() {
     archived.lifecycle = BotLifecycle::Archived;
     f.answer(seq, f.bot.id, Ok(archived));
     assert!(f.view.facts().is_some_and(|facts| facts.archived));
-    let lines = f.view.header_lines();
-    let keys: Vec<Key> = lines.iter().map(|line| line.0).collect();
-    // An Archive this window does not know cannot be undone from here,
-    // and the header says so (S14).
-    assert_eq!(
-        keys,
-        [
-            NAME,
-            PAUSED,
-            ARCHIVED,
-            MAIN_MARK,
-            SAVES,
-            LIMIT,
-            actions::LIFECYCLE_NOTICE
-        ]
-    );
-    assert_eq!(
-        lines
-            .iter()
-            .find(|line| line.0 == ARCHIVED)
-            .map(|line| line.2.as_str()),
-        Some(t(f.view.lang, Words::BotsArchived)),
-        "said in words"
-    );
-    f.view.with_frame(|_, frame| {
-        let title = frame.named("Bot title").next().expect("a title row").rect;
-        let mark = frame.node(ARCHIVED).expect("laid out").rect;
-        assert!(
-            mark.y >= title.y - 0.5 && mark.y + mark.h <= title.y + title.h + 0.5,
-            "beside the name, in its row"
-        );
-        assert_eq!(
-            frame.hit_at(mark.x + mark.w * 0.5, mark.y + mark.h * 0.5),
-            None,
-            "a statement, not a control"
-        );
-        assert!(frame.named("Bot archived").next().is_some());
-    });
-
-    assert!(f.view.ask());
-    let again = f.asked();
-    f.answer(again, f.bot.id, Ok(f.bot.clone()));
-    assert!(f.view.facts().is_some_and(|facts| !facts.archived));
-    assert!(
-        !f.view.with_frame(|_, frame| frame.contains(ARCHIVED)),
-        "active again: not said"
-    );
-    for lang in Lang::ALL {
-        assert!(!t(lang, Words::BotsArchived).trim().is_empty(), "{lang:?}");
-    }
+    let keys: Vec<_> = f
+        .view
+        .header_lines()
+        .into_iter()
+        .map(|line| line.0)
+        .collect();
+    assert_eq!(keys, [actions::LIFECYCLE_NOTICE]);
 }
 
 /// Every language names the header's words.
@@ -508,16 +419,6 @@ impl Fixture {
                 | Command::ReadLibrary { .. }
                 | Command::Lifecycle { .. } => {
                     continue;
-                }
-                // Normal Settings maintenance also reads this Bot's Memory.
-                // A mutation or foreign subject is still an unexpected command.
-                Command::Memory(request) => {
-                    assert_eq!(request.bot, self.bot.id);
-                    assert_eq!(request.kind, crate::bots::memory::Kind::Status);
-                    assert!(matches!(
-                        request.command,
-                        BotCommand::ReadMemory { bot_id } if bot_id == self.bot.id
-                    ));
                 }
                 _ => panic!("not a write"),
             }
@@ -615,6 +516,7 @@ fn the_settings_region_is_an_element_tree_whose_rows_nest_under_their_card() {
         }
         for row in [
             "Bot name row",
+            "Bot avatar choices",
             "Library standing role",
             "Bot model row",
             "Bot model save row",
@@ -847,16 +749,16 @@ fn the_controls_publish_names_in_the_keyboards_order() {
     let f = Fixture::opened(unpaused());
     let lang = f.view.lang;
     let roots = f.view.controls();
-    assert_eq!(roots.len(), 3, "the ⋯, Settings, then the region");
-    assert_eq!(roots[0].key, actions::ACTIONS_BUTTON);
-    assert_eq!(roots[0].label, t(lang, Words::BotsActions));
-    let roots = &roots[1..];
-    assert_eq!(roots[0].key, SETTINGS_BUTTON);
+    assert_eq!(
+        roots.len(),
+        1,
+        "settings is one region, with no duplicate header controls"
+    );
+    assert_eq!(roots[0].key, SETTINGS);
     assert_eq!(roots[0].label, t(lang, Words::BotsSettings));
-    assert_eq!(roots[0].selected, Some(true), "the region is open");
-    assert_eq!(roots[1].key, SETTINGS);
-    assert_eq!(roots[1].label, t(lang, Words::BotsSettings));
-    let cards: Vec<Key> = roots[1]
+    assert_eq!(roots[0].children[0].key, SETTINGS_BUTTON);
+    assert_eq!(roots[0].children[0].label, t(lang, Words::Back));
+    let cards: Vec<Key> = roots[0]
         .children
         .iter()
         .filter(|c| c.role == ControlRole::Group)
@@ -1069,51 +971,17 @@ fn named(named: winit::keyboard::NamedKey) -> WinitKey {
     WinitKey::Named(named)
 }
 
-/// **`F6`'s tab stop reaches *Settings*, and closing the settings gives the
-/// keyboard back where it came from.** Landed on, the header's *Settings*
-/// has the keyboard; Enter opens the settings on it; Escape closes them
-/// and the keyboard is on *Settings* again; a second Escape gives it to
-/// the conversation. Opened by the pointer instead, Escape gives the
-/// keyboard straight back to the conversation, where it was.
 #[test]
-fn the_header_stop_opens_the_settings_and_closing_returns_the_keyboard() {
-    use winit::keyboard::NamedKey;
-    let mut f = Fixture::opened(unpaused());
-    f.view.set_settings_open(false);
-    assert_eq!(f.view.focus(), None, "the conversation has the keyboard");
-    assert!(f.view.header_stop());
-    assert!(!f.view.holds_keyboard());
-
-    assert!(f.view.focus_header());
-    assert_eq!(f.view.focus(), Some(SETTINGS_BUTTON));
-    assert!(f.view.holds_keyboard());
-    assert!(key(&mut f.view, named(NamedKey::Enter), None));
-    assert!(f.view.settings_open, "Enter opened the settings");
-    assert_eq!(f.view.focus(), Some(SETTINGS_BUTTON));
-    assert!(key(&mut f.view, named(NamedKey::Tab), None));
-    assert_eq!(f.view.focus(), Some(NAME_FIELD), "into the region");
-    assert!(key(&mut f.view, named(NamedKey::Escape), None));
-    assert!(!f.view.settings_open);
-    assert_eq!(
-        f.view.focus(),
-        Some(SETTINGS_BUTTON),
-        "back on the control that opened them"
-    );
-    assert!(key(&mut f.view, named(NamedKey::Escape), None));
-    assert_eq!(f.view.focus(), None, "then the conversation");
-
-    // The pointer's way: the keyboard was the conversation's.
-    assert!(f.press(SETTINGS_BUTTON));
-    assert!(f.view.settings_open);
-    assert!(key(&mut f.view, named(NamedKey::Escape), None));
-    assert!(!f.view.settings_open);
-    assert_eq!(f.view.focus(), None, "straight back to the conversation");
-
-    // Released by the window (F6 moved on, or a press elsewhere).
-    assert!(f.view.focus_header());
-    assert!(f.view.release_keyboard());
+fn navigator_settings_back_returns_to_the_chat_without_a_hidden_focus_target() {
+    let mut f = listed(&[]);
+    assert!(!f.view.header_stop());
+    assert!(!f.view.focus_header());
+    f.view.set_settings_open(true);
+    assert_eq!(f.view.focus(), Some(region::SETTINGS_BUTTON));
+    assert!(f.press(region::SETTINGS_BUTTON));
+    assert!(!f.view.settings_shown());
     assert_eq!(f.view.focus(), None);
-    assert!(!f.view.release_keyboard(), "nothing left to release");
+    assert!(!f.view.header_stop());
 }
 
 /// **No header stop before the tab knows its Bot**: there is no *Settings*
@@ -1163,6 +1031,33 @@ fn a_name_typed_in_any_script_is_saved_as_typed() {
         };
         assert_eq!(config.name, name, "byte for byte");
     }
+}
+
+#[test]
+fn an_avatar_only_save_publishes_the_new_face_to_the_roster() {
+    let mut f = Fixture::opened(unpaused());
+    assert!(f.view.take_roster_news().is_none());
+    assert!(f.view.perform(Act::Avatar(1)));
+    assert!(f.press(SAVE_NAME));
+    let (request, sent) = f.wrote();
+    let BotCommand::Update { config, .. } = sent else {
+        panic!("the avatar is saved through Update");
+    };
+    assert_eq!(config.name, f.bot.config.name);
+    assert_eq!(config.avatar, Some(1));
+    let mut saved = f.bot.clone();
+    saved.config = config;
+    saved.revision += 1;
+    f.reply(request, Ok(BotResponse::Bot { bot: saved.clone() }));
+
+    assert_eq!(f.view.avatar(), Some(1));
+    let news = f
+        .view
+        .take_roster_news()
+        .expect("avatar-only roster update");
+    assert_eq!(news, saved);
+    assert_eq!(crate::bots::roster::RosterBot::from(news).avatar, 1);
+    assert!(f.view.take_roster_news().is_none(), "published once");
 }
 
 // ------------------------------------------------ conversations (S8)
@@ -1273,7 +1168,11 @@ fn the_tab_lists_its_conversations_and_shows_the_one_chosen() {
             frame.contains(MAIN_MARK),
         )
     });
-    assert_eq!(tree, (true, true, true), "column, New, and the main mark");
+    assert_eq!(
+        tree,
+        (false, false, false),
+        "navigation belongs to the Bot roster"
+    );
 
     f.view.conversations.surface.ask_open(other);
     assert!(f.view.shown_pass(None));
@@ -1682,11 +1581,9 @@ fn ink_of(drawn: &std::collections::HashMap<String, String>, name: &str) -> Stri
 
 /// The lifecycle half of the tab (S14).
 mod agent;
-mod children;
 mod create;
 mod library;
 mod lifecycle;
-mod memory;
 mod mentions;
 mod onboard;
 
@@ -1798,34 +1695,6 @@ fn a_scroll_of_the_settings_moves_the_published_fingerprint() {
     );
 }
 
-/// **Narrower than a page's compact width the conversation column leaves
-/// and the conversation takes the tab** (`koru_ui::PageShell::compact`,
-/// the rule Settings and Manage follow): at 720 × 600 the column kept its
-/// 258 px and left the chat about 120 (the first window run's finding 9).
-/// Wide again, the column comes back.
-#[test]
-fn a_narrow_tab_gives_the_conversation_the_whole_width() {
-    let mut f = listed(&[]);
-    let wide = f.view.with_frame(|_, frame| {
-        (
-            frame.node(list::CONVERSATIONS).map(|node| node.rect),
-            f.view.conversation_area(frame),
-        )
-    });
-    assert!(wide.0.is_some(), "the column, wide");
-    f.view.set_viewport(420.0, 600.0);
-    let narrow = f.view.with_frame(|_, frame| {
-        (
-            frame.node(list::CONVERSATIONS).map(|node| node.rect),
-            f.view.conversation_area(frame),
-        )
-    });
-    assert!(narrow.0.is_none(), "no column, narrow");
-    assert_eq!(narrow.1.w, 420.0, "the conversation takes the tab's width");
-    f.view.set_viewport(800.0, 600.0);
-    assert!(f.keys().contains(&list::CONVERSATIONS), "back, wide");
-}
-
 /// **While the settings cover the conversation, its composer takes no
 /// keys** — entered as the window enters them (`View::key`), with nothing
 /// of the settings focused, as after a press on the content's background
@@ -1851,266 +1720,5 @@ fn keys_never_reach_the_composer_under_the_settings() {
     assert!(
         key(&mut f.view, WinitKey::Character("h".into()), Some("h")),
         "the conversation, shown, takes typing again"
-    );
-}
-
-/// **A click on a conversation row gives the list the keyboard**, on that
-/// row, as `F6` then Tab does: Delete then asks for that conversation's
-/// Trash instead of reaching the composer (the second window run). The
-/// press goes through the tab's pointer path (`View::mouse_down`).
-#[test]
-fn a_click_on_a_conversation_row_gives_the_list_the_keyboard() {
-    let other = ChatId::new();
-    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
-    let row = f
-        .view
-        .with_frame(|_, frame| BotView::list_area(frame))
-        .and_then(|area| {
-            f.view
-                .conversations
-                .surface
-                .chat_rects(area, area.y)
-                .into_iter()
-                .find(|(chat, _)| *chat == other)
-                .map(|(_, rect)| rect)
-        })
-        .expect("the row is drawn");
-    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
-        .expect("a document");
-    View::mouse_down(
-        &mut f.view,
-        &mut ws,
-        row.x + 8.0,
-        row.y + row.h / 2.0,
-        false,
-    );
-    View::mouse_up(&mut f.view, &mut ws);
-    assert_eq!(f.view.focus(), Some(list::CONVERSATION_LIST));
-    f.view.shown_pass(None);
-    let _ = f.view.take_conversation_trash();
-    assert!(key(
-        &mut f.view,
-        named(winit::keyboard::NamedKey::Delete),
-        None
-    ));
-    f.view.shown_pass(None);
-    assert_eq!(
-        f.view.take_conversation_trash(),
-        Some(other),
-        "Delete asks for the clicked row's Trash"
-    );
-}
-
-/// **At the default window the conversation has the tab, and the other
-/// conversations are one press away** (the second window run: at 940 × 620
-/// the column left the chat about 350 px, its placeholder and model chip
-/// cut; below the compact width nothing reached the other conversations).
-/// A tab of the default window's width (about 628 px) is compact: the
-/// header's *Conversations* opens the list in the conversation's place,
-/// pressed through the tab's pointer path, and choosing a row brings the
-/// conversation back on it. Wide enough for both, the column stays.
-#[test]
-fn the_default_window_gives_the_chat_the_tab_and_a_way_to_the_list() {
-    let other = ChatId::new();
-    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
-    f.view.set_viewport(628.0, 600.0);
-    f.view.shown_pass(None);
-    let (column, chat) = f.view.with_frame(|_, frame| {
-        (
-            frame.node(list::CONVERSATIONS).map(|node| node.rect),
-            f.view.conversation_area(frame),
-        )
-    });
-    assert!(column.is_none(), "no column beside the chat");
-    assert!(chat.w >= 600.0, "the chat has the tab: {chat:?}");
-    assert!(
-        f.keys().contains(&list::CONVERSATIONS_BUTTON),
-        "a way to the list"
-    );
-    assert!(f.press(list::CONVERSATIONS_BUTTON));
-    let column = f
-        .view
-        .with_frame(|_, frame| frame.node(list::CONVERSATIONS).map(|node| node.rect))
-        .expect("the list, opened");
-    assert!(column.w >= 600.0, "in the conversation's place: {column:?}");
-    assert!(
-        !f.view.with_frame(|_, frame| frame.contains(CONVERSATION)),
-        "the conversation is covered"
-    );
-    // A row chosen: the conversation is back, on it.
-    f.view.conversations.surface.ask_open(other);
-    f.view.shown_pass(None);
-    assert_eq!(f.view.chat_id(), other);
-    assert!(
-        f.view
-            .with_frame(|_, frame| frame.node(list::CONVERSATIONS).is_none()),
-        "the list closed"
-    );
-    // Wide enough for both: the column, and no disclosure.
-    f.view.set_viewport(1000.0, 600.0);
-    assert!(f.keys().contains(&list::CONVERSATIONS));
-    assert!(!f.keys().contains(&list::CONVERSATIONS_BUTTON));
-}
-
-/// **The compact header's *Conversations* is published as its neighbours
-/// are**, with its focus on it (the third window run: drawn, and a stop of
-/// Tab in the header, but no node — UI Automation reported the keyboard on
-/// the bare window). A button with its name and Click, its state its
-/// pressed one: off while the conversation shows, on while the list is in
-/// its place. Tab from *Settings* lands on it through the tab's keys, and
-/// the node the window names as focused (`bot_occurrence` of the tab's
-/// focus) is published.
-#[test]
-fn the_compact_conversations_control_is_published_with_its_state_and_focus() {
-    use accesskit::{Action, Role, Toggled};
-    let other = ChatId::new();
-    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
-    f.view.set_viewport(628.0, 600.0);
-    f.view.shown_pass(None);
-    let part = list::CONVERSATIONS_BUTTON.part;
-    let node = node_of(&f.view, part).expect("Conversations is published");
-    assert_eq!(node.role, Role::Button);
-    assert_eq!(
-        node.label.as_deref(),
-        Some(t(Lang::En, Words::BotsConversations))
-    );
-    assert!(node.actions.contains(&Action::Click), "pressable");
-    assert_eq!(node.toggled, Some(Toggled::False), "the conversation shows");
-    assert!(f.press(list::CONVERSATIONS_BUTTON));
-    let node = node_of(&f.view, part).expect("still published");
-    assert_eq!(node.toggled, Some(Toggled::True), "the list in its place");
-    f.publishable("the compact list open");
-
-    // The keyboard reaches it from the header's first stop.
-    assert!(f.press(list::CONVERSATIONS_BUTTON), "closed again");
-    assert!(f.view.focus_header());
-    let mut reached = false;
-    for _ in 0..6 {
-        key(&mut f.view, named(winit::keyboard::NamedKey::Tab), None);
-        if f.view.focus() == Some(list::CONVERSATIONS_BUTTON) {
-            reached = true;
-            break;
-        }
-    }
-    assert!(reached, "Tab reaches Conversations");
-    let focused = node_of(&f.view, part).expect("the focused control is a node");
-    assert_eq!(focused.occurrence.part.name(), part);
-}
-
-/// **Compact, the list leaves for the conversation it gives you, and the
-/// keyboard goes with it** (the third window run): *New conversation* shows
-/// what the owner made instead of leaving the list up, and a row chosen
-/// with a click opens it with the keyboard on the conversation — not on a
-/// list no longer drawn, where Delete reached nothing. Delete on a row the
-/// list's keyboard is on still asks for its Trash, as wide.
-#[test]
-fn compact_the_list_leaves_for_the_conversation_and_the_keyboard_goes_with_it() {
-    let other = ChatId::new();
-    let mut f = listed(&[(other, koru_ai_core::bots::BotChatPurpose::Additional)]);
-    f.view.set_viewport(628.0, 600.0);
-    f.view.shown_pass(None);
-
-    // New conversation from the open list.
-    assert!(f.press(list::CONVERSATIONS_BUTTON));
-    assert!(f.press(list::NEW_CONVERSATION));
-    let (request, _) = f.wrote();
-    let made = ChatId::new();
-    f.reply(
-        request,
-        Ok(BotResponse::Chat {
-            reference: koru_ai_core::bots::BotChatReference {
-                bot_id: f.bot.id,
-                chat_id: made,
-            },
-        }),
-    );
-    f.view.shown_pass(None);
-    assert_eq!(f.view.chat_id(), made, "what it made is shown");
-    assert!(
-        !f.keys().contains(&list::CONVERSATIONS),
-        "the list gave the conversation its place back"
-    );
-
-    // A row clicked in the open list.
-    assert!(f.press(list::CONVERSATIONS_BUTTON));
-    let row = f
-        .view
-        .with_frame(|_, frame| BotView::list_area(frame))
-        .and_then(|area| {
-            f.view
-                .conversations
-                .surface
-                .chat_rects(area, area.y)
-                .into_iter()
-                .find(|(chat, _)| *chat == other)
-                .map(|(_, rect)| rect)
-        })
-        .expect("the row is drawn");
-    let mut ws = koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
-        .expect("a document");
-    View::mouse_down(
-        &mut f.view,
-        &mut ws,
-        row.x + 8.0,
-        row.y + row.h / 2.0,
-        false,
-    );
-    View::mouse_up(&mut f.view, &mut ws);
-    f.view.shown_pass(None);
-    assert_eq!(f.view.chat_id(), other);
-    assert_eq!(f.view.focus(), None, "the keyboard is the conversation's");
-    let _ = f.view.take_conversation_trash();
-    key(&mut f.view, named(winit::keyboard::NamedKey::Delete), None);
-    f.view.shown_pass(None);
-    assert_eq!(
-        f.view.take_conversation_trash(),
-        None,
-        "no hidden row's Trash"
-    );
-
-    // The list's own keys, while it is shown, are wide's.
-    assert!(f.press(list::CONVERSATIONS_BUTTON));
-    f.view.focus = Some(list::CONVERSATION_LIST);
-    f.view.focus_list();
-    key(&mut f.view, named(winit::keyboard::NamedKey::Delete), None);
-    f.view.shown_pass(None);
-    assert!(
-        f.view.take_conversation_trash().is_some(),
-        "Delete on the list's row asks for its Trash"
-    );
-}
-
-/// ***No other conversations yet* is drawn below the row it is about**,
-/// where the others would be listed (the third window run: drawn above the
-/// main conversation's row). Laid out as the tab draws.
-#[test]
-fn the_only_main_sentence_is_drawn_below_the_row() {
-    let mut f = listed(&[]);
-    f.view.set_viewport(1000.0, 600.0);
-    f.view.shown_pass(None);
-    let (notice, area) = f.view.with_frame(|_, frame| {
-        (
-            frame.node(list::CONVERSATIONS_NOTICE).map(|node| node.rect),
-            BotView::list_area(frame),
-        )
-    });
-    let notice = notice.expect("the sentence is drawn");
-    let area = area.expect("the list is drawn");
-    let row = f
-        .view
-        .conversations
-        .surface
-        .chat_rects(area, area.y)
-        .into_iter()
-        .find(|(chat, _)| *chat == f.bot.main_chat)
-        .map(|(_, rect)| rect)
-        .expect("the main conversation's row");
-    assert!(
-        notice.y >= row.y + row.h,
-        "below the row: {notice:?} under {row:?}"
-    );
-    assert!(
-        notice.y - (row.y + row.h) < 48.0,
-        "right under the rows, not at the column's foot: {notice:?} {row:?}"
     );
 }

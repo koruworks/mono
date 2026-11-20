@@ -167,3 +167,82 @@ fn library_membership_is_home_only_bounded_and_excludes_bound_memory() {
     assert!(!library.add(&bot, page(&bot)));
     assert!(!library.add(&bot, library.pages()[0].clone()));
 }
+
+#[test]
+fn memory_binding_retries_exactly_and_preserves_role_and_knowledge_draft() {
+    let (mut library, mut bot) = fixture();
+    let knowledge = page(&bot);
+    assert!(library.add(&bot, knowledge.clone()));
+    let memory = page(&bot);
+    let Command::Write {
+        request, command, ..
+    } = library.set_memory(&bot, Some(memory.clone())).unwrap()
+    else {
+        panic!()
+    };
+    assert!(
+        matches!(&*command, BotCommand::SetMemory { expected_revision, memory: Some(sent), .. }
+        if *expected_revision == bot.revision && sent == &memory)
+    );
+    library.answer_save(request, Err(Failure::Unanswered));
+    assert!(library.set_memory(&bot, None).is_none());
+    assert_eq!(sent(&mut library, &bot), (request, *command));
+    bot.revision += 1;
+    library.answer_save(request, Ok(BotResponse::Bot { bot: bot.clone() }));
+    let held = library.held().unwrap();
+    assert_eq!(held.memory, Some(memory));
+    assert_eq!(held.role, bot.config.role);
+    assert!(
+        held.knowledge.is_empty(),
+        "an unsaved Knowledge draft is not sent with Memory"
+    );
+    assert_eq!(library.pages(), &[knowledge]);
+    assert!(library.dirty());
+}
+
+#[test]
+fn memory_binding_fences_stale_reads_and_does_not_regress_a_newer_binding() {
+    let (mut library, mut bot) = fixture();
+    let older = page(&bot);
+    let newer = page(&bot);
+    let Command::Write { request, .. } = library.set_memory(&bot, Some(older)).unwrap() else {
+        panic!()
+    };
+    library.answer_save(request, Err(Failure::Unanswered));
+    let mut receipt = bot.clone();
+    receipt.revision += 1;
+    bot.revision += 2;
+    library.know_bot(&bot);
+    let Command::ReadLibrary { seq, .. } = library.read(bot.id).unwrap() else {
+        panic!()
+    };
+    let mut current = view(&bot, vec![]);
+    current.memory = Some(newer.clone());
+    assert!(library.answer_read(seq, &bot, Ok(current)));
+    library.owe_read();
+    let Command::ReadLibrary { seq, .. } = library.read(bot.id).unwrap() else {
+        panic!()
+    };
+    library.answer_save(request, Ok(BotResponse::Bot { bot: receipt }));
+    assert!(!library.answer_read(seq, &bot, Ok(view(&bot, vec![]))));
+    assert_eq!(library.held().unwrap().memory, Some(newer));
+    assert_eq!(library.held().unwrap().revision, bot.revision);
+}
+
+#[test]
+fn memory_binding_rejects_role_knowledge_other_workspace_and_archived_changes() {
+    let (mut library, mut bot) = fixture();
+    assert!(
+        library
+            .set_memory(&bot, Some(bot.config.role.clone()))
+            .is_none()
+    );
+    let knowledge = page(&bot);
+    library.add(&bot, knowledge.clone());
+    assert!(library.set_memory(&bot, Some(knowledge)).is_none());
+    let mut foreign = page(&bot);
+    foreign.workspace = koru_store_core::ids::WorkspaceId::new();
+    assert!(library.set_memory(&bot, Some(foreign)).is_none());
+    bot.lifecycle = BotLifecycle::Archived;
+    assert!(library.set_memory(&bot, Some(page(&bot))).is_none());
+}

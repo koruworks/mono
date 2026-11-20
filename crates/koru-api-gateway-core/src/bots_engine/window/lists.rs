@@ -243,7 +243,6 @@ impl Gateway {
                                 } else {
                                     BotActivityState::Running
                                 },
-                                waiting: None,
                             })
                             .collect(),
                     },

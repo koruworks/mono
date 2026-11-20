@@ -98,6 +98,7 @@ pub(crate) enum Layer {
     /// modals, which still stand above everything a tab owns, and the keys
     /// it claims are routed to its owner by the arm that names it.
     MediaViewer,
+    BotWork,
 }
 
 impl Layer {
@@ -108,7 +109,7 @@ impl Layer {
     /// projection publishes the standing blocker and nothing beneath it, and
     /// the test that every kind of blocker publishes the control it focuses
     /// walks *this* table rather than a second list of kinds to keep in step.
-    pub(crate) const ALL: [Self; 24] = [
+    pub(crate) const ALL: [Self; 25] = [
         Self::FontPicker,
         Self::MoveTo,
         Self::Search,
@@ -133,6 +134,7 @@ impl Layer {
         Self::ReminderManagement,
         Self::ReminderCreation,
         Self::MediaViewer,
+        Self::BotWork,
     ];
 
     /// What this layer *is*, to a caller that only wants to know whether it can
@@ -170,6 +172,7 @@ impl Layer {
             Self::ReminderManagement => Blockers::Modal(ModalKind::ReminderManagement),
             Self::ReminderCreation => Blockers::Prompt(PromptKind::ReminderCreation),
             Self::MediaViewer => Blockers::Modal(ModalKind::MediaViewer),
+            Self::BotWork => Blockers::Modal(ModalKind::BotWork),
         }
     }
 }
@@ -246,6 +249,7 @@ impl MainView {
             Layer::ReminderManagement => self.reminder_creation.is_management(),
             Layer::ReminderCreation => self.reminder_creation.is_creation(),
             Layer::MediaViewer => self.lifted_viewer().is_some(),
+            Layer::BotWork => self.bot_work_open(),
         }
     }
 

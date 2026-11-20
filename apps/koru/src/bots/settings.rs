@@ -152,6 +152,7 @@ pub(crate) struct Settled {
 pub(crate) struct Settings {
     bot: Option<Bot>,
     name_draft: Option<String>,
+    avatar_draft: Option<u8>,
     access_draft: Option<AccessDraft>,
     model_draft: Option<ModelDraft>,
     pending: Vec<Pending>,
@@ -182,6 +183,9 @@ impl Settings {
     /// The Bot as the owner last said. **The person's edits are kept**; one
     /// the owner now holds is no longer an edit.
     pub(crate) fn know(&mut self, bot: Bot) {
+        if self.avatar_draft == bot.config.avatar {
+            self.avatar_draft = None;
+        }
         if self.name_draft.as_deref() == Some(bot.config.name.as_str()) {
             self.name_draft = None;
         }
@@ -270,13 +274,6 @@ impl Settings {
             BotOperationKind::Pause => Words::BotsDeliveringPause,
             BotOperationKind::Resume => Words::BotsDeliveringResume,
             BotOperationKind::UpdateAccess => Words::BotsDeliveringAccess,
-            // Not a kind the owner names here (`pause`, `resume`,
-            // `update_access`): the general sentence.
-            BotOperationKind::Start
-            | BotOperationKind::Continue
-            | BotOperationKind::RoutineDraft
-            | BotOperationKind::RoutineOccurrence
-            | BotOperationKind::UpdateRoutineAccess => Words::BotsErrOperationPending,
         })
     }
 
@@ -362,12 +359,23 @@ impl Settings {
         self.bot.is_some()
             && !self.is_pending(Change::Name)
             && !self.delivering()
-            && self.name_draft.as_deref().is_some_and(|draft| {
-                let name = draft.trim();
-                !name.is_empty()
-                    && name.len() <= NAME_MAX_BYTES
-                    && Some(name) != self.bot.as_ref().map(|bot| bot.config.name.as_str())
-            })
+            && !self.name_shown().trim().is_empty()
+            && self.name_shown().trim().len() <= NAME_MAX_BYTES
+            && (self.avatar_draft.is_some()
+                || self.name_draft.as_deref().is_some_and(|name| {
+                    Some(name.trim()) != self.bot.as_ref().map(|bot| bot.config.name.as_str())
+                }))
+    }
+
+    pub(crate) fn avatar_shown(&self) -> u8 {
+        self.avatar_draft
+            .or_else(|| self.bot.as_ref().map(|bot| bot.avatar()))
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn edit_avatar(&mut self, avatar: u8) {
+        let held = self.bot.as_ref().map(|bot| bot.avatar());
+        self.avatar_draft = (held != Some(avatar)).then_some(avatar);
     }
 
     /// *Save* on the name: an `Update` of the configuration the tab read,
@@ -378,7 +386,10 @@ impl Settings {
         }
         let bot = self.bot.as_ref()?;
         let mut config = bot.config.clone();
-        config.name = self.name_draft.as_deref()?.trim().to_owned();
+        config.name = self.name_shown().trim().to_owned();
+        if let Some(avatar) = self.avatar_draft {
+            config.avatar = Some(avatar);
+        }
         let (bot_id, revision) = (bot.id, bot.revision);
         Some(self.send(Change::Name, |request| BotCommand::Update {
             request_id: request,
@@ -995,7 +1006,7 @@ fn known_refusal(code: &str) -> Option<Words> {
         BOT_PENDING => Words::BotsErrPending,
         BOT_OPERATION_PENDING => Words::BotsErrOperationPending,
         ROUTINE_RETRY_UNSUPPORTED => Words::BotsErrRoutineRetryUnsupported,
-        // Every Bot is paused (M8): new work is refused.
+        // Every Bot is paused: new work is refused.
         super::team_pause::TEAM_PAUSED => Words::BotsTeamPausedSend,
         FOLDER_RESERVED => Words::BotsErrFolderReserved,
         "not_found" => Words::BotsErrNotFound,

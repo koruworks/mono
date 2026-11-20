@@ -16,10 +16,9 @@ use koru_delegate_core::{
     PrivateDispatcherId, PrivateEffectKey, PrivateEffectTransition, PrivateEffectView,
 };
 
-/// The connection rows of ai.db, as their one writer exposes them. Each call
-/// is one transaction of the AI owner; the production implementation reaches
-/// it through the AI worker, off the caller's thread. Method for method this
-/// is the repository of `koru-ai-sqlite`.
+/// Atomic operations over connection metadata. The legacy AI-owned adapter
+/// is retired; this service's contract tests use an in-memory implementation.
+/// Native engine integration needs its own persistence adapter.
 pub trait ConnectionStore: Send + Sync {
     fn connection(
         &self,
@@ -156,8 +155,8 @@ pub enum LedgerError {
 }
 
 /// The one delegate command the dispatcher sends while it performs a read:
-/// `AdvancePrivateEffect`. Idempotent by key and transition. The production
-/// implementation is the private Bot channel to the delegate.
+/// `AdvancePrivateEffect`. Idempotent by key and transition. The legacy
+/// private Bot channel is retired; native integration needs its own adapter.
 pub trait EffectLedger: Send + Sync {
     fn advance(
         &self,

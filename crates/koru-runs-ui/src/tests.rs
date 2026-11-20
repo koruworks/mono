@@ -482,20 +482,24 @@ fn a_gap_is_rendered_as_a_gap_and_an_unknown_step_keeps_its_place() {
 /// or step's words, in every language.
 #[test]
 fn m6_ui_roster_waiting_a_run_waiting_for_a_bot_says_so_in_its_own_words() {
-    let waiting = koru_delegate_core::transition_bot(
-        &RunStatus::running(),
-        &koru_delegate_core::RunEvent::WaitingForBot,
-    )
-    .unwrap();
+    // Retained headers may still decode this marker; no runtime produces it.
+    let waiting = RunStatus::Running {
+        attention: koru_delegate_core::AttentionSet::new([
+            koru_delegate_core::Attention::WaitingForBot,
+        ]),
+        control: koru_delegate_core::ControlState::Orchestrator,
+    };
     assert_eq!(
         words::attention(Lang::En, &waiting),
         [t(Lang::En, Key::RunNeedsOtherBot).to_owned()]
     );
-    let both = koru_delegate_core::transition_bot(
-        &waiting,
-        &koru_delegate_core::RunEvent::WaitingForInput,
-    )
-    .unwrap();
+    let both = RunStatus::Running {
+        attention: koru_delegate_core::AttentionSet::new([
+            koru_delegate_core::Attention::WaitingForBot,
+            koru_delegate_core::Attention::WaitingForInput,
+        ]),
+        control: koru_delegate_core::ControlState::Orchestrator,
+    };
     let said = words::attention(Lang::En, &both);
     assert_eq!(said.len(), 2, "one sentence per marker");
     assert!(said.contains(&t(Lang::En, Key::RunNeedsInput).to_owned()));

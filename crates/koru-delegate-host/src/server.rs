@@ -39,58 +39,11 @@ const SCHEDULE_STREAM_QUEUE: usize = 16;
 
 #[derive(Clone)]
 pub struct Identity {
-    pub(crate) run_authorities: crate::authority::AuthorityProjection,
     pub launch_id: String,
     pub authority: String,
     pub device_id: String,
-    pub bot_authority: Option<koru_delegate_api::bots::BotDelegateAuthority>,
-}
-
-fn admits_bot(
-    identity: &Identity,
-    authority: &koru_delegate_api::bots::BotDelegateAuthority,
-) -> bool {
-    identity
-        .bot_authority
-        .as_ref()
-        .is_some_and(|expected| expected.matches(authority))
-        && koru_delegate_core::DeviceId::parse(&identity.device_id)
-            .is_some_and(|device| !device.as_uuid().is_nil())
-}
-
-fn admits_bot_command(
-    identity: &Identity,
-    authority: &koru_delegate_api::bots::BotDelegateAuthority,
-    command: &koru_delegate_api::bots::BotCommand,
-) -> bool {
-    admits_bot(identity, authority)
-        && command.owner().is_none_or(|owner| {
-            Some(owner.device) == koru_delegate_core::DeviceId::parse(&identity.device_id)
-        })
-}
-
-fn permits_legacy_command(
-    legacy_bots: bool,
-    command: &koru_delegate_api::bots::BotCommand,
-) -> bool {
-    // This shared lookup also authorizes ordinary delegated-run page tools.
-    // Retiring Bots must not remove that unrelated authority path.
-    legacy_bots
-        || matches!(
-            command,
-            koru_delegate_api::bots::BotCommand::ResolveRunAuthority { .. }
-        )
-}
-
-fn permits_resolved_authority(
-    legacy_bots: bool,
-    authority: &koru_delegate_core::RunToolAuthority,
-) -> bool {
-    legacy_bots
-        || matches!(
-            authority,
-            koru_delegate_core::RunToolAuthority::Ordinary { .. }
-        )
+    pub run_authority: Option<koru_delegate_api::authority::RunAuthorityCredential>,
+    pub run_authorities: crate::authority::AuthorityProjection,
 }
 
 pub fn spawn(
@@ -100,7 +53,6 @@ pub fn spawn(
     stop: mpsc::Sender<&'static str>,
     active_runs: Arc<AtomicU32>,
     scheduler: crate::scheduler::Control,
-    legacy_bots: bool,
 ) -> Result<(), String> {
     std::thread::Builder::new()
         .name("koru-delegate accept".into())
@@ -114,7 +66,7 @@ pub fn spawn(
                 let spawned = std::thread::Builder::new()
                     .name("koru-delegate connection".into())
                     .stack_size(256 * 1024)
-                    .spawn(move || handle(stream, identity, commands, stop, active, scheduler, legacy_bots));
+                    .spawn(move || handle(stream, identity, commands, stop, active, scheduler));
                 if let Err(error) = spawned {
                     tracing::warn!(target: "koru::delegate", %error, "a connection could not be served");
                 }
@@ -170,7 +122,6 @@ fn handle(
     stop: mpsc::Sender<&'static str>,
     active_runs: Arc<AtomicU32>,
     scheduler: crate::scheduler::Control,
-    legacy_bots: bool,
 ) {
     koru_ipc::set_timeouts(&stream, Some(REQUEST_TIMEOUT));
     let mut reader = &stream;
@@ -179,52 +130,29 @@ fn handle(
     };
     let (reply_tx, reply_rx) = mpsc::sync_channel::<Response>(1);
     let command = match request {
-        Request::Bot { authority, command } => {
-            if !admits_bot_command(&identity, &authority, &command)
-                || !permits_legacy_command(legacy_bots, &command)
+        Request::ResolveRunAuthority {
+            authority,
+            run,
+            generation,
+        } => {
+            let response = if identity
+                .run_authority
+                .as_ref()
+                .is_some_and(|expected| expected.matches(&authority))
             {
-                write(
-                    &stream,
-                    &Response::Failure(Failure::new(
-                        "bot_authority_unavailable",
-                        "The Bot command authority is unavailable or does not match.",
-                        false,
-                    )),
-                );
-                return;
-            }
-            if let koru_delegate_api::bots::BotCommand::ResolveRunAuthority { run, generation } =
-                command
-            {
-                let response = match identity.run_authorities.resolve(run, generation) {
-                    Ok(authority) if permits_resolved_authority(legacy_bots, &authority) => {
-                        Response::Bot(koru_delegate_api::bots::BotReply::RunAuthority { authority })
-                    }
-                    Ok(_) => Response::Failure(Failure::new(
-                        "bot_authority_unavailable",
-                        "The Bot authority is unavailable.",
-                        false,
-                    )),
+                match identity.run_authorities.resolve(run, generation) {
+                    Ok(()) => Response::RunAuthorityConfirmed {},
                     Err(failure) => Response::Failure(failure),
-                };
-                write(&stream, &response);
-                return;
-            }
-            // IPC 17: the owner control and the owner Test are admitted with
-            // the Bot authority above, like every Bot command, and then go to
-            // the scheduler thread, which owns the Schedule document write.
-            // The actor never sees them and never waits on a Store commit.
-            let command = match serve_routine_control(&scheduler, command) {
-                Ok(response) => {
-                    write(&stream, &response);
-                    return;
                 }
-                Err(command) => command,
+            } else {
+                Response::Failure(Failure::new(
+                    "run_authority_unavailable",
+                    "The Run authority credential does not match.",
+                    false,
+                ))
             };
-            Command::Bot {
-                command,
-                reply: reply_tx,
-            }
+            write(&stream, &response);
+            return;
         }
         Request::Hello => {
             write(
@@ -484,63 +412,11 @@ fn wake_schedules(
     Ok(false)
 }
 
-/// Serve an admitted IPC 17 owner control through the scheduler, or hand any
-/// other Bot command back for the actor. A control that is malformed or over
-/// its 4 KiB bound is refused here, before the coordinator sees it.
-fn serve_routine_control(
-    scheduler: &crate::scheduler::Control,
-    command: koru_delegate_api::bots::BotCommand,
-) -> Result<Response, koru_delegate_api::bots::BotCommand> {
-    use koru_delegate_api::bots::BotCommand;
-    match command.routine_control_valid() {
-        None => return Err(command),
-        Some(false) => {
-            return Ok(Response::Failure(Failure::new(
-                "invalid_request",
-                "The Routine control request is malformed or too large.",
-                false,
-            )));
-        }
-        Some(true) => {}
-    }
-    let answer = match command {
-        BotCommand::ControlRoutine {
-            route,
-            expected_revision,
-            action,
-        } => scheduler.control_routine(route, expected_revision, action),
-        BotCommand::TestRoutine {
-            route,
-            expected_revision,
-            occurrence_ms,
-        } => scheduler.test_routine(route, expected_revision, occurrence_ms),
-        other => return Err(other),
-    };
-    Ok(match answer {
-        Ok(reply) => Response::Bot(reply),
-        Err(failure) => Response::Failure(failure),
-    })
-}
-
 /// Do not turn a stale frame into an actor command: an old worker can parse
 /// the request while silently losing the model choice in its run header.
 fn read_current_request(reader: &mut impl std::io::Read) -> std::io::Result<Option<Request>> {
     let (version, body) = frame::read_raw(reader)?;
     if version != WIRE_VERSION {
-        return Ok(None);
-    }
-    // An owner control over its bound is dropped before its content is
-    // decoded, like any malformed frame: unanswered, so nothing about it is
-    // told to a peer whose authority was never checked.
-    if koru_delegate_api::bots::routine_control_frame_oversized(&body) {
-        return Ok(None);
-    }
-    // IPC 18: the same for a bounded private command over its 16 KiB.
-    if koru_delegate_api::bots::private_frame_oversized(&body) {
-        return Ok(None);
-    }
-    // IPC 19: the same for a bounded child read over its 8 KiB.
-    if koru_delegate_api::bots::child_frame_oversized(&body) {
         return Ok(None);
     }
     frame::decode(&body).map(Some)

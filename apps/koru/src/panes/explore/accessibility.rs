@@ -76,6 +76,7 @@ pub(crate) mod parts {
     /// The heading band's title: the app's name.
     /// The library heading's `…` and magnifier.
     pub const ACTIONS: ControlPart = ControlPart::new("actions");
+    pub const BOTS_MORE: ControlPart = ControlPart::new("bots-more");
     /// The tree of rows, and what stands in its place when there are none.
     pub const TREE: ControlPart = ControlPart::new("tree");
     pub const EMPTY: ControlPart = ControlPart::new("empty");
@@ -912,6 +913,10 @@ impl ExploreView {
                 }
                 // The Bots heading's button is *Create a bot* (S8), as a
                 // press on it is.
+                p if p == parts::BOTS_MORE && self.mode == NavigatorMode::Bots => {
+                    self.bots.request_menu(self.bots_menu_anchor(area, None));
+                    Some(Outcome::Consumed)
+                }
                 p if p == parts::ACTIONS && self.mode == NavigatorMode::Bots => {
                     Some(if self.current.is_some() {
                         Outcome::CreateBot

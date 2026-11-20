@@ -10,7 +10,7 @@ this build does not know, follows the build's default, so a later default
 reaches everybody who never chose. `active_pack()` is the pack in effect;
 `chosen_pack()` is the choice, or `None`. The key is a settings file and wire
 format change (approved 2026-10-30), with no version bump or migration.
-The 151 canonical identities and four aliases retain their existing PUA values.
+The 153 canonical identities and four aliases retain their existing PUA values.
 Changing a pack does not change stored documents or require a schema migration.
 
 Highlighting an Icon style menu item previews it without writing preferences.

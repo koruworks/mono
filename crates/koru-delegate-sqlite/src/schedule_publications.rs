@@ -471,12 +471,23 @@ impl RunsDb {
         &self,
         limit: usize,
     ) -> Result<Vec<SchedulePublicationRecord>, LedgerError> {
+        self.ready_schedule_publications_after(None, limit)
+    }
+
+    /// Continue the ready queue past retained, unavailable schedule records.
+    /// The ordering remains ready time, queued time, then event identity.
+    pub fn ready_schedule_publications_after(
+        &self,
+        after: Option<(i64, i64, EventId)>,
+        limit: usize,
+    ) -> Result<Vec<SchedulePublicationRecord>, LedgerError> {
         read_records(
             self.conn(),
             &format!(
                 "SELECT {COLUMNS} FROM schedule_publications AS publication
                   WHERE publication.ready_at_ms IS NOT NULL
                     AND publication.acknowledged_at_ms IS NULL
+                    AND (?2 IS NULL OR (publication.ready_at_ms, publication.queued_at_ms, publication.event_id) > (?2, ?3, ?4))
                     AND (
                       publication.kind = 'created'
                       OR EXISTS (
@@ -490,7 +501,7 @@ impl RunsDb {
                            publication.event_id
                   LIMIT ?1"
             ),
-            params![limit_i64(limit)],
+            params![limit_i64(limit), after.map(|v| v.0), after.map(|v| v.1), after.map(|v| v.2.to_string())],
         )
     }
 

@@ -97,6 +97,7 @@ pub struct AgentSessions {
     /// first rather than asking the host to re-probe again.
     refreshes: Arc<crate::joined::Joined<ProviderKind, Result<AgentCatalog, ErrorCode>>>,
     command_updates: Arc<Mutex<VecDeque<CommandListingUpdate>>>,
+    pub(crate) instructions: koru_delegate_preamble::session::Configuration,
 }
 
 /// One session generation's current command listing. `None` clears a list
@@ -273,7 +274,18 @@ impl AgentSessions {
             live: Arc::new(LiveTurns::default()),
             refreshes: Arc::new(crate::joined::Joined::new()),
             command_updates,
+            instructions: Default::default(),
         })
+    }
+
+    /// Configure sources without reading them. Only a first submitted chat
+    /// input resolves these files, on the provider worker.
+    pub fn with_session_instructions(
+        mut self,
+        instructions: koru_delegate_preamble::session::Configuration,
+    ) -> Self {
+        self.instructions = instructions;
+        self
     }
 
     pub fn take_command_updates(&self) -> Vec<CommandListingUpdate> {

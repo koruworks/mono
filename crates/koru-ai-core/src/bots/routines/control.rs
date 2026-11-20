@@ -56,16 +56,6 @@ pub struct BotRoutineControl {
     pub next: RoutineNextObservation,
 }
 
-/// A Test was accepted for this minute. It is not a claim and not a result:
-/// the Routine's history says what the minute became.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct BotRoutineTest {
-    pub schedule_id: ScheduleId,
-    pub occurrence_ms: i64,
-}
-
 /// The Routine's access after an edit. There is no pending state: the edit
 /// is answered only once its policy barrier is installed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,19 +126,6 @@ impl RoutineThisComputer {
         })
     }
 }
-
-/// The minute a Test asked at `now_ms` would claim, or `None` when fewer than
-/// [`BOT_ROUTINE_TEST_MINUTE_MARGIN_MS`] of that minute remain. No clock is
-/// read here.
-pub fn routine_test_minute(now_ms: i64) -> Option<i64> {
-    let minute = routine_test_minute_of(now_ms);
-    (now_ms >= 0 && minute + ROUTINE_TEST_MINUTE_MS - now_ms >= BOT_ROUTINE_TEST_MINUTE_MARGIN_MS)
-        .then_some(minute)
-}
-
-/// A Test is refused when less than this is left of the current minute: the
-/// preparation, the preclaim and the claim would not fit.
-pub const BOT_ROUTINE_TEST_MINUTE_MARGIN_MS: i64 = 10_000;
 
 /// The public bound of one control command or reply, enum wrapper included.
 pub const BOT_ROUTINE_CONTROL_BYTES: usize = 256 * 1024;

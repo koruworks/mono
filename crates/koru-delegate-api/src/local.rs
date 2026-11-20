@@ -132,7 +132,7 @@ fn unexpected(response: &Response) -> Failure {
         format!(
             "The delegate worker answered with {}.",
             match response {
-                Response::Bot(_) => "bot",
+                Response::RunAuthorityConfirmed {} => "run_authority_confirmed",
                 Response::Hello(_) => "hello",
                 Response::Stopping => "stopping",
                 Response::SchedulesWoken => "schedules_woken",

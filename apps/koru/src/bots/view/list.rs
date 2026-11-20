@@ -68,16 +68,10 @@ pub(crate) fn conversation_key(chat: ChatId) -> Key {
 }
 
 impl BotView {
-    /// Whether the conversation column is part of the tab: once the tab
-    /// knows its Bot, with the settings closed.
-    pub(super) fn shows_column(&self) -> bool {
-        self.facts.is_some() && !self.settings_open && (!self.compact() || self.list_open)
-    }
-
     /// **Compact, with the list opened from the header**: the list takes
     /// the conversation's place, which takes no keys or presses meanwhile.
     pub(super) fn list_covers(&self) -> bool {
-        self.list_open && self.compact() && self.facts.is_some() && !self.settings_open
+        false
     }
 
     /// The header's *Conversations*: the list in the conversation's place,
@@ -107,20 +101,6 @@ impl BotView {
         self.focus = Some(CONVERSATION_LIST);
         self.focus_list();
         true
-    }
-
-    /// The header's *Conversations* button, selected while the list is
-    /// open.
-    pub(super) fn conversations_button(&self, engine: &mut TextEngine) -> El {
-        self.button(
-            engine,
-            "Bot conversations button",
-            CONVERSATIONS_BUTTON,
-            t(self.lang, Words::BotsConversations).to_owned(),
-            ActionStyle::Ghost,
-            false,
-        )
-        .selected(self.list_covers())
     }
 
     /// **Narrower than a page's compact width**, the conversation column
@@ -317,6 +297,7 @@ impl BotView {
             && bound != self.chat
         {
             self.chat = bound;
+            self.conversation_roster_dirty = true;
             self.conversations.owe_read();
             changed = true;
         }
@@ -324,6 +305,7 @@ impl BotView {
         // the list gives the conversation its place back, as choosing a row
         // does (the third window run: the list stayed up over it).
         if let Some(made) = self.conversations.take_made() {
+            self.conversation_roster_dirty = true;
             changed |= self.close_compact_list();
             changed |= self.show_conversation(made);
         }
@@ -433,7 +415,7 @@ impl BotView {
     }
 
     /// *New conversation*: the owner's `CreateChat`.
-    pub(super) fn new_conversation(&mut self) -> bool {
+    pub(crate) fn new_conversation(&mut self) -> bool {
         let Some(command) = self.conversations.create() else {
             return false;
         };
@@ -462,6 +444,9 @@ impl BotView {
         let mut statuses = activity.clone();
         if let Some(view) = self.conversation() {
             match view.status() {
+                ChatStatus::Idle if view.knows_nothing_runs() => {
+                    statuses.remove(&self.chat);
+                }
                 ChatStatus::Idle => {}
                 status => {
                     statuses.insert(self.chat, status);
@@ -486,7 +471,6 @@ impl BotView {
             self.lifecycle_read_now();
             // A reply started or ended: an ask may have been made, or a
             // request settled (M6). Its cards are read again.
-            self.children.owe_read();
         }
         moved
     }
@@ -788,15 +772,6 @@ impl BotView {
     #[cfg(test)]
     pub(crate) fn renames_sent(&self) -> &[(ChatId, String)] {
         &self.conversations.renamed
-    }
-
-    /// **The row the list's keyboard is on**, while the list holds the
-    /// keyboard. Test only.
-    #[cfg(test)]
-    pub(crate) fn list_keyboard_row(&self) -> Option<ChatId> {
-        (self.focus == Some(CONVERSATION_LIST))
-            .then(|| self.conversations.surface.focused_chat())
-            .flatten()
     }
 
     /// Whether the compact list stands in the conversation's place. Test

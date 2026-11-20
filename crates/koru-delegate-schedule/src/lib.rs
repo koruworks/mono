@@ -22,15 +22,6 @@ use koru_delegate_core::{
 
 mod routine;
 pub use routine::RoutineAssociation;
-mod routine_digest;
-pub use routine_digest::routine_definition_digest;
-mod routine_semantic;
-pub use routine_semantic::routine_semantic_digest;
-/// Strict adapters shared only by private Routine seed/capture and bridge DTOs.
-/// Ordinary Schedule serde retains its existing compatibility behavior.
-#[doc(hidden)]
-pub mod routine_wire;
-
 /// The longest authored schedule name, in Unicode scalar values.
 pub const MAX_SCHEDULE_NAME_CHARS: usize = 128;
 
@@ -201,8 +192,8 @@ pub struct ScheduleDefinition {
     pub template: DelegationTemplate,
     pub recurrence: RecurrenceRule,
     pub lifecycle: ScheduleLifecycle,
-    /// Present only in Bot Schedule2. Identity alone grants no execution or
-    /// page access; the AI owner retains the independent Routine policy.
+    /// Retained Bot Schedule2 marker. Ordinary scheduling excludes these
+    /// definitions; their bytes remain decodable and untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routine: Option<RoutineAssociation>,
 }

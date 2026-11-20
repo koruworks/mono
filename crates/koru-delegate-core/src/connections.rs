@@ -3,7 +3,9 @@
 //! Neutral private-connection vocabulary (M5). Identifiers, digests, codes and
 //! sizes only: no account label, no item title, no vendor reference, no link,
 //! no secret and no content that was read can be spelled with these types.
-//! A value here grants nothing; the ledger and the AI owner check authority.
+//! These contracts remain shared with standalone Connections. They carry no
+//! route into the retired delegate Bot executor; the Connections owner checks
+//! authority before using them.
 
 use crate::decisions::{DecisionDigest, DecisionId, DecisionRevision};
 use crate::{

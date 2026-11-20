@@ -41,11 +41,14 @@ struct NativeState {
 #[derive(Default)]
 struct NativeInner {
     calls: Vec<AgentInput>,
+    attempted: Vec<AgentInput>,
     failing: BTreeSet<AttachmentId>,
     events: VecDeque<AgentEvent>,
     woken: bool,
     stopped: bool,
     reject_submit: bool,
+    /// A fixture's explicit proof that this refusal happened before dispatch.
+    reject_known_unsent: bool,
     hold_events: bool,
     hold_submit: bool,
     /// A provider that takes text into the running turn.
@@ -76,6 +79,10 @@ struct NativeControl {
 }
 
 impl AgentControl for NativeControl {
+    fn submission_known_unsent(&self, turn_id: AgentTurnId) -> bool {
+        let inner = self.state.inner.lock().unwrap();
+        inner.reject_known_unsent && !inner.calls.iter().any(|call| call.turn_id == turn_id)
+    }
     fn start(&mut self, _start: AgentStart) -> Result<AgentCapabilities, ProviderFailure> {
         Ok(self.capabilities.clone())
     }
@@ -86,6 +93,7 @@ impl AgentControl for NativeControl {
 
     fn submit(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
         let mut inner = self.state.inner.lock().unwrap();
+        inner.attempted.push(input.clone());
         if inner.reject_submit {
             return Err(ProviderFailure::new(
                 ErrorCode::DeliveryUnsupported,
@@ -284,6 +292,13 @@ struct ManagedHarness {
 }
 
 fn managed_harness(capabilities: CapabilitySet) -> ManagedHarness {
+    managed_harness_oriented(capabilities, None)
+}
+
+fn managed_harness_oriented(
+    capabilities: CapabilitySet,
+    orientation: Option<koru_delegate_preamble::Resolved>,
+) -> ManagedHarness {
     let state = Arc::new(NativeState::default());
     let mut providers = crate::providers::ManagedProviderRegistry::default();
     providers
@@ -321,6 +336,7 @@ fn managed_harness(capabilities: CapabilitySet) -> ManagedHarness {
                 selection: None,
                 mcp_servers: Vec::new(),
                 questions: false,
+                orientation,
             },
             created_at_ms: 10,
             origin: Default::default(),
@@ -1351,3 +1367,6 @@ mod conditional;
 
 #[path = "delivery/initial.rs"]
 mod initial;
+
+#[path = "delivery/orientation.rs"]
+mod orientation;

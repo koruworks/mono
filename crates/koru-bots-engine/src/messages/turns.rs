@@ -85,7 +85,7 @@ impl Database {
             return Ok(None);
         }
         expire(&tx, now)?;
-        let owed:Vec<(String,String)>=tx.prepare("SELECT o.id,o.message FROM obligations o JOIN inbox i ON i.id=o.id JOIN messages m ON m.id=o.message WHERE o.bot=?1 AND o.thread=?2 AND o.state IN ('owed','delivered') AND (o.state='delivered' OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?3) ORDER BY m.sequence,o.id LIMIT ?4")?.query_map(params![bot.to_string(),thread.to_string(),now,limit as u64],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
+        let owed:Vec<(String,String)>=tx.prepare("SELECT o.id,o.message FROM obligations o JOIN inbox i ON i.id=o.id JOIN messages m ON m.id=o.message WHERE o.bot=?1 AND o.thread=?2 AND o.state IN ('owed','delivered') AND (o.state='delivered' OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?3) AND NOT EXISTS(SELECT 1 FROM routine_occurrences ro WHERE ro.message=m.id AND ro.state='queued' AND ro.deadline_ms<=?3) ORDER BY m.sequence,o.id LIMIT ?4")?.query_map(params![bot.to_string(),thread.to_string(),now,limit as u64],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
         if owed.is_empty() {
             tx.commit()?;
             return Ok(None);
@@ -102,7 +102,8 @@ impl Database {
             session,
         };
         tx.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE state='open' AND turn IN (SELECT id FROM turns WHERE bot=?1 AND thread=?2)",params![bot.to_string(),thread.to_string()])?;
-        tx.execute("INSERT INTO turns(id,thread,bot,session,grant,state,generation,worker_incarnation,details,created_at_ms,reply_message) SELECT ?1,?2,id,?3,access,'running',?4,?5,x'7b7d',?6,?8 FROM bots WHERE id=?7",params![turn.id.to_string(),thread.to_string(),session.to_string(),generation,worker.to_string(),now,bot.to_string(),Uuid::new_v4().to_string()])?;
+        let grant = crate::routines::grant(&tx, bot, thread)?;
+        tx.execute("INSERT INTO turns(id,thread,bot,session,grant,state,generation,worker_incarnation,details,created_at_ms,reply_message) VALUES (?1,?2,?3,?4,?5,'running',?6,?7,x'7b7d',?8,?9)",params![turn.id.to_string(),thread.to_string(),bot.to_string(),session.to_string(),grant,generation,worker.to_string(),now,Uuid::new_v4().to_string()])?;
         let boundary: u64 = tx.query_row(
             "SELECT COALESCE(MAX(sequence),0) FROM messages WHERE thread=?1",
             [thread.to_string()],
@@ -233,11 +234,12 @@ impl Database {
                 params![delivery.id.to_string(), obligation],
             )?;
         }
-        for (obligation, _) in &owed {
+        for (obligation, message) in &owed {
             tx.execute(
                 "UPDATE obligations SET state='delivered' WHERE id=?1",
                 [obligation],
             )?;
+            tx.execute("UPDATE routine_occurrences SET state='running',updated_at_ms=?2 WHERE message=?1 AND state='queued'",params![message,now])?;
         }
         tx.commit()?;
         Ok(Some(delivery))

@@ -27,8 +27,6 @@ fn normal_dependencies_are_the_delegation_leaves_and_serde() {
     assert_eq!(
         actual,
         BTreeSet::from([
-            "blake3",
-            "uuid",
             "koru-delegate-core",
             "koru-delegate-document",
             "koru-delegate-preamble",

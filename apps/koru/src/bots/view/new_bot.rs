@@ -16,9 +16,8 @@
 //!       Divider
 //!       col  New bot runs                the track: This device (selected), Cloud (not selectable);
 //!                                        where it runs in words; why Cloud cannot be chosen
-//!       col  New bot more                More/Less and, closed, one line: the agent and the folder;
-//!                                        open: the agents to choose from, that the agent is fixed
-//!                                        once made, the folder and Change…, Open the full form
+//!       col  New bot agents              runtime pills, readiness and Manage agent providers
+//!       col  New bot folder              one-line path and folder chooser; Open the full form
 //!       New bot ended / stage / notice / problem   what a press came to, in the form's own words
 //!   row  New bot footer                  Creating…; Retry; Start over; Cancel; Create
 //! ```
@@ -98,6 +97,10 @@ use crate::bots::faces::{self, FaceLeaf};
 use crate::bots::first_bot;
 use crate::bots::settings::ModelDraft;
 
+mod folder;
+mod runtime;
+use runtime::agent_key;
+
 /// The surface every key below belongs to.
 pub(crate) const SURFACE: &str = "new-bot";
 pub(crate) const ROOT: Key = Key::surface(SURFACE, "root");
@@ -114,10 +117,9 @@ pub(crate) const THIS_DEVICE: Key = Key::surface(SURFACE, "this-device");
 pub(crate) const CLOUD: Key = Key::surface(SURFACE, "cloud");
 pub(crate) const LOCAL_NOTE: Key = Key::surface(SURFACE, "local-note");
 pub(crate) const CLOUD_NOTE: Key = Key::surface(SURFACE, "cloud-note");
-pub(crate) const MORE: Key = Key::surface(SURFACE, "more");
-pub(crate) const SUMMARY: Key = Key::surface(SURFACE, "summary");
 pub(crate) const AGENTS: Key = Key::surface(SURFACE, "agents");
-pub(crate) const AGENT_FIXED: Key = Key::surface(SURFACE, "agent-fixed");
+pub(crate) const MANAGE_AGENTS: Key = Key::surface(SURFACE, "manage-agents");
+pub(crate) const AGENT_SETTINGS: Key = Key::surface(SURFACE, "agent-settings");
 pub(crate) const AGENT_READINESS: Key = Key::surface(SURFACE, "agent-readiness");
 pub(crate) const FOLDER: Key = Key::surface(SURFACE, "folder");
 pub(crate) const CHANGE_FOLDER: Key = Key::surface(SURFACE, "change-folder");
@@ -138,10 +140,6 @@ const FACE_PARTS: [&str; FACE_COUNT as usize] = [
     "face-1", "face-2", "face-3", "face-4", "face-5", "face-6", "face-7", "face-8", "face-9",
     "face-10", "face-11", "face-12", "face-13", "face-14", "face-15", "face-16", "face-17",
     "face-18", "face-19", "face-20", "face-21", "face-22", "face-23", "face-24",
-];
-/// The agents offered under *More*, by their place in the person's list.
-const AGENT_PARTS: [&str; 8] = [
-    "agent-1", "agent-2", "agent-3", "agent-4", "agent-5", "agent-6", "agent-7", "agent-8",
 ];
 /// The form's own sentences, as the dialog keys them: what a creation the
 /// owner ended left, then where one it holds stands.
@@ -183,17 +181,6 @@ pub(crate) fn face_of(key: Key) -> Option<u8> {
         .map(|index| index as u8)
 }
 
-fn agent_key(index: usize) -> Key {
-    Key::surface(SURFACE, AGENT_PARTS[index.min(AGENT_PARTS.len() - 1)])
-}
-
-fn agent_of(key: Key) -> Option<usize> {
-    if key.object != koru_draw::el::Object::Surface(SURFACE) {
-        return None;
-    }
-    AGENT_PARTS.iter().position(|part| *part == key.part)
-}
-
 /// The close button: lit under the pointer, ringed under the keyboard.
 static QUIET_STATES: StateRecipe = StateRecipe {
     name: "new bot quiet action",
@@ -217,20 +204,6 @@ static SEGMENT_STATES: StateRecipe = StateRecipe {
     pressed: Look::bg(Surface::Hover),
     selected_hover: Look::bg(Surface::Raised),
     selected_pressed: Look::bg(Surface::Raised),
-    disabled: Look::NONE,
-    focus: Some(Ring::Line(Line::Focus)),
-};
-
-/// An agent to choose: the library's chooser row, the chosen one on the
-/// selected plate.
-static AGENT_STATES: StateRecipe = StateRecipe {
-    name: "new bot agent",
-    base: Look::NONE,
-    selected: Look::bg(Surface::Selected),
-    hover: Look::bg(Surface::Hover),
-    pressed: Look::bg(Surface::Hover),
-    selected_hover: Look::bg(Surface::Selected),
-    selected_pressed: Look::bg(Surface::Selected),
     disabled: Look::NONE,
     focus: Some(Ring::Line(Line::Focus)),
 };
@@ -317,6 +290,8 @@ pub(crate) enum Outcome {
     /// tab: the person asked for the full form, or closed the dialog while
     /// the owner may hold the creation.
     OpenForm,
+    /// Preserve the draft as a tab and open the existing runtime settings.
+    ManageAgents,
 }
 
 /// What the dialog publishes to an assistive technology: its controls as
@@ -340,8 +315,6 @@ pub(crate) struct NewBotDialog {
     channel_root: Option<PathBuf>,
     /// Which twelve faces the grid shows: 0 or 1.
     set: u8,
-    /// *More* is open.
-    more: bool,
     focus: Key,
     hot: Option<Key>,
     pressed: Option<Key>,
@@ -387,7 +360,6 @@ impl NewBotDialog {
             host,
             channel_root,
             set: 0,
-            more: false,
             focus: NAME,
             hot: None,
             pressed: None,
@@ -493,6 +465,11 @@ impl NewBotDialog {
         if let Some(create) = self.host.create.as_deref_mut() {
             create.first_bot = false;
         }
+        self.into_setup_tab()
+    }
+
+    /// Visiting runtime configuration keeps the dialog's draft and defaults.
+    pub(crate) fn into_setup_tab(mut self) -> BotView {
         self.host.focus = None;
         self.host
     }
@@ -555,7 +532,6 @@ impl NewBotDialog {
             .control_agents(&self.host.agent_settings)
             .into_iter()
             .filter(|agent| !agent.hidden)
-            .take(AGENT_PARTS.len())
             .map(|agent| (agent.id.clone(), agent.label.to_owned()))
             .collect()
     }
@@ -576,19 +552,12 @@ impl NewBotDialog {
         )
     }
 
-    /// **The disclosure's one line while it is closed**: the agent the Bot
-    /// will use and the folder it will work in.
+    /// The complete folder description, retained for accessibility.
     pub(crate) fn summary(&self) -> String {
-        let mut parts = Vec::new();
-        if self.host.agent_provider().is_some() {
-            let agent = self.host.agent_label();
-            parts.push(fill(t(self.lang, Words::BotsNewBotUses), &[agent.as_str()]));
-        }
-        parts.push(match self.folder_path() {
+        match self.folder_path() {
             Some(path) => fill(t(self.lang, Words::BotsNewBotWorksIn), &[path.as_str()]),
             None => self.words(Words::BotsFolderManaged),
-        });
-        parts.join(" ")
+        }
     }
 
     /// What the form refuses before anything is sent, in words, where the
@@ -773,146 +742,6 @@ impl NewBotDialog {
             ))
     }
 
-    /// **More**: closed, one line saying the agent and the folder; open,
-    /// the agents to choose from (the agent is fixed once the Bot is made,
-    /// so it is chosen here or never), the folder and *Change…*, and the
-    /// way to the full form.
-    fn more(&self, engine: &mut TextEngine, locked: bool) -> El {
-        let toggle = self.button(
-            engine,
-            "New bot more",
-            MORE,
-            self.words(if self.more {
-                Words::BotsNewBotLess
-            } else {
-                Words::BotsNewBotMore
-            }),
-            ActionStyle::Ghost,
-            false,
-        );
-        let mut more = col("New bot more block").gap(Space::S2);
-        if !self.more {
-            return more.child(
-                row("New bot more row")
-                    .gap(Space::S2)
-                    .items_center()
-                    .child(toggle)
-                    .child(
-                        Self::sentence("New bot summary", SUMMARY, self.summary(), Ink::Secondary)
-                            .fill(),
-                    ),
-            );
-        }
-        more = more.child(row("New bot more row").child(toggle).child(spacer()));
-        // The agents.
-        let chosen = self.host.agent_provider();
-        let agents = self.agents();
-        if !agents.is_empty() {
-            let mut list = col("New bot agents")
-                .id(AGENTS)
-                .gap(Space::S0_5)
-                .semantics(Role::Group)
-                .name(Words::BotsNewBotAgent)
-                .child(
-                    text(self.words(Words::BotsNewBotAgent))
-                        .named("New bot agents label")
-                        .role(roles::META)
-                        .ink(Ink::Hint),
-                );
-            for (index, (id, label)) in agents.iter().enumerate() {
-                let selected = chosen.as_ref() == Some(id);
-                list = list.child(
-                    row("New bot agent")
-                        .id(agent_key(index))
-                        .min_h(metrics::ROW_MIN)
-                        .pad_x(Space::S2)
-                        .items_center()
-                        .radius(Radius::M)
-                        .states(&AGENT_STATES)
-                        .hit()
-                        .focusable()
-                        .disabled(locked)
-                        .selected(selected)
-                        .action(Action::Click)
-                        .action(Action::Focus)
-                        .semantics(Role::Button)
-                        .name_text(label.clone())
-                        .child(
-                            text(label.clone())
-                                .named("New bot agent name")
-                                .role(roles::ROW)
-                                .ink(if selected {
-                                    Ink::Primary
-                                } else {
-                                    Ink::Secondary
-                                })
-                                .emphasis(selected)
-                                .fill()
-                                .truncate(),
-                        ),
-                );
-            }
-            more = more.child(list);
-        }
-        if let Some(readiness) = self.host.agent_readiness_words() {
-            more = more.child(Self::sentence(
-                "New bot agent readiness",
-                AGENT_READINESS,
-                readiness,
-                Ink::Secondary,
-            ));
-        }
-        more = more.child(Self::sentence(
-            "New bot agent fixed",
-            AGENT_FIXED,
-            self.words(Words::BotsAgentFixed),
-            Ink::Hint,
-        ));
-        // The folder.
-        let chose = self
-            .form()
-            .is_some_and(|form| form.draft().folder.is_some());
-        let folder = match self.folder_path() {
-            Some(path) => fill(t(self.lang, Words::BotsNewBotWorksIn), &[path.as_str()]),
-            None => self.words(Words::BotsFolderManaged),
-        };
-        more = more.child(Self::sentence(
-            "New bot folder",
-            FOLDER,
-            folder,
-            Ink::Secondary,
-        ));
-        let mut actions = row("New bot more actions")
-            .gap(Space::S2)
-            .items_center()
-            .child(self.button(
-                engine,
-                "New bot change folder",
-                CHANGE_FOLDER,
-                self.words(Words::BotsChangeFolder),
-                ActionStyle::Secondary,
-                locked,
-            ));
-        if chose {
-            actions = actions.child(self.button(
-                engine,
-                "New bot managed folder",
-                MANAGED_FOLDER,
-                self.words(Words::BotsFolderUseManaged),
-                ActionStyle::Ghost,
-                locked,
-            ));
-        }
-        more.child(actions.child(spacer()).child(self.button(
-            engine,
-            "New bot full form",
-            FULL_FORM,
-            self.words(Words::BotsNewBotFullForm),
-            ActionStyle::Ghost,
-            false,
-        )))
-    }
-
     /// The dialog as elements.
     pub(crate) fn tree(&self, engine: &mut TextEngine) -> El {
         let Some(form) = self.form() else {
@@ -1025,7 +854,8 @@ impl NewBotDialog {
             )
             .child(divider(Line::Divider))
             .child(self.runs())
-            .child(self.more(engine, locked));
+            .child(self.runtime_choices(engine, locked))
+            .child(self.folder_controls(locked));
 
         // **What the last press came to**, in the form's own sentences: a
         // creation the owner ended and what it left, where one it holds
@@ -1043,7 +873,11 @@ impl NewBotDialog {
                     content.child(Self::sentence("New bot stage", key, words, Ink::Secondary));
             }
         }
-        if let Some(words) = self.host.create_line_words(CREATE_NOTICE) {
+        if let Some(words) = self.host.create_line_words(CREATE_NOTICE)
+            && !form
+                .notice()
+                .is_some_and(crate::bots::creation::names_the_agent)
+        {
             content = content.child(Self::sentence("New bot notice", NOTICE, words, Ink::Accent));
         }
         if let Some(words) = self.problem() {
@@ -1152,9 +986,7 @@ impl NewBotDialog {
     /// as tall as its content or what the window leaves, in the middle.
     fn panel(&self, tree: &El, engine: &mut TextEngine) -> Rect {
         let margin = Space::S4.px(koru_draw::theme::Profile::Desktop);
-        let w = DIALOG_W
-            .value
-            .min((self.viewport.0 - margin * 2.0).max(0.0));
+        let w = self.panel_width();
         let room = (self.viewport.1 - margin * 2.0).max(DIALOG_MIN_H.value.min(self.viewport.1));
         let probe = tree.layout(
             engine,
@@ -1261,7 +1093,7 @@ impl NewBotDialog {
             .unwrap_or(0);
         order
             .into_iter()
-            .filter(|key| match (face_of(*key), agent_of(*key)) {
+            .filter(|key| match (face_of(*key), self.agent_of(*key)) {
                 (Some(face), _) => face == face_stop,
                 (_, Some(agent)) => agent == agent_stop,
                 _ => true,
@@ -1363,7 +1195,7 @@ impl NewBotDialog {
                 Outcome::Ignored
             };
         }
-        if let Some(agent) = agent_of(key) {
+        if let Some(agent) = self.agent_of(key) {
             return if self.choose_agent(agent) {
                 Outcome::Changed
             } else {
@@ -1373,12 +1205,9 @@ impl NewBotDialog {
         let outcome = match key {
             k if k == CLOSE || k == CANCEL => return self.dismiss(),
             k if k == FULL_FORM => return Outcome::OpenForm,
+            k if k == MANAGE_AGENTS || k == AGENT_SETTINGS => return Outcome::ManageAgents,
             k if k == OTHERS => {
                 self.set = 1 - self.set.min(1);
-                true
-            }
-            k if k == MORE => {
-                self.more = !self.more;
                 true
             }
             k if k == CHANGE_FOLDER => self.host.perform_create(Act::ChooseFolder),
@@ -1450,7 +1279,7 @@ impl NewBotDialog {
             _ => return false,
         };
         if to != agent {
-            self.set_focus(agent_key(to));
+            self.set_focus(agent_key(&self.agents()[to].0));
             self.choose_agent(to);
         }
         true
@@ -1462,7 +1291,8 @@ impl NewBotDialog {
         [
             CLOSE,
             OTHERS,
-            MORE,
+            MANAGE_AGENTS,
+            AGENT_SETTINGS,
             CHANGE_FOLDER,
             MANAGED_FOLDER,
             FULL_FORM,
@@ -1515,7 +1345,7 @@ impl NewBotDialog {
         {
             return Outcome::Changed;
         }
-        if let Some(agent) = agent_of(self.focus)
+        if let Some(agent) = self.agent_of(self.focus)
             && self.agents_key(agent, key)
         {
             return Outcome::Changed;

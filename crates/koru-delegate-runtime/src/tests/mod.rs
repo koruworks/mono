@@ -43,7 +43,6 @@ use uuid::Uuid;
 use crate::*;
 
 mod authority;
-mod bots;
 mod creation;
 mod deletion;
 mod dependency;
@@ -169,12 +168,6 @@ pub(crate) struct LedgerScript {
     pub ops: Vec<&'static str>,
     /// The next call named here fails with `Storage`.
     pub fail: Option<&'static str>,
-    /// Arm a one-shot failure only after the named physical phase is reached.
-    pub arm_failure_after: Option<(&'static str, &'static str)>,
-    /// Corrupt both retained/current policy read results after real SQL install.
-    pub corrupt_native_policy_digest: bool,
-    pub unavailable_decision_run: Option<RunId>,
-    pub unavailable_admission_run: Option<RunId>,
 }
 
 #[derive(Clone)]
@@ -194,27 +187,11 @@ impl RecordingStore {
                 detail: "injected".into(),
             });
         }
-        if let Some((after, fail)) = script.arm_failure_after
-            && after == op
-        {
-            script.arm_failure_after = None;
-            script.fail = Some(fail);
-        }
         Ok(())
     }
 }
 
 impl RunStore for RecordingStore {
-    fn decision_projection_runs(
-        &self,
-        after: Option<RunId>,
-        limit: usize,
-    ) -> Result<Vec<RunId>, LedgerError> {
-        self.inner
-            .lock()
-            .unwrap()
-            .decision_projection_runs(after, limit)
-    }
     fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {
@@ -231,7 +208,7 @@ impl RunStore for RecordingStore {
             .unwrap()
             .next_pending_publication_run(after, through, before_or_at)
     }
-    fn decision_open_publications_for(
+    fn bounded_open_publications_for(
         &self,
         run: RunId,
         limit: usize,
@@ -239,14 +216,7 @@ impl RunStore for RecordingStore {
         self.inner
             .lock()
             .unwrap()
-            .decision_open_publications_for(run, limit)
-    }
-    fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
-        Some(self)
-    }
-
-    fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
-        Some(self)
+            .bounded_open_publications_for(run, limit)
     }
 
     fn validate_intent(
@@ -540,8 +510,6 @@ pub(crate) struct DocumentScript {
     pub fail_commit: bool,
     /// The host has not yet called the commits durable: a fact must wait.
     pub not_durable: bool,
-    /// Settle returned without a durable acknowledgment (lost or pending Store reply).
-    pub hold_settle_ack: bool,
     pub commits: usize,
     pub committed_snapshots: Vec<Vec<u8>>,
 }
@@ -557,36 +525,6 @@ struct MemoryHandle {
 }
 
 impl RunDocumentHandle for MemoryHandle {
-    fn prepare_decision_projection(
-        &mut self,
-        _: &koru_delegate_document::RunProjectionIntent,
-    ) -> PortResult<koru_delegate_core::decisions::DecisionPreparedProjection> {
-        Err(PortError::new(
-            Port::Documents,
-            "projection_unavailable",
-            "ordinary fixture does not own decision publication",
-        ))
-    }
-    fn apply_prepared_projection(
-        &mut self,
-        _: &koru_delegate_core::decisions::DecisionPreparedProjection,
-    ) -> PortResult<koru_delegate_document::AppliedRunProjection> {
-        Err(PortError::new(
-            Port::Documents,
-            "projection_unavailable",
-            "ordinary fixture does not own decision publication",
-        ))
-    }
-    fn discard_prepared_projection(
-        &mut self,
-        _: koru_delegate_core::decisions::DecisionTransitionId,
-    ) -> PortResult<()> {
-        Err(PortError::new(
-            Port::Documents,
-            "projection_unavailable",
-            "ordinary fixture does not own decision publication",
-        ))
-    }
     fn document(&self) -> &RunDocument {
         &self.doc
     }
@@ -620,28 +558,12 @@ impl RunDocumentHandle for MemoryHandle {
 
     fn settle(&mut self) -> PortResult<()> {
         // The scripted host settles the moment it is asked to.
-        let mut script = self.script.lock().unwrap();
-        if !script.hold_settle_ack {
-            script.not_durable = false;
-        }
+        self.script.lock().unwrap().not_durable = false;
         Ok(())
     }
 }
 
 impl RunDocuments for MemoryDocuments {
-    fn publication_open(
-        &mut self,
-        workspace: WorkspaceId,
-        document: DocumentId,
-    ) -> PortResult<Box<dyn crate::RunDocumentOpen>> {
-        Ok(Box::new(MemoryPublicationOpen {
-            documents: MemoryDocuments {
-                script: Arc::clone(&self.script),
-            },
-            workspace,
-            document,
-        }))
-    }
     fn create(&mut self, _workspace: WorkspaceId, header: &RunHeader) -> PortResult<DocumentId> {
         let mut script = self.script.lock().unwrap();
         if script.fail_create {
@@ -696,17 +618,6 @@ impl RunDocuments for MemoryDocuments {
     }
 }
 
-struct MemoryPublicationOpen {
-    documents: MemoryDocuments,
-    workspace: WorkspaceId,
-    document: DocumentId,
-}
-impl crate::RunDocumentOpen for MemoryPublicationOpen {
-    fn open(mut self: Box<Self>) -> PortResult<Box<dyn RunDocumentHandle>> {
-        self.documents.open(self.workspace, self.document)
-    }
-}
-
 // ------------------------------------------------------------ the sessions
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -730,15 +641,9 @@ pub(crate) enum Call {
         reason: CancelReason,
     },
     Terminate(SessionId),
-    TerminateOwned(SessionId),
     ResumeToken(SessionId),
     Observe(SessionId),
     Subscribe(SessionId),
-    AnswerApproval {
-        session: SessionId,
-        key: IdempotencyKey,
-        approval: koru_delegate_core::ApprovalId,
-    },
 }
 
 pub(crate) struct SessionScript {
@@ -758,7 +663,6 @@ pub(crate) struct SessionScript {
     pub summaries: HashMap<SessionId, SessionSummary>,
     pub observation: AgentEventObservation,
     pub attach_fails: bool,
-    pub owned_termination_refused: bool,
     /// Keys the host has been asked about, oldest first, for the re-ask
     /// scenario: each lookup pops the next answer when several are given.
     pub lookup_sequence: VecDeque<(HostInstanceId, CreationLookup)>,
@@ -768,19 +672,6 @@ pub(crate) struct SessionScript {
     pub resume_tokens: HashMap<SessionId, ProviderResumeToken>,
     /// The next `cancel_turn` is refused with this code.
     pub cancel_refused: Option<&'static str>,
-    pub bot_inputs: HashMap<IdempotencyKey, (koru_delegate_core::PendingInput, AgentTurnId)>,
-    pub bot_reply_lost: bool,
-    /// Every initial input is answered with this session code, as the host
-    /// pins a refusal to the input's key: a repeat gets the same answer.
-    pub bot_refusal: Option<&'static str>,
-    pub bot_skips: Vec<(SessionId, koru_delegate_core::QuestionRequestId)>,
-    /// Sessions the host no longer has: reaped after their process ended,
-    /// or held by an earlier host incarnation. `terminate` answers
-    /// `session_not_found` for each, as the real host does
-    /// (`SessionRegistry::get` reaps an ended session before it looks, and a
-    /// new incarnation has an empty registry). Empty, `terminate` accepts
-    /// everything, as this fake always did.
-    pub reaped: BTreeSet<SessionId>,
 }
 
 impl Default for SessionScript {
@@ -809,15 +700,9 @@ impl Default for SessionScript {
                 session_cursor: None,
             },
             attach_fails: false,
-            owned_termination_refused: false,
             lookup_sequence: VecDeque::new(),
             resume_tokens: HashMap::new(),
             cancel_refused: None,
-            bot_inputs: HashMap::new(),
-            bot_reply_lost: false,
-            bot_refusal: None,
-            bot_skips: Vec::new(),
-            reaped: BTreeSet::new(),
         }
     }
 }
@@ -836,52 +721,6 @@ impl SessionEvents for NoEvents {
 }
 
 impl Sessions for ScriptedSessions {
-    fn bot_skip_questions(
-        &mut self,
-        session: SessionId,
-        request: koru_delegate_core::QuestionRequestId,
-    ) -> PortResult<()> {
-        self.script
-            .lock()
-            .unwrap()
-            .bot_skips
-            .push((session, request));
-        Ok(())
-    }
-    fn bot_submit(
-        &mut self,
-        session: SessionId,
-        input: koru_delegate_core::PendingInput,
-    ) -> PortResult<AgentTurnId> {
-        let mut script = self.script.lock().unwrap();
-        if let Some(code) = script.bot_refusal {
-            script.calls.push(Call::Submit {
-                session,
-                text: input.text.clone(),
-            });
-            return Err(PortError::new(Port::Sessions, code, "SECRET refusal"));
-        }
-        if let Some((old, turn)) = script.bot_inputs.get(&input.idempotency_key) {
-            return if old == &input {
-                Ok(*turn)
-            } else {
-                Err(PortError::new(Port::Sessions, "conflict", "changed input"))
-            };
-        }
-        let turn = script.turns.pop_front().unwrap();
-        script.calls.push(Call::Submit {
-            session,
-            text: input.text.clone(),
-        });
-        script
-            .bot_inputs
-            .insert(input.idempotency_key, (input, turn));
-        if std::mem::take(&mut script.bot_reply_lost) {
-            return Err(PortError::new(Port::Sessions, "unavailable", "reply lost"));
-        }
-        Ok(turn)
-    }
-
     fn supports_delegation(&self) -> bool {
         self.script.lock().unwrap().supports_delegation
     }
@@ -981,64 +820,18 @@ impl Sessions for ScriptedSessions {
             None => Ok(()),
         }
     }
-    fn terminate_owned(&mut self, session: SessionId) -> PortResult<()> {
-        let mut script = self.script.lock().unwrap();
-        script.calls.push(Call::TerminateOwned(session));
-        if script.reaped.contains(&session) {
-            // `HostSessions::terminate_owned` attaches first; the host
-            // answers a session it no longer has `session_not_found`.
-            return Err(PortError::new(
-                Port::Sessions,
-                "session_not_found",
-                "attach: the session is not in the registry",
-            ));
-        }
-        if script.owned_termination_refused {
-            return Err(PortError::new(
-                Port::Sessions,
-                "stale_lease",
-                "fixture takeover",
-            ));
-        }
-        Ok(())
-    }
     fn terminate(&mut self, session: SessionId) -> PortResult<()> {
-        let mut script = self.script.lock().unwrap();
-        script.calls.push(Call::Terminate(session));
-        if script.reaped.contains(&session) {
-            // `HostSessions::terminate` maps the host's
-            // `ErrorCode::SessionNotFound` to this code (`session_error`).
-            return Err(PortError::new(
-                Port::Sessions,
-                "session_not_found",
-                "terminate: the session is not in the registry",
-            ));
-        }
+        self.script
+            .lock()
+            .unwrap()
+            .calls
+            .push(Call::Terminate(session));
         Ok(())
     }
     fn resume_token(&mut self, session: SessionId) -> PortResult<Option<ProviderResumeToken>> {
         let mut script = self.script.lock().unwrap();
         script.calls.push(Call::ResumeToken(session));
         Ok(script.resume_tokens.get(&session).cloned())
-    }
-    fn bot_answer_approval(
-        &mut self,
-        session: SessionId,
-        key: IdempotencyKey,
-        approval: koru_delegate_core::ApprovalId,
-        _decision: koru_delegate_core::ApprovalDecision,
-        _choice: Option<koru_delegate_core::ApprovalChoiceId>,
-    ) -> PortResult<()> {
-        self.script
-            .lock()
-            .unwrap()
-            .calls
-            .push(Call::AnswerApproval {
-                session,
-                key,
-                approval,
-            });
-        Ok(())
     }
     fn observe(&mut self, session: SessionId) -> PortResult<AgentEventObservation> {
         let mut script = self.script.lock().unwrap();
@@ -1240,20 +1033,6 @@ pub(crate) struct FakeRoots {
 }
 
 impl ScopeRoots for FakeRoots {
-    fn bot_folder(
-        &self,
-        folder: &koru_delegate_core::BotWorkingFolder,
-    ) -> Result<koru_delegate_scope::ResolvedScope, koru_delegate_scope::ScopeRefusal> {
-        if folder.as_str().ends_with("/missing") {
-            return Err(koru_delegate_scope::ScopeRefusal::NotFound);
-        }
-        let directory = PathBuf::from(folder.as_str());
-        Ok(koru_delegate_scope::ResolvedScope {
-            identity: koru_delegate_scope::ScopeIdentity::fixture_canonical(&directory),
-            directory,
-        })
-    }
-
     fn project_root(&self, project: ProjectId) -> RootLookup {
         match self.projects.get(&project) {
             Some(root) => RootLookup::Directory(root.clone()),
@@ -1279,7 +1058,6 @@ pub(crate) struct IssuedLaunch {
 
 #[derive(Default)]
 pub(crate) struct AuthorityLog {
-    pub folder_lookups: Vec<RunId>,
     pub issued: Vec<IssuedLaunch>,
     pub revoked: Vec<RunId>,
     /// The working folder each run's record holds, as the real store would
@@ -1289,14 +1067,6 @@ pub(crate) struct AuthorityLog {
     pub forgotten: Vec<RunId>,
     /// When set, the next `launch` refuses with this code.
     pub refuse: Option<&'static str>,
-    /// Every decision-wait publication (O147), in order.
-    pub waits: Vec<(
-        RunId,
-        Option<(
-            koru_delegate_core::decisions::DecisionId,
-            koru_delegate_core::decisions::DecisionPhase,
-        )>,
-    )>,
 }
 
 /// A run authority the tests can read: it mints a distinct bearer per
@@ -1317,17 +1087,6 @@ pub(crate) const RUN_TOOLS: [&str; 6] = [
 ];
 
 impl McpEndpoints for StubMcp {
-    fn publish_decision_wait(
-        &mut self,
-        run: RunId,
-        wait: Option<(
-            koru_delegate_core::decisions::DecisionId,
-            koru_delegate_core::decisions::DecisionPhase,
-        )>,
-    ) -> PortResult<()> {
-        self.log.lock().unwrap().waits.push((run, wait));
-        Ok(())
-    }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let mut log = self.log.lock().unwrap();
         if let Some(code) = log.refuse.take() {
@@ -1367,9 +1126,7 @@ impl McpEndpoints for StubMcp {
     }
 
     fn run_workspace(&mut self, run: RunId) -> PortResult<Option<PathBuf>> {
-        let mut log = self.log.lock().unwrap();
-        log.folder_lookups.push(run);
-        Ok(log.workspaces.get(&run).cloned())
+        Ok(self.log.lock().unwrap().workspaces.get(&run).cloned())
     }
 
     fn forget(&mut self, run: RunId) -> PortResult<()> {

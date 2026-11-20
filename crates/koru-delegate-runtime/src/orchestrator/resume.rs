@@ -66,9 +66,6 @@ impl Orchestrator {
         run: RunId,
         confirm: bool,
     ) -> Result<koru_delegate_core::WorkspaceScope, RunError> {
-        if self.header(run)?.bot.is_some() {
-            return Err(super::bots::refused("bot_continue_requires_new_run"));
-        }
         let prior = match self.status(run)? {
             RunStatus::Interrupted { prior_attempt } => prior_attempt,
             other => {
@@ -80,7 +77,7 @@ impl Orchestrator {
         if prior == PriorAttempt::Unknown && !confirm {
             return Err(RunError::PriorAttemptUnknown);
         }
-        Ok(self.open(run)?.doc.document()?.header()?.scope)
+        Ok(self.open(run)?.doc.document().header()?.scope)
     }
 
     /// Continue an interrupted run as a fresh attempt. `confirm` is the
@@ -114,9 +111,6 @@ impl Orchestrator {
         mut resolved_scope: Option<ResolvedScope>,
     ) -> Result<Started, RunError> {
         self.ensure_scope_recovery()?;
-        if self.header(run)?.bot.is_some() {
-            return Err(super::bots::refused("bot_continue_requires_new_run"));
-        }
         let prior = match self.status(run)? {
             RunStatus::Interrupted { prior_attempt } => prior_attempt,
             other => {
@@ -133,7 +127,7 @@ impl Orchestrator {
         }
 
         // D48, over the original pins, before anything is fenced.
-        let header = self.open(run)?.doc.document()?.header()?;
+        let header = self.open(run)?.doc.document().header()?;
         if let Some(scope) = resolved_scope.as_mut() {
             self.verify_resolved_scope(run, &header.scope, scope)?;
         }

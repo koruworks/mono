@@ -6,7 +6,7 @@ use super::*;
 fn fresh_database_has_no_work_and_uses_shared_durable_configuration() {
     let db = Database::in_memory().unwrap();
     assert_eq!(db.status().unwrap(), Status::default());
-    assert_eq!(diagnose(&db.connection).unwrap().schema_version, 1);
+    assert_eq!(diagnose(&db.connection).unwrap().schema_version, 2);
     for (pragma, expected) in [("synchronous", 2), ("foreign_keys", 1)] {
         let actual: i64 = db
             .connection
@@ -21,7 +21,7 @@ fn newer_database_is_refused_before_pragmas_but_diagnosis_still_answers() {
     let mut connection = Connection::open_in_memory().unwrap();
     connection
         .execute_batch(
-            "PRAGMA user_version = 2; PRAGMA synchronous = OFF; CREATE TABLE future (value TEXT);",
+            "PRAGMA user_version = 3; PRAGMA synchronous = OFF; CREATE TABLE future (value TEXT);",
         )
         .unwrap();
     assert_eq!(
@@ -35,8 +35,8 @@ fn newer_database_is_refused_before_pragmas_but_diagnosis_still_answers() {
     assert_eq!(
         diagnose(&connection).unwrap(),
         Diagnostic {
-            schema_version: 2,
-            supported_version: 1,
+            schema_version: 3,
+            supported_version: 2,
             status: None,
             status_error: Some(Error::SchemaTooNew),
         }
@@ -82,5 +82,34 @@ fn diagnostic_never_contains_content() {
         !serde_json::to_string(&report)
             .unwrap()
             .contains("private name")
+    );
+}
+
+#[test]
+fn version_two_preserves_v1_data_and_old_build_refuses_it() {
+    let old = Schema {
+        database: DATABASE_NAME,
+        understood: 1,
+        migrations: &SCHEMA.migrations[..1],
+    };
+    let mut connection = koru_sqlite::open_in_memory(&old).unwrap();
+    connection.execute("INSERT INTO bots(id,owner,name,settings,access,knowledge_pages,visibility) VALUES ('retained','owner','name',x'7b7d',x'7b7d',x'5b5d','private')",[]).unwrap();
+    koru_sqlite::prepare(&SCHEMA, &mut connection).unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT name FROM bots WHERE id='retained'", [], |r| r
+                .get::<_, String>(0))
+            .unwrap(),
+        "name"
+    );
+    assert!(matches!(
+        koru_sqlite::prepare(&old, &mut connection),
+        Err(koru_sqlite::OpenError::SchemaTooNew { .. })
+    ));
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM routines", [], |r| r.get::<_, u64>(0))
+            .unwrap(),
+        0
     );
 }

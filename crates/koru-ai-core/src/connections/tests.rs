@@ -3,8 +3,8 @@
 //! and an access command without a connection grant keep their pre-M5 bytes.
 use super::*;
 use crate::bots::{
-    Bot, BotAccess, BotCommand, BotConfig, BotId, BotPage, BotRoutineAccessUpdate, DeviceId,
-    UserScopeId, bot_native_policy, bot_native_policy_from,
+    Bot, BotAccess, BotCommand, BotConfig, BotId, BotPage, DeviceId, UserScopeId,
+    bot_native_policy, bot_native_policy_from,
 };
 use crate::{ChatId, DocumentId, ModelSelection, WorkspaceId};
 
@@ -178,42 +178,6 @@ fn m5_ai_update_access_fingerprint_covers_connections_only_when_present() {
             r#""operation":"read_item","account":"x""#
         ))
         .is_err()
-    );
-}
-
-#[test]
-fn m5_ai_routine_access_edit_carries_the_routines_own_grants_over() {
-    let home = WorkspaceId::from_uuid(id(1));
-    let update = BotRoutineAccessUpdate {
-        request: crate::bots::BotRequestId::from_uuid(id(40)),
-        bot: BotId::from_uuid(id(2)),
-        schedule: koru_delegate_core::ScheduleId::from_uuid(id(41)),
-        expected_grant_revision: 1,
-        access: BotAccess::Workspace,
-        selected_pages: vec![],
-    };
-    let plain = update.grant(home, 3, &Default::default()).unwrap();
-    assert!(plain.policy.connections.is_empty());
-    assert!(
-        !String::from_utf8(plain.canonical_bytes().unwrap())
-            .unwrap()
-            .contains("connections")
-    );
-    let kept = [grant(8)].into();
-    let carried = update.grant(home, 3, &kept).unwrap();
-    assert_eq!(carried.policy.connections, kept);
-    assert_ne!(carried.digest, plain.digest);
-    assert_eq!(carried.digest, carried.canonical_digest().unwrap());
-    // Everything else about the grant is what it was.
-    let mut same = carried.clone();
-    same.policy.connections.clear();
-    same.digest = plain.digest;
-    assert_eq!(same, plain);
-    // Seventeen cannot be carried.
-    assert!(
-        update
-            .grant(home, 3, &(10..27).map(grant).collect())
-            .is_err()
     );
 }
 

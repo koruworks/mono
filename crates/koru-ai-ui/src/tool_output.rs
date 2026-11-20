@@ -9,7 +9,8 @@
 //! [`layout`] lays out once and the surface keeps until the row changes.
 //!
 //! **Text** is the fallback every other renderer falls back to: the output
-//! as Markdown, so a fenced block is a code block and not three backticks.
+//! as pretty JSON when it holds an object or array, otherwise as Markdown,
+//! so a fenced block is a code block and not three backticks.
 //! Whatever the renderer, the tool's own error is shown once, in the error
 //! color; an input that says nothing (`{}`) is not shown; and the outcome
 //! and the time sit on one quiet line under it all.
@@ -141,6 +142,22 @@ pub(crate) fn pieces(
     now_ms: i64,
     expanded: bool,
 ) -> Vec<Piece> {
+    pieces_timed(activity, lang, now_ms, expanded, true)
+}
+
+/// Native observations carry content and outcomes, but no tool timestamps.
+/// Their shared renderer projection must not present a turn time as a call time.
+pub(crate) fn observed_pieces(activity: &ToolActivity, lang: Lang, expanded: bool) -> Vec<Piece> {
+    pieces_timed(activity, lang, 0, expanded, false)
+}
+
+fn pieces_timed(
+    activity: &ToolActivity,
+    lang: Lang,
+    now_ms: i64,
+    expanded: bool,
+    timing: bool,
+) -> Vec<Piece> {
     let call = Call::of(activity);
     let rendered = match shape(&call) {
         Shape::Command => command::render(&call, lang, expanded),
@@ -154,12 +171,13 @@ pub(crate) fn pieces(
     }
     .unwrap_or_else(|| text(&call, lang, expanded));
     let mut pieces = rendered.pieces;
-    pieces.push(Piece::Meta(status_line(
+    pieces.push(Piece::Meta(status_line_timed(
         activity,
         call.error.is_none() && rendered.notes.is_empty(),
         &rendered.notes,
         lang,
         now_ms,
+        timing,
     )));
     pieces
 }
@@ -300,7 +318,7 @@ pub(crate) fn says_nothing(input: &str) -> bool {
 }
 
 /// The fallback: the input when there is one to show, the error once, and
-/// the output as Markdown.
+/// the output as pretty JSON or Markdown.
 fn text(call: &Call<'_>, lang: Lang, expanded: bool) -> Rendered {
     let mut pieces = Vec::new();
     if let Some(input) = call.input {
@@ -319,7 +337,18 @@ fn text(call: &Call<'_>, lang: Lang, expanded: bool) -> Rendered {
     }
     error_block(call, expanded, lang, &mut pieces);
     if let Some(output) = call.output {
-        markdown(&strip_ansi(output), expanded, lang, &mut pieces);
+        let output = strip_ansi(output);
+        if let Some(json) = pretty_json(&output) {
+            pieces.extend(code_block(
+                json.lines()
+                    .map(|line| CodeLine::plain(line, Ink::Text))
+                    .collect(),
+                expanded,
+                lang,
+            ));
+        } else {
+            markdown(&output, expanded, lang, &mut pieces);
+        }
     }
     Rendered {
         pieces,
@@ -379,25 +408,40 @@ pub(crate) fn error_block(call: &Call<'_>, expanded: bool, lang: Lang, pieces: &
 
 /// `text` as JSON pretty-printed when it is JSON, else as its own lines.
 pub(crate) fn json_lines(text: &str) -> Vec<String> {
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()
-        .filter(|value| value.is_object() || value.is_array())
-        .and_then(|value| serde_json::to_string_pretty(&value).ok())
+    pretty_json(text)
         .unwrap_or_else(|| text.to_owned())
         .lines()
         .map(str::to_owned)
         .collect()
 }
 
+/// Only containers are structured output. JSON scalars can also be prose.
+fn pretty_json(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .filter(|value| value.is_object() || value.is_array())
+        .and_then(|value| serde_json::to_string_pretty(&value).ok())
+}
+
+/// The complete value retained with the call, before any display formatting
+/// or line folding. An upstream summary stays a summary; nothing is fetched.
+pub(crate) fn copy_text(activity: &ToolActivity) -> Option<&str> {
+    activity
+        .agent_output
+        .as_deref()
+        .filter(|text| !text.trim().is_empty())
+}
+
 /// The outcome and the time on one line — *Done · 1s · 2 minutes ago* —
 /// and, for a failure the tool gave no words for, why, as the host
 /// classified it.
-pub(crate) fn status_line(
+fn status_line_timed(
     activity: &ToolActivity,
     reason: bool,
     notes: &[String],
     lang: Lang,
     now_ms: i64,
+    timing: bool,
 ) -> String {
     let mut parts = vec![if reason {
         agent_row_detail(activity, lang)
@@ -405,12 +449,12 @@ pub(crate) fn status_line(
         agent_row_outcome(activity, lang)
     }];
     parts.extend(notes.iter().cloned());
-    if let Some(ended) = activity.completed_at {
+    if timing && let Some(ended) = activity.completed_at {
         parts.push(crate::tool_groups::seconds(
             ended.millis() - activity.proposed_at.millis(),
         ));
     }
-    if activity.status != ToolActivityStatus::ApprovalRequired {
+    if timing && activity.status != ToolActivityStatus::ApprovalRequired {
         parts.push(koru_i18n::time::relative_long(
             lang,
             activity.proposed_at.millis(),

@@ -15,8 +15,6 @@ use crate::mainview::MainView;
 use crate::mainview::harness::*;
 use crate::mainview::tab::{Tab, TabView};
 
-mod memory;
-
 fn scout() -> RosterBot {
     RosterBot::from(crate::bots::tests::bot(
         koru_ai_core::bots::BotId::mint(),

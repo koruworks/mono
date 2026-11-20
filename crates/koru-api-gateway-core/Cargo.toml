@@ -7,11 +7,6 @@ license.workspace = true
 publish = false
 description = "Public Koru API admission, routing, and bounded desktop service bridges."
 
-[features]
-# Actual private HTTP composition tests in the existing gateway host crate.
-# Off in product builds; this does not install a public route or capability.
-fixtures = []
-
 [dependencies]
 axum.workspace = true
 base64.workspace = true
@@ -24,9 +19,6 @@ koru-ai-core = { path = "../koru-ai-core" }
 koru-ai-provider-agent = { path = "../koru-ai-provider-agent" }
 koru-ai-server = { path = "../../apps/koru-ai-server" }
 koru-ai-wire = { path = "../koru-ai-wire" }
-# The private read (M5): the service the AI worker hosts, the content type it
-# returns and the bound on it. No credential store is named here.
-koru-connections = { path = "../koru-connections" }
 koru-api-wire = { path = "../koru-api-wire" }
 koru-bots-engine = { path = "../koru-bots-engine", features = ["schema"] }
 koru-core = { path = "../koru-core" }
@@ -77,10 +69,6 @@ uuid.workspace = true
 windows-sys.workspace = true
 
 [dev-dependencies]
-# Reuse the actual in-memory AI owner and Store fixture for Run-tool composition.
-koru-ai-server = { path = "../../apps/koru-ai-server", features = ["fixtures"] }
-# The scripted vendor and effect ledger behind the private read tool's tests.
-koru-connections = { path = "../koru-connections", features = ["test-support"] }
 # The SDK's client, driven against the in-process router through a
 # transport of its own: the protocol test of the run endpoint.
 rmcp = { version = "=3.9.0", default-features = false, features = ["client", "server"] }

@@ -42,6 +42,7 @@ pub(crate) enum NewKind {
     Document,
     Task,
     Chat,
+    Bot,
     Agent,
     Shell,
     /// Never made on its own: it always asks what — files, or content in
@@ -61,6 +62,9 @@ impl NewKind {
         if koru_features::ai() {
             kinds.push(Self::Chat);
         }
+        if crate::bots::shown() {
+            kinds.push(Self::Bot);
+        }
         if koru_features::agents() {
             kinds.push(Self::Agent);
         }
@@ -75,6 +79,7 @@ impl NewKind {
             Self::Document => 'd',
             Self::Task => 't',
             Self::Chat => 'c',
+            Self::Bot => 'b',
             Self::Agent => 'a',
             Self::Shell => 's',
             Self::Import => 'i',
@@ -87,6 +92,7 @@ impl NewKind {
             Self::Document => icons::DOCUMENT,
             Self::Task => icons::CHECK_SQUARE,
             Self::Chat => icons::CHATS_CIRCLE,
+            Self::Bot => icons::ROBOT,
             Self::Agent => icons::ROBOT,
             Self::Shell => icons::TERMINAL,
             Self::Import => icons::IMPORT,
@@ -98,6 +104,7 @@ impl NewKind {
             Self::Document => I18nKey::LauncherDocument,
             Self::Task => I18nKey::LauncherTask,
             Self::Chat => I18nKey::LauncherChat,
+            Self::Bot => I18nKey::BotsTabUnnamed,
             Self::Agent => I18nKey::TerminalKindAgent,
             Self::Shell => I18nKey::TerminalKindShell,
             Self::Import => I18nKey::LauncherImport,
@@ -231,6 +238,11 @@ impl MainView {
         if kind == NewKind::Import {
             return self.open_import_list(at);
         }
+        // A Bot first needs its name/runtime dialog; it chooses no split
+        // before that draft has been created.
+        if kind == NewKind::Bot {
+            return self.create_new(kind, OpenWhere::NewTab);
+        }
         if alt {
             return self.open_place_chooser(PlaceTarget::New(kind), at.point());
         }
@@ -324,6 +336,7 @@ impl MainView {
             NewKind::Document => self.new_document_tab(split),
             NewKind::Task => self.new_task(split),
             NewKind::Chat => self.new_chat(split),
+            NewKind::Bot => self.open_new_bot_dialog(super::new_bot::Opener::Elsewhere),
             NewKind::Import => self.open_import_list(self.next_ask_at(false)),
             NewKind::Agent | NewKind::Shell => match self.default_profile(kind) {
                 Some(index) => self.open_session_tab_where(index, None, split),

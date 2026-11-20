@@ -109,6 +109,13 @@ pub mod agent_catalog;
 mod agents;
 mod approval_modes;
 mod attachments;
+mod bot_presentation;
+mod bot_work;
+mod reply_actions;
+pub use bot_work::{BotWorkControl, BotWorkSemantics};
+#[cfg(feature = "test-support")]
+pub use koru_ai_wire::ChatTranscript as TestChatTranscript;
+use reply_actions::ReplyAction;
 mod chat_status;
 mod chats;
 mod composer;
@@ -128,6 +135,7 @@ mod managed_attention;
 mod managed_navigation;
 mod managed_questions;
 mod managed_surface;
+mod managed_tools;
 mod microphone;
 mod model_picker;
 mod new_divider;
@@ -139,6 +147,7 @@ mod questions;
 mod queue;
 mod quote_pills;
 mod reader;
+mod reconciliation;
 mod restored_scroll;
 mod skills;
 mod sources;
@@ -161,8 +170,8 @@ pub use koru_editor::components::entity_picker::{ExtraChoice, ExtraSection};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
 pub use owned::{
-    CopyDraft, CopyNote, CopyOutcome, HostPaint as EmptyTranscriptPaint, OwnedConversation,
-    OwnedOffers, Refusals as OwnedRefusals, SavedCopy, Unavailable as ConversationUnavailable,
+    HostPaint as EmptyTranscriptPaint, OwnedConversation, OwnedOffers, Refusals as OwnedRefusals,
+    Unavailable as ConversationUnavailable,
 };
 
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
@@ -176,7 +185,7 @@ const PAD: f32 = 14.0;
 const FIELD_H: f32 = 36.0;
 const BUTTON_H: f32 = ActionButton::H;
 const COMPOSER_ICON_SIZE: f32 = theme::IconSize::M.px(theme::Profile::Desktop);
-const CARD_GAP: f32 = 10.0;
+const CARD_GAP: f32 = koru_draw::theme::Space::S2.px(koru_draw::theme::Profile::Desktop);
 /// The space under an agent's notice line (D69), as under a work line.
 const NOTICE_GAP: f32 = 6.0;
 const COMPOSER_GAP: f32 = 8.0;
@@ -220,10 +229,10 @@ const COMPOSER_TOOLBAR_H: f32 = BUTTON_H;
 /// `COMPOSER_PAD_X` and sits `COMPOSER_PAD_BOTTOM` above the bottom, with
 /// `COMPOSER_TEXT_GAP` between the last line and the row. It used to be the
 /// chrome field padding, 7 px, which left the words flush with the border.
-const COMPOSER_PAD_X: f32 = 20.0;
-const COMPOSER_PAD_TOP: f32 = 20.0;
-const COMPOSER_TEXT_GAP: f32 = 16.0;
-const COMPOSER_PAD_BOTTOM: f32 = 14.0;
+const COMPOSER_PAD_X: f32 = 12.0;
+const COMPOSER_PAD_TOP: f32 = 6.0;
+const COMPOSER_TEXT_GAP: f32 = 6.0;
+const COMPOSER_PAD_BOTTOM: f32 = 8.0;
 /// Clear the shared raised shadow's 20 px spread and 3 px downward offset.
 const COMPOSER_BOTTOM_MARGIN: f32 = 24.0;
 /// **The quiet row under the composer box**, left-aligned with it: an agent
@@ -322,6 +331,8 @@ enum Focus {
     ModeChevron,
     /// A reply's *Worked for …* header: Enter or Space opens it.
     Work(MessageId),
+    /// A visible control within the reply's opened work.
+    WorkControl(work_view::WorkHit),
     /// An agent's waiting questions (koru-ai D108): the card's own cursor
     /// says which option, box or action.
     Questions(ToolInvocationId),
@@ -368,6 +379,7 @@ enum ResponseAction {
     Store(MessageId),
     Link(MessageBlockId),
     Retry(MessageId),
+    Details(MessageId),
 }
 
 /// A pending permission request: the one card in a turn, always open, with
@@ -398,6 +410,7 @@ struct ImageSpec {
     alt: String,
 }
 
+#[derive(Clone)]
 struct LoadedImage {
     brush: vello::peniko::ImageBrush,
     width: u32,
@@ -523,11 +536,17 @@ pub struct ChatSurface {
     live_reasoning: String,
     reasoning_expanded: bool,
     attempt: Option<InferenceAttemptId>,
+    /// A reopened legacy reply follows authoritative snapshots, not deltas.
+    observed_attempt: Option<InferenceAttemptId>,
+    observation_generation: u64,
+    observe_retry_at: Option<Instant>,
+    pending_observation_stop: Option<(ChatId, InferenceAttemptId, u64)>,
     /// The attempt whose stream has sent its terminal event; it stays in
     /// `attempt` until the transcript read that follows replaces it.
     ended_attempt: Option<InferenceAttemptId>,
     pending_assistant_message_id: Option<MessageId>,
     managed: Option<managed::State>,
+    host_navigation: managed_navigation::State,
     /// Uncertain submissions stay with their conversation when this surface
     /// is rebound. Reopening reconciles the same receipt, never a new send.
     managed_outbox: HashMap<ChatId, (koru_ai_wire::bot_threads::Command, Option<SentMessage>)>,
@@ -566,6 +585,8 @@ pub struct ChatSurface {
     /// ([`Self::set_mention_names`]): what a sent message's mention reads
     /// as. Empty unless a host feeds it.
     mention_names: HashMap<uuid::Uuid, String>,
+    bot_faces: HashMap<uuid::Uuid, u8>,
+    working_bot: Option<work_view::WorkingBot>,
     /// Documents whose title has been asked of the reader once already.
     titles_requested: HashSet<DocumentId>,
     /// A chip or a titled link was clicked: the document the host should open.
@@ -607,6 +628,10 @@ pub struct ChatSurface {
     question_cards: HashMap<ToolInvocationId, questions::Card>,
     /// Each reply's work view, in the order the replies happened.
     work_layouts: Vec<work_view::WorkLayout>,
+    bot_work: Option<bot_work::Dialog>,
+    bot_work_press: bool,
+    bot_work_replies: HashSet<MessageId>,
+    bot_work_generation: u64,
     /// A local agent's notices, each a grey line in front of its reply
     /// (koru-ai D69), in the order they came.
     notice_layouts: Vec<NoticeLayout>,
@@ -633,6 +658,7 @@ pub struct ChatSurface {
     live_turn_started_ms: Option<i64>,
     /// When a live work header last ticked.
     work_ticked_at: Option<Instant>,
+    bot_progress: Option<(InferenceAttemptId, bot_presentation::Progress)>,
     message_width: f32,
     last_rebuild_stats: RebuildStats,
     messages_dirty: bool,
@@ -679,12 +705,9 @@ pub struct ChatSurface {
     model_options_open: bool,
     model_option_offset: usize,
     chat_model_open: bool,
-    context_window_open: bool,
     context_window_usage: HashMap<ChatId, (u64, u64)>,
     model_chevron: Tween,
     microphone_chevron: Tween,
-    send_chevron: Tween,
-    send_chevron_reveal: Tween,
     /// The model picker's rail, query, highlight and scroll
     /// ([`model_picker`]), reset each time it opens.
     picker: model_picker::PickerState,
@@ -759,7 +782,8 @@ pub struct ChatSurface {
     /// A folder pick the host owes this surface (the native dialog is the
     /// window's, never the surface's).
     working_folder_request: Option<WorkingFolderRequest>,
-    response_hover: Option<(usize, u8)>,
+    response_hover: Option<(usize, ReplyAction)>,
+    reply_tooltip: Tooltip,
     response_message_hover: Option<usize>,
     tool_activity_hover: Option<(ToolInvocationId, u8)>,
     tool_workspace_offset: usize,
@@ -814,10 +838,6 @@ pub struct ChatSurface {
     /// own content holds the keyboard. All off for every surface whose host
     /// never asks, which then behaves exactly as it did.
     hosted_empty: owned::HostedEmpty,
-    /// **The conversation is shown from a saved copy** ([`owned`], *A saved
-    /// copy*): what its host said about it. `None` for every surface whose
-    /// host never says, which then behaves exactly as it did.
-    saved_copy: Option<owned::CopyState>,
     /// How this surface's threads connect: ordinary, or first-party with
     /// `bots.manage` for an owned surface ([`Self::new_owned_at`]).
     scopes: reader::Scopes,
@@ -1075,9 +1095,14 @@ impl ChatSurface {
             live_reasoning: String::new(),
             reasoning_expanded: false,
             attempt: None,
+            observed_attempt: None,
+            observation_generation: 0,
+            observe_retry_at: None,
+            pending_observation_stop: None,
             ended_attempt: None,
             pending_assistant_message_id: None,
             managed: None,
+            host_navigation: managed_navigation::State::default(),
             managed_outbox: HashMap::new(),
             managed_cards: HashMap::new(),
             refused_pictures: HashSet::new(),
@@ -1097,6 +1122,8 @@ impl ChatSurface {
             composer_hit_rect: Rect::new(14.0, 626.0, 338.0, 40.0),
             document_titles: HashMap::new(),
             mention_names: HashMap::new(),
+            bot_faces: HashMap::new(),
+            working_bot: None,
             titles_requested: HashSet::new(),
             open_document_request: None,
             place_document_request: None,
@@ -1119,6 +1146,10 @@ impl ChatSurface {
             tool_activity_layouts: Vec::new(),
             question_cards: HashMap::new(),
             work_layouts: Vec::new(),
+            bot_work: None,
+            bot_work_press: false,
+            bot_work_replies: HashSet::new(),
+            bot_work_generation: 0,
             notice_layouts: Vec::new(),
             opened_work: HashSet::new(),
             opened_step_groups: HashSet::new(),
@@ -1130,6 +1161,7 @@ impl ChatSurface {
             live_answer: live_markdown::LiveAnswer::default(),
             live_turn_started_ms: None,
             work_ticked_at: None,
+            bot_progress: None,
             message_width: 0.0,
             last_rebuild_stats: RebuildStats::default(),
             messages_dirty: true,
@@ -1167,12 +1199,9 @@ impl ChatSurface {
             model_options_open: false,
             model_option_offset: 0,
             chat_model_open: false,
-            context_window_open: false,
             context_window_usage: HashMap::new(),
             model_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
             microphone_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
-            send_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
-            send_chevron_reveal: Tween::new(theme::GLYPH_MORPH_MS, false),
             picker,
             picker_tooltip: Tooltip::default(),
             tool_access_open: false,
@@ -1202,6 +1231,7 @@ impl ChatSurface {
             setup_agent: None,
             working_folder_request: None,
             response_hover: None,
+            reply_tooltip: Tooltip::default(),
             response_message_hover: None,
             tool_activity_hover: None,
             tool_workspace_offset: 0,
@@ -1230,7 +1260,6 @@ impl ChatSurface {
             owned: None,
             unavailable: None,
             hosted_empty: owned::HostedEmpty::default(),
-            saved_copy: None,
             scopes: reader::Scopes::Ordinary,
             highlight: None,
             confirm: None,
@@ -1390,6 +1419,9 @@ impl ChatSurface {
             self.titles_requested.remove(&document);
         }
         self.attempt = None;
+        self.observed_attempt = None;
+        self.observe_retry_at = None;
+        self.pending_observation_stop = None;
         self.ended_attempt = None;
         self.pending_assistant_message_id = None;
         self.pending_user = None;
@@ -1442,7 +1474,9 @@ impl ChatSurface {
         if self.owned.is_some() {
             return false;
         }
+        self.retire_transcript_observation();
         self.suppress_next_document_context = true;
+        self.pending_link_chat = None;
         self.fresh_chat_wanted = true;
         // Before the boot has answered there is no provider to create under:
         // the intent is kept, and the boot's snapshot creates the chat
@@ -1456,6 +1490,7 @@ impl ChatSurface {
     /// Open a durable chat link. Calling this before activation makes the
     /// first read target the link directly; calling it later queues a read.
     pub fn open_link(&mut self, chat: ChatId, block: Option<MessageBlockId>) -> bool {
+        self.close_bot_work();
         // An owned surface shows its own conversation; another is bound,
         // never opened over it ([`Self::bind_owned`]).
         if self.owned.as_ref().is_some_and(|owned| owned.chat != chat) {
@@ -1724,6 +1759,8 @@ impl ChatSurface {
             image,
             stop_hint,
             self.copy_feedback.maintenance_deadline(),
+            self.observe_retry_at,
+            self.reply_tooltip.maintenance_deadline(),
             self.link_card.deadline(),
             self.web_search_tooltip.maintenance_deadline(),
             self.picker_tooltip.maintenance_deadline(),
@@ -1749,6 +1786,7 @@ impl ChatSurface {
         let mut changed = self.staged_embedded_send.is_some();
         changed |= self.drain_updates();
         self.maintain_managed(_now);
+        changed |= self.maintain_observation(_now);
         self.follow_agent_checks(_now);
         self.follow_agent_modes(_now);
         if self
@@ -1775,10 +1813,9 @@ impl ChatSurface {
         changed |= self.copy_feedback.maintain(_now);
         changed |= self.model_chevron.advance(_now);
         changed |= self.microphone_chevron.advance(_now);
-        changed |= self.send_chevron.advance(_now);
-        changed |= self.send_chevron_reveal.advance(_now);
         changed |= self.link_card.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
+        changed |= self.reply_tooltip.maintain(_now);
         changed |= self.picker_tooltip.maintain(_now);
         changed |= self.queue_tooltip.maintain(_now);
         changed |= self.maintain_skill_tooltip(_now);
@@ -1825,9 +1862,8 @@ impl ChatSurface {
         self.copy_feedback.animating(Instant::now())
             || self.model_chevron.animating()
             || self.microphone_chevron.animating()
-            || self.send_chevron.animating()
-            || self.send_chevron_reveal.animating()
             || self.web_search_tooltip.animating(Instant::now())
+            || self.reply_tooltip.animating(Instant::now())
             || self.picker_tooltip.animating(Instant::now())
             || self.queue_tooltip.animating(Instant::now())
             || self.skill_tooltip().animating(Instant::now())
@@ -1836,6 +1872,9 @@ impl ChatSurface {
     }
 
     pub fn cursor_icon(&self) -> CursorIcon {
+        if self.bot_work_open() {
+            return CursorIcon::Default;
+        }
         if let Some(cursor) = self.viewer_cursor() {
             return cursor;
         }
@@ -1945,13 +1984,24 @@ impl ChatSurface {
     }
 
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        if self.bot_work_open() {
+            return self.bot_work_key(key, mods);
+        }
         // An unavailable owned conversation has nothing to type into.
         if self.unavailable.is_some() {
             return false;
         }
         // Any key lets a `$` row's description go at once (D121).
-        let tooltip_gone = self.skill_tooltip_clear();
-        self.route_key(key, text, mods) || tooltip_gone
+        let tooltip_gone = self.skill_tooltip_clear() | self.reply_tooltip.clear();
+        let handled = self.route_key(key, text, mods);
+        if !self.bot_work_open()
+            && let Some(work_view::WorkHit::Header(reply)) = self.work_focus()
+            && let Some(at) = self.bot_work_anchor(reply)
+        {
+            let hint = self.reply_tooltip_at(at.x + at.w * 0.5, at.y + at.h * 0.5);
+            self.reply_tooltip.set_hover(hint, Instant::now());
+        }
+        handled || tooltip_gone
     }
 
     fn route_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
@@ -1992,10 +2042,6 @@ impl ChatSurface {
         // and footer (§9.5).
         if let Some(handled) = self.picker_key(key, text, mods) {
             return handled;
-        }
-        if self.context_window_open && matches!(key, Key::Named(NamedKey::Escape)) {
-            self.context_window_open = false;
-            return true;
         }
         // *Save chat*'s name: Enter saves, Escape leaves, the rest is typing.
         if let Some(message) = self.destination_open {
@@ -2086,15 +2132,16 @@ impl ChatSurface {
         {
             return self.step_chat(step);
         }
-        if let Focus::Work(message) = self.focus
-            && let Some(handled) = self.work_key(message, key, mods)
-        {
+        if let Some(handled) = self.work_key(key, mods) {
             return handled;
         }
         if let Focus::Questions(tool) = self.focus
             && let Some(handled) = self.questions_key(tool, key, text, mods)
         {
             return handled;
+        }
+        if self.observing_bot_thread() {
+            return self.observer_key(key, mods);
         }
         if let Focus::ManagedQuestion(id) = self.focus
             && let Some(handled) = self.managed_question_key(id, key, text, mods)
@@ -2117,7 +2164,8 @@ impl ChatSurface {
             && !koru_keys::is_chord(mods)
             && (self.focus_managed_navigation(true)
                 || self.focus_managed_attention(true)
-                || self.step_managed_question(None, false))
+                || self.step_managed_question(None, false)
+                || self.focus_last_work())
         {
             return true;
         }
@@ -2296,6 +2344,9 @@ impl ChatSurface {
     /// at once, whichever path the key took: its picture is read off this
     /// thread (D9), and nothing is left armed for a later key.
     fn composer_key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
+        if self.observing_bot_thread() {
+            return false;
+        }
         let handled = self.composer.key(key, text, mods);
         // A `$` typed, its query grown, or the caret moved out of it (D121).
         let handled = self.sync_skill_list() || handled;
@@ -2364,8 +2415,7 @@ impl ChatSurface {
         }
         self.shown_chat_id()
             .and_then(|chat| self.queues.pause_reason(chat))
-            // A message on its way to the computer a saved copy came from.
-            .or(self.copy_line())
+            // Native command progress shares the existing status footer.
             .or(self.managed_line())
             .or(self.status.as_deref())
     }
@@ -2613,6 +2663,11 @@ impl ChatSurface {
     }
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
+        self.reply_tooltip.clear();
+        if self.bot_work_open() {
+            let (x, y) = self.bot_work_point(x, y);
+            return self.bot_work_pointer(x, y, true);
+        }
         if self.unavailable.is_some() {
             return false;
         }
@@ -2620,6 +2675,9 @@ impl ChatSurface {
         self.pressed_alt = self.pointer_mods == ModifiersState::ALT;
         if let Some(handled) = self.viewer_mouse_down(x, y) {
             return handled;
+        }
+        if self.observing_bot_thread() {
+            return self.observer_mouse_down(x, y);
         }
         if let Some(handled) = self.computer_choice_mouse_down(x, y) {
             return handled;
@@ -2821,20 +2879,6 @@ impl ChatSurface {
             self.web_search_tooltip.clear();
             return true;
         }
-        if self
-            .context_indicator_button()
-            .is_some_and(|button| button.contains(x, y))
-        {
-            self.context_window_open = !self.context_window_open;
-            self.chat_model_open = false;
-            return true;
-        }
-        if let Some(panel) = self.context_window_panel() {
-            self.context_window_open = false;
-            if panel.rect.contains(x, y) {
-                return true;
-            }
-        }
         if self.chat_model_selector_button().contains(x, y) {
             if self.chat_model_open {
                 self.tool_access_open = false;
@@ -2869,10 +2913,7 @@ impl ChatSurface {
             return self.activate_send_button();
         }
         if let Some(hit) = self.work_hit_at(x, y) {
-            if let work_view::WorkHit::Header(message) = hit {
-                self.focus = Focus::Work(message);
-                self.composer.set_focused(false);
-            }
+            self.focus_work(hit);
             return self.toggle_work(hit);
         }
         if let Some(handled) = self.managed_navigation_press(x, y) {
@@ -2945,7 +2986,7 @@ impl ChatSurface {
             return true;
         }
         match koru_link::parse(url) {
-            Ok(link @ koru_link::KoruLink::Document { .. }) => {
+            Ok(link @ (koru_link::KoruLink::Document { .. } | koru_link::KoruLink::Bot { .. })) => {
                 self.request_document_open(link);
                 true
             }
@@ -2970,7 +3011,7 @@ impl ChatSurface {
             let card = message_card(
                 area,
                 area.y - self.conversation_scroll + message.top,
-                message_height(message),
+                self.shown_message_height(message),
                 message,
             );
             // Asked on every move: a message the pointer is not on is not
@@ -2980,9 +3021,9 @@ impl ChatSurface {
             }
             match message.role {
                 ChatRole::Assistant => {
-                    let mut block_y = card.y + PAD;
+                    let mut block_y = card.y + message.padding();
                     for block in &message.blocks {
-                        let origin = (card.x + PAD, block_y);
+                        let origin = (card.x + message.padding(), block_y);
                         if let Some(hit) = block.link_at(x - origin.0, y - origin.1) {
                             return Some(link_card::ConversationLink::from_hit(
                                 &hit,
@@ -2994,7 +3035,7 @@ impl ChatSurface {
                     }
                 }
                 ChatRole::User if !message.links.is_empty() => {
-                    let origin = (card.x + PAD, card.y + PAD);
+                    let origin = (card.x + message.padding(), card.y + message.padding());
                     if let Some(hit) = koru_markdown::link_at(
                         &message.display,
                         &message.layout,
@@ -3064,10 +3105,10 @@ impl ChatSurface {
             if message.role != ChatRole::User || message.links.is_empty() {
                 continue;
             }
-            let h = message_height(message);
+            let h = self.shown_message_height(message);
             let card_y = area.y - self.conversation_scroll + message.top;
             let card = message_card(area, card_y, h, message);
-            let origin = (card.x + PAD, card.y + PAD);
+            let origin = (card.x + message.padding(), card.y + message.padding());
             let Some(index) = layout_cache::byte_at(&message.layout, x - origin.0, y - origin.1)
             else {
                 continue;
@@ -3128,6 +3169,10 @@ impl ChatSurface {
     }
 
     pub fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        if self.bot_work_open() {
+            let (x, y) = self.bot_work_point(x, y);
+            return self.bot_work_pointer(x, y, false);
+        }
         if let Some(changed) = self.viewer_mouse_move(x, y) {
             return changed;
         }
@@ -3202,6 +3247,10 @@ impl ChatSurface {
         } else {
             self.response_action_hover_at(x, y)
         };
+        let reply_hint = (!self.showing_setup())
+            .then(|| self.reply_tooltip_at(x, y))
+            .flatten();
+        let reply_hint_changed = self.reply_tooltip.set_hover(reply_hint, Instant::now());
         self.tool_activity_hover = if self.showing_setup() {
             None
         } else {
@@ -3226,16 +3275,19 @@ impl ChatSurface {
             .then(|| self.conversation_link_at(x, y))
             .flatten();
         let link_changed = self.link_card.track(under, (x, y), Instant::now());
+        let mode_opened = !self.showing_setup() && self.approval_mode_hover_open(old_pointer, x, y);
         let queue_changed = !self.showing_setup() && self.queue_hover(x, y);
         let queue_hover_changed = !self.showing_setup()
             && self.queue_hit_at(old_pointer.0, old_pointer.1) != self.queue_hit_at(x, y);
         dragged
             || queue_changed
             || queue_hover_changed
+            || mode_opened
             || pill_changed
             || response_dragged
             || link_changed
             || old_response_hover != self.response_hover
+            || reply_hint_changed
             || old_message_hover != self.response_message_hover
             || old_tool_hover != self.tool_activity_hover
             || old_work_hover != self.work_hover
@@ -3245,6 +3297,9 @@ impl ChatSurface {
     }
 
     pub fn mouse_up(&mut self) -> bool {
+        if self.bot_work_open() {
+            return self.bot_work_release();
+        }
         if let Some(handled) = self.viewer_mouse_up() {
             return handled;
         }
@@ -3286,6 +3341,9 @@ impl ChatSurface {
     }
 
     pub fn mouse_double_click(&mut self, x: f32, y: f32) -> bool {
+        if self.bot_work_open() {
+            return true;
+        }
         if self.unavailable.is_some() {
             return false;
         }
@@ -3301,7 +3359,7 @@ impl ChatSurface {
                 return handled;
             }
         }
-        if !self.showing_setup() && self.composer.contains(x, y) {
+        if !self.observing_bot_thread() && !self.showing_setup() && self.composer.contains(x, y) {
             return self.composer.mouse_double_click(x, y);
         }
         if let Some(mut hit) = self.response_text_hit(x, y) {
@@ -3333,6 +3391,9 @@ impl ChatSurface {
     }
 
     pub fn scroll_by(&mut self, delta: MouseScrollDelta) -> bool {
+        if self.bot_work_open() {
+            return self.bot_work_scroll(delta);
+        }
         if let Some(changed) = self.viewer_scroll(delta) {
             return changed;
         }
@@ -3342,6 +3403,7 @@ impl ChatSurface {
         // card goes too: what it hung from has moved.
         self.add_pill.hide();
         self.link_card.hide();
+        self.reply_tooltip.clear();
         // Over the composer's open picker, or over its own lines once they
         // overflow, the wheel is the composer's.
         let (px, py) = self.pointer;
@@ -3425,6 +3487,8 @@ impl ChatSurface {
         // Scrolling up lets go of the newest message (D77).
         if next < self.conversation_scroll {
             self.follow_tail = false;
+        } else if self.bot_chat_flow() && (max - next).abs() < 0.5 {
+            self.follow_tail = true;
         }
         self.conversation_scroll = next;
         changed
@@ -3583,6 +3647,12 @@ impl ChatSurface {
             menu.draw(canvas, root, &mut self.engine, menu_viewport, &enabled);
         }
         self.draw_unlifted_viewer(canvas, root);
+        if self.viewer_lift.is_none() && self.bot_work_open() {
+            self.draw_bot_work(
+                canvas,
+                root * Affine::translate((self.viewport.x as f64, self.viewport.y as f64)),
+            );
+        }
     }
 
     /// Whether the provider setup is drawn instead of the chat. Only when
@@ -3601,6 +3671,36 @@ impl ChatSurface {
     /// Hand a command to the reader, and say truthfully whether it was
     /// queued; a full or gone queue says so on the status line.
     fn queue_command(&mut self, command: Command) -> bool {
+        // Bot conversations cannot be branched by hidden/keyboard/native paths.
+        if self.bot_chat_flow()
+            && matches!(
+                &command,
+                Command::Branch(..)
+                    | Command::Engine {
+                        command: koru_ai_wire::bot_threads::Command::Branch { .. },
+                        ..
+                    }
+            )
+        {
+            return false;
+        }
+        if self.observing_bot_thread()
+            && matches!(
+                &command,
+                Command::Send(_)
+                    | Command::Branch(..)
+                    | Command::Retry(..)
+                    | Command::Steer(..)
+                    | Command::AnswerQuestions(..)
+                    | Command::Engine {
+                        command: koru_ai_wire::bot_threads::Command::Send { .. }
+                            | koru_ai_wire::bot_threads::Command::Join { .. },
+                        ..
+                    }
+            )
+        {
+            return false;
+        }
         // The floor under an owned surface's absent controls ([`owned`]).
         if !self.owned_admits(&command) {
             return false;
@@ -3746,6 +3846,20 @@ impl ChatSurface {
             self.chat_list_changed = true;
         }
         match update {
+            Update::Observation {
+                generation,
+                attempt,
+                update,
+            } => {
+                if generation != self.observation_generation
+                    || self.observed_attempt != Some(attempt)
+                    || self.attempt != Some(attempt)
+                    || self.ended_attempt == Some(attempt)
+                {
+                    return false;
+                }
+                return self.apply_update(*update);
+            }
             Update::EngineOpened(opened) => return self.managed_opened(*opened),
             Update::EngineRefreshed(update) => return self.managed_refreshed(*update),
             Update::EngineReply { thread, reply } => return self.managed_reply(thread, reply),
@@ -3829,7 +3943,11 @@ impl ChatSurface {
                     .selected_destination
                     .min(self.destinations.len().saturating_sub(1));
                 self.scroll_loaded_chat_to_bottom = transcript.is_some();
+                if let Some(transcript) = &transcript {
+                    self.settle_chat_link(transcript.chat.id);
+                }
                 self.transcript = transcript;
+                self.restore_transcript_attempt();
                 self.prime_skill_list();
                 self.messages_dirty = true;
                 // A saved OpenAI credential is enough to discover the
@@ -3862,6 +3980,7 @@ impl ChatSurface {
                     self.forget_input_walk();
                     self.waiting = false;
                     self.attempt = None;
+                    self.observed_attempt = None;
                     self.pending_assistant_message_id = None;
                     self.pending_user = None;
                     self.answering = false;
@@ -3925,9 +4044,22 @@ impl ChatSurface {
                 self.waiting = false;
                 self.refuse_chat_elsewhere(&transcript.chat);
             }
+            Update::Transcript(transcript) if self.keep_streamed_transcript(&transcript) => {
+                return false;
+            }
+            Update::Transcript(transcript) if self.observes_transcript(&transcript) => {
+                return self.apply_observed_transcript(self.observed_attempt.unwrap(), transcript);
+            }
+            Update::Observed {
+                attempt,
+                transcript,
+            } => {
+                return self.apply_observed_transcript(attempt, transcript);
+            }
             Update::Transcript(transcript) => {
                 // The transcript is authoritative after a read; discard an
                 // in-memory pair from a prior turn of this chat.
+                self.settle_chat_link(transcript.chat.id);
                 self.context_window_usage.remove(&transcript.chat.id);
                 self.sent_inputs.retain(|sent| {
                     sent.chat != transcript.chat.id
@@ -3937,6 +4069,7 @@ impl ChatSurface {
                 });
                 self.waiting = false;
                 self.attempt = None;
+                self.observed_attempt = None;
                 self.pending_assistant_message_id = None;
                 self.pending_user = None;
                 self.answering = false;
@@ -3962,6 +4095,7 @@ impl ChatSurface {
                     self.web_search_armed = true;
                 }
                 self.transcript = Some(transcript);
+                self.restore_transcript_attempt();
                 self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
@@ -4001,7 +4135,7 @@ impl ChatSurface {
                     self.context_window_usage.remove(&chat.id);
                 }
                 let chat_id = chat.id;
-                self.waiting = false;
+                self.waiting = self.reply_streaming() || self.message_on_its_way();
                 // The picker stays open over a model chosen in it (D66): its
                 // footer becomes the landed model's, and the list is kept
                 // in range around the chosen row. Not promoted: only a
@@ -4022,8 +4156,6 @@ impl ChatSurface {
                     self.sync_skill_list();
                 }
                 self.settle_after_choice();
-                self.status =
-                    Some(koru_i18n::t(self.lang, koru_i18n::Key::AiModelNextTurn).to_owned());
                 self.drop_strip_if_not_agent(chat_id);
             }
             Update::PrivacyUpdated(chat) => {
@@ -4275,6 +4407,7 @@ impl ChatSurface {
                 };
                 self.waiting = false;
                 self.attempt = None;
+                self.observed_attempt = None;
                 self.pending_assistant_message_id = None;
                 self.pending_user = None;
                 self.answering = false;
@@ -4290,6 +4423,7 @@ impl ChatSurface {
                 }
                 self.chats = chats;
                 self.transcript = transcript;
+                self.restore_transcript_attempt();
                 self.prime_skill_list();
                 self.usage_report = None;
                 self.question_navigation = None;
@@ -4302,6 +4436,10 @@ impl ChatSurface {
                 }
             }
             Update::Accepted(accepted) => {
+                self.bot_progress =
+                    Some((accepted.attempt_id, bot_presentation::Progress::Waiting));
+                self.observed_attempt = None;
+                self.observe_retry_at = None;
                 if let Some(chat) = self.current_chat_id() {
                     self.context_window_usage.remove(&chat);
                 }
@@ -4323,6 +4461,7 @@ impl ChatSurface {
             }
             Update::Event(event) => {
                 let terminal = event.event.is_terminal();
+                self.observe_bot_progress(&event.event);
                 match &event.event {
                     PublicAiEvent::TextDelta { text, .. } => {
                         self.pulse = None;
@@ -4459,17 +4598,28 @@ impl ChatSurface {
             Update::Recovered {
                 attempt,
                 status,
-                transcript,
+                mut transcript,
             } => {
-                if self.attempt != Some(attempt) {
+                if self.attempt != Some(attempt)
+                    || !self.recovery_targets_current_chat(transcript.chat.id)
+                {
                     tracing::debug!(
                         target: "koru_ai::ui_stream",
                         attempt = %attempt,
+                        chat = %transcript.chat.id,
                         status = ?status,
-                        "AI UI ignored recovery for an attempt that is no longer active"
+                        "AI UI ignored recovery outside the active attempt and chat"
                     );
                     return true;
                 }
+                tracing::debug!(
+                    target: "koru_ai::ui_stream",
+                    attempt = %attempt,
+                    chat = %transcript.chat.id,
+                    status = ?status,
+                    "AI UI applying recovered terminal transcript"
+                );
+                self.ended_attempt = Some(attempt);
                 self.replies_finished = self.replies_finished.wrapping_add(1);
                 if let Some(chat) = self.shown_chat_id() {
                     self.reply_end = Some((
@@ -4480,6 +4630,12 @@ impl ChatSurface {
                             _ => queue::ReplyEnd::Failed,
                         },
                     ));
+                }
+                if self.observed_attempt == Some(attempt)
+                    && let Some(current) = &self.transcript
+                {
+                    transcript.chat.current_model = current.chat.current_model.clone();
+                    transcript.reasoning_control = current.reasoning_control.clone();
                 }
                 let changed = self.apply_update(Update::Transcript(transcript));
                 self.status = match status {
@@ -4516,6 +4672,7 @@ impl ChatSurface {
                 }
                 self.waiting = false;
                 self.attempt = None;
+                self.observed_attempt = None;
                 self.pending_assistant_message_id = None;
                 self.pending_user = None;
                 self.answering = false;
@@ -4781,10 +4938,7 @@ impl ChatSurface {
                     code = failure.code,
                     "AI UI send was not accepted; the message is back in the composer"
                 );
-                if self.copy_send_failed(&failure) {
-                    // A saved copy's host names this refusal ([`owned`]):
-                    // whether the draft comes back is the outcome's to say.
-                } else if self.chat_unmade() {
+                if self.chat_unmade() {
                     // The create failed and said why; the send only follows.
                     self.give_back_sent(None);
                 } else {
@@ -4824,6 +4978,7 @@ impl ChatSurface {
                 } else {
                     self.waiting = false;
                     self.attempt = None;
+                    self.observed_attempt = None;
                     self.pending_assistant_message_id = None;
                     self.live_sources.clear();
                     self.open_searches.clear();
@@ -4888,6 +5043,9 @@ impl ChatSurface {
         };
         if transcript.chat.id != activity.chat_id {
             return;
+        }
+        if self.attempt == Some(activity.attempt_id) {
+            self.bot_progress = Some((activity.attempt_id, bot_presentation::Progress::Thinking));
         }
         let arrived_new = !transcript
             .tool_activities
@@ -5038,6 +5196,8 @@ impl ChatSurface {
         if self.owned.is_some() {
             return;
         }
+        self.retire_transcript_observation();
+        self.pending_link_chat = None;
         let mut chat = unmade_transcript(model);
         // A new chat with an agent starts from the person's default
         // permission, mapped onto the agent's own modes (D39).
@@ -5425,10 +5585,8 @@ impl ChatSurface {
     }
 
     fn send_composer(&mut self) -> bool {
-        // **A saved copy whose computer is not reachable sends nothing**
-        // ([`owned`]): the draft stays in the composer, which says why.
-        if self.copy_holds_send() {
-            return true;
+        if self.observing_bot_thread() {
+            return false;
         }
         // **A reply is running: the message is queued** ([`queue`]), and
         // sent when the reply completes.
@@ -5589,10 +5747,12 @@ impl ChatSurface {
         self.pending_assistant_message_id = None;
         self.question_navigation = None;
         self.question_navigation_anchor = None;
-        // The next layout pass knows the exact top of this optimistic user
-        // card. Move there once; streaming below it must not keep moving the
-        // reader after that initial, intentional navigation.
-        self.scroll_to_pending_question = true;
+        // Bot chats flow from the bottom like a conversation. Ordinary AI
+        // chats retain their deliberate navigation to the submitted question.
+        self.scroll_to_pending_question = !self.bot_chat_flow();
+        if self.bot_chat_flow() {
+            self.follow_tail = true;
+        }
         self.pending_question_anchor = None;
         self.draft.clear();
         // Set aside whole rather than cleared: a send that does not go puts
@@ -5691,6 +5851,7 @@ impl ChatSurface {
         }
         self.waiting = false;
         self.attempt = None;
+        self.observed_attempt = None;
         self.pending_assistant_message_id = None;
         self.pending_user = None;
         self.answering = false;
@@ -6212,7 +6373,12 @@ impl ChatSurface {
     }
 
     fn content_rect(&self) -> Rect {
-        let width = (self.viewport.w - PAD * 2.0).max(1.0).min(CONTENT_MAX_W);
+        let max = if self.bot_chat_flow() {
+            CONTENT_MAX_W * bot_presentation::COLUMN_FRACTION
+        } else {
+            CONTENT_MAX_W
+        };
+        let width = (self.viewport.w - PAD * 2.0).max(1.0).min(max);
         Rect::new(
             self.viewport.x + (self.viewport.w - width) * 0.5,
             self.viewport.y,
@@ -6270,6 +6436,10 @@ impl ChatSurface {
     /// the conversation above, the quiet row below — derives from this.
     fn composer_rect(&mut self) -> Rect {
         let content = self.content_rect();
+        if self.observing_bot_thread() {
+            self.composer_hit_rect = Rect::new(content.x, content.y + content.h, content.w, 0.0);
+            return self.composer_hit_rect;
+        }
         let width = content.w.max(MIN_COMPOSER_W);
         let available = (width - COMPOSER_PAD_X * 2.0).max(1.0);
         let max_chip_w = available.min(composer_band::MAX_CHIP_W);
@@ -6311,12 +6481,29 @@ impl ChatSurface {
             self.chip_scroll,
         );
         self.chip_scroll = self.chip_band.scroll;
+        let mode_name = (self.send_mode() != queue::SendMode::Stop)
+            .then(|| self.approval_presentation())
+            .flatten()
+            .map(|(row, _)| row.title);
+        let compact_width = available
+            - composer_shell::controls_width(
+                mode_name.is_some(),
+                self.dictation.offered,
+                self.dictation.microphone.offered,
+            )
+            - COMPOSER_PAD_X * 2.0;
+        let inline = self.transcript.as_ref().is_some_and(|transcript| {
+            agents::is_agent_provider(&transcript.chat.current_model.provider)
+        }) && self.strip_band() == 0.0
+            && !self.dictating()
+            && compact_width >= 80.0
+            && self.composer.fits_single_line(compact_width);
         // One to eight visual lines of the composer's own text, then it
         // scrolls — measured by the editor at this width.
         let text_h = self
             .composer
             .text_height(
-                (width - COMPOSER_PAD_X * 2.0).max(1.0),
+                if inline { compact_width } else { available }.max(1.0),
                 COMPOSER_MIN_LINES,
                 COMPOSER_MAX_LINES,
             )
@@ -6325,7 +6512,7 @@ impl ChatSurface {
             + COMPOSER_PAD_TOP
             + text_h
             + COMPOSER_TEXT_GAP
-            + COMPOSER_TOOLBAR_H
+            + if inline { 0.0 } else { COMPOSER_TOOLBAR_H }
             + COMPOSER_PAD_BOTTOM;
         // The quiet row under the box, when there is one, is part of the
         // block: the box stands on it rather than on the window's edge.
@@ -6343,14 +6530,11 @@ impl ChatSurface {
         };
         let rect = Rect::new(content.x, y, width, height);
         self.composer_hit_rect = rect;
-        let mode_name = (self.send_mode() != queue::SendMode::Stop)
-            .then(|| self.approval_presentation())
-            .flatten()
-            .map(|(row, _)| row.title);
         self.composer_shell = Some(composer_shell::layout(
             rect,
             self.strip_band(),
             text_h,
+            inline,
             koru_i18n::t(self.lang, koru_i18n::Key::AiComposerAddContext),
             self.send_button_name(),
             mode_name.as_deref(),
@@ -6574,6 +6758,18 @@ impl ChatSurface {
     }
 
     fn chat_model_button(&self) -> Rect {
+        if self.transcript.is_some() {
+            if let Some(shell) = &self.composer_shell {
+                return shell.model();
+            }
+            let toolbar = self.composer_toolbar_rect();
+            return Rect::new(
+                toolbar.x + toolbar.w - BUTTON_H,
+                toolbar.y,
+                BUTTON_H,
+                BUTTON_H,
+            );
+        }
         let toolbar = self.composer_toolbar_rect();
         // As wide as its label wants, up to half the toolbar; the mode
         // control gives way to its left.
@@ -6589,26 +6785,15 @@ impl ChatSurface {
         Rect::new(toolbar.x + toolbar.w - width, toolbar.y, width, toolbar.h)
     }
 
-    fn context_indicator_button(&self) -> Option<Rect> {
-        self.context_indicator_rect(self.chat_model_button())
-    }
-
     fn chat_model_selector_button(&self) -> Rect {
         self.model_selector_rect(self.chat_model_button())
     }
 
     fn model_selector_rect(&self, model: Rect) -> Rect {
-        let lead_width = self
-            .context_indicator_rect(model)
-            .map_or(0.0, |rect| rect.w + 2.0);
-        Rect::new(model.x + lead_width, model.y, model.w - lead_width, model.h)
+        model
     }
 
-    fn context_indicator_rect(&self, model: Rect) -> Option<Rect> {
-        self.transcript.as_ref()?;
-        Some(Rect::new(model.x, model.y, BUTTON_H, model.h))
-    }
-
+    #[cfg(test)]
     fn context_progress(&self) -> Option<f32> {
         let (used, size) = self.reported_context_usage()?;
         Some(used as f32 / size as f32)
@@ -7245,12 +7430,6 @@ impl ChatSurface {
             {
                 return Some((5, 8));
             }
-            if self
-                .context_indicator_button()
-                .is_some_and(|button| button.contains(x, y))
-            {
-                return Some((5, 12));
-            }
             if self.chat_model_selector_button().contains(x, y) {
                 return Some((5, 5));
             }
@@ -7350,11 +7529,13 @@ impl ChatSurface {
             rect.y,
             rect.w,
             rect.h,
-            &scene::Panel::popover(18.0).border(if self.focus == Focus::Composer {
-                p.focus_ring
-            } else {
-                p.panel_border
-            }),
+            &scene::Panel::popover(18.0).shadow_alpha(0.5).border(
+                if self.focus == Focus::Composer {
+                    p.focus_ring
+                } else {
+                    p.panel_border
+                },
+            ),
         );
     }
 
@@ -7362,11 +7543,7 @@ impl ChatSurface {
         // One caret at a time: none here while the host's own content in
         // the empty transcript holds the keyboard.
         let focused = self.focus == Focus::Composer && !self.host_holds_keyboard();
-        // A held saved copy says why nothing can be sent ([`owned`]).
-        let held = self.copy_placeholder().map(str::to_owned);
-        let placeholder = held
-            .as_deref()
-            .unwrap_or_else(|| koru_i18n::t(self.lang, self.composer_placeholder_key()));
+        let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
         self.composer.set_focused(focused);
         self.composer
             .draw(canvas, root, focused, self.pointer, placeholder);
@@ -7437,6 +7614,55 @@ impl ChatSurface {
                 .draw(canvas, root, &mut self.engine);
         }
         self.draw_reasoning_drawer(canvas, root, composer);
+        if let Some(transcript) = &self.transcript {
+            let _model = koru_draw::inspect::scope(
+                "ComposerModel",
+                "element",
+                root,
+                scene::rect(
+                    model_button.x,
+                    model_button.y,
+                    model_button.w,
+                    model_button.h,
+                ),
+                |record| record.property("action", "open models and context usage", "button"),
+            );
+            let hot = model_button.contains(self.pointer.0, self.pointer.1);
+            if hot || self.chat_model_open {
+                scene::fill(
+                    canvas,
+                    root,
+                    theme::p().hover_tint,
+                    &scene::rrect(
+                        model_button.x,
+                        model_button.y,
+                        model_button.w,
+                        model_button.h,
+                        model_button.h * 0.5,
+                    ),
+                );
+            }
+            let mark = Rect::new(
+                model_button.x + (model_button.w - COMPOSER_ICON_SIZE) * 0.5,
+                model_button.y + (model_button.h - COMPOSER_ICON_SIZE) * 0.5,
+                COMPOSER_ICON_SIZE,
+                COMPOSER_ICON_SIZE,
+            );
+            model_picker::draw_provider_mark(
+                canvas,
+                root,
+                &mut self.engine,
+                &transcript.chat.current_model.provider,
+                agents::is_agent_provider(&transcript.chat.current_model.provider),
+                mark,
+                if hot {
+                    theme::p().text
+                } else {
+                    theme::p().text_dim
+                },
+            );
+            return false;
+        }
         let koru_chat = self.koru_chat();
         let model_label = self.chip_label();
         let model_caret =
@@ -7450,7 +7676,6 @@ impl ChatSurface {
         });
         // The shell is taken while its frame paints. Recomputing the model
         // button here would use fallback send geometry and shift the ring.
-        let indicator = self.context_indicator_rect(model_button);
         let selector = self.model_selector_rect(model_button);
         let lead_width = selector.x - model_button.x;
         let shown_label = self.engine.elided(
@@ -7520,54 +7745,27 @@ impl ChatSurface {
                 hovered,
             );
         }
-        if let Some(rect) = indicator {
-            let ring_inset = theme::Space::S0_5.px(theme::Profile::Desktop);
-            let _indicator = koru_draw::inspect::scope(
-                "ComposerContextIndicator",
-                "element",
-                root,
-                scene::rect(rect.x, rect.y, rect.w, rect.h),
-                |record| record.property("action", "open context window", "button"),
-            );
-            koru_ui::progress_ring::ProgressRing::new(self.context_progress()).draw(
-                canvas,
-                root,
-                Rect::new(
-                    rect.x + ring_inset,
-                    rect.y + ring_inset,
-                    rect.w - ring_inset * 2.0,
-                    rect.h - ring_inset * 2.0,
-                ),
-            );
-            if let Some(transcript) = &self.transcript {
-                let mark = Rect::new(
-                    rect.x + (rect.w - COMPOSER_ICON_SIZE) * 0.5,
-                    rect.y + (rect.h - COMPOSER_ICON_SIZE) * 0.5,
-                    COMPOSER_ICON_SIZE,
-                    COMPOSER_ICON_SIZE,
-                );
-                model_picker::draw_provider_mark(
-                    canvas,
-                    root,
-                    &mut self.engine,
-                    &transcript.chat.current_model.provider,
-                    agents::is_agent_provider(&transcript.chat.current_model.provider),
-                    mark,
-                    theme::p().text,
-                );
-            }
-        }
         false
     }
 
     fn paint_composer_plus(&mut self, canvas: &mut Scene, root: Affine, plus: Rect) {
-        IconButton::new(icons::PLUS, plus)
-            .with_state(IconButtonState {
+        koru_ui::icon_button::draw_with(
+            canvas,
+            root,
+            &mut self.engine,
+            plus,
+            icons::PLUS,
+            IconButtonState {
                 hovered: plus.contains(self.pointer.0, self.pointer.1),
                 active: self.plus_menu.is_some(),
                 disabled: false,
-            })
-            .draw(canvas, root, &mut self.engine);
+            },
+            koru_ui::icon_button::Metrics {
+                icon_size: COMPOSER_ICON_SIZE,
+                radius: plus.h * 0.5,
+                ..koru_ui::icon_button::Metrics::INLINE
+            },
+        );
     }
 
     fn paint_composer_send(&mut self, canvas: &mut Scene, root: Affine, send: Rect) {
@@ -7575,9 +7773,7 @@ impl ChatSurface {
         let enabled = match mode {
             queue::SendMode::Stop => true,
             queue::SendMode::Queue => self.composer_has_content(),
-            queue::SendMode::Send => {
-                !self.awaiting_model() && self.composer_has_content() && !self.copy_holds_send()
-            }
+            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
         };
         draw_composer_action(
             canvas,
@@ -7598,9 +7794,7 @@ impl ChatSurface {
         let enabled = match mode {
             queue::SendMode::Stop => true,
             queue::SendMode::Queue => self.composer_has_content(),
-            queue::SendMode::Send => {
-                !self.awaiting_model() && self.composer_has_content() && !self.copy_holds_send()
-            }
+            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
         };
         let mut button = SplitButton {
             rect,
@@ -7611,21 +7805,13 @@ impl ChatSurface {
             menu_hot: false,
             menu_focused: self.focus == Focus::ModeChevron,
             menu_open: self.approval_mode_open,
-            reveal: self.send_chevron_reveal.progress(),
-            chevron_turn: self.send_chevron.progress(),
+            reveal: 0.0,
+            chevron_turn: 0.0,
         };
         button.action_hot = button
             .action_rect()
             .contains(self.pointer.0, self.pointer.1);
         button.menu_hot = button.menu_rect().contains(self.pointer.0, self.pointer.1);
-        let now = Instant::now();
-        self.send_chevron.set(self.approval_mode_open, now);
-        self.send_chevron_reveal.set(
-            button.menu_hot || button.menu_focused || button.menu_open,
-            now,
-        );
-        button.reveal = self.send_chevron_reveal.progress();
-        button.chevron_turn = self.send_chevron.progress();
         button.draw(
             canvas,
             root,
@@ -7645,6 +7831,9 @@ impl ChatSurface {
         // its row's in the Chats list; the surface itself starts with the
         // conversation.
         self.draw_messages(canvas, root);
+        if self.observing_bot_thread() {
+            return;
+        }
         // Over the transcript, under everything that floats over it.
         self.draw_add_pill(canvas, root);
         let composer = self.composer_rect();
@@ -7735,12 +7924,18 @@ impl ChatSurface {
             Instant::now(),
         );
         self.draw_model_picker(canvas, root);
-        self.draw_context_window(canvas, root);
         self.draw_tool_mode_picker(canvas, root);
         self.draw_approval_mode_picker(canvas, root);
         self.draw_tool_access_picker(canvas, root);
         self.draw_microphone_panel(canvas, root);
         self.web_search_tooltip.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            self.viewport,
+            Instant::now(),
+        );
+        self.reply_tooltip.draw(
             canvas,
             root,
             &mut self.engine,
@@ -7836,7 +8031,29 @@ impl ChatSurface {
     }
 
     fn rebuild_messages(&mut self, width: f32) {
+        self.bot_work_generation = self.bot_work_generation.wrapping_add(1);
+        self.bot_work_replies = self
+            .transcript
+            .as_ref()
+            .into_iter()
+            .flat_map(|transcript| {
+                transcript
+                    .tool_activities
+                    .iter()
+                    .map(|row| row.assistant_message_id)
+            })
+            .collect();
         let started = Instant::now();
+        self.settle_bot_activity();
+        let bot = self.bot_chat_flow();
+        let optimistic_reply = self.reply_pending() && self.managed.is_none();
+        let managed_live: HashSet<_> = self
+            .managed
+            .iter()
+            .flat_map(|state| &state.snapshot.turns)
+            .filter(|turn| turn.state == "running")
+            .filter_map(|turn| turn.reply_message.map(MessageId::from_uuid))
+            .collect();
         self.settle_question_cards(false);
         self.tool_activity_layouts.clear();
         self.work_layouts.clear();
@@ -7847,7 +8064,13 @@ impl ChatSurface {
         let unnamed = koru_i18n::t(self.lang, koru_i18n::Key::BotsMentionKind);
         let lang = self.lang;
         let now_ms = koru_ai_core::Timestamp::now().millis();
-        let work_width = (width - PAD * 2.0).max(1.0);
+        let work_pad = if bot {
+            bot_presentation::PROSE_PAD
+        } else {
+            PAD
+        };
+        let progress = self.bot_reply_progress();
+        let work_width = (width - work_pad * 2.0).max(1.0);
         self.rebuild_managed_notices(work_width);
         let detail = |activity: &ToolActivity| {
             if is_agent_row(activity) {
@@ -7859,7 +8082,13 @@ impl ChatSurface {
         // An opened call's detail is laid out once and kept until what it
         // shows changes: a rebuild runs on every streamed delta.
         let opened_calls = &self.opened_calls;
-        self.call_details.retain(|id, _| opened_calls.contains(id));
+        self.call_details.retain(|id, _| {
+            opened_calls.contains(id)
+                || self
+                    .bot_work
+                    .as_ref()
+                    .is_some_and(|open| open.calls.contains(id))
+        });
         let expanded = &self.expanded_outputs;
         let cache = &mut self.call_details;
         // A picture a call read is drawn from its file (D38): its path read
@@ -7869,11 +8098,20 @@ impl ChatSurface {
             .as_ref()
             .and_then(|transcript| transcript.chat.agent_working_folder.clone());
         let images = &self.images;
+        let observed_tools = self.managed.is_some();
         let mut wanted_pictures = Vec::new();
         let mut call_detail = |engine: &mut TextEngine, activity: &ToolActivity, width: f32| {
             let pieces = if is_agent_row(activity) {
                 tool_output::picture::settle(
-                    tool_output::pieces(activity, lang, now_ms, expanded.contains(&activity.id)),
+                    if observed_tools {
+                        tool_output::observed_pieces(
+                            activity,
+                            lang,
+                            expanded.contains(&activity.id),
+                        )
+                    } else {
+                        tool_output::pieces(activity, lang, now_ms, expanded.contains(&activity.id))
+                    },
                     |path| {
                         tool_output::open_path::resolve(
                             path,
@@ -7943,11 +8181,20 @@ impl ChatSurface {
                 });
             }
             let mut worked: HashSet<MessageId> = HashSet::new();
-            // As a person reads them: a message steered into a reply
-            // under its question, before the reply (D99).
-            for message in koru_ai_core::reading_order(&transcript.messages) {
-                if !message.markdown.is_empty() || message.state != MessageState::Pending {
-                    let wrap_width = message_wrap_width(message.role, width);
+            // Native history is already sequenced by its owner. Ordinary
+            // chat's steering heuristic assumes a reply row is reserved with
+            // every input; applying it here moves a new question above the
+            // previous answer until its own reply is published.
+            let reading_order = if self.managed.is_some() {
+                transcript.messages.iter().collect()
+            } else {
+                koru_ai_core::reading_order(&transcript.messages)
+            };
+            for message in reading_order {
+                // A reloaded pending reply is still visible before its first
+                // word/tool. Only the exact optimistic live copy is omitted.
+                if !(optimistic_reply && running == Some(message.id)) {
+                    let wrap_width = bot_presentation::wrap_width(message.role, width, bot);
                     let usage_text = (message.role == ChatRole::Assistant
                         && message.state == MessageState::Complete)
                         .then(|| usage_by_message.get(&message.id))
@@ -7955,23 +8202,13 @@ impl ChatSurface {
                         .and_then(|usage| usage_line(usage, self.lang));
                     // Refused pictures: from the live event while this surface
                     // lives, and from the reloaded transcript's stop code (O36).
-                    let display = if let Some(instead) = self
-                        .saved_copy
-                        .as_ref()
-                        .and_then(|copy| copy.shown_instead(message.id, &message.markdown))
-                    {
-                        // What a saved copy's host says of this message
-                        // ([`owned`]): its text was not copied, or part of
-                        // it stayed on the other computer.
-                        instead
-                    } else if message.markdown.is_empty()
+                    let display = if message.markdown.is_empty()
                         && message.state == MessageState::Failed
                         && (self.refused_pictures.contains(&message.id)
                             || transcript.usage.iter().any(|entry| {
                                 entry.message_id == message.id
                                     && refused_pictures(entry.stop_code.as_deref())
-                            }))
-                    {
+                            })) {
                         koru_i18n::t(self.lang, koru_i18n::Key::BotsPicturesRefused).to_owned()
                     } else if message.markdown.is_empty() && message.state == MessageState::Failed {
                         failure_label(message.error_class, self.lang)
@@ -8003,7 +8240,7 @@ impl ChatSurface {
                     // mentioned Bot reads as `@` and its name.
                     let (mut display, links) = if message.role == ChatRole::User {
                         doc_links::titled_for_message(
-                            &doc_links::mentions_named(
+                            &doc_links::mentions_linked(
                                 &quote_pills::quote_bars(&display),
                                 &self.mention_names,
                                 unnamed,
@@ -8028,7 +8265,7 @@ impl ChatSurface {
                         && let Some(cut) =
                             tool_groups::cut_reply(&message.markdown, &rows, offset, &blocks)
                     {
-                        if cut.answer_start > 0 {
+                        if !bot && cut.answer_start > 0 {
                             display = message.markdown[cut.answer_start..].trim_start().to_owned();
                             blocks = cut.blocks;
                         }
@@ -8040,6 +8277,8 @@ impl ChatSurface {
                             work_view::WorkInput {
                                 message: message.id,
                                 live: message.state == MessageState::Pending,
+                                bot,
+                                progress: progress.get(&message.id).copied().unwrap_or_default(),
                                 started_ms: message.created_at.millis(),
                                 worked_ms: tool_groups::worked_ms(
                                     Some(message.created_at.millis()),
@@ -8048,6 +8287,14 @@ impl ChatSurface {
                                 ),
                                 items: cut.items,
                                 groups: cut.groups,
+                                names: bot_presentation::ActivityNames {
+                                    documents: Some(&self.document_titles),
+                                    bots: Some(&self.mention_names),
+                                },
+                                activity: rows
+                                    .iter()
+                                    .copied()
+                                    .find(|call| bot_presentation::current_activity(call)),
                             },
                             &opened,
                             &mut call_detail,
@@ -8089,7 +8336,9 @@ impl ChatSurface {
                     tool_groups::cut_reply::<MessageBlockId>(&self.draft, &rows, offset, &[])
                 {
                     let answer = &self.draft[cut.answer_start..];
-                    pending_answer = Some(self.draft.len() - answer.trim_start().len());
+                    if !bot {
+                        pending_answer = Some(self.draft.len() - answer.trim_start().len());
+                    }
                     worked.insert(message);
                     self.work_layouts.push(work_view::build(
                         &mut self.engine,
@@ -8098,10 +8347,20 @@ impl ChatSurface {
                         work_view::WorkInput {
                             message,
                             live: true,
+                            bot,
+                            progress: progress.get(&message).copied().unwrap_or_default(),
                             started_ms: self.live_turn_started_ms.unwrap_or(now_ms),
                             worked_ms: 0,
                             items: cut.items,
                             groups: cut.groups,
+                            names: bot_presentation::ActivityNames {
+                                documents: Some(&self.document_titles),
+                                bots: Some(&self.mention_names),
+                            },
+                            activity: rows
+                                .iter()
+                                .copied()
+                                .find(|call| bot_presentation::current_activity(call)),
                         },
                         &opened,
                         &mut call_detail,
@@ -8124,8 +8383,11 @@ impl ChatSurface {
                 {
                     // Done only once the reply is: a running reply whose
                     // calls have all ended is still working.
-                    let live = Some(message) == running
-                        || rows.iter().any(|row| !row.status.is_terminal());
+                    let live = if self.managed.is_some() {
+                        managed_live.contains(&message)
+                    } else {
+                        Some(message) == running || rows.iter().any(|row| !row.status.is_terminal())
+                    };
                     let started_ms = rows
                         .iter()
                         .map(|row| row.proposed_at.millis())
@@ -8138,16 +8400,33 @@ impl ChatSurface {
                         work_view::WorkInput {
                             message,
                             live,
+                            bot,
+                            progress: progress.get(&message).copied().unwrap_or_default(),
                             started_ms,
                             worked_ms: tool_groups::worked_ms(None, None, &rows),
                             items: cut.items,
                             groups: cut.groups,
+                            names: bot_presentation::ActivityNames {
+                                documents: Some(&self.document_titles),
+                                bots: Some(&self.mention_names),
+                            },
+                            activity: rows
+                                .iter()
+                                .copied()
+                                .find(|call| bot_presentation::current_activity(call)),
                         },
                         &opened,
                         &mut call_detail,
                     ));
                 }
             }
+            Self::rebuild_bot_work(
+                &mut self.bot_work,
+                transcript,
+                &mut self.engine,
+                lang,
+                &mut call_detail,
+            );
             // A pending permission request is a card of its own, open, in
             // front of its reply; so is an agent's set of questions (D108),
             // waiting or closed.
@@ -8228,12 +8507,18 @@ impl ChatSurface {
                 })
             })
             .map(|index| old.swap_remove(index));
-        let (mut messages, stats) =
-            layout_cache::reconcile(&mut self.engine, old, inputs, render_chat_block);
+        let (mut messages, stats) = layout_cache::reconcile_with_faces(
+            &mut self.engine,
+            old,
+            inputs,
+            render_chat_block,
+            &self.bot_faces,
+        );
         self.last_rebuild_stats = stats;
         if let Some(report) = &self.usage_report {
             let markdown = format_usage_report(report);
             messages.push(MessageLayout {
+                bot_prose: false,
                 id: None,
                 top: 0.0,
                 role: ChatRole::Assistant,
@@ -8265,7 +8550,7 @@ impl ChatSurface {
                 let card = self.user_card(&steered, Vec::new(), width);
                 messages.push(card);
             }
-            let assistant_width = message_wrap_width(ChatRole::Assistant, width);
+            let assistant_width = bot_presentation::wrap_width(ChatRole::Assistant, width, bot);
             let usage_text = (!self.draft.is_empty())
                 .then_some(self.live_usage.as_ref())
                 .flatten()
@@ -8313,6 +8598,7 @@ impl ChatSurface {
             });
             // Under the running reply's id, so its work is placed above it.
             messages.push(live.unwrap_or_else(|| MessageLayout {
+                bot_prose: bot,
                 id: running,
                 top: 0.0,
                 role: ChatRole::Assistant,
@@ -8338,11 +8624,13 @@ impl ChatSurface {
         }
         self.append_managed_live(&mut messages, old_managed, width);
         for message in &mut messages {
+            message.bot_prose = bot;
             for tile in &mut message.attachments {
                 tile.measure_chip(&mut self.engine, message.wrap_width);
             }
         }
         self.message_layouts = messages;
+        self.ensure_bot_activity(width);
         self.rebuild_managed_cards(width);
         self.rebuild_managed_attention(width);
         self.rebuild_managed_navigation(width);
@@ -8405,10 +8693,10 @@ impl ChatSurface {
         width: f32,
     ) -> MessageLayout {
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
-        let user_width = message_wrap_width(ChatRole::User, width);
+        let user_width = bot_presentation::wrap_width(ChatRole::User, width, self.bot_chat_flow());
         let unnamed = koru_i18n::t(self.lang, koru_i18n::Key::BotsMentionKind);
         let (display, links) = doc_links::titled_for_message(
-            &doc_links::mentions_named(
+            &doc_links::mentions_linked(
                 &quote_pills::quote_bars(markdown),
                 &self.mention_names,
                 unnamed,
@@ -8417,12 +8705,19 @@ impl ChatSurface {
             untitled,
         );
         MessageLayout {
+            bot_prose: self.bot_chat_flow(),
             id: None,
             top: 0.0,
             role: ChatRole::User,
             state: MessageState::Complete,
             markdown: markdown.to_owned(),
-            layout: layout_cache::display_layout(&mut self.engine, &display, &links, user_width),
+            layout: layout_cache::display_layout_with_faces(
+                &mut self.engine,
+                &display,
+                &links,
+                user_width,
+                &self.bot_faces,
+            ),
             display,
             links,
             wrap_width: user_width,
@@ -8465,10 +8760,21 @@ impl ChatSurface {
             }
             if let Some(message_id) = self.message_layouts[message_index].id {
                 top = self.place_managed_navigation(Some(message_id), top);
-                top = self.place_turn(message_id, top, &mut placed_work, &mut placed_cards);
+                if !self.bot_chat_flow() {
+                    top = self.place_turn(message_id, top, &mut placed_work, &mut placed_cards);
+                }
             }
             self.message_layouts[message_index].top = top;
-            top += message_height(&self.message_layouts[message_index]) + CARD_GAP;
+            let height = self.shown_message_height(&self.message_layouts[message_index]);
+            if height > 0.0 {
+                top += height + CARD_GAP;
+            }
+            if let Some(message_id) = self.message_layouts[message_index].id {
+                if self.bot_chat_flow() {
+                    top = self.place_turn(message_id, top, &mut placed_work, &mut placed_cards);
+                }
+                top = self.place_managed_navigation_after(message_id, top);
+            }
         }
         // Work whose reply is not (yet) a message in the list — an attempt's
         // first call before its assistant card lands — follows the messages.
@@ -8515,7 +8821,9 @@ impl ChatSurface {
             if !placed_work[index] && work.message == message {
                 placed_work[index] = true;
                 work.top = top;
-                top += work.height + 6.0;
+                if work.height > 0.0 {
+                    top += work.height + 6.0;
+                }
             }
         }
         for (index, card) in self.tool_activity_layouts.iter_mut().enumerate() {
@@ -8532,7 +8840,7 @@ impl ChatSurface {
         let messages = self
             .message_layouts
             .iter()
-            .map(|message| message.top + message_height(message) + CARD_GAP);
+            .map(|message| message.top + self.shown_message_height(message) + CARD_GAP);
         let cards = self
             .tool_activity_layouts
             .iter()
@@ -8540,6 +8848,7 @@ impl ChatSurface {
         let work = self
             .work_layouts
             .iter()
+            .filter(|work| work.height > 0.0)
             .map(|work| work.top + work.height + 6.0);
         let notices = self
             .notice_layouts
@@ -8549,6 +8858,7 @@ impl ChatSurface {
             .chain(cards)
             .chain(work)
             .chain(notices)
+            .chain(std::iter::once(self.managed_navigation_extent()))
             .chain(
                 self.managed
                     .iter()
@@ -8605,6 +8915,9 @@ impl ChatSurface {
             if self.scroll_loaded_chat_to_bottom {
                 self.conversation_scroll = (self.conversation_extent - area.h).max(0.0);
                 self.scroll_loaded_chat_to_bottom = false;
+                if self.bot_chat_flow() {
+                    self.follow_tail = true;
+                }
             } else if self.follow_tail {
                 // Jumped to the newest message (D77): a streaming reply
                 // keeps it there.
@@ -8651,30 +8964,74 @@ impl ChatSurface {
         let p = theme::p();
         let now = Instant::now();
         let mut card_tiles: Vec<(Rect, attachments::Tile)> = Vec::new();
-        for (message_index, message) in self.message_layouts.iter().enumerate() {
-            let h = message_height(message);
+        for message_index in 0..self.message_layouts.len() {
+            let message_id = self.message_layouts[message_index].id;
+            let bounds = self.conversation_turn_rect(message_index, area);
+            let _turn = koru_draw::inspect::scope(
+                "Conversation turn",
+                "part",
+                root,
+                scene::rect(bounds.x, bounds.y, bounds.w, bounds.h),
+                |_| {},
+            );
+            if let Some(id) = message_id {
+                if !self.bot_chat_flow() {
+                    self.draw_turn_work(canvas, root, area, Some(id));
+                }
+                self.draw_managed_navigation_for(canvas, root, Some(id));
+            }
+            let message = &self.message_layouts[message_index];
+            let h = self.shown_message_height(message);
             let y = area.y - self.conversation_scroll + message.top;
             let card = message_card(area, y, h, message);
-            if card.y + card.h >= area.y && card.y <= area.y + area.h {
+            if h > 0.0 && card.y + card.h >= area.y && card.y <= area.y + area.h {
+                if message.bot_prose {
+                    canvas.push_clip_layer(
+                        vello::peniko::Fill::NonZero,
+                        root,
+                        &scene::rect(card.x, card.y, card.w, card.h),
+                    );
+                }
+                let _prose =
+                    (self.bot_chat_flow() && message.role == ChatRole::Assistant).then(|| {
+                        koru_draw::inspect::scope(
+                            "Bot message",
+                            "part",
+                            root,
+                            scene::rect(card.x, card.y, card.w, card.h),
+                            |_| {},
+                        )
+                    });
+                if self.bot_chat_flow() && message.role == ChatRole::Assistant {
+                    bot_presentation::draw_bubble(canvas, root, card, message);
+                }
                 if message.role == ChatRole::User {
                     scene::fill(
                         canvas,
                         root,
-                        p.row_selected,
+                        theme::chat_user_colors().0,
                         &scene::rrect(card.x, card.y, card.w, card.h, 8.0),
                     );
                     // Its attachment pills under its words, drawn once the cards are.
                     if !message.attachments.is_empty() {
                         let top = if message.display.trim().is_empty() {
-                            card.y + PAD
+                            card.y + message.padding()
                         } else {
-                            card.y + PAD + message.layout.height() + attachments::TILE_GAP
+                            card.y
+                                + message.padding()
+                                + message.layout.height()
+                                + attachments::TILE_GAP
                         };
                         let (rects, _) =
                             attachments::card_tiles(&message.attachments, message.wrap_width);
                         for (rect, tile) in rects.iter().zip(&message.attachments) {
                             card_tiles.push((
-                                Rect::new(card.x + PAD + rect.x, top + rect.y, rect.w, rect.h),
+                                Rect::new(
+                                    card.x + message.padding() + rect.x,
+                                    top + rect.y,
+                                    rect.w,
+                                    rect.h,
+                                ),
                                 tile.clone(),
                             ));
                         }
@@ -8682,13 +9039,45 @@ impl ChatSurface {
                 }
                 if message.blocks.is_empty() {
                     if message.state == MessageState::Pending && message.display.is_empty() {
-                        if let Some(pulse) = &self.pulse {
+                        if let Some(bot) = &self.working_bot {
+                            // A tool reply already has a live work header. Do not
+                            // show a second working face in its empty answer.
+                            if !self
+                                .work_layouts
+                                .iter()
+                                .any(|work| work.live && Some(work.message) == message.id)
+                            {
+                                bot.draw(
+                                    canvas,
+                                    root,
+                                    &mut self.engine,
+                                    Rect::new(
+                                        card.x + message.padding(),
+                                        card.y + message.padding(),
+                                        20.0,
+                                        20.0,
+                                    ),
+                                );
+                                let label = self.engine.simple_layout(
+                                    koru_i18n::t(self.lang, koru_i18n::Key::AiThinking),
+                                    role::ui(),
+                                );
+                                scene::draw_layout(
+                                    canvas,
+                                    root,
+                                    &label,
+                                    card.x + message.padding() + 26.0,
+                                    card.y + message.padding(),
+                                    Some(p.text_dim),
+                                );
+                            }
+                        } else if let Some(pulse) = &self.pulse {
                             pulse.draw(
                                 canvas,
                                 root,
                                 Rect::new(
-                                    card.x + PAD,
-                                    card.y + PAD,
+                                    card.x + message.padding(),
+                                    card.y + message.padding(),
                                     20.0,
                                     role::ui().metrics.line_height,
                                 ),
@@ -8702,16 +9091,27 @@ impl ChatSurface {
                             root,
                             message_index,
                             None,
-                            card.x + PAD,
-                            card.y + PAD,
+                            card.x + message.padding(),
+                            card.y + message.padding(),
                         );
+                        if message.role == ChatRole::User {
+                            draw_user_bot_chip_outlines(
+                                canvas,
+                                root,
+                                message,
+                                card.x + message.padding(),
+                                card.y + message.padding(),
+                                &self.bot_faces,
+                                self.pointer,
+                            );
+                        }
                         scene::draw_layout(
                             canvas,
                             root,
                             &message.layout,
-                            card.x + PAD,
-                            card.y + PAD,
-                            Some(p.text),
+                            card.x + message.padding(),
+                            card.y + message.padding(),
+                            (message.role == ChatRole::User).then(|| theme::chat_user_colors().1),
                         );
                         if message.role == ChatRole::User {
                             draw_user_document_icons(
@@ -8719,13 +9119,14 @@ impl ChatSurface {
                                 root,
                                 &mut self.engine,
                                 message,
-                                card.x + PAD,
-                                card.y + PAD,
+                                card.x + message.padding(),
+                                card.y + message.padding(),
+                                &self.bot_faces,
                             );
                         }
                     }
                 } else {
-                    let mut block_y = card.y + PAD;
+                    let mut block_y = card.y + message.padding();
                     for block in &message.blocks {
                         let highlighted =
                             self.highlight.is_some_and(|(target, _)| target == block.id);
@@ -8753,7 +9154,7 @@ impl ChatSurface {
                                 canvas,
                                 root,
                                 table,
-                                card.x + PAD,
+                                card.x + message.padding(),
                                 block_y,
                                 0.0,
                                 None,
@@ -8763,7 +9164,7 @@ impl ChatSurface {
                                 canvas,
                                 root,
                                 block,
-                                card.x + PAD,
+                                card.x + message.padding(),
                                 block_y,
                             );
                         } else if let Some(image) = &block.image {
@@ -8772,16 +9173,16 @@ impl ChatSurface {
                                 root,
                                 image,
                                 Rect::new(
-                                    card.x + PAD,
+                                    card.x + message.padding(),
                                     block_y,
-                                    card.w - PAD * 2.0,
+                                    card.w - message.padding() * 2.0,
                                     block.height(),
                                 ),
                                 &block.layout,
                                 Rect::new(
-                                    card.x + PAD,
+                                    card.x + message.padding(),
                                     block_y,
-                                    card.w - PAD * 2.0,
+                                    card.w - message.padding() * 2.0,
                                     block.height(),
                                 )
                                 .contains(self.pointer.0, self.pointer.1),
@@ -8791,7 +9192,7 @@ impl ChatSurface {
                                 canvas,
                                 root,
                                 block,
-                                card.x + PAD,
+                                card.x + message.padding(),
                                 block_y,
                             );
                             self.draw_response_selection(
@@ -8799,14 +9200,14 @@ impl ChatSurface {
                                 root,
                                 message_index,
                                 Some(block_index),
-                                card.x + PAD,
+                                card.x + message.padding(),
                                 block_y,
                             );
                             scene::draw_layout(
                                 canvas,
                                 root,
                                 &block.layout,
-                                card.x + PAD,
+                                card.x + message.padding(),
                                 block_y,
                                 Some(p.text),
                             );
@@ -8819,8 +9220,8 @@ impl ChatSurface {
                         canvas,
                         root,
                         usage,
-                        card.x + PAD,
-                        card.y + PAD + message_content_height(message) + USAGE_GAP,
+                        card.x + message.padding(),
+                        card.y + message.padding() + message_content_height(message) + USAGE_GAP,
                         Some(p.text_dim),
                     );
                 }
@@ -8833,94 +9234,31 @@ impl ChatSurface {
                         canvas,
                         root,
                         &sources.layout,
-                        card.x + PAD,
-                        card.y + PAD + message_content_height(message) + usage_h + USAGE_GAP,
+                        card.x + message.padding(),
+                        card.y
+                            + message.padding()
+                            + message_content_height(message)
+                            + usage_h
+                            + USAGE_GAP,
                         Some(p.accent),
                     );
                 }
-                if message.role == ChatRole::Assistant
-                    && message.id.is_some()
-                    && self.response_message_hover == Some(message_index)
-                {
-                    if message.state == MessageState::Complete {
-                        for index in 0..self.response_action_count() {
-                            let rect = action_rect(card, index);
-                            IconButton::new(response_action_glyph(index), rect)
-                                .with_state(IconButtonState {
-                                    hovered: rect.contains(self.pointer.0, self.pointer.1),
-                                    active: false,
-                                    disabled: index == 3 && message.blocks.is_empty(),
-                                })
-                                .draw(canvas, root, &mut self.engine);
-                        }
-                    } else if matches!(
-                        message.state,
-                        MessageState::Failed | MessageState::Interrupted
-                    ) && message.id.is_some_and(|id| self.offers_retry(id))
-                    {
-                        let rect = action_rect(card, 0);
-                        IconButton::new(icons::REDO, rect)
-                            .with_state(IconButtonState {
-                                hovered: rect.contains(self.pointer.0, self.pointer.1),
-                                active: false,
-                                disabled: false,
-                            })
-                            .draw(canvas, root, &mut self.engine);
-                    }
+                if message.bot_prose {
+                    canvas.pop_layer();
                 }
+                drop(_prose);
+                self.draw_reply_actions(canvas, root, message_index, card);
+            }
+            if self.bot_chat_flow()
+                && let Some(id) = message_id
+            {
+                self.draw_turn_work(canvas, root, area, Some(id));
             }
         }
-        let now_ms = koru_ai_core::Timestamp::now().millis();
-        // How far the light has crossed a running reply's header (D83):
-        // still under reduced motion.
-        let sweep = (!self.reduced_motion).then(|| chat_status::sweep_phase(now_ms));
-        let images = &self.images;
-        let mut picture = |canvas: &mut Scene, root: Affine, key: &str, rect: Rect| {
-            if let Some(loaded) = images.get(key).and_then(|image| image.ready.as_ref()) {
-                draw_image_fitted(canvas, root, loaded, rect);
-            }
-        };
-        for notice in &self.notice_layouts {
-            let y = area.y - self.conversation_scroll + notice.top;
-            if y + notice.layout.height() < area.y || y > area.y + area.h {
-                continue;
-            }
-            scene::draw_layout(
-                canvas,
-                root,
-                &notice.layout,
-                area.x + PAD,
-                y,
-                Some(p.text_dim),
-            );
-        }
-        for work in &self.work_layouts {
-            let origin = Rect::new(
-                area.x + PAD,
-                area.y - self.conversation_scroll + work.top,
-                (area.w - PAD * 2.0).max(1.0),
-                work.height,
-            );
-            if origin.y + origin.h < area.y || origin.y > area.y + area.h {
-                continue;
-            }
-            work_view::draw(
-                canvas,
-                root,
-                &mut self.engine,
-                self.lang,
-                work,
-                origin,
-                self.work_hover,
-                self.focus == Focus::Work(work.message),
-                now_ms,
-                sweep,
-                &mut picture,
-            );
-        }
+        self.draw_turn_work(canvas, root, area, None);
         self.draw_managed_cards(canvas, root);
         self.draw_managed_attention(canvas, root);
-        self.draw_managed_navigation(canvas, root);
+        self.draw_managed_navigation_for(canvas, root, None);
         for tool in &self.tool_activity_layouts {
             let row = Rect::new(
                 area.x,
@@ -9041,44 +9379,6 @@ impl ChatSurface {
         );
     }
 
-    fn response_action_at(&mut self, x: f32, y: f32) -> Option<ResponseAction> {
-        let area = self.conversation_rect();
-        for (message_index, message) in self.message_layouts.iter().enumerate() {
-            let h = message_height(message);
-            let card_y = area.y - self.conversation_scroll + message.top;
-            let card = message_card(area, card_y, h, message);
-            if let Some(message_id) = message.id
-                && message.role == ChatRole::Assistant
-                && self.response_message_hover == Some(message_index)
-            {
-                if message.state == MessageState::Complete {
-                    for index in 0..self.response_action_count() {
-                        if action_rect(card, index).contains(x, y) {
-                            return match index {
-                                0 => Some(ResponseAction::Copy(message.markdown.clone())),
-                                1 => Some(ResponseAction::Branch(message_id)),
-                                2 => Some(ResponseAction::Store(message_id)),
-                                3 => message
-                                    .blocks
-                                    .first()
-                                    .map(|block| ResponseAction::Link(block.id)),
-                                _ => None,
-                            };
-                        }
-                    }
-                } else if matches!(
-                    message.state,
-                    MessageState::Failed | MessageState::Interrupted
-                ) && self.offers_retry(message_id)
-                    && action_rect(card, 0).contains(x, y)
-                {
-                    return Some(ResponseAction::Retry(message_id));
-                }
-            }
-        }
-        None
-    }
-
     fn source_link_at(&self, x: f32, y: f32) -> Option<String> {
         let area = self.conversation_hit_rect;
         if !area.contains(x, y) {
@@ -9086,7 +9386,7 @@ impl ChatSurface {
         }
         for message in &self.message_layouts {
             let card_y = area.y - self.conversation_scroll + message.top;
-            let card = message_card(area, card_y, message_height(message), message);
+            let card = message_card(area, card_y, self.shown_message_height(message), message);
             let Some(sources) = &message.sources else {
                 continue;
             };
@@ -9095,13 +9395,13 @@ impl ChatSurface {
                 .as_ref()
                 .map_or(0.0, |usage| usage.height() + USAGE_GAP);
             let origin = (
-                card.x + PAD,
-                card.y + PAD + message_content_height(message) + usage_h + USAGE_GAP,
+                card.x + message.padding(),
+                card.y + message.padding() + message_content_height(message) + usage_h + USAGE_GAP,
             );
             let rect = Rect::new(
                 origin.0,
                 origin.1,
-                card.w - PAD * 2.0,
+                card.w - message.padding() * 2.0,
                 sources.layout.height(),
             );
             if rect.contains(x, y) {
@@ -9113,16 +9413,26 @@ impl ChatSurface {
 
     /// What in a reply's work view is under the pointer.
     fn work_hit_at(&self, x: f32, y: f32) -> Option<work_view::WorkHit> {
+        if self.bot_chat_flow() {
+            return self
+                .bot_work_anchor_at(x, y)
+                .map(work_view::WorkHit::Header);
+        }
         let area = self.conversation_hit_rect;
         if !area.contains(x, y) {
             return None;
         }
         self.work_layouts.iter().find_map(|work| {
+            let pad = if work.bot {
+                bot_presentation::PROSE_PAD
+            } else {
+                PAD
+            };
             work_view::hit(
                 work,
-                area.x + PAD,
+                area.x + pad,
                 area.y - self.conversation_scroll + work.top,
-                (area.w - PAD * 2.0).max(1.0),
+                (area.w - pad * 2.0).max(1.0),
                 x,
                 y,
             )
@@ -9131,6 +9441,11 @@ impl ChatSurface {
 
     /// Open or fold what was hit: a reply's work, a step group, a call.
     fn toggle_work(&mut self, hit: work_view::WorkHit) -> bool {
+        if self.bot_chat_flow()
+            && let work_view::WorkHit::Header(reply) = hit
+        {
+            return self.open_bot_work(reply);
+        }
         fn flip<T: std::hash::Hash + Eq>(set: &mut HashSet<T>, value: T) {
             if !set.remove(&value) {
                 set.insert(value);
@@ -9142,6 +9457,7 @@ impl ChatSurface {
                 flip(&mut self.opened_step_groups, (message, index));
             }
             work_view::WorkHit::Call(call) => flip(&mut self.opened_calls, call),
+            work_view::WorkHit::CopyOutput(call) => return self.copy_tool_output(call),
             work_view::WorkHit::Toggle(call) => flip(&mut self.expanded_outputs, call),
             work_view::WorkHit::Link(..) => {
                 if let Some(url) = self
@@ -9173,28 +9489,6 @@ impl ChatSurface {
         true
     }
 
-    /// Enter or Space opens the focused reply's work; Escape gives the
-    /// keyboard back to the composer. Anything else is the composer's.
-    fn work_key(&mut self, message: MessageId, key: &Key, mods: ModifiersState) -> Option<bool> {
-        if !mods.is_empty() {
-            return None;
-        }
-        match key {
-            Key::Named(NamedKey::Enter | NamedKey::Space) => {
-                Some(self.toggle_work(work_view::WorkHit::Header(message)))
-            }
-            Key::Character(value) if value.as_str() == " " => {
-                Some(self.toggle_work(work_view::WorkHit::Header(message)))
-            }
-            Key::Named(NamedKey::Escape) => {
-                self.focus = Focus::Composer;
-                self.composer.set_focused(true);
-                Some(true)
-            }
-            _ => None,
-        }
-    }
-
     /// When a running reply's *Working for …* moves on next: once a second
     /// for its count, or at the status frame while its light sweeps
     /// (koru-ai D83) — never while no reply runs.
@@ -9204,10 +9498,13 @@ impl ChatSurface {
         } else {
             koru_chats_ui::status::FRAME
         };
-        self.work_layouts.iter().any(|work| work.live).then(|| {
-            self.work_ticked_at
-                .map_or_else(Instant::now, |at| at + step)
-        })
+        self.work_layouts
+            .iter()
+            .any(|work| work.live && (!work.bot || !self.reduced_motion))
+            .then(|| {
+                self.work_ticked_at
+                    .map_or_else(Instant::now, |at| at + step)
+            })
     }
 
     /// Part 0 is the card, 1 is Approve, 2 is Deny, and an agent's choices
@@ -9250,37 +9547,6 @@ impl ChatSurface {
         None
     }
 
-    fn response_action_hover_at(&mut self, x: f32, y: f32) -> Option<(usize, u8)> {
-        let area = self.conversation_rect();
-        for (message_index, message) in self.message_layouts.iter().enumerate() {
-            let h = message_height(message);
-            let card_y = area.y - self.conversation_scroll + message.top;
-            let card = message_card(area, card_y, h, message);
-            if message.role == ChatRole::Assistant
-                && message.id.is_some()
-                && self.response_message_hover == Some(message_index)
-            {
-                let action_count = if message.state == MessageState::Complete {
-                    self.response_action_count()
-                } else if matches!(
-                    message.state,
-                    MessageState::Failed | MessageState::Interrupted
-                ) && message.id.is_some_and(|id| self.offers_retry(id))
-                {
-                    1
-                } else {
-                    0
-                };
-                for index in 0..action_count {
-                    if action_rect(card, index).contains(x, y) {
-                        return Some((message_index, 64 + index as u8));
-                    }
-                }
-            }
-        }
-        None
-    }
-
     fn response_message_hover_at(
         &mut self,
         x: f32,
@@ -9289,7 +9555,7 @@ impl ChatSurface {
     ) -> Option<usize> {
         let area = self.conversation_rect();
         for (index, message) in self.message_layouts.iter().enumerate() {
-            let h = message_height(message);
+            let h = self.shown_message_height(message);
             let card_y = area.y - self.conversation_scroll + message.top;
             let card = message_card(area, card_y, h, message);
             if message.role == ChatRole::Assistant && message.id.is_some() {
@@ -9299,6 +9565,14 @@ impl ChatSurface {
                     .then_some(ACTION_H + 8.0)
                     .unwrap_or(0.0);
                 let text = Rect::new(card.x, card.y, card.w, (card.h - actions).max(0.0));
+                if self.bot_chat_flow()
+                    && self
+                        .reply_actions(message)
+                        .enumerate()
+                        .any(|(slot, _)| self.reply_action_rect(message, card, slot).contains(x, y))
+                {
+                    return Some(index);
+                }
                 if text.contains(x, y) || (previous == Some(index) && card.contains(x, y)) {
                     return Some(index);
                 }
@@ -9313,16 +9587,16 @@ impl ChatSurface {
             return None;
         }
         for (message_index, message) in self.message_layouts.iter().enumerate() {
-            let h = message_height(message);
+            let h = self.shown_message_height(message);
             let card_y = area.y - self.conversation_scroll + message.top;
             let card = message_card(area, card_y, h, message);
             if message.role == ChatRole::Assistant {
                 if message.blocks.is_empty() {
-                    let origin = (card.x + PAD, card.y + PAD);
+                    let origin = (card.x + message.padding(), card.y + message.padding());
                     let rect = Rect::new(
                         origin.0,
                         origin.1,
-                        card.w - PAD * 2.0,
+                        card.w - message.padding() * 2.0,
                         message.layout.height(),
                     );
                     if rect.contains(x, y) {
@@ -9340,11 +9614,15 @@ impl ChatSurface {
                         });
                     }
                 } else {
-                    let mut block_y = card.y + PAD;
+                    let mut block_y = card.y + message.padding();
                     for (block_index, block) in message.blocks.iter().enumerate() {
-                        let origin = (card.x + PAD, block_y);
-                        let rect =
-                            Rect::new(origin.0, origin.1, card.w - PAD * 2.0, block.height());
+                        let origin = (card.x + message.padding(), block_y);
+                        let rect = Rect::new(
+                            origin.0,
+                            origin.1,
+                            card.w - message.padding() * 2.0,
+                            block.height(),
+                        );
                         if block.image.is_some() && rect.contains(x, y) {
                             let selection =
                                 Selection::from_point(&block.layout, x - origin.0, y - origin.1);
@@ -9411,21 +9689,27 @@ impl ChatSurface {
         let card = message_card(
             area,
             area.y - self.conversation_scroll + message.top,
-            message_height(message),
+            self.shown_message_height(message),
             message,
         );
         match block_index {
-            None => Some((&message.layout, (card.x + PAD, card.y + PAD))),
+            None => Some((
+                &message.layout,
+                (card.x + message.padding(), card.y + message.padding()),
+            )),
             Some(index) => {
                 let block_y = card.y
-                    + PAD
+                    + message.padding()
                     + message
                         .blocks
                         .get(..index)?
                         .iter()
                         .map(|block| block.height() + BLOCK_GAP)
                         .sum::<f32>();
-                Some((&message.blocks.get(index)?.layout, (card.x + PAD, block_y)))
+                Some((
+                    &message.blocks.get(index)?.layout,
+                    (card.x + message.padding(), block_y),
+                ))
             }
         }
     }
@@ -9890,17 +10174,20 @@ impl ChatSurface {
                 self.show_copy_feedback("Copied");
                 true
             }
-            ResponseAction::Branch(message) => self.send_command(Command::Branch(
-                chat.id,
-                BranchChatRequest {
-                    branch_chat_id: ChatId::new(),
-                    through_message_id: message,
-                    title: koru_i18n::fill(
-                        koru_i18n::t(self.lang, koru_i18n::Key::BotsEngineBranchTitle),
-                        &[&chat.title],
-                    ),
-                },
-            )),
+            ResponseAction::Branch(message) => {
+                !self.bot_chat_flow()
+                    && self.queue_command(Command::Branch(
+                        chat.id,
+                        BranchChatRequest {
+                            branch_chat_id: ChatId::new(),
+                            through_message_id: message,
+                            title: koru_i18n::fill(
+                                koru_i18n::t(self.lang, koru_i18n::Key::BotsEngineBranchTitle),
+                                &[&chat.title],
+                            ),
+                        },
+                    ))
+            }
             ResponseAction::Store(message) => {
                 if self.destinations.is_empty() {
                     self.status = Some("No writable Koru workspace is available.".into());
@@ -9937,6 +10224,7 @@ impl ChatSurface {
                     },
                 ))
             }
+            ResponseAction::Details(message) => self.open_bot_work(message),
         }
     }
 
@@ -10500,7 +10788,7 @@ fn draw_composer_action(
     let fill = if stop {
         if hovered { p.hover_tint } else { p.panel_bg }
     } else if enabled {
-        p.accent
+        theme::chat_user_colors().0
     } else {
         p.row_selected
     };
@@ -10537,11 +10825,19 @@ fn draw_composer_action(
         Some(if stop {
             p.text
         } else if enabled {
-            p.on_accent
+            theme::chat_user_colors().1
         } else {
             p.text_dim
         }),
     );
+}
+
+fn message_padding(role: ChatRole) -> f32 {
+    if role == ChatRole::User {
+        theme::Space::S2.px(theme::Profile::Desktop)
+    } else {
+        PAD
+    }
 }
 
 fn message_wrap_width(role: ChatRole, width: f32) -> f32 {
@@ -10550,7 +10846,7 @@ fn message_wrap_width(role: ChatRole, width: f32) -> f32 {
     } else {
         width
     };
-    (width - PAD * 2.0).max(1.0)
+    (width - message_padding(role) * 2.0).max(1.0)
 }
 
 fn message_content_width(message: &MessageLayout) -> f32 {
@@ -10576,12 +10872,30 @@ fn message_content_width(message: &MessageLayout) -> f32 {
 }
 
 fn message_card(area: Rect, y: f32, h: f32, message: &MessageLayout) -> Rect {
+    if message.bot_prose {
+        let max_width = (area.w * bot_presentation::BUBBLE_FRACTION).max(1.0);
+        let content = message_content_width(message)
+            .max(
+                message
+                    .sources
+                    .as_ref()
+                    .map_or(0.0, |sources| sources.layout.width()),
+            )
+            .max(message.usage.as_ref().map_or(0.0, |usage| usage.width()));
+        let width = (content + message.padding() * 2.0).clamp(1.0, max_width);
+        let x = if message.role == ChatRole::User {
+            area.x + area.w - width
+        } else {
+            area.x
+        };
+        return Rect::new(x, y, width, h);
+    }
     if message.role != ChatRole::User {
         return Rect::new(area.x, y, area.w, h);
     }
     let max_width = (area.w * USER_MESSAGE_MAX_FRACTION).max(1.0);
-    let width =
-        (message_content_width(message) + PAD * 2.0).clamp(72.0_f32.min(max_width), max_width);
+    let width = (message_content_width(message) + message.padding() * 2.0)
+        .clamp(72.0_f32.min(max_width), max_width);
     Rect::new(area.x + area.w - width, y, width, h)
 }
 
@@ -10592,11 +10906,23 @@ fn draw_user_document_icons(
     message: &MessageLayout,
     ox: f32,
     oy: f32,
+    faces: &HashMap<uuid::Uuid, u8>,
 ) {
     let icon = engine.icon_layout(icons::DOCUMENT, 13.0);
     for link in &message.links {
-        let end = link.range.start + doc_links::CHIP_LEAD.len();
-        if message.display.get(link.range.start..end) != Some(doc_links::CHIP_LEAD) {
+        let bot = koru_link::parse(&link.url)
+            .ok()
+            .and_then(|link| match link {
+                koru_link::KoruLink::Bot { bot, name } => Some((bot, name)),
+                _ => None,
+            });
+        let lead = if bot.is_some() {
+            doc_links::BOT_CHIP_LEAD
+        } else {
+            doc_links::CHIP_LEAD
+        };
+        let end = link.range.start + lead.len();
+        if message.display.get(link.range.start..end) != Some(lead) {
             continue;
         }
         let selection = Selection::new(
@@ -10609,6 +10935,21 @@ fn draw_user_document_icons(
                 return;
             }
             drawn = true;
+            if let Some((bot, name)) = &bot {
+                let side = ((box_.x1 - box_.x0) as f32 - 8.0)
+                    .min((box_.y1 - box_.y0) as f32 - 4.0)
+                    .max(1.0);
+                let avatar = Rect::new(
+                    ox + box_.x0 as f32 + 4.0,
+                    oy + (box_.y0 + box_.y1) as f32 * 0.5 - side * 0.5,
+                    side,
+                    side,
+                );
+                let face = faces.get(bot).copied().unwrap_or(0);
+                koru_draw::face::Face::new(face, name).draw(canvas, root, engine, avatar);
+                koru_draw::pill::draw_bot_avatar_border(canvas, root, face, avatar);
+                return;
+            }
             scene::draw_layout(
                 canvas,
                 root,
@@ -10616,6 +10957,42 @@ fn draw_user_document_icons(
                 ox + box_.x0 as f32 + ((box_.x1 - box_.x0) as f32 - icon.width()) * 0.5,
                 oy + box_.y0 as f32 + ((box_.y1 - box_.y0) as f32 - icon.height()) * 0.5,
                 Some(theme::p().accent),
+            );
+        });
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_user_bot_chip_outlines(
+    canvas: &mut Scene,
+    root: Affine,
+    message: &MessageLayout,
+    ox: f32,
+    oy: f32,
+    faces: &HashMap<uuid::Uuid, u8>,
+    pointer: (f32, f32),
+) {
+    for link in &message.links {
+        let Ok(koru_link::KoruLink::Bot { bot, .. }) = koru_link::parse(&link.url) else {
+            continue;
+        };
+        let selection = Selection::new(
+            Cursor::from_byte_index(&message.layout, link.range.start, Affinity::Downstream),
+            Cursor::from_byte_index(&message.layout, link.range.end, Affinity::Upstream),
+        );
+        selection.geometry_with(&message.layout, |box_, _| {
+            let at = Rect::new(
+                ox + box_.x0 as f32,
+                oy + box_.y0 as f32,
+                (box_.x1 - box_.x0) as f32,
+                (box_.y1 - box_.y0) as f32,
+            );
+            koru_draw::pill::draw_bot_chip_outline(
+                canvas,
+                root,
+                faces.get(&bot).copied().unwrap_or(0),
+                at,
+                at.contains(pointer.0, pointer.1),
             );
         });
     }
@@ -10724,20 +11101,6 @@ fn format_result_bytes(bytes: u64) -> String {
         return format!("{kib:.1} KB");
     }
     format!("{:.1} MB", kib / 1_024.0)
-}
-
-/// The buttons under a finished reply: copy, branch, store, link. Rating a
-/// reply (thumbs up and down) is off for now (the user's call, 2026-11-02);
-/// the service keeps its feedback store and API, so it can come back.
-const RESPONSE_ACTIONS: usize = 4;
-
-fn response_action_glyph(index: usize) -> char {
-    match index {
-        0 => icons::COPY,
-        1 => icons::GIT_BRANCH,
-        2 => icons::FLOPPY_DISK,
-        _ => icons::LINK,
-    }
 }
 
 fn render_chat_block(
@@ -10982,10 +11345,11 @@ fn open_web_link(url: &str) -> bool {
 }
 
 fn action_rect(card: Rect, index: usize) -> Rect {
-    let gap = 2.0;
+    use koru_draw::theme::{Profile, Space};
+    let gap = Space::S0_5.px(Profile::Desktop);
     Rect::new(
-        card.x + PAD + index as f32 * (ACTION_H + gap),
-        card.y + card.h - ACTION_H - 6.0,
+        card.x + Space::S3_5.px(Profile::Desktop) + index as f32 * (ACTION_H + gap),
+        card.y + card.h - ACTION_H - Space::S1_5.px(Profile::Desktop),
         ACTION_H,
         ACTION_H,
     )
@@ -11065,6 +11429,7 @@ fn unmade_transcript(model: ModelSelection) -> ChatTranscript {
     let id = ChatId::new();
     let now = koru_ai_core::Timestamp::now();
     ChatTranscript {
+        active_attempt: None,
         chat: Chat {
             id,
             title: DEFAULT_CHAT_TITLE.into(),
@@ -11300,6 +11665,7 @@ mod tests {
         let now = koru_ai_core::Timestamp::from_millis(1);
         let chat_id = ChatId::new();
         ChatTranscript {
+            active_attempt: None,
             sources: Vec::new(),
             chat: Chat {
                 id: chat_id,
@@ -15777,89 +16143,49 @@ mod tests {
     }
 
     #[test]
-    fn the_context_ring_stays_at_the_model_chips_leading_edge_while_painting() {
+    fn the_agent_icon_opens_models_and_context_together() {
         let mut surface = ChatSurface::new();
         let (reader, _commands, _updates) = Reader::test_pair();
         surface.reader = Some(reader);
         surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+        surface.transcript = Some(transcript());
+        surface.validated_ready = true;
+        surface.composer_rect();
+        let icon = surface.chat_model_selector_button();
+        assert_eq!(icon.w, BUTTON_H);
+        assert!(surface.mouse_down(icon.x + 2.0, icon.y + 2.0));
+        assert!(surface.chat_model_open);
+        assert!(surface.context_window_snapshot().is_some());
+        let panel = surface.picker_geometry().unwrap().panel;
+        assert!(panel.y >= surface.viewport.y);
+        assert!(panel.y + panel.h <= surface.viewport.y + surface.viewport.h);
+        surface.mouse_down(icon.x + 2.0, icon.y + 2.0);
+        assert!(!surface.chat_model_open);
+    }
+
+    #[test]
+    fn an_agent_draft_grows_out_of_the_inline_row_and_shrinks_back() {
+        let mut surface = ChatSurface::new();
+        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
         let mut chat = transcript();
         chat.chat.current_model.provider = AiProviderId::parse("agent-codex").unwrap();
         surface.transcript = Some(chat);
-        surface.validated_ready = true;
-        surface.offer_dictation(true);
-        surface.offer_microphone_choice(true);
-
-        let root = Affine::IDENTITY;
-        let capture =
-            koru_draw::inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 900.0, 600.0));
-        surface.draw(&mut Scene::new(), root);
-        let painted = capture
-            .finish()
-            .records
-            .into_iter()
-            .find(|record| record.name == "ComposerContextIndicator")
-            .expect("painted context ring")
-            .rect();
-        let model = surface.chat_model_button();
-        assert_eq!(painted.x0 as f32, model.x);
-        assert_eq!(painted.y0 as f32, model.y);
-        assert_eq!(painted.x1 as f32, model.x + BUTTON_H);
-    }
-
-    #[test]
-    fn the_context_ring_opens_details_without_opening_the_model_picker() {
-        let mut surface = ChatSurface::new();
-        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
-        surface.transcript = Some(transcript());
-        surface.composer_rect();
-
-        let indicator = surface.context_indicator_button().expect("chat ring");
-        assert_eq!(surface.context_progress(), None);
-        assert!(surface.mouse_down(indicator.x + 2.0, indicator.y + 2.0));
-        assert!(surface.context_window_panel().is_some());
-        assert!(!surface.chat_model_open);
-
-        assert!(surface.mouse_down(indicator.x + 2.0, indicator.y + 2.0));
-        assert!(surface.context_window_panel().is_none());
-    }
-
-    #[test]
-    fn context_logo_and_model_selector_have_separate_hover_targets() {
-        let mut surface = ChatSurface::new();
-        surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
-        surface.transcript = Some(transcript());
-        surface.composer_rect();
-
-        let logo = surface.context_indicator_button().unwrap();
-        let model = surface.chat_model_selector_button();
-        assert!(logo.x + logo.w < model.x);
-        assert_eq!(
-            surface.control_hover_at(logo.x + 2.0, logo.y + 2.0),
-            Some((5, 12))
-        );
-        assert_eq!(
-            surface.control_hover_at(model.x + 2.0, model.y + 2.0),
-            Some((5, 5))
-        );
-        assert!(!model.contains(logo.x + 2.0, logo.y + 2.0));
-    }
-
-    #[test]
-    fn the_context_popover_starts_at_the_icon_and_stays_in_view() {
-        let mut surface = ChatSurface::new();
-        surface.set_viewport(Rect::new(0.0, 0.0, 2000.0, 700.0));
-        surface.transcript = Some(transcript());
-        surface.composer_rect();
-        surface.context_window_open = true;
-
-        let indicator = surface.context_indicator_button().unwrap();
-        let panel = surface.context_window_panel().unwrap().rect;
-        let gap = theme::overlay::popover().anchor_gap;
-        assert!((panel.x - indicator.x).abs() < 0.5);
+        let compact = surface.composer_rect();
+        let text = surface.composer_text_rect();
+        assert!(surface.plus_button().y >= text.y);
+        assert!(surface.plus_button().y < text.y + text.h);
+        surface
+            .composer
+            .set_text(&"A longer draft with several words. ".repeat(24));
+        let expanded = surface.composer_rect();
+        assert!(expanded.h > compact.h);
         assert!(
-            (panel.y - indicator.y - indicator.h - gap).abs() < 0.5
-                || (indicator.y - panel.y - panel.h - gap).abs() < 0.5
+            surface.plus_button().y
+                >= surface.composer_text_rect().y + surface.composer_text_rect().h
         );
+        assert_eq!(surface.composer_rect().h, expanded.h);
+        surface.composer.set_text("");
+        assert_eq!(surface.composer_rect().h, compact.h);
     }
 
     #[test]
@@ -15887,7 +16213,7 @@ mod tests {
         assert_eq!(surface.chip_label(), "gpt-5.5 · Medium");
 
         let chip = surface.chat_model_button();
-        assert!(surface.mouse_down(chip.x + BUTTON_H + 4.0, chip.y + 2.0));
+        assert!(surface.mouse_down(chip.x + chip.w * 0.5, chip.y + chip.h * 0.5));
         let control = surface.effort_control().cloned().unwrap();
         let high = surface
             .picker_segment_rect(ReasoningChoice::Level(ReasoningLevel::High))
@@ -15943,7 +16269,7 @@ mod tests {
         assert!(surface.web_search_button().is_none());
 
         let chip = surface.chat_model_button();
-        assert!(surface.mouse_down(chip.x + BUTTON_H + 4.0, chip.y + 2.0));
+        assert!(surface.mouse_down(chip.x + chip.w * 0.5, chip.y + chip.h * 0.5));
         assert!(
             surface.chat_model_open,
             "the chip opens even with no model list"
@@ -17052,10 +17378,14 @@ mod tests {
                 .iter()
                 .position(|r| r.name == part)
                 .unwrap_or_else(|| panic!("{part} is drawn"));
+            let mut parent = records[i].parent;
+            while parent.is_some_and(|index| index != the_box) {
+                parent = records[parent.unwrap()].parent;
+            }
             assert_eq!(
-                records[i].parent,
+                parent,
                 Some(the_box),
-                "{part} is inside the composer's box"
+                "{part} is nested inside the composer's box"
             );
         }
         let primitives: Vec<usize> = records
@@ -17367,10 +17697,14 @@ mod tests {
             work_view::WorkInput {
                 message: MessageId::new(),
                 live: true,
+                bot: false,
+                progress: Default::default(),
                 started_ms: 0,
                 worked_ms: 0,
                 items: Vec::new(),
                 groups: Vec::new(),
+                names: bot_presentation::ActivityNames::default(),
+                activity: None,
             },
             &work_view::Opened {
                 replies: &HashSet::new(),

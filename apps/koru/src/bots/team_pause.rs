@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **Pause all Bots** (Bots M8, P8.1; contract 6.1): what the roster's
-//! control says and may do, from what the Bot service last answered.
+//! **Pause all Bots**: what the roster's control says and may do, from
+//! what the native engine last answered.
 //!
 //! This is the model only. It asks nothing and sends nothing: the roster
 //! hands it each answer and takes from it the change to send. It is fed

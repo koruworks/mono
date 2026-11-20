@@ -227,10 +227,45 @@ pub struct ChatComposer {
     /// Where host coordinates put the editor's view origin.
     origin: (f32, f32),
     open_request: Option<koru_link::KoruLink>,
+    bot_faces: std::collections::HashMap<uuid::Uuid, u8>,
     place_request: Option<koru_link::KoruLink>,
 }
 
 impl ChatComposer {
+    pub(crate) fn set_bot_faces(&mut self, faces: &std::collections::HashMap<uuid::Uuid, u8>) {
+        self.bot_faces.clone_from(faces);
+        self.refresh_bot_pills();
+    }
+
+    fn refresh_bot_pills(&mut self) -> bool {
+        let mut changed = false;
+        for row in &mut self.editor.body.rows {
+            for info in row.pills.values_mut() {
+                if !matches!(info.kind, koru_draw::pill::PillKind::Bot(_)) {
+                    continue;
+                }
+                let Some(id) = info
+                    .entity
+                    .as_ref()
+                    .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                else {
+                    continue;
+                };
+                let face = self.bot_faces.get(&id).copied().unwrap_or(0);
+                let kind = koru_draw::pill::PillKind::Bot(face);
+                if info.kind != kind {
+                    info.kind = kind;
+                    row.dirty = true;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.editor.reflow();
+        }
+        changed
+    }
+
     pub(crate) fn new(store_root: Option<PathBuf>) -> Self {
         let (ws, root, editor) = fresh();
         Self {
@@ -249,6 +284,7 @@ impl ChatComposer {
             text: Rect::new(0.0, 0.0, 1.0, 1.0),
             origin: (0.0, 0.0),
             open_request: None,
+            bot_faces: std::collections::HashMap::new(),
             place_request: None,
         }
     }
@@ -846,6 +882,24 @@ impl ChatComposer {
     /// The height of the text the composer should show at `inner_w`: between
     /// `min_lines` and `max_lines` visual lines, not counting its padding.
     /// Past `max_lines` the composer scrolls.
+    /// Use the already-shaped advances to decide whether controls can share
+    /// the line. Measuring at two alternating widths would reflow every frame.
+    pub(crate) fn fits_single_line(&self, width: f32) -> bool {
+        match self.editor.body.rows.as_slice() {
+            [] => true,
+            [row] => {
+                !row.text.contains('\n')
+                    && row
+                        .layout
+                        .lines()
+                        .map(|line| line.metrics().advance)
+                        .sum::<f32>()
+                        <= width - 1.0
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn text_height(&mut self, inner_w: f32, min_lines: usize, max_lines: usize) -> f32 {
         let w = inner_w.max(1.0) + 2.0 * side();
         if (self.editor.view.viewport.0 - w).abs() > 0.5 {
@@ -857,6 +911,15 @@ impl ChatComposer {
         let Some(first) = rows.first() else {
             return min;
         };
+        // Inline references share the text's line box. The editor's extended
+        // hit band must not increase the composer's visible height.
+        if let [row] = rows.as_slice() {
+            return row
+                .layout
+                .height()
+                .min(line_height() * max_lines as f32)
+                .max(min);
+        }
         let top = first.y;
         let mut lines = 0usize;
         for row in rows {
@@ -880,7 +943,18 @@ impl ChatComposer {
             (text.w - 2.0 * PAD_X).max(1.0),
             (text.h - PAD_TOP - PAD_BOTTOM).max(1.0),
         );
-        let origin = (inner.x - side(), inner.y - theme::MARGIN_TOP);
+        // Center the visible letters, not the font's asymmetric line box.
+        // The shared origin also moves the placeholder, caret and hit targets.
+        let ink_shift = self.editor.body.rows.first().map_or(0.0, |row| {
+            if self.editor.body.rows.len() == 1 && row.layout.len() == 1 {
+                // Use the visible text region's center, including when
+                // an inline object has a larger editor hit-area band.
+                koru_editor::rowlayout::first_line_mid_y(row, 0.0) - inner.h * 0.5
+            } else {
+                koru_editor::rowlayout::ink_shift(row)
+            }
+        });
+        let origin = (inner.x - side(), inner.y - theme::MARGIN_TOP - ink_shift);
         let viewport = (inner.w + 2.0 * side(), inner.h + 2.0 * theme::MARGIN_TOP);
         let embedded = Embedded {
             clip: Rect::new(text.x - origin.0, text.y - origin.1, text.w, text.h),
@@ -954,6 +1028,30 @@ impl ChatComposer {
         }
         self.editor.view.active = true;
         let (vx, vy) = self.view_point(x, y);
+        self.editor.mouse_move(vx, vy);
+        if let Some(koru_editor::view_state::Hover::Pill { row, attr }) = self.editor.view.hover {
+            if let Some(info) = self
+                .editor
+                .body
+                .rows
+                .get(row)
+                .and_then(|row| row.pills.get(&attr))
+            {
+                if matches!(info.kind, koru_draw::pill::PillKind::Bot(_)) {
+                    if let Some(id) = info
+                        .entity
+                        .as_ref()
+                        .and_then(|id| uuid::Uuid::parse_str(id).ok())
+                    {
+                        self.open_request = Some(koru_link::KoruLink::Bot {
+                            bot: id,
+                            name: info.label.trim_start_matches('@').into(),
+                        });
+                        return true;
+                    }
+                }
+            }
+        }
         let handled = self.editor.mouse_down(&mut self.ws, vx, vy, false);
         self.sync();
         handled || self.text.contains(x, y)
@@ -1043,7 +1141,7 @@ impl ChatComposer {
     /// search, route a query or an outline, refuse a new page, surface a chip
     /// click. Cheap when nothing is pending.
     fn sync(&mut self) -> bool {
-        let mut changed = false;
+        let mut changed = self.refresh_bot_pills();
         // **A composer never makes a page.** The picker's "new page" row
         // closes the picker and leaves the typed `@…` as text; nothing is
         // created, and nothing is left waiting for a document that will never

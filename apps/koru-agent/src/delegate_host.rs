@@ -112,7 +112,7 @@ static DELEGATE: OnceLock<Supervisor> = OnceLock::new();
 pub fn start(
     paths: &Paths,
     device: koru_device::DeviceId,
-    bot_authority: koru_delegate_api::bots::BotDelegateAuthority,
+    run_authority: koru_delegate_api::authority::RunAuthorityCredential,
 ) -> Result<&'static Supervisor, String> {
     let endpoint = crate::delegate_endpoint(paths).map_err(|error| error.to_string())?;
     let authority = Arc::new(Mutex::new(String::new()));
@@ -122,7 +122,7 @@ pub fn start(
         &endpoint,
         authority,
         device,
-        bot_authority,
+        run_authority,
     ));
     let supervisor = Supervisor {
         handle,
@@ -176,7 +176,7 @@ fn delegate_spec(
     endpoint: &koru_ipc::Endpoint,
     wake_authority: Arc<Mutex<String>>,
     device: koru_device::DeviceId,
-    bot_authority: koru_delegate_api::bots::BotDelegateAuthority,
+    run_authority: koru_delegate_api::authority::RunAuthorityCredential,
 ) -> WorkerSpec<DelegateChild> {
     let segment: String = crate::segment().into();
     let root = paths.root().to_path_buf();
@@ -203,7 +203,7 @@ fn delegate_spec(
                 device_id,
                 stop_authority.clone(),
             )
-            .with_bot_authority(bot_authority.clone());
+            .with_run_authority(run_authority.clone());
             let bootstrap = serde_json::to_vec(&bootstrap)
                 .map_err(|error| format!("could not encode the delegate bootstrap: {error}"))?;
             let mut args: Vec<std::ffi::OsString> = Vec::new();

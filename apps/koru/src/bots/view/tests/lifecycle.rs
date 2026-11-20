@@ -45,8 +45,8 @@ fn nothing_sent(f: &Fixture) {
     assert!(sent.is_empty(), "nothing was sent");
 }
 
-/// **The ⋯ offers Archive and Move to Trash, and pressing it sends
-/// nothing**: it asks the window for its menu. Each confirmation says what
+/// **The navigator owns Archive and Move to Trash.** The removed chat
+/// header cannot open another menu or send a command. Each confirmation says what
 /// will happen in the person's words — running work stopped, a session they
 /// took over included; for Trash, the conversations go and the role page,
 /// results and folder stay.
@@ -54,12 +54,12 @@ fn nothing_sent(f: &Fixture) {
 fn the_menu_and_its_questions_send_nothing_and_say_what_will_happen() {
     let mut f = listed(&[]);
     assert_eq!(f.view.lifecycle_rows(), [Ask::Archive, Ask::Trash]);
-    assert!(f.view.perform(region::Act::Actions));
-    let at = f
-        .view
-        .take_actions_request()
-        .expect("the menu is the window's");
-    assert!(at.0 > 0.0 && at.1 > 0.0, "under the ⋯: {at:?}");
+    assert!(!f.keys().contains(&actions::ACTIONS_BUTTON));
+    assert!(
+        !f.view.perform(region::Act::Actions),
+        "the removed chat-header menu cannot open; the navigator owns it"
+    );
+    assert!(f.view.take_actions_request().is_none());
     let running = crate::bots::stops::WorkNow::Running;
     let (title, body, verb) = f.view.confirm_words(Ask::Archive, running).unwrap();
     assert_eq!(title, "Archive “Scout”?");
@@ -242,7 +242,10 @@ fn archive_then_unarchive_from_the_tab() {
     assert!(f.view.facts().unwrap().archived);
     f.publishable("archived");
     assert!(f.view.shows_conversation(), "its history stays readable");
-    assert!(f.keys().contains(&ARCHIVED));
+    assert!(
+        !f.keys().contains(&ARCHIVED),
+        "identity stays in the navigator"
+    );
     assert!(f.keys().contains(&actions::UNARCHIVE));
     assert_eq!(f.view.lifecycle_rows(), [Ask::Unarchive, Ask::Trash]);
     assert_eq!(
@@ -449,6 +452,19 @@ fn a_second_conversation_trash_waits_in_words() {
     assert_eq!(f.view.take_conversation_trash(), None);
     assert_eq!(f.view.list_notice(), Some(Words::BotsErrPending));
     assert!(f.keys().contains(&list::TRASH_NOTICE));
+    let notice = f
+        .view
+        .controls()
+        .into_iter()
+        .find(|control| control.key == list::TRASH_NOTICE)
+        .expect("the retained status region publishes the refusal");
+    assert_eq!(notice.role, ControlRole::Label);
+    assert_eq!(notice.label, t(f.view.lang, Words::BotsErrPending));
+    f.view.with_frame(|_, frame| {
+        assert!(!frame.contains(list::CONVERSATIONS));
+        assert!(!frame.contains(actions::ACTIONS_BUTTON));
+        assert!(frame.node(HEADER).unwrap().rect.h > 0.0);
+    });
 }
 
 /// **A competing operation** (`request_conflict` today,
@@ -519,34 +535,11 @@ fn a_hidden_tab_reads_no_progress() {
     assert!(matches!(read, BotCommand::ReadLifecycleOperation { .. }));
 }
 
-/// **The ⋯ is a named button before Settings in the keyboard's order and
-/// the accessibility tree**, and the keyboard returns to it when the
-/// window's dialog closes.
 #[test]
-fn the_actions_button_is_named_ordered_and_gets_the_keyboard_back() {
+fn lifecycle_dialog_does_not_restore_focus_to_the_removed_header_menu() {
     let mut f = listed(&[]);
-    let order = f.view.focus_order();
-    let actions_at = order.iter().position(|key| *key == actions::ACTIONS_BUTTON);
-    let settings_at = order.iter().position(|key| *key == region::SETTINGS_BUTTON);
-    assert!(actions_at.unwrap() < settings_at.unwrap(), "{order:?}");
-    let controls = f.view.controls();
-    let named = controls
-        .iter()
-        .find(|control| control.key == actions::ACTIONS_BUTTON)
-        .expect("published");
-    assert_eq!(named.label, "Bot actions");
-    assert_eq!(named.role, ControlRole::Button);
-    // The keyboard opened the menu from the ⋯ …
-    f.view.focus = Some(actions::ACTIONS_BUTTON);
-    assert!(f.view.perform(region::Act::Actions));
-    // … the window's menu and dialog took it …
-    f.view.focus = None;
-    // … and the dialog's close gives it back.
-    f.view.dialog_closed();
-    assert_eq!(f.view.focus(), Some(actions::ACTIONS_BUTTON));
-    // A pointer-opened menu leaves the keyboard where it was.
-    f.view.focus = None;
-    f.view.perform(region::Act::Actions);
+    assert!(!f.view.focus_order().contains(&actions::ACTIONS_BUTTON));
+    f.view.return_focus = Some(actions::ACTIONS_BUTTON);
     f.view.dialog_closed();
     assert_eq!(f.view.focus(), None);
 }

@@ -454,6 +454,12 @@ pub struct ProviderDiagnostics {
 /// Koru ids to provider-native ids. All methods may block and therefore run on
 /// a session worker, never a window or Agent event thread.
 pub trait AgentControl: Send {
+    /// Proves this turn has never reached the provider. Called immediately
+    /// after a failed submit on the same serialized owner. Absence of proof
+    /// is deliberately ambiguous; implementations must retain sent identities.
+    fn submission_known_unsent(&self, _turn_id: AgentTurnId) -> bool {
+        false
+    }
     /// Starts the provider transport and completes its initialize handshake.
     fn start(&mut self, start: AgentStart) -> Result<AgentCapabilities, ProviderFailure>;
 

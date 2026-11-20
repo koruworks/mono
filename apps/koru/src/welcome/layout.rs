@@ -252,29 +252,11 @@ pub(super) fn field_w(engine: &mut TextEngine, text: &str) -> f32 {
 /// wider than `max_w`. A path's end says the most — the bridge's name and its
 /// flags — so the end keeps two thirds of what is kept.
 pub(super) fn elide_middle(engine: &mut TextEngine, text: &str, max_w: f32) -> String {
-    if field_w(engine, text) <= max_w {
-        return text.to_owned();
-    }
-    let chars: Vec<char> = text.chars().collect();
-    let cut = |keep: usize| {
-        let head = keep / 3;
-        let tail = keep - head;
-        let mut out: String = chars[..head].iter().collect();
-        out.push('\u{2026}');
-        out.extend(&chars[chars.len() - tail..]);
-        out
-    };
-    // The most characters that still fit: `lo` always fits, `hi` never does.
-    let (mut lo, mut hi) = (0, chars.len());
-    while hi - lo > 1 {
-        let mid = (lo + hi) / 2;
-        if field_w(engine, &cut(mid)) <= max_w {
-            lo = mid;
-        } else {
-            hi = mid;
-        }
-    }
-    cut(lo)
+    engine.elided_middle(
+        text,
+        theme::role::row(),
+        (max_w - FIELD_PAD_X * 2.0).max(0.0),
+    )
 }
 
 /// Lay a sentence of styled segments into lines no wider than `width`,

@@ -26,7 +26,7 @@ pub struct LaunchBootstrap {
     pub device_id: String,
     authority: String,
     #[serde(default)]
-    bot_authority: Option<koru_delegate_api::bots::BotDelegateAuthority>,
+    run_authority: Option<koru_delegate_api::authority::RunAuthorityCredential>,
 }
 
 impl LaunchBootstrap {
@@ -47,7 +47,7 @@ impl LaunchBootstrap {
             explicit_root,
             device_id,
             authority,
-            bot_authority: None,
+            run_authority: None,
         }
     }
 
@@ -56,16 +56,16 @@ impl LaunchBootstrap {
         &self.authority
     }
 
-    pub fn with_bot_authority(
+    pub fn with_run_authority(
         mut self,
-        authority: koru_delegate_api::bots::BotDelegateAuthority,
+        authority: koru_delegate_api::authority::RunAuthorityCredential,
     ) -> Self {
-        self.bot_authority = Some(authority);
+        self.run_authority = Some(authority);
         self
     }
 
-    pub fn bot_authority(&self) -> Option<&koru_delegate_api::bots::BotDelegateAuthority> {
-        self.bot_authority.as_ref()
+    pub fn run_authority(&self) -> Option<&koru_delegate_api::authority::RunAuthorityCredential> {
+        self.run_authority.as_ref()
     }
 }
 

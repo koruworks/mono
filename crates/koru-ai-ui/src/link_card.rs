@@ -102,6 +102,16 @@ impl LinkCard {
         pointer: (f32, f32),
         now: Instant,
     ) -> bool {
+        // Bot identities are direct app controls, not URL previews. Preserve
+        // normal document/web cards, including their crossing-to-card behavior.
+        if under.as_ref().is_some_and(|link| {
+            matches!(
+                koru_link::parse(&link.url),
+                Ok(koru_link::KoruLink::Bot { .. })
+            )
+        }) {
+            return self.hide();
+        }
         // On its way onto the card the pointer leaves the link: the card
         // stays while it is over it, as the document's does.
         if self

@@ -25,6 +25,12 @@ pub enum Command {
         id: Uuid,
         thread: ChatId,
     },
+    Rename {
+        id: Uuid,
+        thread: ChatId,
+        revision: u64,
+        title: String,
+    },
     Branch {
         id: Uuid,
         thread: ChatId,
@@ -125,6 +131,8 @@ pub struct ActiveTurn {
 #[schemars(rename = "BotThreadSnapshot")]
 pub struct Snapshot {
     pub conversation: BotConversation,
+    /// Thread metadata revision, independent of model/settings changes.
+    pub revision: u64,
     pub settings_revision: u64,
     pub paused: bool,
     pub team_paused: bool,
@@ -171,6 +179,42 @@ pub struct Card {
     pub messages: u64,
     pub outputs: u64,
     pub state: String,
+    /// Collaboration facts projected from dispatches and obligations, not
+    /// inferred from the number of words messages in a thread.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dispatches: Vec<Dispatch>,
+    /// A single completed firing. Several cards may share one Routine thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine: Option<RoutineResult>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotThreadRoutineResult")]
+pub struct RoutineResult {
+    pub routine: Uuid,
+    pub occurrence: Uuid,
+    pub at_ms: i64,
+    pub manual: bool,
+    pub reply: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<koru_ai_core::bots::BotReplyPreview>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotThreadDispatch")]
+pub struct Dispatch {
+    pub group: Uuid,
+    /// Reserved response of the exact originating turn, including while live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_reply: Option<Uuid>,
+    pub message: Uuid,
+    pub recipient: BotId,
+    pub name: String,
+    pub state: String,
+    pub reply: Option<Uuid>,
+    /// Exact answered-by message, bounded for the origin's read-only preview.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<koru_ai_core::bots::BotReplyPreview>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -345,3 +389,6 @@ impl std::fmt::Debug for Response {
         f.write_str("BotThreadResponse(<redacted>)")
     }
 }
+
+#[cfg(test)]
+mod tests;

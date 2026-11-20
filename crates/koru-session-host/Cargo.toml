@@ -27,6 +27,8 @@ base64.workspace = true
 koru-agent-worker = { path = "../koru-agent-worker" }
 koru-api-client = { path = "../koru-api-client" }
 koru-channel = { path = "../koru-channel" }
+koru-delegate-preamble = { path = "../koru-delegate-preamble" }
+koru-settings = { path = "../koru-settings" }
 koru-events = { path = "../koru-events" }
 koru-ipc = { path = "../koru-ipc", features = ["tokio"] }
 koru-log = { path = "../koru-log" }

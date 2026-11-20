@@ -11,10 +11,27 @@ use koru_draw::el::{
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::tokens::{Profile, Space};
-use koru_ui::icon_button::Metrics;
 use koru_ui::split_button::SplitButton;
 
 use crate::{BUTTON_H, COMPOSER_PAD_TOP, COMPOSER_TEXT_GAP};
+
+const CONTROL_GAP: f32 = Space::S2.px(Profile::Desktop);
+
+pub(crate) fn controls_width(mode: bool, mic: bool, choice: bool) -> f32 {
+    BUTTON_H
+        + BUTTON_H
+        + CONTROL_GAP
+        + if mode {
+            SplitButton::ACTION_W + SplitButton::RESTING_MENU_W
+        } else {
+            BUTTON_H
+        }
+        + if mic {
+            BUTTON_H + CONTROL_GAP + if choice { BUTTON_H } else { 0.0 }
+        } else {
+            0.0
+        }
+}
 
 pub(crate) const PLUS: Key = Key::surface("KoruComposer", "add-context");
 pub(crate) const SEND: Key = Key::surface("KoruComposer", "send");
@@ -28,6 +45,15 @@ pub(crate) struct Shell {
 }
 
 impl Shell {
+    pub(crate) fn model(&self) -> Rect {
+        let slot = self.frame.rect_of("ComposerModelSlot").expect("model slot");
+        Rect::new(
+            slot.x,
+            slot.y + (slot.h - BUTTON_H) * 0.5,
+            BUTTON_H,
+            BUTTON_H,
+        )
+    }
     pub(crate) fn text(&self) -> Rect {
         self.frame.rect_of("ComposerText").expect("composer text")
     }
@@ -70,6 +96,7 @@ pub(crate) fn layout(
     rect: Rect,
     band_height: f32,
     text_height: f32,
+    inline: bool,
     plus_name: &str,
     send_name: &str,
     mode_name: Option<&str>,
@@ -78,8 +105,16 @@ pub(crate) fn layout(
 ) -> Shell {
     let text_region = COMPOSER_PAD_TOP + text_height + COMPOSER_TEXT_GAP;
     let mut toolbar = row("ComposerToolbar")
-        .h(Length::Runtime(BUTTON_H, "action button height"))
-        .pad_x(Space::S5)
+        .h(Length::Runtime(
+            if inline {
+                text_region.max(BUTTON_H)
+            } else {
+                BUTTON_H
+            },
+            "composer row height",
+        ))
+        .items_center()
+        .pad_x(Space::S3)
         .child(
             boxed("ComposerAddContext")
                 .w(Length::Runtime(BUTTON_H, "action button height"))
@@ -91,7 +126,18 @@ pub(crate) fn layout(
                 .semantics(Role::Button)
                 .name_text(plus_name),
         )
-        .child(spacer());
+        .child(if inline {
+            boxed("ComposerText")
+                .fill()
+                .h(Length::Runtime(text_region, "editor lines and insets"))
+        } else {
+            spacer()
+        })
+        .child(
+            boxed("ComposerModelSlot")
+                .w(Length::Runtime(BUTTON_H + 8.0, "model icon and gap"))
+                .h(Length::Runtime(BUTTON_H, "model button height")),
+        );
     if let Some(name) = microphone_name {
         toolbar = toolbar.child(
             boxed("ComposerMicrophone")
@@ -104,24 +150,16 @@ pub(crate) fn layout(
                 .name_text(name),
         );
         if let Some(choice_name) = microphone_choice_name {
-            toolbar = toolbar
-                .child(boxed("ComposerMicrophoneChoiceGap").w(Length::Runtime(
-                    Space::S0_5.px(Profile::Desktop),
-                    "choice gap",
-                )))
-                .child(
-                    boxed("ComposerMicrophoneChoice")
-                        .w(Length::Runtime(
-                            Metrics::COMPACT.control_width(),
-                            "microphone choice width",
-                        ))
-                        .h(Length::Runtime(BUTTON_H, "action button height"))
-                        .id(MICROPHONE_CHOICE)
-                        .hit()
-                        .action(Action::Click)
-                        .semantics(Role::Button)
-                        .name_text(choice_name),
-                );
+            toolbar = toolbar.child(
+                boxed("ComposerMicrophoneChoice")
+                    .w(Length::Runtime(BUTTON_H, "microphone choice width"))
+                    .h(Length::Runtime(BUTTON_H, "action button height"))
+                    .id(MICROPHONE_CHOICE)
+                    .hit()
+                    .action(Action::Click)
+                    .semantics(Role::Button)
+                    .name_text(choice_name),
+            );
         }
         toolbar = toolbar.child(
             boxed("ComposerMicrophoneGap")
@@ -147,12 +185,15 @@ pub(crate) fn layout(
     toolbar = if let Some(mode_name) = mode_name {
         toolbar.child(
             row("ComposerSplitButton")
-                .w(Length::Runtime(SplitButton::W, "split button width"))
+                .w(Length::Runtime(
+                    SplitButton::ACTION_W + SplitButton::RESTING_MENU_W,
+                    "split button width",
+                ))
                 .child(send)
                 .child(
                     boxed("ComposerModeChevron")
                         .w(Length::Runtime(
-                            SplitButton::MENU_W,
+                            SplitButton::RESTING_MENU_W,
                             "mode menu target width",
                         ))
                         .h(Length::Runtime(BUTTON_H, "action button height"))
@@ -167,15 +208,16 @@ pub(crate) fn layout(
     } else {
         toolbar.child(send)
     };
-    let tree = col("KoruComposer").child(
-        col("ComposerBox")
-            .pad_bottom(Space::S3_5)
-            .child(
-                boxed("ComposerContextBand").h(Length::Runtime(band_height, "measured chip band")),
-            )
-            .child(boxed("ComposerText").h(Length::Runtime(text_region, "editor lines and insets")))
-            .child(toolbar),
-    );
+    let mut body = col("ComposerBox")
+        .pad_top(if inline { Space::S1 } else { Space::S0 })
+        .pad_bottom(if inline { Space::S1 } else { Space::S2 })
+        .child(boxed("ComposerContextBand").h(Length::Runtime(band_height, "measured chip band")));
+    if !inline {
+        body = body.child(
+            boxed("ComposerText").h(Length::Runtime(text_region, "editor lines and insets")),
+        );
+    }
+    let tree = col("KoruComposer").child(body.child(toolbar));
     let frame = LAYOUT.with_borrow_mut(|slot| {
         let (engine, cache) = slot.get_or_insert_with(|| (TextEngine::new(), TextCache::default()));
         tree.layout(engine, cache, rect, FrameCx::root())
@@ -188,9 +230,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn inline_text_and_controls_share_a_row_without_overlapping() {
+        let shell = layout(
+            Rect::new(0.0, 0.0, 800.0, 44.0),
+            0.0,
+            24.0,
+            true,
+            "Add context",
+            "Send",
+            Some("Mode"),
+            Some("Dictate"),
+            Some("Microphone"),
+        );
+        let text = shell.text();
+        assert!(shell.plus().x + shell.plus().w <= text.x);
+        let text_center = text.y + COMPOSER_PAD_TOP + 12.0;
+        for control in [
+            shell.plus(),
+            shell.model(),
+            shell.microphone().unwrap(),
+            shell.send(),
+        ] {
+            assert!((control.y + control.h * 0.5 - text_center).abs() < 0.01);
+            assert!((control.y + control.h * 0.5 - 22.0).abs() < 0.01);
+        }
+        assert!(text.x + text.w <= shell.model().x);
+        assert!(shell.model().x + shell.model().w <= shell.microphone().unwrap().x);
+        assert_eq!(shell.microphone().unwrap().h, shell.send().h);
+        assert_eq!(shell.microphone_choice().unwrap().h, shell.send().h);
+        assert!(shell.frame.diagnostics.is_empty());
+    }
+
+    #[test]
     fn shell_parts_share_frame_geometry_and_ancestry() {
         let rect = Rect::new(10.0, 20.0, 360.0, 130.0);
-        let shell = layout(rect, 46.0, 28.0, "Add context", "Send", None, None, None);
+        let shell = layout(
+            rect,
+            46.0,
+            28.0,
+            false,
+            "Add context",
+            "Send",
+            None,
+            None,
+            None,
+        );
         assert!(
             shell.frame.diagnostics.is_empty(),
             "{:?}",
@@ -211,7 +295,10 @@ mod tests {
         let text = shell.text();
         let toolbar = shell.toolbar();
         assert_eq!(text.y + text.h, toolbar.y);
-        assert_eq!(shell.send().x + shell.send().w, rect.x + rect.w - 20.0);
+        assert_eq!(
+            shell.send().x + shell.send().w,
+            rect.x + rect.w - crate::COMPOSER_PAD_X
+        );
         let text_node = shell.frame.named("ComposerText").next().unwrap();
         let box_node = shell.frame.named("ComposerBox").next().unwrap();
         let mut parent = text_node.parent;
@@ -232,6 +319,7 @@ mod tests {
             Rect::new(10.0, 20.0, 360.0, 130.0),
             0.0,
             74.0,
+            false,
             "Add context",
             "Send",
             Some("Approval mode"),
@@ -242,7 +330,7 @@ mod tests {
         let send = shell.send();
         let mode = shell.mode().expect("mode menu target");
         let group = shell.frame.rect_of("ComposerSplitButton").unwrap();
-        assert_eq!(group.w, SplitButton::W);
+        assert_eq!(group.w, SplitButton::ACTION_W + SplitButton::RESTING_MENU_W);
         assert_eq!(send.x, group.x);
         assert_eq!(send.w, SplitButton::ACTION_W);
         assert_eq!(send.x + send.w, mode.x);
@@ -255,6 +343,7 @@ mod tests {
             Rect::new(10.0, 20.0, 360.0, 130.0),
             0.0,
             74.0,
+            false,
             "Add context",
             "Send",
             Some("Approval mode"),
@@ -264,8 +353,9 @@ mod tests {
         let chooser = shell.microphone_choice().unwrap();
         let microphone = shell.microphone().unwrap();
         let send = shell.send();
-        assert!(microphone.x + microphone.w < chooser.x);
-        assert!(chooser.x + chooser.w < send.x);
+        assert_eq!(microphone.x + microphone.w, chooser.x);
+        assert_eq!(send.x - chooser.x - chooser.w, 8.0);
+        assert_eq!(microphone.x - shell.model().x - shell.model().w, 8.0);
         assert_eq!(
             shell.frame.hit_at(microphone.x + 1.0, microphone.y + 1.0),
             Some(MICROPHONE)

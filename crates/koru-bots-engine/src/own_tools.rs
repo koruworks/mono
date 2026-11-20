@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 pub fn catalog() -> Vec<Value> {
-    vec![
+    let mut tools = vec![
         json!({
             "name": "read_older_messages",
             "description": "Read an ordered page of messages in this conversation. Use the last sequence as after to read the next page.",
@@ -19,7 +19,7 @@ pub fn catalog() -> Vec<Value> {
         }),
         json!({
             "name":"message_bot",
-        "description":"Ask another Bot without waiting. Omit thread to open a side thread; its answer continues your originating conversation. source_message must name a work item offered to this turn. Reuse id and identical arguments after uncertainty.",
+        "description":"Ask another Bot without waiting. Briefly tell the person which Bots you are asking and why before calling this tool. Omit thread to open a side thread; its answer continues your originating conversation. After acceptance, give one short confirmation for the group of requests. When replies arrive, answer the person's original question using their actual contents; say which replies are still outstanding and never claim a Bot replied without a received message. The UI shows delivery and reply progress, so do not repeat those status lines. source_message must name a work item offered to this turn. Reuse id and identical arguments after uncertainty.",
             "inputSchema":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"to":{"type":"string","format":"uuid"},"source_message":{"type":"string","format":"uuid"},"body":{"type":"string"},"thread":{"type":["string","null"],"format":"uuid"},"deadline_ms":{"type":["integer","null"]}},"required":["id","to","source_message","body"],"additionalProperties":false}
         }),
         json!({
@@ -27,7 +27,9 @@ pub fn catalog() -> Vec<Value> {
             "description":"List active Bots in your workspace, with addresses usable by message_bot. Pass next as after for another page.",
             "inputSchema":{"type":"object","properties":{"after":{"type":["string","null"],"format":"uuid"}},"additionalProperties":false}
         }),
-    ]
+    ];
+    tools.extend(crate::routines::tools::catalog());
+    tools
 }
 
 pub(crate) fn execute(
@@ -38,6 +40,9 @@ pub(crate) fn execute(
     now: i64,
 ) -> Result<Value, Error> {
     let identity = db.resolve_call(secret, binding, call)?;
+    if crate::routines::tools::handles(call.tool()) {
+        return crate::routines::tools::execute(db, &identity, call, now);
+    }
     match call.tool() {
         "message_bot" => {
             let request = serde_json::from_value(call.arguments().clone())

@@ -109,6 +109,19 @@ const HOSTED: &[&str] = &[
 /// proposed the crate) rather than describing today's code. A new reference
 /// anywhere else fails: describe today's code by its current crate instead.
 const FORMER: &[(&str, &[&str])] = &[
+    // The copied-Bot wire crate was retired by the native engine cutover.
+    // These dated execution/discovery notes describe the former protocol.
+    (
+        "koru-bot-client-wire",
+        &[
+            "docs/features/bots/EXECUTION.md",
+            "docs/features/bots/F9.FEASIBILITY.notes.md",
+            "docs/features/bots/M8.DISCOVERY.notes.md",
+            "docs/features/bots/M8.LINKED-FN.EXECUTION.notes.md",
+            "docs/features/bots/M8.MIRROR.EXECUTION.notes.md",
+            "docs/features/bots/M8.OWNER-SERVER.EXECUTION.notes.md",
+        ],
+    ),
     // The standalone Koru Terminal app, deleted by ADR-279; these record its
     // removal or decisions taken while it existed, and techdebt 60-62 are
     // entries about its code.

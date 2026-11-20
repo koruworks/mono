@@ -4,7 +4,6 @@ use super::*;
 
 fn entry(bot: BotId, chat: ChatId, state: BotActivityState) -> BotActivity {
     BotActivity {
-        waiting: None,
         bot_id: bot,
         chat_id: chat,
         state,

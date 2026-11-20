@@ -33,10 +33,7 @@ impl MainView {
                             koru_ai_core::bots::BotActivityState::NeedsYou => {
                                 activity.needs_you.push(entry.chat_id.as_uuid())
                             }
-                            // A reply waiting on other Bots (M6) is a run in
-                            // progress: pausing its Routine lets it finish.
-                            koru_ai_core::bots::BotActivityState::Running
-                            | koru_ai_core::bots::BotActivityState::Waiting => {
+                            koru_ai_core::bots::BotActivityState::Running => {
                                 activity.running.push(entry.chat_id.as_uuid())
                             }
                         }

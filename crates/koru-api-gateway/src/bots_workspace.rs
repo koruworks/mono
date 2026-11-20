@@ -28,9 +28,6 @@ pub(crate) fn start(
     config: &crate::GatewayConfig,
     state: &Arc<GatewayState>,
 ) -> Result<Option<Server>, String> {
-    if !koru_bots_engine::ENABLED {
-        return Ok(None);
-    }
     let Some(authority) = config
         .bootstrap
         .as_ref()

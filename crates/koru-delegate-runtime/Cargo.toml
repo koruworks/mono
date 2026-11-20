@@ -19,19 +19,7 @@ description = "Drives a delegated run from request to terminal state through the
 
 [features]
 default = []
-# The decision-chain builder (`test_support`) for dependents' composition
-# tests: an orchestrator over the real in-memory ledger and minimal scripted
-# ports, holding a prepared Koru edit decision in memory. A dependent turns it
-# on only in its `[dev-dependencies]`, because a `cfg(test)` guard here never
-# reaches the crates above (AGENTS.md, Testing). It touches no disk, Store,
-# provider or network, and drives only public orchestrator methods. The one
-# edge is the scope fixture identity, so no folder is canonicalized. Nothing
-# shipped enables it.
-test-support = ["koru-delegate-scope/fixtures"]
-
 [dependencies]
-blake3.workspace = true
-uuid.workspace = true
 # `RunId`, `RunStatus`, `transition`, `RunHeader`, `TimelineEntry`,
 # `UsageFact` — what the orchestrator moves and records.
 koru-delegate-core = { path = "../koru-delegate-core" }
@@ -60,6 +48,6 @@ tracing = { workspace = true }
 koru-core = { path = "../koru-core" }
 
 [dev-dependencies]
-koru-delegate-sqlite = { path = "../koru-delegate-sqlite", features = ["test-support"] }
+uuid.workspace = true
 koru-delegate-scope = { path = "../koru-delegate-scope", features = ["fixtures"] }
 koru-time-zone = { path = "../koru-time-zone" }

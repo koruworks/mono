@@ -62,6 +62,28 @@ impl TextEngine {
         self.simple_layout_in(text, style, theme::ui_stack())
     }
 
+    /// Chrome with changing numeric counters. Keep words in the UI font and
+    /// shape digits in the code font, in one layout so wrapping and bidi agree.
+    pub fn numeric_layout(
+        &mut self,
+        text: &str,
+        style: theme::TextStyle,
+        max_width: Option<f32>,
+    ) -> Layout<Brush> {
+        self.shaped_with_digits(
+            text,
+            theme::ui_stack(),
+            Setting {
+                size: style.metrics.size,
+                line_height: LineHeight::Absolute(style.metrics.line_height),
+                weight: style.weight.value(),
+                wrap: max_width.map(|width| (width, OverflowWrap::Anywhere)),
+                brush: theme::p().text,
+            },
+            true,
+        )
+    }
+
     /// Like [`simple_layout`](Self::simple_layout) but in an explicit family
     /// stack rather than the chrome's — so a font picker can render each
     /// family's name set in that family's own face.
@@ -145,6 +167,16 @@ impl TextEngine {
     /// alignment. The public entry points differ only in which of these
     /// they take from a role and which from the caller.
     fn shaped(&mut self, text: &str, stack: &str, setting: Setting) -> Layout<Brush> {
+        self.shaped_with_digits(text, stack, setting, false)
+    }
+
+    fn shaped_with_digits(
+        &mut self,
+        text: &str,
+        stack: &str,
+        setting: Setting,
+        monospace_digits: bool,
+    ) -> Layout<Brush> {
         let mut b = self
             .layout_cx
             .ranged_builder(&mut self.font_cx, text, 1.0, true);
@@ -158,6 +190,18 @@ impl TextEngine {
         }
         push_axes(&mut b, setting.size, setting.weight);
         b.push_default(StyleProperty::Brush(Brush(setting.brush)));
+        if monospace_digits {
+            for (start, character) in text.char_indices() {
+                if character.is_numeric() {
+                    b.push(
+                        StyleProperty::FontFamily(FontFamily::Source(Cow::Borrowed(
+                            theme::code_stack(),
+                        ))),
+                        start..start + character.len_utf8(),
+                    );
+                }
+            }
+        }
         let mut layout = b.build(text);
         layout.break_all_lines(setting.wrap.map(|(max_width, _)| max_width));
         layout.align(Alignment::Start, AlignmentOptions::default());
@@ -503,7 +547,9 @@ impl TextEngine {
             | PillKind::Quote
             | PillKind::Skill
             | PillKind::Mention => 0.0,
-            PillKind::File | PillKind::Contact | PillKind::Date => theme::PILL_PAD_X,
+            PillKind::File | PillKind::Contact | PillKind::Date | PillKind::Bot(_) => {
+                theme::PILL_PAD_X
+            }
         };
         // Document titles: peel a leading emoji into the icon slot (Explore/tabs
         // rule) so spacing matches a kind glyph and the emoji is not drawn twice.
@@ -576,6 +622,8 @@ impl TextEngine {
         // no icon and so no slot: its caption's own `@` leads it.
         let icon_slot = if kind == PillKind::Mention {
             0.0
+        } else if matches!(kind, PillKind::Bot(_)) {
+            style.size.min(label_baseline)
         } else {
             cap_height_of(&label_layout)
         };
@@ -607,16 +655,35 @@ impl TextEngine {
         } else {
             0.0
         };
+        let avatar = if let PillKind::Bot(face) = kind {
+            let mut scene = vello::Scene::new();
+            crate::face::Face::new(face, label.trim_start_matches('@')).draw_in(
+                &mut scene,
+                vello::kurbo::Affine::IDENTITY,
+                self,
+                crate::geometry::Rect::new(0.0, 0.0, icon_slot, icon_slot),
+                theme::p(),
+            );
+            Some(scene)
+        } else {
+            None
+        };
+        // Inline references share the surrounding line's height and baseline.
+        // Adding the label's leading and another pair of pads made a compact
+        // composer grow when a page/file, skill or Bot mention was inserted.
+        let height = style.line_height;
+        let inline_ascent = (style.line_height + cap_height_of(&label_layout)) * 0.5;
         let visual = PillVisual {
             width: horizontal_padding * 2.0 + icon_slot + gap + label_layout.width(),
-            height: theme::PILL_PAD_Y * 2.0 + label_baseline + label_descent,
+            height,
             horizontal_padding,
-            inline_ascent: theme::PILL_PAD_Y + label_baseline,
+            inline_ascent,
             label_baseline,
             label_descent,
             icon_slot,
             label: label_layout,
             icon,
+            avatar,
         };
         let size = (visual.width, visual.inline_ascent);
         self.pills.0.insert(key, visual);
@@ -814,6 +881,14 @@ impl TextEngine {
         self.elided_in(text, style, theme::ui_stack(), max_w)
     }
 
+    /// One measured line retaining both ends. Paths and commands keep more
+    /// of their ending, where the final folder or arguments identify them.
+    pub fn elided_middle(&mut self, text: &str, style: theme::TextStyle, max_w: f32) -> String {
+        elide_middle_measured(text, max_w, |value| {
+            self.simple_layout(value, style).width()
+        })
+    }
+
     /// Measure and elide in the same explicit stack used to paint the result.
     pub fn elided_in(
         &mut self,
@@ -822,34 +897,84 @@ impl TextEngine {
         stack: &str,
         max_w: f32,
     ) -> String {
-        if max_w <= 0.0 {
-            return String::new();
-        }
-        let full = self.simple_layout_in(text, style, stack).width();
-        if full <= max_w {
-            return text.to_string();
-        }
-        let chars: Vec<char> = text.chars().collect();
-        // The proportion that fits, less room for the ellipsis. A first guess
-        // from the ratio lands within a character or two on almost any string,
-        // and the loop below only has to walk the remainder.
-        let room = (max_w / full).clamp(0.0, 1.0);
-        let mut keep = ((chars.len() as f32 * room).floor() as usize).min(chars.len());
-        for _ in 0..ELIDE_TRIES {
-            if keep == 0 {
-                return ELLIPSIS.to_string();
-            }
-            let candidate: String = chars[..keep].iter().collect::<String>() + ELLIPSIS;
-            if self.simple_layout_in(&candidate, style, stack).width() <= max_w {
-                return candidate;
-            }
-            // Shrink by the overshoot rather than by one: a wildly wrong guess
-            // converges in the same handful of steps as a nearly-right one.
-            let over = 1.max(keep / 8);
-            keep = keep.saturating_sub(over);
-        }
-        chars[..keep].iter().collect::<String>() + ELLIPSIS
+        elide_measured(text, max_w, |text| {
+            self.simple_layout_in(text, style, stack).width()
+        })
     }
+
+    /// Elide using the same mixed-font metrics as [`Self::numeric_layout`].
+    pub fn numeric_elided(&mut self, text: &str, style: theme::TextStyle, max_w: f32) -> String {
+        elide_measured(text, max_w, |text| {
+            self.numeric_layout(text, style, None).width()
+        })
+    }
+}
+
+fn elide_middle_measured(text: &str, max_w: f32, mut width: impl FnMut(&str) -> f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if width(text) <= max_w {
+        return text.to_owned();
+    }
+    if width(ELLIPSIS) > max_w {
+        return String::new();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let cut = |keep: usize| {
+        let head = keep / 3;
+        let tail = keep - head;
+        let mut result: String = chars[..head].iter().collect();
+        result.push_str(ELLIPSIS);
+        result.extend(&chars[chars.len() - tail..]);
+        result
+    };
+    let (mut fits, mut overflows) = (0, chars.len());
+    for _ in 0..ELIDE_TRIES {
+        if overflows - fits <= 1 {
+            break;
+        }
+        let keep = (fits + overflows) / 2;
+        if width(&cut(keep)) <= max_w {
+            fits = keep;
+        } else {
+            overflows = keep;
+        }
+    }
+    cut(fits)
+}
+
+#[cfg(test)]
+mod elision_tests;
+
+fn elide_measured(text: &str, max_w: f32, mut width: impl FnMut(&str) -> f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    let full = width(text);
+    if full <= max_w {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    // The proportion that fits, less room for the ellipsis. A first guess
+    // from the ratio lands within a character or two on almost any string,
+    // and the loop below only has to walk the remainder.
+    let room = (max_w / full).clamp(0.0, 1.0);
+    let mut keep = ((chars.len() as f32 * room).floor() as usize).min(chars.len());
+    for _ in 0..ELIDE_TRIES {
+        if keep == 0 {
+            return ELLIPSIS.to_string();
+        }
+        let candidate: String = chars[..keep].iter().collect::<String>() + ELLIPSIS;
+        if width(&candidate) <= max_w {
+            return candidate;
+        }
+        // Shrink by the overshoot rather than by one: a wildly wrong guess
+        // converges in the same handful of steps as a nearly-right one.
+        let over = 1.max(keep / 8);
+        keep = keep.saturating_sub(over);
+    }
+    chars[..keep].iter().collect::<String>() + ELLIPSIS
 }
 
 /// What a standalone layout is set in, beyond its text and family stack:
@@ -1233,31 +1358,25 @@ mod tests {
         );
     }
 
-    /// Pad is 2px above the ascent line and 2px below the descent line.
+    /// A reference occupies one surrounding line, with its label on that
+    /// line's baseline; descenders remain inside its visual bounds.
     #[test]
-    fn a_pill_pads_ascent_and_descent_by_pill_pad_y() {
+    fn inline_references_fit_the_surrounding_line() {
         let mut engine = TextEngine::new();
-        let _ = engine.measure_pill(PillKind::Document, "Catalog", None);
-        let v = engine
-            .pills
-            .get(PillKind::Document, "Catalog", None)
-            .expect("cached");
-        assert!((v.inline_ascent - (theme::PILL_PAD_Y + v.label_baseline)).abs() < 0.01);
-        assert!(
-            (v.height - (theme::PILL_PAD_Y * 2.0 + v.label_baseline + v.label_descent)).abs()
-                < 0.01,
-            "h={} baseline={} descent={}",
-            v.height,
-            v.label_baseline,
-            v.label_descent
-        );
-        assert!(v.label_descent > 0.5, "Catalog has a descender");
-        // Below baseline: descent + pad, not pad alone.
-        let below = v.height - v.inline_ascent;
-        assert!(
-            (below - (v.label_descent + theme::PILL_PAD_Y)).abs() < 0.01,
-            "below baseline should be descent+pad, got {below}"
-        );
+        for kind in [
+            PillKind::Document,
+            PillKind::File,
+            PillKind::Bot(2),
+            PillKind::Skill,
+        ] {
+            let _ = engine.measure_pill(kind, "Catalog", None);
+            let v = engine.pills.get(kind, "Catalog", None).expect("cached");
+            assert!((v.height - PillTextStyle::body().line_height).abs() < 0.01);
+            assert!((v.inline_ascent - (v.height + cap_height_of(&v.label)) * 0.5).abs() < 0.01);
+            assert!(v.label_descent > 0.5, "Catalog has a descender");
+            assert!(v.inline_ascent < v.height);
+            assert!(v.icon_slot <= v.height);
+        }
     }
 
     #[test]

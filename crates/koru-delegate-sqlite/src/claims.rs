@@ -92,10 +92,15 @@ impl RunsDb {
         if revision == 0 {
             return Err(LedgerError::RevisionZero);
         }
+        if matches!(
+            request.scope,
+            koru_delegate_core::WorkspaceScope::BotFolder { .. }
+        ) {
+            return Err(LedgerError::IntentConflict);
+        }
         let payload =
             serde_json::to_string(request).map_err(|_| LedgerError::PayloadUnencodable)?;
         self.write(WriteOp::ClaimScheduledRun, |tx, _now| {
-            crate::bots::routines::deny_schedule(tx, schedule)?;
             let claimed = match read(tx, schedule, occurrence_ms)? {
                 Some(existing) => match existing.state {
                     SlotState::Claimed => ClaimedSlot {
@@ -204,7 +209,6 @@ impl RunsDb {
             return Err(LedgerError::RevisionZero);
         }
         self.write(WriteOp::ClaimSkip, |tx, _now| {
-            crate::bots::routines::deny_schedule(tx, schedule)?;
             let due = claim_skip_in_tx(
                 tx,
                 claimed_at_ms,
@@ -263,10 +267,15 @@ impl RunsDb {
         if revision == 0 {
             return Err(LedgerError::RevisionZero);
         }
+        if matches!(
+            request.scope,
+            koru_delegate_core::WorkspaceScope::BotFolder { .. }
+        ) {
+            return Err(LedgerError::IntentConflict);
+        }
         let payload =
             serde_json::to_string(request).map_err(|_| LedgerError::PayloadUnencodable)?;
         self.write(WriteOp::ClaimScheduledRun, |tx, _now| {
-            crate::bots::routines::deny_schedule(tx, schedule)?;
             if let Some(existing) = read(tx, schedule, occurrence_ms)? {
                 return match existing.state {
                     SlotState::Claimed => Ok(ClaimedSlot {
@@ -356,7 +365,6 @@ impl RunsDb {
         }
         validate_skip(outcome, busy_holder)?;
         self.write(WriteOp::ClaimSkip, |tx, _now| {
-            crate::bots::routines::deny_schedule(tx, schedule)?;
             claim_skip_in_tx(
                 tx,
                 claimed_at_ms,
@@ -387,7 +395,6 @@ impl RunsDb {
             return Err(LedgerError::RevisionZero);
         }
         self.write(WriteOp::ClaimSlot, |tx, now| {
-            crate::bots::routines::deny_schedule(tx, schedule)?;
             if let Some(existing) = read(tx, schedule, occurrence_ms)? {
                 return Err(LedgerError::SlotAlreadyClaimed {
                     run: existing.run,
@@ -431,9 +438,7 @@ impl RunsDb {
             return Err(LedgerError::InvalidSettlementOutcome);
         }
         self.write(WriteOp::RecordOutcome, |tx, _| {
-            crate::bots::routines::deny_schedule(tx, schedule)?;
             let claim = read(tx, schedule, occurrence_ms)?.ok_or(LedgerError::UnknownSlot)?;
-            crate::bots::routines::deny_run(tx, claim.run)?;
             match claim.state {
                 SlotState::Claimed => {
                     tx.execute(
@@ -504,27 +509,9 @@ impl RunsDb {
     /// Claims whose pending intents must be completed forward after restart.
     pub fn unsettled_claims(&self) -> Result<Vec<SlotClaim>, LedgerError> {
         self.read_slots(
-            "WHERE outcome = 'claimed' ORDER BY claimed_at_ms, schedule_id, occurrence_ms",
+            "WHERE outcome = 'claimed' AND EXISTS(SELECT 1 FROM run_intents i WHERE i.run_id=schedule_claims.run_id AND CASE WHEN json_valid(i.payload_json) THEN coalesce(json_extract(i.payload_json, '$.scope.kind') != 'bot_folder', 1) ELSE 1 END) ORDER BY claimed_at_ms, schedule_id, occurrence_ms",
             [],
-            false,
         )
-    }
-
-    /// Executable ordinary recovery excludes every retained Routine marker.
-    /// Canonical historical reads above deliberately remain unchanged.
-    pub fn ordinary_unsettled_claims(&self) -> Result<Vec<SlotClaim>, LedgerError> {
-        self.read_slots(
-            "WHERE outcome = 'claimed' ORDER BY claimed_at_ms, schedule_id, occurrence_ms",
-            [],
-            true,
-        )
-    }
-
-    /// Exact-run deny-only classification for ordinary occurrence publication.
-    /// A known negative is not permission to execute; retained Routine markers
-    /// and malformed evidence reuse the same owner as ordinary recovery.
-    pub fn validate_ordinary_schedule_run(&self, run: RunId) -> Result<(), LedgerError> {
-        crate::bots::routines::deny_run(self.conn(), run)
     }
 
     /// The schedule slot that originated one run, including after restart.
@@ -569,71 +556,36 @@ impl RunsDb {
         &self,
         suffix: &str,
         params: [rusqlite::types::Value; N],
-        ordinary_only: bool,
     ) -> Result<Vec<SlotClaim>, LedgerError> {
-        let columns = if ordinary_only {
-            "CASE WHEN typeof(c.schedule_id)='text' AND length(CAST(c.schedule_id AS BLOB))=36 THEN c.schedule_id END,
-             c.occurrence_ms,c.revision,
-             CASE WHEN typeof(c.run_id)='text' AND length(CAST(c.run_id AS BLOB))=36 THEN c.run_id END,
-             c.outcome,
-             CASE WHEN typeof(c.busy_holder_run_id)='text' AND length(CAST(c.busy_holder_run_id AS BLOB))=36 THEN c.busy_holder_run_id END,
-             c.claimed_at_ms,
-             EXISTS(SELECT 1 FROM bot_routine_routes r WHERE r.schedule_id=c.schedule_id)
-             OR EXISTS(SELECT 1 FROM bot_routine_links l WHERE l.run_id=c.run_id)
-             OR EXISTS(SELECT 1 FROM bot_admissions a WHERE a.run_id=c.run_id AND a.submission_version=2),
-             c.busy_holder_run_id IS NULL OR (typeof(c.busy_holder_run_id)='text' AND length(CAST(c.busy_holder_run_id AS BLOB))=36)"
-        } else {
-            "c.schedule_id,c.occurrence_ms,c.revision,c.run_id,c.outcome,c.busy_holder_run_id,c.claimed_at_ms,0,1"
-        };
-        let sql = format!("SELECT {columns} FROM schedule_claims c {suffix}");
+        let sql = format!(
+            "SELECT schedule_id, occurrence_ms, revision, run_id, outcome, busy_holder_run_id, claimed_at_ms FROM schedule_claims {suffix}"
+        );
         let mut statement = self
             .conn()
             .prepare(&sql)
             .map_err(|error| LedgerError::sql("list claims", error))?;
-        let mut rows = statement
-            .query(rusqlite::params_from_iter(params))
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(params), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            })
             .map_err(|error| LedgerError::sql("list claims", error))?;
         let mut claims = Vec::new();
-        while let Some(row) = rows
-            .next()
-            .map_err(|e| LedgerError::sql("list claims", e))?
-        {
-            let cell_error = |e| LedgerError::sql("list claims", e);
-            // Deny indexed positive markers before allocating any malformed
-            // slot content. Remaining marker/shape checks need only a bounded
-            // Run identity, not a second full intent read or slot decoding.
-            if ordinary_only && row.get::<_, bool>(7).map_err(cell_error)? {
-                continue;
-            }
-            let run: String = row.get(3).map_err(cell_error)?;
-            if ordinary_only {
-                let identity = run.parse().map_err(|_| LedgerError::Corrupt {
-                    table: "schedule_claims",
-                    column: "run_id",
-                })?;
-                match crate::bots::routines::deny_run(self.conn(), identity) {
-                    Ok(()) => {}
-                    Err(LedgerError::InvalidScheduleAuthority) => continue,
-                    Err(error) => return Err(error),
-                }
-                if !row.get::<_, bool>(8).map_err(cell_error)? {
-                    return Err(LedgerError::Corrupt {
-                        table: "schedule_claims",
-                        column: "busy_holder_run_id",
-                    });
-                }
-            }
-            let schedule: String = row.get(0).map_err(cell_error)?;
-            let occurrence = row.get(1).map_err(cell_error)?;
-            let revision = row.get(2).map_err(cell_error)?;
-            let outcome: String = row.get(4).map_err(cell_error)?;
-            let busy_holder: Option<String> = row.get(5).map_err(cell_error)?;
-            let at = row.get(6).map_err(cell_error)?;
+        for row in rows {
+            let (schedule, occurrence, revision, run, outcome, busy_holder, at) =
+                row.map_err(|error| LedgerError::sql("list claims", error))?;
             let schedule = schedule.parse().map_err(|_| LedgerError::Corrupt {
                 table: "schedule_claims",
                 column: "schedule_id",
             })?;
-            let claim = typed(
+            claims.push(typed(
                 schedule,
                 occurrence,
                 revision,
@@ -641,8 +593,7 @@ impl RunsDb {
                 &outcome,
                 busy_holder.as_deref(),
                 at,
-            )?;
-            claims.push(claim);
+            )?);
         }
         Ok(claims)
     }

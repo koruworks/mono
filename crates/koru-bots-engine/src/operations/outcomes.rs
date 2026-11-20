@@ -18,7 +18,7 @@ pub(super) fn validate(record: &Record, outcome: &Outcome) -> Result<(), Error> 
                         NativeResultKind::CreatedPage
                     ) | (NativeEffectKind::EditDocument, NativeResultKind::EditedPage)
                 )
-                || encode(result)?.len() > koru_bot_client_wire::MAX_FRAME_BYTES / 2
+                || encode(result)?.len() > crate::limits::MAX_PAYLOAD_BYTES / 2
             {
                 return Err(Error::InvalidRequest);
             }

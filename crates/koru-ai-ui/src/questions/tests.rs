@@ -43,6 +43,7 @@ fn transcript() -> ChatTranscript {
     let now = Timestamp::from_millis(1);
     let chat_id = ChatId::new();
     ChatTranscript {
+        active_attempt: None,
         sources: Vec::new(),
         chat: Chat {
             id: chat_id,

@@ -1,32 +1,42 @@
-panel [438.00 67.50 360.00 315.00] rail [438.00 67.50 0.00 0.00] search [442.00 75.50 352.00 32.00] field [442.00 75.50 322.00 32.00] refresh [766.00 77.50 26.00 28.00] list [442.00 111.50 352.00 240.00] footer None strip None context None fast None
-records 31 truncated false
-0 ^- part "Popover surface" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z0
+panel [444.00 8.00 360.00 420.00] rail [444.00 8.00 0.00 0.00] search [448.00 16.00 352.00 32.00] field [448.00 16.00 322.00 32.00] refresh [772.00 18.00 26.00 28.00] list [448.00 52.00 352.00 240.00] footer None strip None context None fast None
+records 52 truncated false
+0 ^- part "Popover surface" b[444.00 8.00 804.00 428.00] c[0.00 0.00 900.00 700.00] z0
     radius = "10" (PopoverShell::radius; caller-owned field)
     recipe viewport inset = "8" (theme::overlay::popover().viewport_inset; anchored default, not measured padding)
     recipe anchor gap = "6" (theme::overlay::popover().anchor_gap; anchored default, not measured spacing)
     recipe radius = "10" (theme::overlay::popover().radius; anchored default, actual radius shown separately)
     coverage = "Shell paint and its content: what is drawn inside the panel nests under this record" (PopoverShell::draw_containing)
-1 ^0 part "FloatingPanel" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z1
+1 ^0 part "FloatingPanel" b[444.00 8.00 804.00 428.00] c[0.00 0.00 900.00 700.00] z1
     fill = "#FFFFFF / alpha 1.000" (scene::Panel::fill)
     elevation = "Raised" (scene::Panel::elevation)
     radius = "10" (scene::Panel::radius)
-2 ^1 part "Shadow" b[418.00 50.50 818.00 405.50] c[0.00 0.00 900.00 700.00] z2
+    shadow opacity = "1" (scene::Panel::shadow_alpha)
+2 ^1 part "Shadow" b[424.00 -9.00 824.00 451.00] c[0.00 0.00 900.00 700.00] z2
     rings = "16" (one soft shadow drawn as expanding fills; vello has no blur)
     spread / dy = "20 / 3" (SHADOW_SPREAD / SHADOW_DY)
-3 ^1 primitive "fill" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z3
+3 ^1 primitive "fill" b[444.00 8.00 804.00 428.00] c[0.00 0.00 900.00 700.00] z3
     color = "#FFFFFF / alpha 1.000" (resolved paint; token origin not exposed)
-4 ^1 primitive "stroke" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z4
+4 ^1 primitive "stroke" b[444.00 8.00 804.00 428.00] c[0.00 0.00 900.00 700.00] z4
     color = "#E0E0E0 / alpha 1.000" (resolved paint; token origin not exposed)
     width = "1" (scene::stroke)
-5 ^0 element "Model picker" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z5
-    element = "row" (El constructor)
+5 ^0 element "Model picker and usage" b[444.00 8.00 804.00 428.00] c[0.00 0.00 900.00 700.00] z5
+    element = "column" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
     appearance = "light" (Theme::appearance)
     contrast = "standard" (FrameCx::contrast)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-6 ^5 element "Picker content" b[438.00 67.50 798.00 382.50] c[0.00 0.00 900.00 700.00] z6
+6 ^5 element "Model picker" b[444.00 8.00 804.00 323.00] c[0.00 0.00 900.00 700.00] z6
+    element = "row" (El constructor)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    fill = "Fill(1)" (El::fill)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+7 ^6 element "Picker content" b[444.00 8.00 804.00 323.00] c[0.00 0.00 900.00 700.00] z7
     element = "column" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -36,7 +46,7 @@ records 31 truncated false
     pad = "alias::PICKER_PAD = Space::S1 -> 4" (El::pad)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-7 ^6 element "Search row" b[442.00 71.50 794.00 111.50] c[0.00 0.00 900.00 700.00] z7
+8 ^7 element "Search row" b[448.00 12.00 800.00 52.00] c[0.00 0.00 900.00 700.00] z8
     element = "row" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -46,7 +56,7 @@ records 31 truncated false
     pad_y = "alias::PICKER_SEARCH_INSET = Space::S1 -> 4" (El::pad_y)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-8 ^7 element "Search box" b[442.00 75.50 794.00 107.50] c[0.00 0.00 900.00 700.00] z8
+9 ^8 element "Search box" b[448.00 16.00 800.00 48.00] c[0.00 0.00 900.00 700.00] z9
     element = "row" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -58,7 +68,7 @@ records 31 truncated false
     gap = "alias::PICKER_REFRESH_GAP = Space::S0_5 -> 2" (El::gap)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "presses surface model-picker/search" (El::hit / El::action)
-9 ^8 element "Search field" b[442.00 75.50 764.00 107.50] c[0.00 0.00 900.00 700.00] z9
+10 ^9 element "Search field" b[448.00 16.00 770.00 48.00] c[0.00 0.00 900.00 700.00] z10
     element = "leaf" (El constructor)
     key = "surface model-picker/search" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -70,26 +80,26 @@ records 31 truncated false
     semantics = "TextInput: delegated to the leaf's own node" (El::semantics)
     name = "Key::AiModelSearch" (El::name)
     input = "neutral" (El::hit / El::action)
-10 ^9 component "KoruTextInput" b[442.00 75.50 764.00 107.50] c[0.00 0.00 900.00 700.00] z10
+11 ^10 component "KoruTextInput" b[448.00 16.00 770.00 48.00] c[0.00 0.00 900.00 700.00] z11
     implementation = "koru_ui::text_input" (shared implementation)
     focused = "true" (caller state)
     masked = "false" (input state)
     docs = "docs/features/koruui/COMPONENTS.md" (catalog)
-11 ^10 primitive "fill" b[442.00 75.50 764.00 107.50] c[0.00 0.00 900.00 700.00] z11
+12 ^11 primitive "fill" b[448.00 16.00 770.00 48.00] c[0.00 0.00 900.00 700.00] z12
     color = "#EAEAEA / alpha 1.000" (resolved paint; token origin not exposed)
-12 ^10 part "text line" b[449.00 83.64 452.47 99.36] c[0.00 0.00 900.00 700.00] z12
+13 ^11 part "text line" b[455.00 24.14 458.47 39.86] c[0.00 0.00 900.00 700.00] z13
     line height = "15.729492" (actual Parley line box)
-    baseline = "96.229004" (local layout coordinates)
+    baseline = "36.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-13 ^10 part "text line" b[449.00 84.50 553.29 102.50] c[0.00 0.00 900.00 700.00] z13
+14 ^11 part "text line" b[455.00 25.00 559.29 43.00] c[0.00 0.00 900.00 700.00] z14
     line height = "18" (actual Parley line box)
-    baseline = "98.229004" (local layout coordinates)
+    baseline = "38.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-14 ^13 primitive "text run" b[449.00 85.64 553.29 101.36] c[0.00 0.00 900.00 700.00] z14
+15 ^14 primitive "text run" b[455.00 26.14 559.29 41.86] c[0.00 0.00 900.00 700.00] z15
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "98.229004" (local layout coordinates)
+    baseline = "38.729004" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#ABABAB / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -98,9 +108,9 @@ records 31 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-15 ^10 primitive "fill" b[449.00 85.00 449.80 98.00] c[0.00 0.00 900.00 700.00] z15
+16 ^11 primitive "fill" b[455.00 25.00 455.80 39.00] c[0.00 0.00 900.00 700.00] z16
     color = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
-16 ^8 element "Refresh models" b[766.00 77.50 792.00 105.50] c[0.00 0.00 900.00 700.00] z16
+17 ^9 element "Refresh models" b[772.00 18.00 798.00 46.00] c[0.00 0.00 900.00 700.00] z17
     element = "leaf" (El constructor)
     profile = "desktop" (FrameCx::profile)
     theme = "light" (FrameCx::theme)
@@ -108,7 +118,7 @@ records 31 truncated false
     contrast = "standard" (FrameCx::contrast)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-17 ^6 element "Model list" b[442.00 111.50 794.00 378.50] c[0.00 0.00 900.00 700.00] z17
+18 ^7 element "Model list" b[448.00 52.00 800.00 319.00] c[0.00 0.00 900.00 700.00] z18
     element = "scroll viewport" (El constructor)
     key = "surface model-picker/list" (El::id)
     profile = "desktop" (FrameCx::profile)
@@ -122,7 +132,7 @@ records 31 truncated false
     semantics = "List" (El::semantics)
     name = "model content" (El::name_text)
     input = "neutral" (El::hit / El::action)
-18 ^17 element "Model row" b[442.00 111.50 794.00 141.50] c[442.00 111.50 794.00 351.50] z18
+19 ^18 element "Model row" b[448.00 52.00 800.00 82.00] c[448.00 52.00 800.00 292.00] z19
     element = "row" (El constructor)
     key = "model 00000000-0000-0000-11a5-6ce19de6df1d/row" (El::id)
     occurrence = "1 of 2 named alike" (Frame)
@@ -140,9 +150,9 @@ records 31 truncated false
     name = "model content" (El::name_text)
     selected = "false" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-19 ^18 primitive "fill" b[442.00 111.50 794.00 141.50] c[442.00 111.50 794.00 351.50] z19
+20 ^19 primitive "fill" b[448.00 52.00 800.00 82.00] c[448.00 52.00 800.00 292.00] z20
     color = "#191919 / alpha 0.078" (resolved paint; token origin not exposed)
-20 ^18 element "Model name" b[450.00 117.50 786.00 135.50] c[442.00 111.50 794.00 351.50] z20
+21 ^19 element "Model name" b[456.00 58.00 792.00 76.00] c[448.00 52.00 800.00 292.00] z21
     element = "text" (El constructor)
     within = "model 00000000-0000-0000-11a5-6ce19de6df1d/row" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -156,15 +166,15 @@ records 31 truncated false
     lines = "1" (measured layout)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-21 ^20 part "label line" b[450.00 117.77 492.21 135.77] c[442.00 111.50 794.00 351.50] z21
+22 ^21 part "label line" b[456.00 58.27 498.21 76.27] c[448.00 52.00 800.00 292.00] z22
     line height = "18" (actual Parley line box; first-line draw)
-    baseline = "131.5" (local layout coordinates)
+    baseline = "72" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-22 ^21 primitive "text run" b[450.00 118.91 492.21 134.64] c[442.00 111.50 794.00 351.50] z22
+23 ^22 primitive "text run" b[456.00 59.41 498.21 75.14] c[448.00 52.00 800.00 292.00] z23
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "131.5" (local layout coordinates)
+    baseline = "72" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -173,7 +183,7 @@ records 31 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-23 ^17 element "Model row" b[442.00 141.50 794.00 171.50] c[442.00 111.50 794.00 351.50] z23
+24 ^18 element "Model row" b[448.00 82.00 800.00 112.00] c[448.00 52.00 800.00 292.00] z24
     element = "row" (El constructor)
     key = "model 00000000-0000-0000-ad82-5174a7808571/row" (El::id)
     occurrence = "2 of 2 named alike" (Frame)
@@ -191,9 +201,9 @@ records 31 truncated false
     name = "model content" (El::name_text)
     selected = "true" (El::selected)
     input = "pointer target; Click" (El::hit / El::action)
-24 ^23 primitive "fill" b[442.00 141.50 794.00 171.50] c[442.00 111.50 794.00 351.50] z24
+25 ^24 primitive "fill" b[448.00 82.00 800.00 112.00] c[448.00 52.00 800.00 292.00] z25
     color = "#F2F2F2 / alpha 1.000" (resolved paint; token origin not exposed)
-25 ^23 element "Model name" b[450.00 147.50 763.00 165.50] c[442.00 111.50 794.00 351.50] z25
+26 ^24 element "Model name" b[456.00 88.00 769.00 106.00] c[448.00 52.00 800.00 292.00] z26
     element = "text" (El constructor)
     within = "model 00000000-0000-0000-ad82-5174a7808571/row" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -207,15 +217,15 @@ records 31 truncated false
     lines = "1" (measured layout)
     semantics = "none: transparent to semantic parenting" (El::semantics)
     input = "neutral" (El::hit / El::action)
-26 ^25 part "label line" b[450.00 147.77 491.01 165.77] c[442.00 111.50 794.00 351.50] z26
+27 ^26 part "label line" b[456.00 88.27 497.01 106.27] c[448.00 52.00 800.00 292.00] z27
     line height = "18" (actual Parley line box; first-line draw)
-    baseline = "161.5" (local layout coordinates)
+    baseline = "102" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-27 ^26 primitive "text run" b[450.00 148.91 491.01 164.64] c[442.00 111.50 794.00 351.50] z27
+28 ^27 primitive "text run" b[456.00 89.41 497.01 105.14] c[448.00 52.00 800.00 292.00] z28
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "161.5" (local layout coordinates)
+    baseline = "102" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -224,7 +234,7 @@ records 31 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-28 ^23 element "Current check" b[772.00 149.50 786.00 163.50] c[442.00 111.50 794.00 351.50] z28
+29 ^24 element "Current check" b[778.00 90.00 792.00 104.00] c[448.00 52.00 800.00 292.00] z29
     element = "icon" (El constructor)
     within = "model 00000000-0000-0000-ad82-5174a7808571/row" (ancestry)
     profile = "desktop" (FrameCx::profile)
@@ -235,11 +245,11 @@ records 31 truncated false
     ink = "Ink::Secondary -> #6B6B6B / alpha 1.000" (El::ink)
     semantics = "decorative" (El::semantics)
     input = "neutral" (El::hit / El::action)
-29 ^28 part "text line" b[772.00 149.50 786.00 163.50] c[442.00 111.50 794.00 351.50] z29
+30 ^29 part "text line" b[778.00 90.00 792.00 104.00] c[448.00 52.00 800.00 292.00] z30
     line height = "14" (actual Parley line box)
-    baseline = "163.5" (local layout coordinates)
+    baseline = "104" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-30 ^29 primitive "icon" b[772.00 149.50 786.00 163.50] c[442.00 111.50 794.00 351.50] z30
+31 ^30 primitive "icon" b[778.00 90.00 792.00 104.00] c[448.00 52.00 800.00 292.00] z31
     icon pack = "Tabler" (selected icon pack)
     icon source = "Tabler" (upstream or original Koru artwork)
     icon name = "CHECK" (icons::ALL canonical name)
@@ -247,3 +257,180 @@ records 31 truncated false
     icon variant = "regular" (requested state)
     icon size = "14" (layout slot)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint)
+32 ^5 element "Model usage report" b[444.00 323.00 804.00 428.00] c[0.00 0.00 900.00 700.00] z32
+    element = "column" (El constructor)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+33 ^32 element "Divider" b[444.00 323.00 804.00 324.00] c[0.00 0.00 900.00 700.00] z33
+    element = "divider" (El constructor)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    line = "Line::Divider -> #E0E0E0 / alpha 1.000" (divider)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+34 ^33 primitive "fill" b[444.00 323.00 804.00 324.00] c[0.00 0.00 900.00 700.00] z34
+    color = "#E0E0E0 / alpha 1.000" (resolved paint; token origin not exposed)
+35 ^32 element "Model usage content" b[444.00 324.00 804.00 428.00] c[0.00 0.00 900.00 700.00] z35
+    element = "column" (El constructor)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    pad = "Space::S3 -> 12" (El::pad)
+    gap = "Space::S2 -> 8" (El::gap)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+36 ^35 element "Context summary" b[456.00 336.00 792.00 354.00] c[0.00 0.00 900.00 700.00] z36
+    element = "row" (El constructor)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+37 ^36 element "Text" b[456.00 336.00 556.55 354.00] c[0.00 0.00 900.00 700.00] z37
+    element = "text" (El constructor)
+    occurrence = "1 of 2 named alike" (Frame)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    text role = "row" (El::role)
+    ink = "Ink::Primary -> #191919 / alpha 1.000" (El::ink)
+    text mode = "single line" (El::truncate / El::wrap)
+    lines = "1" (measured layout)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+38 ^37 part "label line" b[456.00 336.27 556.55 354.27] c[0.00 0.00 900.00 700.00] z38
+    line height = "18" (actual Parley line box; first-line draw)
+    baseline = "350" (local layout coordinates)
+    ink bounds = "Not exposed" (line box is not glyph ink)
+39 ^38 primitive "text run" b[456.00 337.41 556.55 353.14] c[0.00 0.00 900.00 700.00] z39
+    font size = "13" (rendered run)
+    font weight = "500" (Parley run font attributes)
+    font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
+    baseline = "350" (local layout coordinates)
+    ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
+    foreground = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
+    rendered family = "Inter" (actual font face; fallback included)
+    font source = "bundled with Koru" (who supplied the face)
+    face attributes = "Attributes { stretch: Stretch(1.0), style: Normal, weight: Weight(400.0) }" (font face; variation axes may override)
+    variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
+    synthetic italic = "None" (rendered run)
+    tracking = "Not exposed" (unknown; do not infer from advances)
+40 ^36 element "Spacer" b[556.55 336.00 780.00 354.00] c[0.00 0.00 900.00 700.00] z40
+    element = "row" (El constructor)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    fill = "Fill(1)" (El::fill)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+41 ^36 element "Text" b[780.00 336.00 792.00 354.00] c[0.00 0.00 900.00 700.00] z41
+    element = "text" (El constructor)
+    occurrence = "2 of 2 named alike" (Frame)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    text role = "meta" (El::role)
+    ink = "Ink::Secondary -> #6B6B6B / alpha 1.000" (El::ink)
+    text mode = "single line" (El::truncate / El::wrap)
+    lines = "1" (measured layout)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+42 ^41 part "label line" b[780.00 336.63 792.00 352.63] c[0.00 0.00 900.00 700.00] z42
+    line height = "16" (actual Parley line box; first-line draw)
+    baseline = "349" (local layout coordinates)
+    ink bounds = "Not exposed" (line box is not glyph ink)
+43 ^42 primitive "text run" b[780.00 337.38 792.00 351.89] c[0.00 0.00 900.00 700.00] z43
+    font size = "12" (rendered run)
+    font weight = "500" (Parley run font attributes)
+    font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
+    baseline = "349" (local layout coordinates)
+    ascent / descent = "11.625 / 2.8945313" (rendered font metrics; not padding)
+    foreground = "#6B6B6B / alpha 1.000" (resolved paint; token origin not exposed)
+    rendered family = "Inter" (actual font face; fallback included)
+    font source = "bundled with Koru" (who supplied the face)
+    face attributes = "Attributes { stretch: Stretch(1.0), style: Normal, weight: Weight(400.0) }" (font face; variation axes may override)
+    variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
+    synthetic italic = "None" (rendered run)
+    tracking = "Not exposed" (unknown; do not infer from advances)
+44 ^35 element "Context progress" b[456.00 362.00 792.00 368.00] c[0.00 0.00 900.00 700.00] z44
+    element = "leaf" (El constructor)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    h = "metrics::MODEL_USAGE_BAR_H -> 6" (El::h)
+    semantics = "decorative" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+45 ^44 primitive "fill" b[456.00 362.00 792.00 368.00] c[0.00 0.00 900.00 700.00] z45
+    color = "#E0E0E0 / alpha 1.000" (resolved paint; token origin not exposed)
+46 ^35 element "Text" b[456.00 376.00 792.00 392.00] c[0.00 0.00 900.00 700.00] z46
+    element = "text" (El constructor)
+    occurrence = "1 of 2 named alike" (Frame)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    text role = "meta" (El::role)
+    ink = "Ink::Secondary -> #6B6B6B / alpha 1.000" (El::ink)
+    text mode = "wrapped" (El::truncate / El::wrap)
+    lines = "1" (measured layout)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+47 ^46 part "text line" b[456.00 375.63 706.34 391.63] c[0.00 0.00 900.00 700.00] z47
+    line height = "16" (actual Parley line box)
+    baseline = "388" (local layout coordinates)
+    ink bounds = "Not exposed" (line box is not glyph ink)
+48 ^47 primitive "text run" b[456.00 376.38 706.34 390.89] c[0.00 0.00 900.00 700.00] z48
+    font size = "12" (rendered run)
+    font weight = "500" (Parley run font attributes)
+    font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
+    baseline = "388" (local layout coordinates)
+    ascent / descent = "11.625 / 2.8945313" (rendered font metrics; not padding)
+    foreground = "#6B6B6B / alpha 1.000" (resolved paint; token origin not exposed)
+    rendered family = "Inter" (actual font face; fallback included)
+    font source = "bundled with Koru" (who supplied the face)
+    face attributes = "Attributes { stretch: Stretch(1.0), style: Normal, weight: Weight(400.0) }" (font face; variation axes may override)
+    variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
+    synthetic italic = "None" (rendered run)
+    tracking = "Not exposed" (unknown; do not infer from advances)
+49 ^35 element "Text" b[456.00 400.00 792.00 416.00] c[0.00 0.00 900.00 700.00] z49
+    element = "text" (El constructor)
+    occurrence = "2 of 2 named alike" (Frame)
+    profile = "desktop" (FrameCx::profile)
+    theme = "light" (FrameCx::theme)
+    appearance = "light" (Theme::appearance)
+    contrast = "standard" (FrameCx::contrast)
+    text role = "meta" (El::role)
+    ink = "Ink::Secondary -> #6B6B6B / alpha 1.000" (El::ink)
+    text mode = "wrapped" (El::truncate / El::wrap)
+    lines = "1" (measured layout)
+    semantics = "none: transparent to semantic parenting" (El::semantics)
+    input = "neutral" (El::hit / El::action)
+50 ^49 part "text line" b[456.00 399.63 551.73 415.63] c[0.00 0.00 900.00 700.00] z50
+    line height = "16" (actual Parley line box)
+    baseline = "412" (local layout coordinates)
+    ink bounds = "Not exposed" (line box is not glyph ink)
+51 ^50 primitive "text run" b[456.00 400.38 551.73 414.89] c[0.00 0.00 900.00 700.00] z51
+    font size = "12" (rendered run)
+    font weight = "500" (Parley run font attributes)
+    font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
+    baseline = "412" (local layout coordinates)
+    ascent / descent = "11.625 / 2.8945313" (rendered font metrics; not padding)
+    foreground = "#6B6B6B / alpha 1.000" (resolved paint; token origin not exposed)
+    rendered family = "Inter" (actual font face; fallback included)
+    font source = "bundled with Koru" (who supplied the face)
+    face attributes = "Attributes { stretch: Stretch(1.0), style: Normal, weight: Weight(400.0) }" (font face; variation axes may override)
+    variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
+    synthetic italic = "None" (rendered run)
+    tracking = "Not exposed" (unknown; do not infer from advances)

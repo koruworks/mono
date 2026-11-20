@@ -12,7 +12,7 @@ name = "koru-ai-server"
 path = "src/main.rs"
 
 [features]
-fixtures = ["koru-ai-sqlite/fixtures", "koru-connections/test-support"]
+fixtures = ["koru-ai-sqlite/fixtures"]
 
 [dependencies]
 base64.workspace = true
@@ -20,47 +20,24 @@ blake3.workspace = true
 bytes.workspace = true
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 koru-ai-api = { path = "../../crates/koru-ai-api" }
-koru-ai-client = { path = "../../crates/koru-ai-client" }
 koru-ai-core = { path = "../../crates/koru-ai-core" }
 koru-ai-provider = { path = "../../crates/koru-ai-provider" }
 koru-ai-provider-agent = { path = "../../crates/koru-ai-provider-agent" }
 koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite" }
 koru-ai-wire = { path = "../../crates/koru-ai-wire" }
-# Bot client protocol 1: the pages and records a linked desktop is sent
-# (`src/worker/bots/client`).
-koru-bot-client-wire = { path = "../../crates/koru-bot-client-wire" }
-koru-bots-engine = { path = "../../crates/koru-bots-engine" }
-# Private connections (M5): the service this worker hosts and the credential
-# port it is composed with. **Never with `koru-oauth-credentials/desktop`**:
-# only the host that composes the worker constructs an OS credential store,
-# so no test of this crate can reach a real keychain.
-koru-connections = { path = "../../crates/koru-connections" }
-koru-oauth-credentials = { path = "../../crates/koru-oauth-credentials" }
-koru-delegate-api = { path = "../../crates/koru-delegate-api" }
-koru-delegate-core = { path = "../../crates/koru-delegate-core" }
-koru-delegate-document = { path = "../../crates/koru-delegate-document" }
+koru-delegate-preamble = { path = "../../crates/koru-delegate-preamble" }
+koru-i18n = { path = "../../crates/koru-i18n" }
 koru-export = { path = "../../crates/koru-export" }
 koru-export-markdown = { path = "../../crates/koru-export-markdown" }
 koru-link = { path = "../../crates/koru-link" }
 koru-mcp-server = { path = "../../crates/koru-mcp-server" }
-# `TransportSession`: one stream of a linked device, as the gateway's Bot
-# ingress hands it to the owner server (`src/worker/bots/client/owner.rs`).
-koru-network-edge = { path = "../../crates/koru-network-edge" }
 koru-env = { path = "../../crates/koru-env" }
-# The six `bots.*` rows this worker publishes (M8): their typed payloads and
-# the draft a sink is handed (`src/worker/bots/events.rs`). A leaf crate; the
-# worker links nothing that stores or sends an event.
-koru-events = { path = "../../crates/koru-events" }
 koru-ipc = { path = "../../crates/koru-ipc" }
 koru-session-protocol = { path = "../../crates/koru-session-protocol" }
 koru-import-markdown = { path = "../../crates/koru-import-markdown" }
 koru-store-core = { path = "../../crates/koru-store-core" }
 koru-store-server = { path = "../koru-store-server" }
 koru-store-wire = { path = "../../crates/koru-store-wire" }
-# The streams of linked devices are tasks on the runtime that admitted them,
-# the gateway's. The worker itself stays a thread; nothing of its writer runs
-# on a runtime.
-tokio.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -71,11 +48,7 @@ zip.workspace = true
 
 [dev-dependencies]
 koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite", features = ["fixtures"] }
-# The scripted vendor, ledger and lockable credential store.
-koru-connections = { path = "../../crates/koru-connections", features = ["test-support"] }
 # Reading every change's commit message, for the attribution sweep.
 loro.workspace = true
 koru-log = { path = "../../crates/koru-log" }
-# The device principal of a paired test stream (`TransportSession::pair`).
-koru-device = { path = "../../crates/koru-device" }
 tempfile.workspace = true

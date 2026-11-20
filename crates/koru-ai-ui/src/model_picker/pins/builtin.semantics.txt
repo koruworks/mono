@@ -1,6 +1,6 @@
 diagnostics []
-TextInput Some(Key(AiModelSearch)) key=Some(Key { object: Surface("model-picker"), part: "search" }) b[442.00 75.50 322.00 32.00] selected=None disabled=false focusable=false actions=[]
-List Some(Text("Ollama")) key=Some(Key { object: Surface("model-picker"), part: "list" }) b[442.00 111.50 352.00 267.00] selected=None disabled=false focusable=false actions=[]
-  ListItem Some(Text("qwen3")) key=Some(Key { object: Model(1271542186074627869), part: "row" }) b[442.00 111.50 352.00 30.00] selected=Some(false) disabled=false focusable=false actions=[Click]
-  ListItem Some(Text("llama3")) key=Some(Key { object: Model(12502645077002192241), part: "row" }) b[442.00 141.50 352.00 30.00] selected=Some(true) disabled=false focusable=false actions=[Click]
+TextInput Some(Key(AiModelSearch)) key=Some(Key { object: Surface("model-picker"), part: "search" }) b[448.00 16.00 322.00 32.00] selected=None disabled=false focusable=false actions=[]
+List Some(Text("Ollama")) key=Some(Key { object: Surface("model-picker"), part: "list" }) b[448.00 52.00 352.00 267.00] selected=None disabled=false focusable=false actions=[]
+  ListItem Some(Text("qwen3")) key=Some(Key { object: Model(1271542186074627869), part: "row" }) b[448.00 52.00 352.00 30.00] selected=Some(false) disabled=false focusable=false actions=[Click]
+  ListItem Some(Text("llama3")) key=Some(Key { object: Model(12502645077002192241), part: "row" }) b[448.00 82.00 352.00 30.00] selected=Some(true) disabled=false focusable=false actions=[Click]
 focus Some(Key { object: Surface("model-picker"), part: "search" }) search ""

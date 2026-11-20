@@ -15,6 +15,8 @@ blake3.workspace = true
 # declared once so `koru.bat envs` and reference/ENV.md account for it.
 koru-env = { path = "../koru-env" }
 koru-events = { path = "../koru-events" }
+koru-delegate-preamble = { path = "../koru-delegate-preamble" }
+koru-i18n = { path = "../koru-i18n" }
 koru-session-observability = { path = "../koru-session-observability" }
 koru-session-profiles = { path = "../koru-session-profiles" }
 koru-session-protocol = { path = "../koru-session-protocol" }

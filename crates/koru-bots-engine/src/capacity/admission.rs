@@ -329,13 +329,14 @@ impl Admission {
              WHERE o.state IN ('owed','delivered') AND b.paused=0 AND b.lifecycle='active' AND t.lifecycle='active' AND COALESCE(tm.paused,0)=0
                AND EXISTS(SELECT 1 FROM participants p WHERE p.thread=i.thread AND p.participant=i.bot AND p.kind='bot')
                AND (o.state='delivered' OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?2)
+               AND NOT EXISTS(SELECT 1 FROM routine_occurrences ro WHERE ro.message=m.id AND ro.state='queued' AND ro.deadline_ms<=?2)
                AND (l.bot IS NULL OR l.idle=1) AND (?3=0 OR l.idle=1)
                AND (?4=0 OR t.capacity_wait_notified=0)
                AND NOT EXISTS(SELECT 1 FROM turns r WHERE r.bot=i.bot AND r.thread=i.thread AND r.state IN ('running','needs_you','parked'))
                AND NOT EXISTS(SELECT 1 FROM operations w WHERE w.bot=i.bot AND w.thread=i.thread AND (w.state='leased' OR (w.state='unresolved' AND json_extract(CAST(w.recovery AS TEXT),'$.continued_by') IS NULL)))
                AND NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.session=l.session AND d.state IN ('offered','unknown'))
              GROUP BY i.bot,i.thread,t.kind
-             ORDER BY t.kind='routine',EXISTS(SELECT 1 FROM live a WHERE a.bot=i.bot AND a.active=1),MIN(i.accepted_at_ms),i.bot,i.thread LIMIT 1",
+             ORDER BY MIN(CASE WHEN m.sender='routine' THEN 1 ELSE 0 END),EXISTS(SELECT 1 FROM live a WHERE a.bot=i.bot AND a.active=1),MIN(i.accepted_at_ms),i.bot,i.thread LIMIT 1",
             params![live, now.min(i64::MAX as u64) as i64, reuse_only, unnotified_only], |r| Ok((r.get(0)?, r.get(1)?)),
         ).optional()?;
         row.map(|(bot, thread)| {

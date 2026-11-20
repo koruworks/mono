@@ -118,7 +118,9 @@ impl Solver<'_> {
         let style = style_of(t);
         let width = match t.mode {
             TextMode::Single => None,
-            TextMode::Truncate | TextMode::Clip | TextMode::Wrap => width,
+            TextMode::Truncate | TextMode::TruncateMiddle | TextMode::Clip | TextMode::Wrap => {
+                width
+            }
         };
         let key = TextCache::key(t, &style, width, &self.cx);
         if let Some(layout) = self.cache.get(&key) {
@@ -127,6 +129,10 @@ impl Solver<'_> {
         let layout = Rc::new(match (t.mode, width) {
             (TextMode::Truncate, Some(w)) => {
                 let fitted = self.engine.elided(&t.content, style, w);
+                self.engine.simple_layout(&fitted, style)
+            }
+            (TextMode::TruncateMiddle, Some(w)) => {
+                let fitted = self.engine.elided_middle(&t.content, style, w);
                 self.engine.simple_layout(&fitted, style)
             }
             // Broken at the width; paint draws only the first line.
@@ -191,9 +197,10 @@ impl Solver<'_> {
         let inner = match &el.kind {
             Kind::Text(t) => match t.mode {
                 TextMode::Wrap => self.shape(t, Some(inner_w)).height(),
-                TextMode::Single | TextMode::Truncate | TextMode::Clip => {
-                    style_of(t).metrics.line_height
-                }
+                TextMode::Single
+                | TextMode::Truncate
+                | TextMode::TruncateMiddle
+                | TextMode::Clip => style_of(t).metrics.line_height,
             },
             Kind::Icon(i) => i.size.px(self.cx.profile),
             Kind::Leaf(adapter) => adapter.measure(Some(inner_w)).1,

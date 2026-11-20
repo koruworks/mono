@@ -82,18 +82,19 @@ pub(crate) fn default_agent<P: Clone>(agents: &[Agent<'_, P>]) -> Option<P> {
 }
 
 /// **Where a new Bot works when the person chooses no folder**, for the
-/// dialog to show before the Bot exists: `<channel root>/ai/bots/<BotId>/work`,
+/// dialog to show before the Bot exists: `<channel root>/bots/<BotId>/workspace`,
 /// under Koru's local data (`%LOCALAPPDATA%\Koru\<channel>` on Windows).
 ///
-/// This is the path the Bot's owner derives for `BotFolderChoice::Managed`
-/// ([`koru_ai_core::bots::managed_folder`] under
-/// [`koru_channel::ai_root_under`]), computed the same way so the two cannot
-/// differ. It names a path and creates nothing: the owner makes the folder
+/// This previews the native engine's managed-folder layout. It names a path
+/// and creates nothing: the owner makes the folder
 /// when the Bot is created. The dialog still sends `Managed {}`, never this
 /// path, so the owner alone decides where a managed folder is; a folder the
 /// person picks instead is sent as `Selected` and must already exist.
 pub(crate) fn default_folder(channel_root: &Path, bot: BotId) -> PathBuf {
-    koru_ai_core::bots::managed_folder(&koru_channel::ai_root_under(channel_root), bot)
+    channel_root
+        .join("bots")
+        .join(bot.to_storage())
+        .join("workspace")
 }
 
 /// **The channel root this window runs against**: the `--root` it was
