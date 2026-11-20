@@ -198,6 +198,16 @@ pub(crate) struct MobileBlobs {
 }
 
 impl MobileBlobs {
+    pub(crate) fn bind_admission(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        permit: &koru_sync_control::cloud::CloudPermitV2,
+        holds: koru_network_iroh::cloud::client_io::reconcile::UploadAdmissionHolds,
+        live: koru_blob_sync::LiveAuthorization,
+    ) {
+        self.engine.bind_admission(runtime, permit, holds, live);
+    }
+
     /// Install this platform's halves into the engine the worker composed.
     ///
     /// `None` when the worker has no engine, which means its read model would

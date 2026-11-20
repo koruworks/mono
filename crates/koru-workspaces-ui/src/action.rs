@@ -79,6 +79,12 @@ pub enum Action {
     /// Trash and later moves stand. From an Unassigned row (its former
     /// Profile) or a *Deleted profiles* row.
     RestoreProfile(ProfileId, koru_api_client::DeletionId),
+    /// **Restore a workspace into the Profile the account keeps it under**
+    /// (trash-recovery): out of this device's Trash and under that Profile
+    /// in one step, whatever became of the Profile it was trashed with.
+    /// Asks first — the question is built here, since nothing is open in a
+    /// trashed workspace for the gateway to report — and Enter accepts.
+    RestoreTo(WorkspaceId, ProfileId),
 
     // ------------------------------------------------------------ the surface's own
     ShowArchived,

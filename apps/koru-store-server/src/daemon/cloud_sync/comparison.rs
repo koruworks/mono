@@ -161,8 +161,14 @@ where
             changed += 1;
         }
     }
-    if changed != 0 || reordered != 0 {
+    // A proof whose bytes differ but whose revision is the same is not news:
+    // the encoding's order is a hash map's, so it varies between two reads of
+    // one revision, and logging it put a line out every pass for a workspace
+    // nothing had happened in (614 a day on one device, 2026-11-17).
+    if changed != 0 {
         tracing::info!(%workspace, changed, reordered, "cloud sync: rechecked durable document proofs");
+    } else if reordered != 0 {
+        tracing::debug!(%workspace, reordered, "cloud sync: proofs re-encoded, unchanged");
     }
     progress(Progress::Documents {
         synced: outcome.documents_synced,

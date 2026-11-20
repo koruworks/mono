@@ -737,7 +737,7 @@ it.
 
 ## Global search
 
-Press `Ctrl+P` in Koru, click the magnifying glass in the caption, or press
+Press `Ctrl+K` in Koru, click the magnifying glass in the caption, or press
 `Ctrl+Shift+K` anywhere on the machine — Windows and macOS both. On a Mac the
 chord really is Control, not Command: a global shortcut has to dodge the
 *system's* chords, and ⌘⇧K is far likelier to be taken than ⌃⇧K, so this is
@@ -852,7 +852,7 @@ active global search finds nothing, **Search archived workspaces** appears when
 there are archived workspaces to search; it keeps the query and searches only
 those archives. Softly deleted workspaces remain excluded.
 
-`Ctrl+P` and the caption button begin by searching only the workspace in that
+`Ctrl+K` and the caption button begin by searching only the workspace in that
 window. Its empty state and recents are scoped there too, so opening an ordinary
 in-app result stays in the same window. If the workspace has no match, choose
 **Search this profile** to keep the query and widen that search to every active
@@ -906,7 +906,7 @@ without switching the source window. Opening a result also **shows it in the
 library**: every collapsed branch above the document is unfolded and the tree
 scrolls the row into view, so a page found by searching can be found again by
 looking. Enter does not
-clear the query; after an in-app result opens, the next `Ctrl+P` restores the
+clear the query; after an in-app result opens, the next `Ctrl+K` restores the
 same search. Closing and reopening search during the same Koru session also
 restores the current query and focused result in memory, including loading later
 result pages when needed. The result is checked against the refreshed search
@@ -959,13 +959,13 @@ Rest an intentional hover on an icon-only control for 400 ms to see its tooltip.
 It fades and settles toward the control over 100 ms; moving away fades it over
 75 ms. After one tooltip has appeared, adjacent controls explain themselves
 immediately for 300 ms. Keyboard focus shows the same explanation immediately.
-The main-window magnifying glass identifies itself as **Search — Ctrl+P**.
+The main-window magnifying glass identifies itself as **Search — Ctrl+K**.
 
 If the system has already assigned `Ctrl+Shift+K` to another app, Koru falls
 through to `Ctrl+Alt+Space`, then `Ctrl+Shift+O`. **Whichever
 it ended up with is written beside *Search* in the agent's right-click menu** —
 that is the place to look, because a released Koru has no console to print it
-to. `Ctrl+P` always works while Koru is focused.
+to. `Ctrl+K` always works while Koru is focused.
 
 ### Words inside pictures, PDFs and text files
 
@@ -1042,6 +1042,21 @@ below a matching title, heading or sentence somebody wrote.
 All the words of a search must be on the same page of a PDF, or in the same
 picture: `termination notice` does not find a PDF that says *termination* on
 page 2 and *notice* on page 39.
+
+**Inside one document.** `Ctrl+F` in a document also finds the words read from
+its pictures. Each time the word appears in a picture counts as one match, in
+the order the pictures sit on the page. Landing on one scrolls the picture into
+view and flashes its frame for about a second, as a search result does; no
+words are highlighted, because they are in the picture rather than in your
+text. **Replace** steps past a picture's match and **Replace all** leaves it
+alone. A picture pasted a moment ago is found once it has been read; if it is
+not found yet, close find and open it again.
+
+**Copy a picture's words.** Right-click a picture that has been read and choose
+**Copy text** to put its words on the clipboard as plain text. The item appears
+only when there are words to copy. A screen reader is given the same words as
+the picture's description, *Text in picture: ...*, up to the first 500
+characters. All of this happens on your computer; nothing is sent anywhere.
 
 **While a lot is being read** — after a large import, say — search finds what
 has been read already, and below the results it says how much is left:
@@ -2475,7 +2490,7 @@ On a rendered table cell, the same context menu adds **Edit Markdown**, row
 insert/delete and column insert/delete commands. The top-left table button
 switches between Compact and Extended width.
 
-`Ctrl+V` also works in the pickers — a URL pasted into the `Ctrl+K` link prompt,
+`Ctrl+V` also works in the pickers — a URL pasted into the `Ctrl+Shift+L` link prompt,
 a name pasted into a rename. And in a document, `Ctrl+V` pastes a picture that
 is on the clipboard — a screenshot, a browser "copy image", or image file(s)
 copied in Explorer — as a new image block below the line you are on (see
@@ -2681,7 +2696,7 @@ Type a trigger to insert one:
 | --- | --- |
 | `/` | command menu — `/document` among the rest |
 | `@` | document picker, directly |
-| `Ctrl+K` | a link, with a name and a URL — seeded from the selection |
+| `Ctrl+Shift+L` | a link, with a name and a URL — seeded from the selection |
 
 **There is no `/date` any more.** A date on a block is the block's **due
 date** — `/due`, below — rather than an inline pill, because two ways to put
@@ -2693,14 +2708,14 @@ and are still editable by clicking them; nothing was converted.
 
  **A URL you type or paste becomes a link on its own.** Type `https://example.com`
  and a space — or press Enter — and it turns into a link pill whose caption and
- target are both the URL, no `Ctrl+K` needed; pasting one (or several) does the
+ target are both the URL, no `Ctrl+Shift+L` needed; pasting one (or several) does the
  same. Only a URL with a scheme is recognised, so `file.txt`, `v1.2` and a bare
  `example.com` stay text; a trailing period or comma is left as text rather than
  swallowed into the link. `Ctrl+Z` right after brings the raw URL back. A long
  URL is shown as its host — `edgetrade-my.sharepoint.com` — so the pill never
  runs off the edge of the line; hover it (or click to edit) to see the full URL.
 
-**`Ctrl+K` reads what you have selected.** A link is two answers — a caption and
+**`Ctrl+Shift+L` reads what you have selected.** A link is two answers — a caption and
 a target — and a selection is always one of them. Select a URL and it fills the
 URL in, leaving you typing the caption; select a word and it fills the caption
 in, leaving you typing the URL. Either way the field you land in is the one
@@ -2783,7 +2798,7 @@ the selection began.
 
 ### The picker boxes
 
-The `Ctrl+K` link boxes are proper text inputs, and
+The `Ctrl+Shift+L` link boxes are proper text inputs, and
 handle text the way a task does — everything except formatting and pills, which
 a name and a URL have no use for:
 
@@ -5968,7 +5983,7 @@ two channels running, whichever agent started first has it; the second falls bac
 to `Ctrl+Alt+Space`, then `Ctrl+Shift+O`. **Right-click each
 agent's icon to see which chord it settled on** — the *Search* row names it, so
 you do not have to work it out by pressing things. If a build could not get any
-of them, that row says *Search (no global shortcut)* and `Ctrl+P` inside its
+of them, that row says *Search (no global shortcut)* and `Ctrl+K` inside its
 window is the way in. Registration happens once, when an agent
 starts: quitting the one that holds `Ctrl+Shift+K` does not hand it over, so
 restart the agent you want to have it. Everything else about both installations
@@ -6078,6 +6093,17 @@ window, while an active update offer still contributes its own dot. **View all
 releases**, **Send feedback**, **Star us on GitHub** and
 **Follow on X** are the remaining Help rows. The last three use feedback,
 GitHub and X icons.
+
+The release rows, **View all releases**, **Star us on GitHub** and **Follow on
+X** open through `www.koru.do/go/...`, which counts which row was opened and
+by which version, channel and operating system, then forwards to the release
+page, `koru.do/releases`, GitHub or X. **Send feedback** is not counted. The
+Help release list and the update check also go through `www.koru.do`: the
+site counts the version, channel and operating system asking, and the app
+marks its first check of the day so daily use can be counted without any
+install id. The site then serves the same list or the same manifest. If the
+site cannot be reached, the app asks the update server or GitHub directly, so
+an update is never missed.
 
 The account chooser —
 **Accounts…** on Manage's **Koru Cloud** page — switches between held accounts; **Add Account** starts
@@ -6628,7 +6654,7 @@ paragraph ready for typing. The title remains unchanged.
 | --- | --- |
 | `/` | command menu |
 | `@` | document entity picker |
-| `Ctrl+K` | link |
+| `Ctrl+Shift+L` | link |
 | click a date pill | re-open its picker |
 | click a document pill | follow it in this tab |
 | `Ctrl+click` a document pill | open in a background tab (reuse if already open) |
@@ -6658,7 +6684,7 @@ paragraph ready for typing. The title remains unchanged.
 
 | | |
 | --- | --- |
-| `Ctrl+P` / `Ctrl+Shift+F` | open global search inside Koru |
+| `Ctrl+K` / `Ctrl+Shift+F` | open global search inside Koru |
 | `Ctrl+F` | find text in the current document |
 | `Ctrl+H` | open local search with Replace expanded |
 | `Ctrl+Alt+F` | alternate Replace shortcut when the keyboard layout delivers it |

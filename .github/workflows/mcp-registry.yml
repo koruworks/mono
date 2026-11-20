@@ -1,0 +1,93 @@
+# The MCP registry listing (`do.koru/koru`, `server.json` at the root of this
+# repository), published on its own tag, independent of the desktop app's
+# `v<version>` releases:
+#
+#   git tag -a mcp-v<version> -m "MCP registry <version>"
+#   git push origin mcp-v<version>
+#
+# The tag is the listing's version: `mcp-v0.2.0` publishes 0.2.0, whatever
+# `server.json` says at the tagged commit. Nothing is built or released for
+# desktop users. The registry keeps metadata only: the hosted server at
+# https://mcp.koru.do/mcp. Ownership is proven by the `v=MCPv1` TXT record on
+# koru.do, whose private key is the `MCP_REGISTRY_PRIVATE_KEY` secret of the
+# `mcp-registry` environment; that environment admits `mcp-v*` tags. A version
+# already listed is skipped, because the registry refuses to publish the same
+# version twice (a deleted version cannot be reused either), so a new listing
+# needs a new, higher version. The registry marks the highest version latest.
+name: mcp-registry
+
+on:
+  push:
+    # A plain version only; an `mcp-v0.2.0-beta.1` does not match.
+    tags: ['mcp-v[0-9]+.[0-9]+.[0-9]+']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: koru-mcp-registry-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  mcp-registry:
+    name: mcp-registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The key is an environment secret; the environment admits `mcp-v*` tags.
+    environment: mcp-registry
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+      # Pinned on purpose; raise it deliberately, never `releases/latest`.
+      MCP_PUBLISHER_VERSION: v1.8.9
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: The version from the tag
+        run: |
+          set -euo pipefail
+          version="${TAG#mcp-v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::$TAG is not mcp-v<major>.<minor>.<patch>"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "Publishing version $version"
+      # sigstore/cosign-installer v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532
+      - name: Install mcp-publisher, verified against its Sigstore bundle
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          base="https://github.com/modelcontextprotocol/registry/releases/download/$MCP_PUBLISHER_VERSION"
+          curl --fail --location --silent --show-error --output "$archive" "$base/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/$MCP_PUBLISHER_VERSION" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+      - name: Set the listing's version from the tag
+        run: |
+          set -euo pipefail
+          jq --arg v "$VERSION" '.version = $v' server.json > "$RUNNER_TEMP/server.json"
+          mv "$RUNNER_TEMP/server.json" server.json
+          ./mcp-publisher validate server.json
+      - name: Publish the listing
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          name="$(jq -r .name server.json)"
+          status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            "https://registry.modelcontextprotocol.io/v0.1/servers/${name/\//%2F}/versions/$VERSION")"
+          if [ "$status" = 200 ]; then
+            echo "$name $VERSION is already listed"
+            exit 0
+          fi
+          test -n "$MCP_REGISTRY_PRIVATE_KEY" || { echo "::error::MCP_REGISTRY_PRIVATE_KEY is not set"; exit 1; }
+          ./mcp-publisher login dns --domain koru.do --private-key "$MCP_REGISTRY_PRIVATE_KEY"
+          ./mcp-publisher publish server.json
+          ./mcp-publisher logout

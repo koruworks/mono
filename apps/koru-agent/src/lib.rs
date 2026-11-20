@@ -57,6 +57,7 @@ pub mod cli;
 pub mod cli_updates;
 pub mod client;
 pub mod cloud_host;
+pub(crate) mod cloud_reconcile;
 pub mod connection;
 pub mod delegate_host;
 pub mod delegate_report;

@@ -58,7 +58,10 @@
 //! device can honestly conclude no unit exists anywhere (QUESTIONS.md Q10).
 
 use super::*;
-use crate::ports::{RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootUnitWrite};
+use crate::ports::{
+    RootCatalogOverlay, RootCatalogUnitCommit, RootCatalogUnitRow, RootProjection, RootPublication,
+    RootUnitWrite,
+};
 use crate::root_catalog::{
     CatalogUnitKind, CatalogUnitRef, Placement, ProfileCatalogUnit, Staged, WorkspaceCatalogUnit,
 };
@@ -498,6 +501,81 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             "root placement moved"
         );
         Ok(())
+    }
+
+    /// **Bring one Workspace's list row under the Profile its unit places it
+    /// in**, when the two disagree and the Profile is on this device.
+    ///
+    /// An import leaves a placement *pending* when it names a Profile this
+    /// device does not hold yet (`root_sync` logs `placement_pending`): the
+    /// unit is committed and the `workspaces` row keeps its old owner. The
+    /// import decides on the difference *that update* made, so every later
+    /// update found the placement already there and never looked at the row
+    /// again; a Workspace moved before its Profile arrived stayed listed
+    /// under the Profile it left, for good (found on a device, 2026-11-17).
+    /// The trigger here is the state, not the update: the row's owner is not
+    /// the unit's Profile. It writes the projection alone and no unit.
+    ///
+    /// Answers whether the row moved. It does not for a Workspace with no
+    /// unit, an unassigned or Holder placement, a Profile that is absent,
+    /// removed or deleted here, or one with a private overlay — its row
+    /// follows a move this device has not published, which the overlay's own
+    /// path projects.
+    pub(super) fn project_pending_placement(&mut self, workspace: WorkspaceId) -> Result<bool> {
+        let scope = self.catalog.local_user_scope()?;
+        let unit = CatalogUnitRef::Workspace { workspace };
+        if self.catalog.root_catalog_overlay(scope, unit)?.is_some() {
+            return Ok(false);
+        }
+        let Some(Placement {
+            profile: Some(profile),
+            ..
+        }) = self.root_placement(workspace)?
+        else {
+            return Ok(false);
+        };
+        let Ok(row) = self.workspace_including_deleted(workspace) else {
+            return Ok(false);
+        };
+        if row.owner == profile
+            || self.catalog.profile_catalog_state(profile)? != Some(ProfileCatalogState::Active)
+        {
+            return Ok(false);
+        }
+        let mut projected = row;
+        projected.owner = profile;
+        projected.position = self.next_workspace_position(profile)?;
+        self.catalog.publish_root(
+            scope,
+            &RootPublication {
+                units: Vec::new(),
+                projections: vec![RootProjection::Placement(&projected)],
+                state: Vec::new(),
+            },
+        )?;
+        // The row's owner is the Workspace's ceiling, as after a move.
+        self.transport.invalidate();
+        tracing::info!(
+            workspace = %workspace,
+            "root_sync action=pending_placement_applied"
+        );
+        Ok(true)
+    }
+
+    /// Apply every placement that was pending on `profile`, now that it is
+    /// on this device: called wherever a Profile's row appears or becomes
+    /// visible again. Answers how many rows moved.
+    pub(super) fn apply_pending_placements(&mut self, profile: ProfileId) -> Result<usize> {
+        if self.catalog.profile_catalog_state(profile)? != Some(ProfileCatalogState::Active) {
+            return Ok(0);
+        }
+        let mut applied = 0;
+        for workspace in self.placed_workspaces(profile)? {
+            if self.project_pending_placement(workspace)? {
+                applied += 1;
+            }
+        }
+        Ok(applied)
     }
 
     /// Publish a Workspace's pending overlay into its durable unit, once the

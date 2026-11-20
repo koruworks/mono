@@ -153,6 +153,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::Name => "rename",
         Control::Switch => "switch-profile",
         Control::CloudPointer => "cloud-pointer",
+        Control::CloudSettings => "cloud-settings",
         Control::Attention(answer) => match answer {
             Attention::RetryDelete => "retry-delete",
             Attention::RemoveAfterFailure => "remove-after-failure",
@@ -194,6 +195,8 @@ fn control_part(control: Control) -> ControlPart {
         Control::UnassignedMore(_) => "unassigned-more",
         Control::RestoreUnassignedProfile(_) => "unassigned-restore",
         Control::RestoreDeletedProfile(_) => "restore-deleted",
+        Control::TrashedInAccountRow(_) => "trashed-in-account-row",
+        Control::RestoreTrashedTo(_) => "trashed-in-account-restore",
         Control::LinkDevice => "link-device",
         Control::CloseCreation => "close-creation",
         Control::ThisDevice => "this-computer",
@@ -313,7 +316,9 @@ impl Context {
             | Control::RestoreWorkspace(id)
             | Control::UnassignedRow(id)
             | Control::UnassignedMore(id)
-            | Control::RestoreUnassignedProfile(id) => {
+            | Control::RestoreUnassignedProfile(id)
+            | Control::TrashedInAccountRow(id)
+            | Control::RestoreTrashedTo(id) => {
                 Occurrence::model(self.window, self.view, id.as_uuid(), part)
             }
             // A deleted Profile's *Restore* is about that Profile.

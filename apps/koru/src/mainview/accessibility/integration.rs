@@ -133,6 +133,7 @@ fn mini_app_refinement_publishes_unique_tasks_and_document_with_same_source_in_a
         breadcrumb: "Notes".into(),
         title: "Task beside document".into(),
         attributes: vec![],
+        bucket: None,
     };
     app.tasks.seed_for_test(
         vec![crate::tasks_view::query::TaskEntry::of(&row, today, 0).unwrap()],
@@ -1112,6 +1113,7 @@ fn open_tasks_page(window: &mut Window, titles: &[&str]) -> Vec<KoruNodeId> {
                     breadcrumb: String::new(),
                     title: (*title).to_owned(),
                     attributes: Vec::new(),
+                    bucket: None,
                 },
                 today,
                 0,

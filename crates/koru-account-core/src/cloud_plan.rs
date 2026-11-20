@@ -75,12 +75,27 @@ pub enum BillingMode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PolicyUnavailable;
 
+/// The account's one Free place, as its row reads in the policy snapshot.
+/// Only `Active` grants Free; the other states exist so that a counted but
+/// unusable place is never mistaken for "no place" or for access.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FreePlace {
+    Offered,
+    Active,
+    HeldPlus,
+    RemovalPending,
+    Released,
+}
+
 /// A transaction-local selection, not a cache or a repository port. `purchase`
 /// is independent: inability to manage billing cannot revoke known access.
 pub struct CloudPlanInput {
     pub billing_mode: BillingMode,
     pub subscription: Result<Option<SubscriptionSummary>, PolicyUnavailable>,
     pub complimentary_until_millis: Result<Option<i64>, PolicyUnavailable>,
+    /// `Ok(None)` is a verified absence, and what an unbilled deployment
+    /// supplies: it consumes no places.
+    pub free_place: Result<Option<FreePlace>, PolicyUnavailable>,
     pub purchase: CloudPurchase,
 }
 
@@ -157,8 +172,11 @@ impl CloudPlanPolicy {
             result.mcp_allowed = Some(true);
             return result;
         }
-        let (Ok(subscription), Ok(grant)) = (&input.subscription, input.complimentary_until_millis)
-        else {
+        let (Ok(subscription), Ok(grant), Ok(place)) = (
+            &input.subscription,
+            input.complimentary_until_millis,
+            input.free_place,
+        ) else {
             return result;
         };
         let grant = grant.filter(|end| *end > now);
@@ -190,6 +208,21 @@ impl CloudPlanPolicy {
                 CloudAccessReason::PlusActive
             };
             result.mcp_allowed = Some(true);
+        } else if place == Some(FreePlace::Active) {
+            result.tier = CloudTier::Free;
+            result.allowance = CloudAllowance::Finite {
+                base_bytes: FREE_BYTES,
+                effective_bytes: FREE_BYTES,
+            };
+            result.access = CloudAccessState::ReadWrite;
+            result.reason = CloudAccessReason::FreeActive;
+            // CTO decision 2026-11-15: a Free account with a place has Cloud MCP.
+            result.mcp_allowed = Some(true);
+        } else if place == Some(FreePlace::HeldPlus) {
+            // Plus ended and the held place has not been returned yet. A read
+            // never moves a place, so this stays unavailable until the writer
+            // that owns the transition has run; it is not Local.
+            return result;
         } else {
             result.tier = CloudTier::Local;
             result.allowance = CloudAllowance::Finite {
@@ -207,7 +240,7 @@ impl CloudPlanPolicy {
         result
     }
 
-    /// Fixture only: no production input or deployment switch can mint Free.
+    /// Fixture only: production Free comes from an active place in the input.
     pub fn fake_free() -> Self {
         Self {
             tier: CloudTier::Free,
@@ -217,7 +250,7 @@ impl CloudPlanPolicy {
             },
             access: CloudAccessState::ReadWrite,
             reason: CloudAccessReason::FreeActive,
-            mcp_allowed: Some(false),
+            mcp_allowed: Some(true),
             purchase: CloudPurchase::Known {
                 manageable: false,
                 status: None,
@@ -229,7 +262,8 @@ impl CloudPlanPolicy {
         }
     }
 
-    /// Free read/write access must never become legacy MCP entitlement.
+    /// The legacy entitlement carrier follows the MCP capability alone, never
+    /// the tier: Plus, unbilled and Free with a place carry it; Local does not.
     pub fn mcp_entitlement(&self) -> Result<CloudEntitlement, AppConnectionError> {
         match self.mcp_allowed {
             Some(true) => Ok(CloudEntitlement::Active {

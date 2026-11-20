@@ -121,7 +121,23 @@ pub(crate) fn context_line(breadcrumb: &str, lifecycle: Lifecycle) -> String {
 
 /// [`context_line`] for a hit.
 pub(crate) fn context(hit: &SearchHit) -> String {
-    context_line(&hit.breadcrumb, hit.lifecycle)
+    match list_path(koru_i18n::current(), hit) {
+        Some(path) => path,
+        None => context_line(&hit.breadcrumb, hit.lifecycle),
+    }
+}
+
+/// Where a task list is: *Tasks / Top 3 / Backlog*, in the reader's language
+/// and with its separator. `None` for a hit that is not a list.
+///
+/// Assembled here from the names the store sends, rather than read from the
+/// store's own breadcrumb, because *Tasks* is this surface's word.
+pub(crate) fn list_path(lang: Lang, hit: &SearchHit) -> Option<String> {
+    let list = hit.list.as_ref()?;
+    let mut parts = vec![t(lang, Key::SearchTasksCrumb)];
+    parts.extend(list.path.iter().map(String::as_str));
+    parts.push(hit.title.as_str());
+    Some(parts.join(t(lang, Key::TaskListPathSeparator)))
 }
 
 /// The row as a screen reader says it: the title, where it is, and — for a

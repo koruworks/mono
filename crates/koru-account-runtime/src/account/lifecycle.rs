@@ -323,6 +323,14 @@ impl LifecycleRepository {
     /// Persist a deletion found by bounded reconciliation. A pending local
     /// delete keeps its own operation id so its uncertain request can still be
     /// replayed exactly; otherwise the hosted tombstone becomes the cleanup key.
+    ///
+    /// **The same deletion read again changes nothing.** Reconciliation asks
+    /// the service at every start and every few minutes after, and the
+    /// service answers *deleted* for as long as the Profile is. Writing the
+    /// row again put its stage back to `hosted_committed`, so a cleanup this
+    /// device had finished was owed again each time, and its notice with it
+    /// (2026-11-17) — what [`Self::observe_trust_deleted`] already refused
+    /// for a tombstone a peer re-sends.
     pub fn observe_deleted(
         &mut self,
         lifecycle: &ProfileLifecycle,
@@ -334,6 +342,12 @@ impl LifecycleRepository {
                 return Ok(existing);
             }
             if lifecycle.revision < existing.lifecycle_revision {
+                return Ok(existing);
+            }
+            if lifecycle.revision == existing.lifecycle_revision
+                && existing.lifecycle_state == ProfileLifecycleState::Deleted
+                && existing.operation == operation
+            {
                 return Ok(existing);
             }
         }
@@ -1066,6 +1080,60 @@ mod tests {
             .unwrap();
         assert_eq!(again.stage, ProfileCleanupStage::HostedCommitted);
         assert_eq!(repository.pending().unwrap(), vec![again]);
+    }
+
+    /// The same notice, from the other side: reconciliation reads the
+    /// service's *deleted* at every start and every few minutes, and each
+    /// read used to put a settled row back to `hosted_committed`.
+    #[test]
+    fn a_settled_deletion_read_again_from_the_service_owes_nothing() {
+        let mut repository = LifecycleRepository::in_memory();
+        let profile = profile();
+        let operation = ProfileLifecycleMutationId::mint();
+        repository
+            .observe_deleted(&deleted(profile, operation), 1)
+            .unwrap();
+        for (index, stage) in [
+            ProfileCleanupStage::WorkspacesRemoved,
+            ProfileCleanupStage::ProfileRemoved,
+            ProfileCleanupStage::SettingsCleared,
+            ProfileCleanupStage::NavigationSettled,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            repository
+                .acknowledge(profile, stage, 2 + index as i64)
+                .unwrap();
+        }
+        assert!(repository.pending().unwrap().is_empty());
+
+        let again = repository
+            .observe_deleted(&deleted(profile, operation), 99)
+            .unwrap();
+        assert_eq!(again.stage, ProfileCleanupStage::NavigationSettled);
+        assert!(repository.pending().unwrap().is_empty());
+
+        // A cleanup half done keeps the half it did.
+        let other = ProfileId::new();
+        let other_operation = ProfileLifecycleMutationId::mint();
+        repository
+            .observe_deleted(&deleted(other, other_operation), 1)
+            .unwrap();
+        repository
+            .acknowledge(other, ProfileCleanupStage::WorkspacesRemoved, 2)
+            .unwrap();
+        let midway = repository
+            .observe_deleted(&deleted(other, other_operation), 99)
+            .unwrap();
+        assert_eq!(midway.stage, ProfileCleanupStage::WorkspacesRemoved);
+
+        // The same Profile deleted again after a restore is a new deletion.
+        let mut later = deleted(profile, ProfileLifecycleMutationId::mint());
+        later.revision = ProfileLifecycleRevision::new(3);
+        let renewed = repository.observe_deleted(&later, 100).unwrap();
+        assert_eq!(renewed.stage, ProfileCleanupStage::HostedCommitted);
+        assert!(repository.pending().unwrap().contains(&renewed));
     }
 
     #[test]

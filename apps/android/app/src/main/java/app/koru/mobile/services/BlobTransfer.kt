@@ -408,6 +408,17 @@ fun blobLoadFailure(code: String, waitingOn: List<String> = emptyList()): BlobLo
  * its one argument; the others ignore it).
  */
 fun blobHeldMessage(code: String): Int = when (code) {
+    "cloud_policy_unavailable" -> R.string.cloud_upload_policy_unavailable
+    "cloud_plan_required" -> R.string.cloud_upload_plan_required
+    "file_exceeds_plan_allowance" -> R.string.cloud_upload_file_allowance
+    "usage_unknown" -> R.string.cloud_upload_usage_unknown
+    "account_over_quota" -> R.string.cloud_upload_account_quota
+    "cloud_document_count_limit" -> R.string.cloud_upload_document_count
+    "cloud_stored_document_bytes_limit" -> R.string.cloud_upload_document_bytes
+    "cloud_physical_bytes_limit" -> R.string.cloud_upload_physical_bytes
+    "cloud_staging_bytes_limit" -> R.string.cloud_upload_staging_bytes
+    "cloud_removal_capacity_limit" -> R.string.cloud_upload_removal_capacity
+
     in BLOB_NOT_HELD_CODES -> R.string.image_waiting_no_holder
     "no_linked_devices" -> R.string.image_link_device
     else -> R.string.file_transfers_held

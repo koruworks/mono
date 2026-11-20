@@ -27,9 +27,9 @@ use std::fmt;
 // serialises it, the blocking client that parses it — and only this one should
 // link an FTS engine to do so.
 pub use koru_store_wire::search::{
-    AttrFilter, AttrOp, DEFAULT_PAGE_SIZE, Lifecycle, LifecycleFilter, MAX_PAGE_SIZE, MatchSpan,
-    Navigation, ReadingCounts, RecentQuery, SearchFacet, SearchFacets, SearchHit, SearchPage,
-    SearchQuery, SearchRequest, SearchResponse, SearchSort, field,
+    AttrFilter, AttrOp, DEFAULT_PAGE_SIZE, Lifecycle, LifecycleFilter, ListHit, MAX_PAGE_SIZE,
+    MatchSpan, Navigation, ReadingCounts, RecentQuery, SearchFacet, SearchFacets, SearchHit,
+    SearchPage, SearchQuery, SearchRequest, SearchResponse, SearchSort, TaskHit, field,
 };
 
 /// One independently explainable piece of matchable text.

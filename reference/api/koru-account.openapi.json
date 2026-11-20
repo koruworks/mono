@@ -1085,11 +1085,6 @@
                           ]
                         }
                       }
-                    },
-                    "mcp_allowed": {
-                      "enum": [
-                        false
-                      ]
                     }
                   }
                 }

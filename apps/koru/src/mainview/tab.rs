@@ -18,7 +18,7 @@
 //! Adding a canvas or a calendar later is a new arm *here*, not there.
 
 use koru_core::schema::WorkspaceDoc;
-use koru_core::{NodeId, WorkspaceId};
+use koru_core::{DocumentId, NodeId, WorkspaceId};
 use koru_editor::{Editing, OpenWhere};
 use koru_workspace::Workspace;
 use koru_workspace_host::View;
@@ -934,6 +934,10 @@ pub struct Draft {
     /// page becomes its next sibling on promote. `None` when there was no
     /// anchor (welcome, empty library).
     pub library_anchor: Option<NodeId>,
+    /// The document this draft is a child of, when a row's `+` created it. On
+    /// promote it is placed under this parent instead of as a sibling. `None`
+    /// for a plain Ctrl+T draft.
+    pub child_of: Option<DocumentId>,
 }
 
 /// This build's release notes, rendered as a page rather than fetched as one.
@@ -1630,6 +1634,16 @@ impl Tab {
     /// failure `+` would hit anyway — the caller falls back to a welcome tab
     /// rather than opening a tab that cannot be typed in.
     pub fn draft(library_anchor: Option<NodeId>) -> Option<Self> {
+        Self::draft_under(library_anchor, None)
+    }
+
+    /// The same draft, for a row's `+`: it becomes a **child** of `parent` on
+    /// promote rather than a sibling.
+    pub fn child_draft(library_anchor: Option<NodeId>, parent: DocumentId) -> Option<Self> {
+        Self::draft_under(library_anchor, Some(parent))
+    }
+
+    fn draft_under(library_anchor: Option<NodeId>, child_of: Option<DocumentId>) -> Option<Self> {
         let doc = WorkspaceDoc::create(WorkspaceId::new(), DRAFT_NAME).ok()?;
         let mut workspace = Workspace::new(doc);
         // An empty title, not a prefilled one: the row draws its "Title"
@@ -1655,6 +1669,7 @@ impl Tab {
                 authored: false,
                 origin_scope: None,
                 library_anchor,
+                child_of,
             }),
             home: None,
             pinned: None,

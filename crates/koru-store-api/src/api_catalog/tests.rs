@@ -353,9 +353,13 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // A person's two requests on one item (OCR Plan 3.2, `…/read-all` and
     // `…/read-again`) add two internal rows over two paths. Turning the
     // reader off and on again (OCR Plan 3.5, `…/reader/off` and `…/on`) two
-    // more.
-    assert_eq!(ROUTES.len(), 131, "a row was added or removed");
-    assert_eq!(paths.len(), 107, "a path was added or removed");
+    // more. Restoring a workspace into a Profile (trash-recovery P1,
+    // `…/restore-to`) is one more public row over one more path. The
+    // workspaces in the trash here that the account still holds (P2, P4:
+    // `…/trashed-in-account` and its `…/acknowledge`) are two more public
+    // rows over two more paths.
+    assert_eq!(ROUTES.len(), 134, "a row was added or removed");
+    assert_eq!(paths.len(), 110, "a path was added or removed");
 }
 
 #[test]

@@ -259,11 +259,17 @@ impl MainView {
     /// The Tasks pages a new task can be written on, under the Task tile:
     /// the queues, then the person's lists.
     fn open_task_destinations(&mut self, at: AskAt) -> bool {
-        context_menu::set_task_list_names(
+        context_menu::set_task_lists(
             self.list_table
                 .iter()
-                .filter(|entry| entry.deleted_ms.is_none())
-                .map(|entry| (entry.id, entry.name.clone()))
+                .map(|node| {
+                    (
+                        node.entry.id,
+                        node.entry.name.clone(),
+                        context_menu::static_accent_token(node.entry.color.as_deref()),
+                        node.depth,
+                    )
+                })
                 .collect(),
         );
         let mut menu = ContextMenu::aligned(

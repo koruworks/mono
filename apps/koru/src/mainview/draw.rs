@@ -76,6 +76,7 @@ impl MainView {
         self.reminder_preferences
             .set_client(workspace.store_client());
         self.reminders.set_client(workspace.store_client());
+        self.task_events.set_client(workspace.store_client());
         // The Welcome ticks come off a worker thread too; no request here.
         self.welcome_progress.set_client(workspace.store_client());
         // A Welcome tab made anywhere (a closed last tab, + → Welcome, a
@@ -603,6 +604,9 @@ impl MainView {
         // Above the update banner, below the modals: a toast is transient and a
         // dialog is not, so a dialog must never end up behind one.
         self.draw_toast(scene, root, now);
+        if let Some(switch) = self.quick_switch.as_mut() {
+            switch.draw(scene, root, &mut self.engine, self.viewport);
+        }
         self.draw_confirm(scene, root);
         if let Some(offer) = &self.file_paste {
             offer

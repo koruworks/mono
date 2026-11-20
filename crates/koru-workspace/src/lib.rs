@@ -673,6 +673,46 @@ impl Workspace {
         title: &str,
         parent: koru_core::DocumentId,
     ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        let placement = self.placement_in(parent);
+        let id = self.register_document_placed(
+            title,
+            placement,
+            None,
+            koru_core::explore::KIND_DOCUMENT,
+        )?;
+        self.note_pending_parent(id, parent);
+        self.seed_new_document(title, koru_core::explore::KIND_DOCUMENT);
+        Ok(id)
+    }
+
+    /// [`create_document_in`](Self::create_document_in) whose first published
+    /// content is an authored subtree — a draft opened by a row's `+` and
+    /// promoted with what was typed into it. The same placement, and the same
+    /// initialization as
+    /// [`create_document_from_cutting_after`](Self::create_document_from_cutting_after).
+    pub fn create_document_from_cutting_in(
+        &mut self,
+        title: &str,
+        parent: koru_core::DocumentId,
+        cutting: &koru_core::schema::Cutting,
+    ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        let placement = self.placement_in(parent);
+        let id = self.register_document_placed_with_contents(
+            title,
+            placement,
+            None,
+            koru_core::explore::KIND_DOCUMENT,
+            InitialContents::Cutting { cutting, title },
+        )?;
+        self.note_pending_parent(id, parent);
+        Ok(id)
+    }
+
+    /// The last-child slot under `parent`.
+    fn placement_in(
+        &self,
+        parent: koru_core::DocumentId,
+    ) -> (Option<koru_store_core::ids::DocumentId>, Option<usize>) {
         let anchor = explore::store_document(parent);
         let index = self.manifest.as_ref().map_or(0, |manifest| {
             manifest
@@ -681,17 +721,14 @@ impl Workspace {
                 .filter(|entry| entry.parent == Some(anchor))
                 .count()
         });
-        let id = self.register_document_placed(
-            title,
-            (Some(anchor), Some(index)),
-            None,
-            koru_core::explore::KIND_DOCUMENT,
-        )?;
+        (Some(anchor), Some(index))
+    }
+
+    /// The provisional entry shows under `parent` until the manifest says so.
+    fn note_pending_parent(&mut self, id: koru_core::DocumentId, parent: koru_core::DocumentId) {
         if let Some(pending) = self.pending_documents.iter_mut().find(|p| p.id == id) {
             pending.parent = Some(parent);
         }
-        self.seed_new_document(title, koru_core::explore::KIND_DOCUMENT);
-        Ok(id)
     }
 
     /// Create a **canvas** in this workspace and return its id.

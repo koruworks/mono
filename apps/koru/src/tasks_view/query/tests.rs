@@ -457,3 +457,44 @@ fn an_older_store_turns_the_mechanism_off_for_the_page() {
         "an ordinary invalidation: asked once, now"
     );
 }
+
+/// While the Store's task events are being heard the timer is the net under
+/// a missed one, five minutes out; a tail that stops puts the half minute
+/// back at once rather than after the slow deadline already set.
+#[test]
+fn the_timer_stands_back_while_the_store_is_telling_and_returns_when_it_stops() {
+    let t0 = Instant::now();
+    let (mut panel, workspace) = a_visible_panel(t0);
+    let poll = |panel: &mut TaskListPanel, now| {
+        panel.maintain(
+            Some(workspace),
+            Some(RailTarget::Bucket(Bucket::Today)),
+            true,
+            now,
+        );
+    };
+    poll(&mut panel, t0);
+    assert_eq!(panel.next_refresh_for_test(), Some(t0 + REFRESH_EVERY));
+
+    panel.set_event_driven(true);
+    let t1 = t0 + REFRESH_EVERY;
+    poll(&mut panel, t1);
+    assert_eq!(panel.next_refresh_for_test(), Some(t1 + REFRESH_WHEN_TOLD));
+
+    // An event still asks at once: the timer is not the way news arrives.
+    panel.invalidate();
+    assert!(
+        panel
+            .next_refresh_for_test()
+            .is_some_and(|due| due <= Instant::now())
+    );
+
+    poll(&mut panel, Instant::now());
+    panel.set_event_driven(false);
+    assert!(
+        panel
+            .next_refresh_for_test()
+            .is_some_and(|due| due <= Instant::now() + REFRESH_EVERY),
+        "the slow deadline is pulled in when the tail stops"
+    );
+}

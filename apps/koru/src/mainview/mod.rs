@@ -107,6 +107,7 @@ pub mod panes;
 mod place_chooser;
 mod profile_probe;
 mod profile_wait;
+mod quick_switch;
 mod rail_overflow;
 mod reader_offer;
 mod recording;
@@ -125,6 +126,7 @@ mod session_lanes;
 mod snapshot_prompt;
 pub mod tab;
 pub mod tab_rules;
+mod task_events;
 pub(crate) mod taskcounts;
 pub(crate) mod tasks;
 mod terminal_look;
@@ -600,6 +602,14 @@ pub(crate) enum ToastPayload {
     ReaderEnded {
         terms: Option<koru_store_wire::reader::ReaderTerms>,
     },
+    /// A workspace is in this device's Trash while the account still keeps
+    /// it under a Profile here (trash-recovery P4). Its action opens the
+    /// question *Restore to {Profile}* asks; nothing is restored by the
+    /// press alone.
+    RestoreWorkspaceTo {
+        workspace: koru_store_core::ids::WorkspaceId,
+        profile: koru_store_core::ids::ProfileId,
+    },
     /// Message only — no action button.
     None,
 }
@@ -748,6 +758,10 @@ pub struct MainView {
     /// What the tasks rail's numbers come from — one query per refresh on a
     /// worker thread, and nothing at all while the rail is not showing.
     task_counts: taskcounts::TaskCountsPanel,
+    /// The Store saying this workspace's tasks changed, from another device
+    /// or another window: what refreshes the rail and the Tasks page without
+    /// waiting for their timers.
+    task_events: task_events::TaskEvents,
     document_appearances: document_appearance::DocumentAppearances,
     /// **The one place the local date is watched.** Every bucket is a function
     /// of *today*, so midnight — and waking on the other side of one — makes all
@@ -770,10 +784,20 @@ pub struct MainView {
     /// `None` is the common case and costs nothing, the same shape the rename
     /// field has.
     new_list: Option<new_list::NewList>,
+    /// Ctrl+Tab held: the open tabs, most recent first.
+    quick_switch: Option<quick_switch::QuickSwitch>,
+    /// When each tab was last *used* (written in, a task made on), by tab id,
+    /// on `use_clock`. What the quick switch orders by. Absent: never used.
+    tab_used: std::collections::HashMap<u64, u64>,
+    use_clock: u64,
     /// A list the rail asked for, waiting for the shell to create it in the
     /// workspace system document. The tag chooser's `wants_create_tag` seam,
     /// one for one.
-    wants_create_list: Option<(String, Option<String>)>,
+    wants_create_list: Option<koru_workspace_host::tasks::ListCreate>,
+    /// Where the keyboard was in the rail when the inline list field opened,
+    /// so closing the field hands it back (nested-lists §6). `None` when the
+    /// field was opened with the pointer.
+    list_field_origin: Option<crate::panes::explore::rail::RailFocus>,
     /// Renames, recolours and deletions of lists that already exist, waiting for
     /// the same sweep. A `Vec` rather than a second `Option` because two of them
     /// can happen between two turns — and because a **delete only ever arrives
@@ -784,7 +808,7 @@ pub struct MainView {
     wants_page_attachment: Vec<koru_core::ids::PageKey>,
     /// The workspace list table as the shell last pushed it. The rail's names,
     /// swatches and order come from here; only the counts come off the wire.
-    list_table: Vec<koru_core::system::ListEntry>,
+    list_table: Vec<koru_core::system::ListNode>,
     /// Store-backed reminder behavior and cached semantic state. The final
     /// surface geometry/navigation is intentionally not represented here.
     reminders: reminders::Controller,
@@ -1119,6 +1143,9 @@ pub struct MainView {
     /// that has not arrived yet looks exactly the same. So the ask is held and
     /// re-applied until the row shows up or the deadline passes.
     pending_task_reveal: Option<(koru_core::DocumentId, NodeId, std::time::Instant)>,
+    /// A task chosen in search, being read so it can be opened on the Tasks
+    /// page it is on now (`tasks_view::landing`). At most one.
+    search_landing: crate::tasks_view::landing::SearchLanding,
     /// **A task open waiting to be checked against the resolver**, because the
     /// document that answers is not open yet when the row is pressed.
     ///
@@ -1367,7 +1394,7 @@ pub struct MainView {
     note_documents: std::collections::HashSet<koru_core::DocumentId>,
     /// When the deep-link captions were last re-asked for.
     deep_links_polled: Option<Instant>,
-    /// A search hidden by successful navigation. Reopening Ctrl+P restores the
+    /// A search hidden by successful navigation. Reopening Ctrl+K restores the
     /// exact query instead of constructing an empty surface; explicit close or
     /// outside-click still discards it.
     retained_search: Option<crate::search::SearchSurface>,
@@ -1788,6 +1815,36 @@ impl MainView {
         self.panes.group_mut(source)?.take_tab(index)
     }
 
+    /// The `+` menu's *Move*: lift the active tab out of its group and split
+    /// the focused pane on `side`, landing the tab in the new pane — the same
+    /// path a cross-pane drag to an edge takes.
+    fn move_active_to_split(&mut self, side: koru_editor::SplitSide) -> bool {
+        let source = self.panes.focused_path().clone();
+        let tab_id = self.tabs().active_tab().id;
+        let Some(tab) = self.take_tab_from_group(&source, tab_id) else {
+            return false;
+        };
+        let doc = tab.document;
+        self.panes
+            .split(&source, place_chooser::split_dir(side), tab);
+        self.settle_pane_drop(doc);
+        true
+    }
+
+    /// Move focus to the next pane, in tree order, wrapping. `false` when the
+    /// window has a single pane, so there is nowhere to move to.
+    fn focus_next_pane(&mut self) -> bool {
+        let groups: Vec<panes::PanePath> = self.panes.iter_groups().map(|(path, _)| path).collect();
+        if groups.len() <= 1 {
+            return false;
+        }
+        let current = self.panes.focused_path().clone();
+        let at = groups.iter().position(|path| *path == current).unwrap_or(0);
+        let next = groups[(at + 1) % groups.len()].clone();
+        self.panes.set_focus(next);
+        true
+    }
+
     /// The one tail every drop path runs, **after** the tab has landed:
     /// emptied groups collapse (only now is it safe — the landing's paths were
     /// computed against the pre-collapse tree), and a document no longer shown
@@ -1932,12 +1989,17 @@ impl MainView {
             cloud_images_due: true,
             cloud_images: (0, Vec::new()),
             task_counts: taskcounts::TaskCountsPanel::default(),
+            task_events: task_events::TaskEvents::default(),
             document_appearances: document_appearance::DocumentAppearances::default(),
             tasks_day: crate::tasks_view::query::DayWatch::default(),
             context_tasks_stale: true,
             context_tasks_doc: None,
             new_list: None,
+            quick_switch: None,
+            tab_used: std::collections::HashMap::new(),
+            use_clock: 0,
             wants_create_list: None,
+            list_field_origin: None,
             list_edits: Vec::new(),
             wants_page_attachment: Vec::new(),
             list_table: Vec::new(),
@@ -2029,6 +2091,7 @@ impl MainView {
             pending_document_rename: None,
             pending_document_attrs: None,
             pending_task_reveal: None,
+            search_landing: Default::default(),
             pending_task_open: None,
             task_commands: Vec::new(),
             pending_count_deltas: Vec::new(),
@@ -2205,6 +2268,12 @@ impl MainView {
             }
         }));
         self.run_index.set_waker(std::sync::Arc::new({
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
+            }
+        }));
+        self.task_events.set_waker(std::sync::Arc::new({
             let proxy = proxy.clone();
             move || {
                 let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
@@ -2654,6 +2723,11 @@ impl MainView {
         let bounds = self.search_bounds();
         View::set_viewport(&mut search, bounds.w, bounds.h);
         search.configure_modal(Self::command_bar_chips());
+        if koru_features::tasks()
+            && let Some(workspace) = self.current_workspace()
+        {
+            search.offer_queues(workspace);
+        }
         self.search = Some(search);
         // The observation, not the work: one channel send, a no-op under
         // `cargo test` (nothing starts the host there).
@@ -3113,14 +3187,26 @@ impl MainView {
         }
     }
 
-    /// A sidebar row's `+` (the review's note): the document's name, then the
-    /// shell makes it as the row's last child and opens it.
+    /// A sidebar row's `+`: make a draft that becomes the row's last child on
+    /// promote, exactly as *New document* makes a plain draft. No name prompt
+    /// — the name is typed in the draft's own title, and Escape cancels the
+    /// whole thing.
     fn prompt_new_child_document(&mut self, parent: NodeId) -> bool {
         self.menu = None;
-        if self.new_document.is_none() {
-            self.new_workspace_owner = None;
-            self.new_document = Some(NewDocument::child(&mut self.engine, parent));
-        }
+        // The `+` was pressed in the sidebar, which took the keyboard for the
+        // tree (or the quick filter). The new draft is what you want to type
+        // into, so give the keyboard to it.
+        self.explore.clear_focus();
+        // Unfold the row first, so the child shows where it lands.
+        self.explore.expand(parent);
+        let parent_id = koru_core::DocumentId::from_uuid(parent.as_uuid());
+        self.record_jump();
+        self.tabs_mut()
+            .push(Tab::child_draft(Some(parent), parent_id).unwrap_or_else(Tab::welcome));
+        self.slides_mut().clear();
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.ensure_tab_visible(self.tabs().active());
         true
     }
 
@@ -3728,21 +3814,6 @@ impl MainView {
                 }
                 true
             }
-            // A row's `+`: inside that row, as its last child. The row is
-            // unfolded first so the child shows where it lands.
-            NewDocumentAction::CreateDocument(title)
-                if matches!(purpose, PromptPurpose::ChildDocument(_)) =>
-            {
-                self.new_document = None;
-                if let PromptPurpose::ChildDocument(parent) = purpose {
-                    self.explore.expand(parent);
-                    self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
-                        parent: koru_core::DocumentId::from_uuid(parent.as_uuid()),
-                        title,
-                    });
-                }
-                return true;
-            }
             NewDocumentAction::CreateDocument(title) => {
                 // **A document belongs to the workspace, not to the document in
                 // hand.** `create_document_after` inserts a node into the
@@ -3995,6 +4066,117 @@ impl MainView {
         self.recents.insert(0, document);
         self.recents.truncate(koru_workspace_host::MAX_RECENTS);
         self.recents_stale = true;
+    }
+
+    /// Stamp the tab in front as used now.
+    pub(super) fn mark_tab_used(&mut self) {
+        self.use_clock += 1;
+        let id = self.tabs().active_tab().id;
+        self.tab_used.insert(id, self.use_clock);
+        // Closed tabs leave their stamps behind; drop them once they
+        // outnumber anything a window holds.
+        if self.tab_used.len() > 512 {
+            let open: std::collections::HashSet<u64> = self
+                .panes
+                .iter_groups()
+                .flat_map(|(_, group)| group.tabs().iter().map(|tab| tab.id))
+                .collect();
+            self.tab_used.retain(|id, _| open.contains(id));
+        }
+    }
+
+    /// Go to the tab the quick switch is on, and put the list away.
+    fn finish_quick_switch(&mut self) -> bool {
+        let Some(switch) = self.quick_switch.take() else {
+            return false;
+        };
+        // By identity: a tab closed while the list stood is simply not there.
+        // With no search there is always a highlighted tab to go to.
+        let Some((group, chosen)) = switch.chosen() else {
+            return true;
+        };
+        let found = self
+            .panes
+            .iter_groups()
+            .find(|(path, _)| *path == group)
+            .and_then(|(_, tabs)| tabs.tabs().position(|tab| tab.id == chosen));
+        if let Some(i) = found {
+            // The tab may be in another split: the keyboard goes there too.
+            self.panes.set_focus(group);
+            self.select(i);
+            self.ensure_tab_visible(self.tabs().active());
+            self.size_visible_groups();
+            self.wake_workspaces_tab();
+        }
+        true
+    }
+
+    /// Every split's tabs: the focused split first, each in the order its
+    /// tabs last showed. That is the order among tabs nobody has used. Most
+    /// recent first; the sort is stable, so tabs never used keep the order.
+    /// The tab in front leads whatever its stamp: the list starts from where
+    /// you are.
+    fn quick_switch_entries(&self) -> Vec<quick_switch::Entry> {
+        let focused = self.panes.focused_path().clone();
+        let current = self.tabs().active_tab().id;
+        let mut groups: Vec<_> = self.panes.iter_groups().collect();
+        groups.sort_by_key(|(path, _)| *path != focused);
+        let mut entries: Vec<(u64, quick_switch::Entry)> = Vec::new();
+        for (path, group) in groups {
+            for i in group.tabs().by_recency() {
+                let Some(tab) = group.tabs().get(i) else {
+                    continue;
+                };
+                entries.push((
+                    self.tab_used.get(&tab.id).copied().unwrap_or(0),
+                    quick_switch::Entry {
+                        tab: tab.id,
+                        group: path.clone(),
+                        label: tab.label.clone(),
+                        glyph: tab.view.icon().unwrap_or(koru_draw::icons::DOCUMENT),
+                        emoji: tab.icon.clone(),
+                        current: tab.id == current,
+                        status: tab.view.status_mark(),
+                    },
+                ));
+            }
+        }
+        entries.sort_by(|a, b| b.1.current.cmp(&a.1.current).then(b.0.cmp(&a.0)));
+        entries.into_iter().map(|(_, entry)| entry).collect()
+    }
+
+    /// Close the tab the list's `index` row is over — its ✕. The list is
+    /// rebuilt afterwards, so it stays open (or closes, when that was the
+    /// second-to-last tab).
+    fn close_quick_switch_tab(&mut self, index: usize) {
+        let Some((group, tab_id)) = self
+            .quick_switch
+            .as_ref()
+            .and_then(|switch| switch.entry(index))
+            .map(|entry| (entry.group.clone(), entry.tab))
+        else {
+            return;
+        };
+        let found = self
+            .panes
+            .iter_groups()
+            .find(|(path, _)| *path == group)
+            .and_then(|(_, tabs)| tabs.tabs().position(|candidate| candidate.id == tab_id));
+        let Some(i) = found else {
+            // The tab closed while the list stood: rebuild without it.
+            self.rebuild_quick_switch();
+            return;
+        };
+        self.panes.set_focus(group);
+        self.close_requested(i);
+        self.rebuild_quick_switch();
+    }
+
+    /// Stand the list back up from the tabs as they are now. The highlight
+    /// lands on the tab used before this one; with fewer than two tabs open
+    /// there is nothing to switch to and the list closes.
+    fn rebuild_quick_switch(&mut self) {
+        self.quick_switch = quick_switch::QuickSwitch::new(self.quick_switch_entries(), 1);
     }
 
     fn select(&mut self, i: usize) -> bool {
@@ -4459,6 +4641,10 @@ impl MainView {
                 // fixed before the answer landed falls back to.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::NewTaskIn(_) => true,
+                MenuAction::TaskListRow(..) => true,
+                // Move splits the focused pane; with one tab there is nothing
+                // to split it away from.
+                MenuAction::Move => self.tabs().len() > 1,
                 // Dimmed, with its reason beside it, when this build carries
                 // no configuration for the importer (C6) — never hidden.
                 MenuAction::ImportFormat(id) => {
@@ -4472,6 +4658,7 @@ impl MainView {
                     action,
                     MenuAction::Documents
                         | MenuAction::OpenWelcome
+                        | MenuAction::ViewOpenTabs
                         | MenuAction::Socials
                         | MenuAction::Delegate
                         | MenuAction::NewDocument
@@ -4487,6 +4674,10 @@ impl MainView {
                         | MenuAction::OpenRunningSession(_)
                         | MenuAction::Chats
                         | MenuAction::NewAiChat
+                        | MenuAction::Tasks
+                        | MenuAction::NewList
+                        | MenuAction::Move
+                        | MenuAction::MoveToSplit(_)
                         | MenuAction::OpenRecentChat(_)
                         | MenuAction::ClearRecents
                         | MenuAction::ImportAs
@@ -4760,10 +4951,12 @@ impl MainView {
             // for a list that no longer exists is a page that would draw
             // "Nothing in this list yet." for ever.
             MenuSubject::List(id) => {
-                self.list_table.iter().any(|entry| entry.id == *id)
+                self.list_table.iter().any(|node| node.entry.id == *id)
                     && matches!(
                         action,
                         MenuAction::RailOpenInNewTab
+                            | MenuAction::ListNewInside
+                            | MenuAction::ListMoveToTop
                             | MenuAction::ListRename
                             | MenuAction::ListColor
                             | MenuAction::ListSwatch(_)
@@ -4882,6 +5075,8 @@ impl MainView {
                 MenuAction::NewDocument => self.new_tab(),
                 MenuAction::MiniApp => self.open_mini_app_fixture(),
                 MenuAction::OpenWelcome => self.open_welcome_tab(),
+                // The quick switch, for somebody who has not met its chord.
+                MenuAction::ViewOpenTabs => self.cycle_tab(1),
                 MenuAction::Socials => self.open_socials_tab(),
                 MenuAction::Delegate => self.begin_delegation(delegate::DelegationOrigin::Blank),
                 MenuAction::NewCanvas => self.new_canvas(),
@@ -4892,7 +5087,10 @@ impl MainView {
                 | MenuAction::NewAgent
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
-                | MenuAction::Chats => false,
+                | MenuAction::Chats
+                | MenuAction::Tasks
+                | MenuAction::Move => false,
+                MenuAction::MoveToSplit(side) => self.move_active_to_split(side),
                 MenuAction::OpenRunningSession(session) => {
                     self.open_session_tab_for_existing(session)
                 }
@@ -4905,6 +5103,12 @@ impl MainView {
                 }
                 // The launcher's Shift+T: that page, caret in Add a task.
                 MenuAction::NewTaskIn(target) => self.new_task_in(target, None),
+                // The `+` menu's Tasks flyout: a list row adds a task to it.
+                MenuAction::TaskListRow(id, ..) => {
+                    self.new_task_in(crate::panes::explore::rail::RailTarget::List(id), None)
+                }
+                // *New list*: make one where it lives — the rail's field.
+                MenuAction::NewList => self.begin_new_list_from_plus(),
                 MenuAction::NewAiChat => self.open_ai_chat_tab(),
                 MenuAction::ManageAgents => {
                     self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
@@ -5448,6 +5652,20 @@ impl MainView {
                     self.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(id), true)
                 }
                 MenuAction::ListRename => self.begin_list_rename(id),
+                MenuAction::ListNewInside => self.apply_tasks_rail(
+                    crate::panes::explore::rail::TasksRailRequest::BeginNewList {
+                        parent: Some(id),
+                    },
+                ),
+                // Out to the top level, last: the menu's reading of dragging
+                // the row between the top-level rows.
+                MenuAction::ListMoveToTop => {
+                    self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::MoveList {
+                        ids: vec![id],
+                        parent: None,
+                        before: None,
+                    })
+                }
                 MenuAction::ListSwatch(token) => self.apply_tasks_rail(
                     crate::panes::explore::rail::TasksRailRequest::RecolorList {
                         id,
@@ -5484,11 +5702,18 @@ impl MainView {
             MenuSubject::Help => match action {
                 MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
                 MenuAction::HelpStarOnGitHub => {
-                    self.ask_pane(PaneRequest::OpenUri(context_menu::GITHUB_URL));
+                    self.ask_pane(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                        "github", None,
+                    )));
                     true
                 }
                 MenuAction::HelpSocial(social) => {
-                    self.ask_pane(PaneRequest::OpenUri(social.url()));
+                    self.ask_pane(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                        match social {
+                            context_menu::Social::X => "x",
+                        },
+                        None,
+                    )));
                     true
                 }
                 _ => false,
@@ -6157,6 +6382,28 @@ impl MainView {
         // move the highlight in a list the pointer is no longer looking at.
         if let Some((at, sub)) = self.submenu.clone() {
             let enabled = self.enabled_items(&sub);
+            // A directional submenu — Move's Top/Right/Bottom/Left — picks its
+            // arm with the matching arrow, so the arrow that names a side
+            // chooses it rather than stepping the highlight.
+            if let Some(side) = match key {
+                Key::Named(NamedKey::ArrowUp) => Some(koru_editor::SplitSide::Up),
+                Key::Named(NamedKey::ArrowRight) => Some(koru_editor::SplitSide::Right),
+                Key::Named(NamedKey::ArrowDown) => Some(koru_editor::SplitSide::Down),
+                Key::Named(NamedKey::ArrowLeft) => Some(koru_editor::SplitSide::Left),
+                _ => None,
+            } && let Some(i) = sub
+                .items()
+                .iter()
+                .position(|a| *a == MenuAction::MoveToSplit(side))
+                .filter(|&i| enabled.get(i) == Some(&true))
+            {
+                let action = sub.items()[i];
+                self.nested = None;
+                self.submenu = None;
+                self.menu = None;
+                self.run_menu_action(sub.subject, action);
+                return true;
+            }
             return match key {
                 // Esc and Left back out one level, leaving the parent standing
                 // with its own row still highlighted — the same "one Esc, one
@@ -6215,6 +6462,36 @@ impl MainView {
             };
         }
         let enabled = self.enabled_items(&menu);
+        // A plain letter chooses the row whose mnemonic it underlines, the way
+        // the launcher's letters do — so Ctrl+T, then D, opens Documents.
+        if let Key::Character(c) = key
+            && let Some(letter) = c.chars().next().filter(|ch| ch.is_ascii_alphabetic())
+        {
+            let letter = letter.to_ascii_lowercase();
+            let matched = menu
+                .items()
+                .iter()
+                .position(|action| {
+                    action
+                        .mnemonic()
+                        .is_some_and(|m| m.to_ascii_lowercase() == letter)
+                })
+                .filter(|&i| enabled.get(i).copied().unwrap_or(false));
+            if let Some(i) = matched {
+                let action = menu.items()[i];
+                if context_menu::submenu(action).is_some() {
+                    self.open_submenu(i);
+                    if let Some((_, m)) = self.submenu.as_mut() {
+                        let inner: Vec<bool> = m.items().iter().map(|a| a.selectable()).collect();
+                        m.step(&inner, 1);
+                    }
+                    return true;
+                }
+                self.menu = None;
+                self.run_menu_action(menu.subject, action);
+            }
+            return true;
+        }
         match key {
             Key::Named(NamedKey::Escape) => {
                 // **Only the menu.** A menu opened over the switcher leaves it
@@ -7895,6 +8172,19 @@ impl MainView {
         let chats = self.plus_recent_chats();
         context_menu::set_plus_snapshots(recents, shells, agents, chats);
         context_menu::set_plus_canvases(canvases);
+        context_menu::set_task_lists(
+            self.list_table
+                .iter()
+                .map(|node| {
+                    (
+                        node.entry.id,
+                        node.entry.name.clone(),
+                        context_menu::static_accent_token(node.entry.color.as_deref()),
+                        node.depth,
+                    )
+                })
+                .collect(),
+        );
         context_menu::set_profile_presence(self.profile_probe.snapshot());
     }
 
@@ -8053,9 +8343,9 @@ impl MainView {
 
     /// Fulfil the entity picker's create row. Once somebody has typed a name,
     /// there is no useful second prompt: create that page directly through the
-    /// shell. With no query this remains the lazy Ctrl+T draft, so merely
-    /// opening the picker and choosing Add new page does not leave an empty
-    /// document behind.
+    /// shell. With no query this remains the lazy draft, so merely opening the
+    /// picker and choosing Add new page does not leave an empty document
+    /// behind.
     fn new_page_from_entity(&mut self, title: String) -> bool {
         let title = title.trim();
         if title.is_empty() {
@@ -8358,6 +8648,14 @@ impl MainView {
                 self.arm_workspaces_poll();
                 true
             }
+            // *Restore to {Profile}*: the controller's own question, drawn
+            // by this window like its other confirmations, then one Store
+            // call; the outcome arrives as its notice. Not offered to the
+            // controller at all while it would refuse.
+            Outcome::RestoreWorkspaceTo { workspace, profile } => self.ask_restore_workspace_to(
+                crate::manage::workspaces::catalog_workspace(workspace),
+                crate::manage::workspaces::catalog_profile(profile),
+            ),
             Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
@@ -8798,6 +9096,56 @@ impl MainView {
         }
     }
 
+    /// After a paste changed the document it landed in. **A draft's private
+    /// document** asks for promotion; **the window's document** is shown by
+    /// every other pane on it, which main's split-pane sync adopts at once.
+    /// Never both: `ws` is the window's document, and handing it to the
+    /// siblings after a write into a draft would adopt the wrong one.
+    fn settle_paste(&mut self, ws: &WorkspaceDoc) {
+        if self.tabs().active_tab().draft.is_some() {
+            self.promote_draft();
+        } else {
+            self.adopt_siblings(ws);
+        }
+    }
+
+    /// Bring every other tab in this window up to date after a local edit to `ws`.
+    ///
+    /// `App::adopt_others` notifies *other windows* when this window edits the
+    /// workspace document, skipping this window so the editor that just typed
+    /// does not rebuild over its own caret placement. Inside this window,
+    /// however, another split pane (or a background tab) may be showing the
+    /// same document. Each view owns its own [`ChangeTracker`]: a leaf that
+    /// authored the edit has already settled its own tracker, so draining every
+    /// tab here is a no-op for the author and queues the diff for every sibling
+    /// tab; [`catch_up_active`](Self::catch_up_active) then settles the visible
+    /// split panes immediately.
+    pub(super) fn adopt_siblings(&mut self, ws: &WorkspaceDoc) {
+        let focused_path = self.panes.focused_path().clone();
+        let focused_active = self.panes.focused().tabs().active();
+        for (path, group) in self.panes.iter_groups_mut() {
+            let active = group.tabs().active();
+            for (i, t) in group.tabs_mut().iter_mut().enumerate() {
+                if t.draft.is_none() {
+                    if path == focused_path
+                        && i == focused_active
+                        && let TabView::Tasks(tasks) = &mut t.view
+                    {
+                        if let Some(leaf) = tasks.body_leaf_in(ws) {
+                            leaf.body_mut().defer_pending(ws);
+                        }
+                    } else {
+                        t.view.adopt_cheap(ws);
+                    }
+                }
+                if i != active {
+                    t.invalidate_size();
+                }
+            }
+        }
+        self.catch_up_active(ws);
+    }
+
     /// Settle one tab against the document; whether it had anything to take.
     fn catch_up_tab(tab: &mut Tab, ws: &WorkspaceDoc) -> bool {
         if tab.draft.is_some() {
@@ -9164,18 +9512,56 @@ impl MainView {
         let lists: Vec<crate::panes::explore::rail::RailList> = self
             .list_table
             .iter()
-            .map(|entry| {
-                let (count, overdue) = self.task_counts.group(entry.id);
+            .map(|node| {
+                let (count, overdue) = self.task_counts.group(node.entry.id);
                 crate::panes::explore::rail::RailList {
-                    id: entry.id,
-                    name: entry.name.clone(),
-                    color: entry.color.clone(),
+                    id: node.entry.id,
+                    name: node.entry.name.clone(),
+                    color: node.entry.color.clone(),
                     count,
                     overdue,
+                    parent: node.parent,
+                    depth: node.depth,
+                    has_children: node.has_children,
                 }
             })
             .collect();
         self.explore.rail_mut().set_lists(lists)
+    }
+
+    /// The lists drawn inside `id`, depth first, as the table stands: what a
+    /// delete confirmation counts, and exactly what it then deletes.
+    fn lists_inside(&self, id: koru_core::ids::ListId) -> Vec<koru_core::ids::ListId> {
+        let Some(at) = self.list_table.iter().position(|node| node.entry.id == id) else {
+            return Vec::new();
+        };
+        let depth = self.list_table[at].depth;
+        self.list_table[at + 1..]
+            .iter()
+            .take_while(|node| node.depth > depth)
+            .map(|node| node.entry.id)
+            .collect()
+    }
+
+    /// The live list beside the others under `parent` that already carries
+    /// `name`, folded the way the model folds it — the lowest id, the model's
+    /// own tie-break. `except` leaves one list out: the one being renamed.
+    fn sibling_named(
+        &self,
+        parent: Option<koru_core::ids::ListId>,
+        name: &str,
+        except: Option<koru_core::ids::ListId>,
+    ) -> Option<koru_core::ids::ListId> {
+        let key = koru_core::tags::fold_key(name);
+        if key.is_empty() {
+            return None;
+        }
+        self.list_table
+            .iter()
+            .filter(|node| node.parent == parent && Some(node.entry.id) != except)
+            .filter(|node| node.entry.fold_key() == key)
+            .map(|node| node.entry.id)
+            .min()
     }
 
     /// A press the rail reported.
@@ -9213,28 +9599,83 @@ impl MainView {
                 self.close_list_field();
                 self.open_place_chooser(place_chooser::PlaceTarget::TasksPage(target), at)
             }
-            Request::BeginNewList => {
-                let color = self.explore.rail().suggested_color().to_owned();
-                self.close_list_field();
-                self.explore.rail_mut().begin_new_list();
-                self.new_list = Some(new_list::NewList::new(&mut self.engine, &color));
+            // The field opens **where the list will be** — first under the
+            // heading, or first under its parent — and that row is scrolled
+            // into view. It used to hang off a row at the foot of the section,
+            // which a long rail scrolls out of sight: the field held the
+            // keyboard and drew nothing, and the `+` looked dead.
+            Request::BeginNewList { parent } => self.begin_new_list(parent),
+            Request::NewList {
+                parent,
+                name,
+                color,
+            } => {
+                // **A sibling already has the name: that list is selected and
+                // nothing is made** (nested-lists §3, D8) — no record, no
+                // rank, no parent. The model keeps the same rule; asking here
+                // is what lets the row be shown.
+                if let Some(existing) = self.sibling_named(parent, &name, None) {
+                    let area = self.explore_area();
+                    let top = self.explore.rail_top(area);
+                    let rail = self.explore.rail_mut();
+                    rail.set_selected(Some(crate::panes::explore::rail::RailTarget::List(
+                        existing,
+                    )));
+                    rail.reveal_list(area, top, existing);
+                    return self.open_tasks_tab(
+                        crate::panes::explore::rail::RailTarget::List(existing),
+                        false,
+                    );
+                }
+                self.wants_create_list = Some(koru_workspace_host::tasks::ListCreate {
+                    parent,
+                    name,
+                    color,
+                });
                 true
             }
-            Request::NewList { name, color } => {
-                self.wants_create_list = Some((name, color));
-                true
-            }
-            // The order the rows are already in on the rail, written to the
-            // table so every window and every peer agrees with it.
-            Request::ReorderList { id, to } => {
-                let _ = (id, to);
-                let order: Vec<koru_core::ids::ListId> =
-                    self.explore.rail().list_order().into_iter().collect();
-                self.list_edits
-                    .push(koru_workspace_host::tasks::ListEdit::Reorder(order));
+            // Where the row already is on the rail, written to the table so
+            // every window and every peer agrees with it. No task moves.
+            Request::MoveList {
+                ids,
+                parent,
+                before,
+            } => {
+                crate::tasks::debug_line(format_args!(
+                    "list move lists={} nested={} before={}",
+                    ids.len(),
+                    parent.is_some(),
+                    before.is_some()
+                ));
+                // One edit per list, each before the same sibling and in the
+                // order given, so a selection lands together.
+                for id in ids {
+                    self.list_edits
+                        .push(koru_workspace_host::tasks::ListEdit::Move { id, parent, before });
+                }
+                // A parent's shut row shows what is inside it, so a move
+                // changes numbers the table push alone would not redraw.
+                self.refresh_rail_lists();
                 true
             }
             Request::RowMenu { target, at } => self.open_rail_menu(target, at),
+            // The swatch's press: the list's colour rows, at the press — the
+            // same picker the Tasks page's heading swatch opens.
+            Request::ListColor { id, at } => {
+                self.close_list_field();
+                let mut menu = ContextMenu::new(
+                    &mut self.engine,
+                    MenuSubject::List(id),
+                    at,
+                    context_menu::list_color_items(),
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+                true
+            }
             Request::RenameList { id, name } => {
                 self.list_edits
                     .push(koru_workspace_host::tasks::ListEdit::Rename { id, name });
@@ -9248,9 +9689,17 @@ impl MainView {
                     });
                 true
             }
-            Request::DeleteList(id) => {
+            Request::DeleteList { id, inside } => {
+                // The keyboard goes to the row above the one that is leaving
+                // (nested-lists §6), if the keyboard was in the rail at all.
+                if self.explore.rail().focus().is_some() {
+                    let area = self.explore_area();
+                    let top = self.explore.rail_top(area);
+                    let above = self.explore.rail().focus_above(id);
+                    self.explore.rail_mut().set_focus(area, top, above);
+                }
                 self.list_edits
-                    .push(koru_workspace_host::tasks::ListEdit::Delete(id));
+                    .push(koru_workspace_host::tasks::ListEdit::DeleteTree { id, inside });
                 // The counts are about to be wrong in two ways — a list's row
                 // goes, and the tasks that were in it move — so the standing
                 // invalidation is asked rather than waiting for the coarse tick.
@@ -9301,11 +9750,15 @@ impl MainView {
         // A field left open under a menu about the same row would take the
         // keystrokes the menu's own arrows are for.
         self.close_list_field();
+        let nested = self
+            .list_table
+            .iter()
+            .any(|node| node.entry.id == id && node.parent.is_some());
         let mut m = ContextMenu::new(
             &mut self.engine,
             MenuSubject::List(id),
             at,
-            context_menu::list_items(),
+            context_menu::list_items(nested),
         );
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
@@ -9321,11 +9774,13 @@ impl MainView {
     /// keyboard and the duplicate check are the container's, exactly as they are
     /// for the `+` row — see [`new_list`].
     fn begin_list_rename(&mut self, id: koru_core::ids::ListId) -> bool {
-        let Some(entry) = self.list_table.iter().find(|entry| entry.id == id) else {
+        let Some(node) = self.list_table.iter().find(|node| node.entry.id == id) else {
             return false;
         };
-        let (name, color) = (entry.name.clone(), entry.color.clone());
+        let (name, color) = (node.entry.name.clone(), node.entry.color.clone());
+        let origin = self.explore.rail().focus();
         self.close_list_field();
+        self.list_field_origin = origin;
         self.explore.rail_mut().begin_rename(id);
         self.new_list = Some(new_list::NewList::renaming(
             &mut self.engine,
@@ -9333,6 +9788,12 @@ impl MainView {
             &name,
             color.as_deref(),
         ));
+        // The row being renamed can be anywhere in a rail longer than the
+        // column, or under a shut parent: bring it into view, as a new list's
+        // row is.
+        let area = self.explore_area();
+        let top = self.explore.rail_top(area);
+        self.explore.rail_mut().reveal_list(area, top, id);
         true
     }
 
@@ -9345,21 +9806,45 @@ impl MainView {
     /// losing the work in it, and the answer is that they do not. The list is
     /// what goes.
     fn ask_delete_list(&mut self, id: koru_core::ids::ListId) -> bool {
-        let Some(entry) = self.list_table.iter().find(|entry| entry.id == id) else {
+        let Some(node) = self.list_table.iter().find(|node| node.entry.id == id) else {
             return false;
         };
-        self.confirm = Some((
+        let name = node.entry.name.clone();
+        // **What the question counts is what the answer deletes**
+        // (nested-lists D4): the lists inside this one as the table stands
+        // now. One a peer nests in while the dialog is up is not among them
+        // and is not deleted.
+        let inside = self.lists_inside(id);
+        let dialog = if inside.is_empty() {
             koru_ui::Confirm::new(
                 "Delete this list?",
                 format!(
-                    "\u{201C}{}\u{201D} will be removed from the sidebar. Tasks in it are not \
-                     deleted \u{2014} they just leave the list.",
-                    entry.name
+                    "\u{201C}{name}\u{201D} will be removed from the sidebar. Tasks in it are not \
+                     deleted \u{2014} they just leave the list."
                 ),
                 "Delete list",
-            ),
-            trash::ConfirmSubject::DeleteList(id),
-        ));
+            )
+        } else {
+            let lang = crate::format::lang();
+            let count = koru_i18n::number::decimal(lang, inside.len() as u64);
+            let title = if inside.len() == 1 {
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedOne),
+                    &[&name],
+                )
+            } else {
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedMany),
+                    &[&name, &count],
+                )
+            };
+            koru_ui::Confirm::new(
+                title,
+                koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedBody),
+                koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedConfirm),
+            )
+        };
+        self.confirm = Some((dialog, trash::ConfirmSubject::DeleteList { id, inside }));
         true
     }
 
@@ -9375,24 +9860,65 @@ impl MainView {
         self.new_list = None;
         self.explore.rail_mut().end_new_list();
         self.explore.rail_mut().end_rename();
+        // The keyboard goes back to the row the field was opened from.
+        if let Some(origin) = self.list_field_origin.take() {
+            let area = self.explore_area();
+            let top = self.explore.rail_top(area);
+            self.explore.rail_mut().set_focus(area, top, origin);
+        }
         had
     }
 
-    /// Every live list's name, so the field can refuse a duplicate without
-    /// learning what a workspace is.
+    /// Open the inline field over the rail's *+ New list* row, for `parent`
+    /// (`None` is the top level). The rail's own request and the `+` menu's
+    /// *New list* both reach here.
+    fn begin_new_list(&mut self, parent: Option<koru_core::ids::ListId>) -> bool {
+        let color = self.explore.rail().suggested_color().to_owned();
+        let origin = self.explore.rail().focus();
+        self.close_list_field();
+        self.list_field_origin = origin;
+        self.explore.rail_mut().begin_new_list(parent);
+        self.new_list = Some(new_list::NewList::new(&mut self.engine, &color, parent));
+        let area = self.explore_area();
+        let top = self.explore.rail_top(area);
+        self.explore.rail_mut().reveal_new_list(area, top);
+        true
+    }
+
+    /// The `+` menu's *New list*: the field lives in the rail, so show the
+    /// Tasks navigator first, then open the field.
+    fn begin_new_list_from_plus(&mut self) -> bool {
+        if !self.sidebar.is_open() {
+            self.toggle_sidebar();
+        }
+        self.explore.show_tasks();
+        self.begin_new_list(None)
+    }
+
+    /// The names the open field may not take, so it can refuse a duplicate
+    /// without learning what a workspace is.
     ///
-    /// **A rename does not clash with itself**: the list being renamed is left
-    /// out, or pressing Enter on a name you have not changed would be refused as
-    /// a duplicate of the row you are standing on.
+    /// **Only a rename is refused, and only among siblings** (nested-lists
+    /// D8): a name is unique under one parent, not across the workspace. A
+    /// new list refuses nothing — a sibling's name there selects that list.
+    /// A rename does not clash with itself: the list being renamed is left
+    /// out, or pressing Enter on a name you have not changed would be refused
+    /// as a duplicate of the row you are standing on.
     fn list_names(&self) -> Vec<String> {
-        let mine = match self.new_list.as_ref().map(|field| field.target()) {
-            Some(new_list::Target::Existing(id)) => Some(id),
-            _ => None,
+        let Some(new_list::Target::Existing(mine)) =
+            self.new_list.as_ref().map(|field| field.target())
+        else {
+            return Vec::new();
         };
+        let parent = self
+            .list_table
+            .iter()
+            .find(|node| node.entry.id == mine)
+            .and_then(|node| node.parent);
         self.list_table
             .iter()
-            .filter(|entry| Some(entry.id) != mine)
-            .map(|entry| entry.name.clone())
+            .filter(|node| node.parent == parent && node.entry.id != mine)
+            .map(|node| node.entry.name.clone())
             .collect()
     }
 
@@ -9406,7 +9932,7 @@ impl MainView {
         let area = self.explore_area();
         let top = self.explore.rail_top(area);
         match self.new_list.as_ref()?.target() {
-            new_list::Target::New => self.explore.rail().new_list_field_rect(area, top),
+            new_list::Target::New(_) => self.explore.rail().new_list_field_rect(area, top),
             new_list::Target::Existing(id) => self.explore.rail().list_field_rect(area, top, id),
         }
     }
@@ -9430,7 +9956,14 @@ impl MainView {
                     Some(new_list::Target::Existing(id)) => {
                         crate::panes::explore::rail::TasksRailRequest::RenameList { id, name }
                     }
-                    _ => crate::panes::explore::rail::TasksRailRequest::NewList { name, color },
+                    Some(new_list::Target::New(parent)) => {
+                        crate::panes::explore::rail::TasksRailRequest::NewList {
+                            parent,
+                            name,
+                            color,
+                        }
+                    }
+                    None => return true,
                 };
                 self.apply_tasks_rail(request)
             }
@@ -9612,6 +10145,9 @@ impl MainView {
                 }
                 WelcomeWant::VoiceSettings => {
                     self.open_voice_settings_tab();
+                }
+                WelcomeWant::ReaderSettings => {
+                    self.open_reader_settings();
                 }
                 WelcomeWant::Import(format) => {
                     self.ask_pane(PaneRequest::ImportContent {
@@ -10114,32 +10650,31 @@ impl MainView {
             return;
         };
         let active = self.active_document;
-        // Names first, so the read of `entries` is finished before the tabs are
-        // written and `mark_tab_widths_stale` can take `&mut self`.
-        let names: Vec<(usize, String)> = self
-            .tabs()
+        let entries: std::collections::HashMap<_, _> = entries
             .iter()
-            .enumerate()
-            .filter_map(|(i, t)| {
-                let id = t.document.filter(|id| Some(*id) != active)?;
-                let entry = entries.iter().find(|e| e.id == id)?;
-                let title = if entry.title.is_empty() {
+            .map(|e| {
+                let title = if e.title.is_empty() {
                     "Untitled".to_owned()
                 } else {
-                    entry.title.clone()
+                    e.title.clone()
                 };
-                Some((i, title))
+                (e.id, title)
             })
             .collect();
-        if names.is_empty() {
-            return;
-        }
-        for (i, name) in names {
-            if let Some(t) = self.tabs_mut().get_mut(i) {
-                t.set_name(&name);
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for t in group.tabs_mut().iter_mut() {
+                if let Some(id) = t.document.filter(|id| Some(*id) != active)
+                    && let Some(name) = entries.get(&id)
+                {
+                    t.set_name(name);
+                    changed = true;
+                }
             }
         }
-        self.mark_tab_widths_stale();
+        if changed {
+            self.mark_tab_widths_stale();
+        }
     }
 
     fn refresh_labels(&mut self, ws: &WorkspaceDoc) {
@@ -10187,72 +10722,74 @@ impl MainView {
                 Some((*id, title))
             })
             .collect();
-        for t in self.tabs_mut().iter_mut() {
-            // **The Tasks tab is named for what it is showing**, and it is the
-            // one tab whose name can change without anybody pressing anything:
-            // a peer renaming the list it is on moves it. So it is refreshed
-            // here with the document tabs rather than written once where the
-            // queue is pressed. It has no root, so every gate below would skip
-            // it.
-            if matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_)) {
-                t.refresh_tasks_label();
-                // The lane's names follow the listing, as the tab's does.
-                if let TabView::Tasks(page) = &mut t.view {
-                    let faces: Vec<crate::tasks_view::LaneItem> = page
-                        .attachment_ids()
-                        .into_iter()
-                        .map(|file| {
-                            let (name, is_file) = titles
-                                .get(&file)
-                                .cloned()
-                                .unwrap_or_else(|| ("File".to_owned(), true));
-                            crate::tasks_view::LaneItem {
-                                id: file,
-                                name,
-                                is_file,
-                            }
-                        })
-                        .collect();
-                    page.set_attachment_faces(faces);
+        for (_, group) in self.panes.iter_groups_mut() {
+            for t in group.tabs_mut().iter_mut() {
+                // **The Tasks tab is named for what it is showing**, and it is the
+                // one tab whose name can change without anybody pressing anything:
+                // a peer renaming the list it is on moves it. So it is refreshed
+                // here with the document tabs rather than written once where the
+                // queue is pressed. It has no root, so every gate below would skip
+                // it.
+                if matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_)) {
+                    t.refresh_tasks_label();
+                    // The lane's names follow the listing, as the tab's does.
+                    if let TabView::Tasks(page) = &mut t.view {
+                        let faces: Vec<crate::tasks_view::LaneItem> = page
+                            .attachment_ids()
+                            .into_iter()
+                            .map(|file| {
+                                let (name, is_file) = titles
+                                    .get(&file)
+                                    .cloned()
+                                    .unwrap_or_else(|| ("File".to_owned(), true));
+                                crate::tasks_view::LaneItem {
+                                    id: file,
+                                    name,
+                                    is_file,
+                                }
+                            })
+                            .collect();
+                        page.set_attachment_faces(faces);
+                    }
+                    continue;
                 }
-                continue;
-            }
-            // **A note's resolved name stands where its title row would be**,
-            // in every tab over it, active or not — the row holds the empty
-            // root text nothing reads, and a person opening the note from
-            // the library expects to see what the library called it.
-            if let Some(document) = t.document
-                && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
-                && let TabView::Leaf(leaf) = &mut t.view
-            {
-                leaf.set_title_display(Some(name.clone()));
-            }
-            // A draft's root names a node in its own throwaway document, not in
-            // this one, so `name_of` here would be a lookup in the wrong place.
-            // Its label is `DRAFT_NAME` until it is promoted.
-            if t.draft.is_some() {
-                continue;
-            }
-            // **And the same is true of a tab over another document**, for the
-            // same reason: `ws` is the *active* one, so `name_of` there finds
-            // nothing and answers `Untitled` — which would rename every
-            // background document tab to that the moment anything changed. Its
-            // label follows the manifest instead, through `set_entries`.
-            if t.document != active_document {
-                continue;
-            }
-            // A note's name is resolved, never its root text, so its tab is
-            // named from the listing like a background tab — active or not.
-            if let Some(document) = t.document
-                && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
-            {
-                t.set_name(name);
-                continue;
-            }
-            // A title being typed into is held at the name it had when the
-            // caret arrived — `settle_naming` releases it on the way out.
-            if let Some(root) = t.view.root().filter(|r| Some(*r) != naming) {
-                t.set_name(&koru_workspace::name_of(ws, root));
+                // **A note's resolved name stands where its title row would be**,
+                // in every tab over it, active or not — the row holds the empty
+                // root text nothing reads, and a person opening the note from
+                // the library expects to see what the library called it.
+                if let Some(document) = t.document
+                    && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
+                    && let TabView::Leaf(leaf) = &mut t.view
+                {
+                    leaf.set_title_display(Some(name.clone()));
+                }
+                // A draft's root names a node in its own throwaway document, not in
+                // this one, so `name_of` here would be a lookup in the wrong place.
+                // Its label is `DRAFT_NAME` until it is promoted.
+                if t.draft.is_some() {
+                    continue;
+                }
+                // **And the same is true of a tab over another document**, for the
+                // same reason: `ws` is the *active* one, so `name_of` there finds
+                // nothing and answers `Untitled` — which would rename every
+                // background document tab to that the moment anything changed. Its
+                // label follows the manifest instead, through `set_entries`.
+                if t.document != active_document {
+                    continue;
+                }
+                // A note's name is resolved, never its root text, so its tab is
+                // named from the listing like a background tab — active or not.
+                if let Some(document) = t.document
+                    && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
+                {
+                    t.set_name(name);
+                    continue;
+                }
+                // A title being typed into is held at the name it had when the
+                // caret arrived — `settle_naming` releases it on the way out.
+                if let Some(root) = t.view.root().filter(|r| Some(*r) != naming) {
+                    t.set_name(&koru_workspace::name_of(ws, root));
+                }
             }
         }
         self.mark_tab_widths_stale();
@@ -10277,11 +10814,46 @@ impl MainView {
 }
 impl MainView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_down_inner(ws, x, y, ctrl);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
+    }
+
+    fn mouse_down_inner(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.sync_mini_app_refinement_target();
         self.tooltip.clear();
         self.pointer = (x, y);
         if self.file_preview.is_some() {
             return self.file_preview_press(x, y);
+        }
+        // On a row of the quick switch: go there. On its ✕: close that tab and
+        // keep the list up. Anywhere else: put it away, and the press is spent.
+        if self.quick_switch.is_some() {
+            if let Some(index) = self
+                .quick_switch
+                .as_ref()
+                .and_then(|switch| switch.close_at(self.viewport, x, y))
+            {
+                self.close_quick_switch_tab(index);
+                return true;
+            }
+            let mut go = false;
+            if let Some(switch) = self.quick_switch.as_mut() {
+                if switch.press(self.viewport, x, y) {
+                    go = true;
+                } else if !switch.contains(self.viewport, x, y) {
+                    // Off the panel puts it away; on its padding is not a
+                    // choice and not a dismissal.
+                    self.quick_switch = None;
+                }
+            }
+            if go {
+                self.finish_quick_switch();
+            }
+            return true;
         }
         // A press anywhere moves the keyboard off the chrome stop it was on.
         self.chrome_focus = None;
@@ -10846,6 +11418,15 @@ impl MainView {
         handled || opened || toasted || asked || binned || entity_changed || microphones
     }
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_up_inner(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
+    }
+
+    fn mouse_up_inner(&mut self, ws: &mut WorkspaceDoc) -> bool {
         // A chat's lifted picture viewer takes the release of its own press.
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_up(),
@@ -11451,7 +12032,11 @@ impl View for MainView {
             _ => {}
         }
         let handled = MainView::key(self, ws, key, text, mods);
+        let before = ws.version();
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         if handled || acted {}
         handled || acted
     }
@@ -11504,7 +12089,11 @@ impl View for MainView {
         }
         let handled = MainView::mouse_down(self, ws, x, y, ctrl);
         let attachment_opened = self.open_pending_ai_attachment();
+        let before = ws.version();
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         if handled || acted {}
         handled || acted || attachment_opened
     }
@@ -11522,7 +12111,11 @@ impl View for MainView {
             return View::mouse_up(search, ws);
         }
         let handled = MainView::mouse_up(self, ws);
+        let before = ws.version();
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         if handled || acted {}
         handled || acted
     }
@@ -11724,8 +12317,13 @@ impl View for MainView {
                 // **A run pill asks the same way** (ADR-369): the pill is the
                 // document's, the menu is this window's, because what a run
                 // produced is not something an editor can name.
+                let before = ws.version();
+                let acted = self.drain_trash_all(ws);
+                if ws.version() != before {
+                    self.adopt_siblings(ws);
+                }
                 handled
-                    | self.drain_trash_all(ws)
+                    | acted
                     | self.drain_run_pill_menu((x, y))
                     | self.drain_schedule_pill_menu((x, y))
             }
@@ -11757,6 +12355,11 @@ impl View for MainView {
         self.pointer = (x, y);
         if self.file_preview.is_some() {
             return true;
+        }
+        // The quick switch stands over everything: the pointer lights its
+        // rows and nothing underneath it.
+        if let Some(switch) = self.quick_switch.as_mut() {
+            return switch.hover(self.viewport, x, y);
         }
         if let Some(fab) = self.fab.as_mut() {
             let viewport = self.viewport;
@@ -11948,6 +12551,14 @@ impl View for MainView {
             // Reached only by a press that landed in the column, so it is on
             // screen and its rows have to be current before they are hit-tested.
             self.refresh_explore(ws, true);
+            // A row that holds rows opens or shuts on a double-click.
+            if self
+                .explore
+                .toggle_fold_at(self.explore_area(), self.viewport, x, y)
+            {
+                self.explore_stale = true;
+                return true;
+            }
             let out = self
                 .explore
                 .mouse_double_click(self.explore_area(), self.viewport, x, y);
@@ -11996,6 +12607,16 @@ impl View for MainView {
             return;
         }
         if self.delegation_scroll(-Self::wheel_lines(delta) * 32.0) {
+            return;
+        }
+        // The quick switch stands over everything, and the wheel is its
+        // list's: a row a notch.
+        if let Some(switch) = self.quick_switch.as_mut() {
+            let rows = match delta {
+                MouseScrollDelta::LineDelta(_, y) => -y.round() as i32,
+                MouseScrollDelta::PixelDelta(p) => (-p.y / 38.0).round() as i32,
+            };
+            switch.scroll_rows(rows);
             return;
         }
         if self.reminder_creation.is_open() {
@@ -12214,7 +12835,12 @@ impl View for MainView {
     }
 
     fn key_up(&mut self, ws: &mut WorkspaceDoc, key: &Key) -> bool {
-        self.canvas_key_up(ws, key)
+        let before = ws.version();
+        let handled = self.canvas_key_up(ws, key);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
@@ -12243,7 +12869,13 @@ impl View for MainView {
     }
 
     fn set_mods(&mut self, mods: ModifiersState) {
+        // Ctrl+Tab is hold-to-cycle, release-to-switch: when Control lifts
+        // while the list stands, go to the highlighted tab and put it away.
+        let control_lifted = self.mods.control_key() && !mods.control_key();
         self.mods = mods;
+        if control_lifted && self.quick_switch.is_some() {
+            self.finish_quick_switch();
+        }
         self.ai_chat.set_mods(mods);
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
@@ -12260,6 +12892,11 @@ impl View for MainView {
 
     fn cursor_icon(&self) -> CursorIcon {
         if self.file_preview.is_some() {
+            return CursorIcon::Default;
+        }
+        // Over the quick switch the pointer is the plain arrow, whatever is
+        // underneath: a text caret over a list of rows says the wrong thing.
+        if self.quick_switch.is_some() {
             return CursorIcon::Default;
         }
         match self.lifted_viewer() {
@@ -12684,7 +13321,10 @@ impl View for MainView {
             || crate::taskbar::new_document_pending()
             || crate::taskbar::open_pending()
             || crate::taskbar::open_document_pending()
-            || self.tabs().active_tab().view.is_animating()
+            || self
+                .panes
+                .iter_groups()
+                .any(|(_, group)| group.tabs().active_tab().view.is_animating())
     }
 
     fn invalidate(&mut self) {
@@ -12793,6 +13433,7 @@ impl View for MainView {
         action: accesskit::Action,
         data: Option<&accesskit::ActionData>,
     ) -> bool {
+        let before = ws.version();
         let handled = MainView::accessibility_action(self, ws, target, action, data);
         // **A request from a screen reader is a gesture, and every gesture ends
         // here.** `key`, `mouse_down` and `mouse_up` each finish with this call,
@@ -12801,6 +13442,9 @@ impl View for MainView {
         // none of them, which nothing noticed until the Tasks page gave an AT
         // action something to ask the container for.
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         handled || acted
     }
 
@@ -13112,12 +13756,21 @@ impl View for MainView {
             if matches!(&tab.view, TabView::Leaf(leaf) if leaf.body().composition().is_some()) {
                 return None;
             }
+            // A row's `+` draft is placed as that row's last child; any other
+            // draft as the next sibling of the open document.
+            let child_of = tab.draft.as_ref().and_then(|draft| draft.child_of);
             // This latch names the exact request being returned, never an
-            // earlier queued intent. The host completes this CreateDocument
+            // earlier queued intent. The host completes this creation
             // synchronously before taking another request (including Agent's).
             self.queued_drafts.pop_front();
             self.promoting = Some(origin);
-            return Some(PaneRequest::CreateDocument(String::new()));
+            return Some(match child_of {
+                Some(parent) => PaneRequest::CreateDocumentIn {
+                    parent,
+                    title: String::new(),
+                },
+                None => PaneRequest::CreateDocument(String::new()),
+            });
         }
     }
 
@@ -13380,6 +14033,14 @@ impl View for MainView {
         MainView::open_whats_new(self, version)
     }
 
+    fn open_tasks_target(
+        &mut self,
+        target: koru_workspace_host::TasksTarget,
+        match_text: Option<&str>,
+    ) -> bool {
+        MainView::open_tasks_from_search(self, target, match_text)
+    }
+
     fn open_search_target(
         &mut self,
         ws: &WorkspaceDoc,
@@ -13388,6 +14049,9 @@ impl View for MainView {
         trash_root: Option<NodeId>,
         match_text: Option<&str>,
     ) -> bool {
+        // Any navigation retires a task landing still in flight: the person
+        // has gone somewhere, and its late answer must not take them away.
+        self.search_landing.retire();
         let started = Instant::now();
         tracing::info!(
             target: "koru::navigation",
@@ -13962,14 +14626,19 @@ impl View for MainView {
         let Some(leaf) = self.active_editing_leaf() else {
             return false;
         };
-        leaf.complete_new_page_link(
+        let before = ws.version();
+        let done = leaf.complete_new_page_link(
             ws,
             title,
             koru_editor::trigger::DocumentTarget {
                 document,
                 node: None,
             },
-        )
+        );
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        done
     }
 
     fn complete_selection_move(
@@ -13982,6 +14651,7 @@ impl View for MainView {
         let TabView::Leaf(leaf) = self.active_view() else {
             return false;
         };
+        let before = ws.version();
         let toast = title.clone();
         let done = leaf.complete_selection_move(
             ws,
@@ -13990,6 +14660,9 @@ impl View for MainView {
         );
         if done {
             self.show_notice(format!("Moved to {toast}"));
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
         done
     }
@@ -14846,7 +15519,7 @@ impl View for MainView {
     /// every push for the reason [`set_tag_table`](Self::set_tag_table) gives
     /// — a tab opened since the last change still has to be told, and a leaf
     /// that already has the table answers the compare and no work.
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         let moved = self.list_table != lists;
         if moved {
             self.list_table = lists.to_vec();
@@ -14869,7 +15542,7 @@ impl View for MainView {
 
     /// The rail's "+ New list", on its way to the workspace's system document.
     /// Taken rather than read, the tag request's contract exactly.
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<koru_workspace_host::tasks::ListCreate> {
         self.wants_create_list.take()
     }
 
@@ -15095,6 +15768,7 @@ impl View for MainView {
         node: NodeId,
         files: &[(koru_core::DocumentId, String)],
     ) {
+        let before = ws.version();
         let i = self
             .attachment_request
             .take()
@@ -15112,6 +15786,9 @@ impl View for MainView {
         };
         if let Some(l) = leaf {
             View::insert_attachment(l, ws, node, files);
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
     }
 
@@ -15302,9 +15979,28 @@ impl View for MainView {
             .and_then(|leaf| View::take_wants_copy_html(leaf))
     }
 
-    fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
+    /// A picture's read words are the document's that shows it, as its
+    /// menu's offers are.
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
         self.active_editing_leaf()
-            .is_some_and(|leaf| View::apply_pending_image_cut(leaf, ws))
+            .map(|leaf| View::take_wants_picture_texts(leaf))
+            .unwrap_or_default()
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        self.active_editing_leaf()
+            .is_some_and(|leaf| View::set_picture_text(leaf, hash, text))
+    }
+
+    fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let before = ws.version();
+        let done = self
+            .active_editing_leaf()
+            .is_some_and(|leaf| View::apply_pending_image_cut(leaf, ws));
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        done
     }
 
     fn take_wants_paste_image(&mut self) -> Option<koru_workspace_host::PasteTarget> {
@@ -15332,6 +16028,7 @@ impl View for MainView {
         if self.canvas_insert_image(ws, node, (hash, mime), width, height) {
             return;
         }
+        let before = ws.version();
         let i = self.image_request.take().unwrap_or(self.tabs().active());
         match self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
             Some(TabView::MiniApp(app)) if app.owns(ws) => {
@@ -15347,6 +16044,9 @@ impl View for MainView {
             }
             _ => {}
         }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
     }
 
     fn append_image(
@@ -15360,6 +16060,7 @@ impl View for MainView {
         if self.canvas_append_image(ws, (hash, mime), width, height) {
             return;
         }
+        let before = ws.version();
         match self.active_view() {
             TabView::MiniApp(app) if app.owns(ws) => {
                 if let Some(leaf) = app.focused_leaf() {
@@ -15374,6 +16075,9 @@ impl View for MainView {
             }
             _ => {}
         }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
     }
 
     fn paste_images(
@@ -15385,6 +16089,7 @@ impl View for MainView {
         if self.canvas_insert_images(ws, images) {
             return;
         }
+        let before = ws.version();
         let landed = match self.active_view() {
             TabView::MiniApp(app) if app.owns(ws) => {
                 if let Some(leaf) = app.focused_leaf() {
@@ -15415,28 +16120,32 @@ impl View for MainView {
             // `adopt` would catch it next frame; this makes it immediate.
             self.explore_stale = true;
         }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
     }
 
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
         self.size_focused_input();
-        let (view, ws) = self.tabs_mut().active_mut().doc(ws);
-        let before = ws.version();
+        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+        let before = doc.version();
         match view {
-            TabView::MiniApp(app) if app.owns(ws) => {
+            TabView::MiniApp(app) if app.owns(doc) => {
                 if let Some(leaf) = app.focused_leaf() {
-                    View::paste_text(leaf, ws, text);
+                    View::paste_text(leaf, doc, text);
                 }
             }
-            TabView::Leaf(l) => View::paste_text(l, ws, text),
+            TabView::Leaf(l) => View::paste_text(l, doc, text),
             TabView::Tasks(t) => {
-                if let Some(l) = t.body_leaf_in(ws) {
-                    View::paste_text(l, ws, text);
+                if let Some(l) = t.body_leaf_in(doc) {
+                    View::paste_text(l, doc, text);
                 }
             }
             _ => {}
         }
-        if ws.version() != before {
-            self.promote_draft();
+        let changed = doc.version() != before;
+        if changed {
+            self.settle_paste(ws);
         }
     }
 
@@ -15502,6 +16211,7 @@ impl View for MainView {
         place: koru_workspace_host::ImagePlace,
         images: &[koru_workspace_host::PastedImage],
     ) {
+        let before = ws.version();
         let mut place = Some(place);
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.iter_tabs_mut() {
@@ -15524,6 +16234,9 @@ impl View for MainView {
                 // The `/image` ask, if this was one, is answered.
                 self.image_request = None;
                 self.explore_stale = true;
+                if ws.version() != before {
+                    self.adopt_siblings(ws);
+                }
             }
             Some(koru_workspace_host::ImagePlace::Paste(target)) => {
                 View::paste_images(self, ws, target, images)
@@ -15580,37 +16293,38 @@ impl View for MainView {
         blocks: &[koru_workspace_host::RichBlock],
     ) {
         self.size_focused_input();
-        let (view, ws) = self.tabs_mut().active_mut().doc(ws);
-        let before = ws.version();
+        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+        let before = doc.version();
         let landed = match view {
-            TabView::MiniApp(app) if app.owns(ws) => {
+            TabView::MiniApp(app) if app.owns(doc) => {
                 if let Some(leaf) = app.focused_leaf() {
-                    View::paste_rich(leaf, ws, target, blocks);
+                    View::paste_rich(leaf, doc, target, blocks);
                     true
                 } else {
                     false
                 }
             }
             TabView::Leaf(l) => {
-                View::paste_rich(l, ws, target, blocks);
+                View::paste_rich(l, doc, target, blocks);
                 true
             }
-            TabView::Tasks(t) => match t.body_leaf_in(ws) {
+            TabView::Tasks(t) => match t.body_leaf_in(doc) {
                 Some(l) => {
-                    View::paste_rich(l, ws, target, blocks);
+                    View::paste_rich(l, doc, target, blocks);
                     true
                 }
                 None => false,
             },
             _ => false,
         };
-        if ws.version() != before {
-            self.promote_draft();
-        }
+        let changed = doc.version() != before;
         if landed {
             // Like `paste_images`: image blocks landed under the active document,
             // so the explore column's library cache is stale.
             self.explore_stale = true;
+        }
+        if changed {
+            self.settle_paste(ws);
         }
     }
 
@@ -15637,14 +16351,17 @@ impl View for MainView {
         had
     }
 
+    /// **Ctrl+Tab is the quick switch, hold-to-cycle.** The first press stands
+    /// the list up on the tab used before this one; each further press moves
+    /// the highlight. Letting go of Control goes (see [`set_mods`]); Enter or
+    /// a click on a row goes, Escape or a click elsewhere puts it away.
     fn cycle_tab(&mut self, delta: i32) -> bool {
-        if !self.tabs_mut().cycle(delta) {
-            return false;
+        if let Some(switch) = self.quick_switch.as_mut() {
+            switch.step(delta);
+            return true;
         }
-        self.ensure_tab_visible(self.tabs().active());
-        self.size_visible_groups();
-        self.wake_workspaces_tab();
-        true
+        self.quick_switch = quick_switch::QuickSwitch::new(self.quick_switch_entries(), delta);
+        self.quick_switch.is_some()
     }
 
     fn restore(&mut self, ws: &Workspace, settings: &Settings) {
@@ -15697,16 +16414,20 @@ impl View for MainView {
         if settings.tabs_per_workspace {
             self.adopt_workspace_strip(ws, settings);
         }
-        // Explore width / collapsed are per workspace; the strip is not.
-        if let Some(w) = settings.workspace.and_then(|id| settings.sidebar_w_in(id)) {
-            self.sidebar
-                .set_full(w.clamp(layout::SIDEBAR_MIN_W, layout::SIDEBAR_MAX_W));
-        }
+        // What is collapsed is per workspace. **The pane's width is not**: it
+        // is left exactly as it is across a switch.
+        // Nor is the quick filter: it was typed over the other workspace.
+        self.explore.clear_quick_filter();
         let collapsed = settings
             .workspace
             .map(|id| settings.collapsed_in(id).to_vec())
             .unwrap_or_default();
         self.explore.set_collapsed(collapsed);
+        let shut = settings
+            .workspace
+            .map(|id| settings.collapsed_lists_in(id).to_vec())
+            .unwrap_or_default();
+        self.explore.rail_mut().set_collapsed(shut);
         self.explore_stale = true;
         self.entries = None;
         // Reseat each open leaf against its document room when it is still
@@ -15759,7 +16480,10 @@ impl View for MainView {
             self.search
                 .as_ref()
                 .and_then(koru_workspace_host::View::maintenance_deadline),
-            self.tabs().active_tab().view.maintenance_deadline(),
+            self.panes
+                .iter_groups()
+                .filter_map(|(_, group)| group.tabs().active_tab().view.maintenance_deadline())
+                .min(),
             // An open font picker waiting for the scan looks again soon.
             self.font_picker_waiting()
                 .then(|| Instant::now() + std::time::Duration::from_millis(100)),
@@ -15769,6 +16493,10 @@ impl View for MainView {
             // has no clock, which is the same bargain History keeps.
             self.cloud_sync.deadline(),
             self.task_counts.deadline(),
+            // A task from search is being read off-thread: look again soon.
+            self.search_landing
+                .pending()
+                .then(|| Instant::now() + std::time::Duration::from_millis(16)),
             self.document_appearances.deadline(),
             self.welcome_progress.deadline(),
             self.task_pages_deadline(),
@@ -15984,6 +16712,15 @@ impl View for MainView {
             self.explore
                 .set_document_appearances(self.document_appearances.rows.clone());
         }
+        // The Store said this workspace's tasks changed — a move on another
+        // device, a tick in another window. The same door a write from this
+        // window uses, so the rail and the page ask now rather than on their
+        // half-minute timers.
+        if self.task_events.take_changed(self.current_workspace()) {
+            self.tasks_changed();
+        }
+        let told = self.task_events.live();
+        self.task_counts.set_event_driven(told);
         let counts_changed = self
             .task_counts
             .maintain(self.current_workspace(), rail_visible, now);
@@ -15998,10 +16735,20 @@ impl View for MainView {
                 .set_counts(self.task_counts.counts());
             self.refresh_rail_lists();
         }
-        let context_tasks_changed = self.refresh_context_tasks(ws);
-        let mut page_changed = self.maintain_task_pages(now);
+        // *Search everywhere for …* under a quick filter that found nothing.
+        if let Some(text) = self.explore.take_wants_search() {
+            self.open_search();
+            if let Some(search) = self.search.as_mut() {
+                search.type_query(&text);
+            }
+        }
+        if self.explore.take_quick_filter_stale() {
+            self.explore_stale = true;
+        }
+        let landing_changed = self.finish_search_landing(now);
+        let context_tasks_changed = self.refresh_context_tasks(ws) | landing_changed;
         let workspace = self.current_workspace();
-        let active_path = self.panes.focused_path().clone();
+        let mut page_changed = self.maintain_task_pages(now, told);
         // Home's Today page, fed the same way: its panel asks only while the
         // tab is in front, and the facts it draws from are compared before
         // they are stored, so a frame with nothing new costs the compares.
@@ -16017,12 +16764,11 @@ impl View for MainView {
             .map(|p| p.name.clone())
             .unwrap_or_default();
         let home_offline = self.store_trouble.is_some();
-        let home_showing = matches!(self.tabs().active_tab().view, TabView::Home(_));
-        for (path, group) in self.panes.iter_groups_mut() {
+        for (_, group) in self.panes.iter_groups_mut() {
             let group_active = group.active();
             for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
                 if let TabView::Home(page) = &mut tab.view {
-                    let in_front = home_showing && path == active_path && i == group_active;
+                    let in_front = i == group_active;
                     if page.feed(
                         &home_name,
                         home_recents.clone(),
@@ -16253,8 +16999,14 @@ impl View for MainView {
         while let Some(request) = self.reminder_preferences.take_startup_request() {
             self.ask_pane(PaneRequest::AnswerReminderStartup(request));
         }
-        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
-        let view_changed = view.maintain(doc, now);
+        let mut view_changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let (view, doc) = group.tabs_mut().active_mut().doc(ws);
+            view_changed |= view.maintain(doc, now);
+        }
+        if reminder_submitted || reminder_cancelled {
+            self.adopt_siblings(ws);
+        }
         // The Manage tab's *Linked devices* page re-asks for presence on its
         // deadline; the ask leaves as a request for Agent.
         let manage_asked = matches!(self.tabs().active_tab().view, TabView::Manage(_))
@@ -16346,9 +17098,73 @@ impl MainView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        let before = ws.version();
+        let handled = self.key_inner(ws, key, text, mods);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
+    }
+
+    fn key_inner(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> bool {
         self.sync_mini_app_refinement_target();
         if self.file_preview.is_some() {
             return self.file_preview_key(key);
+        }
+        // The quick switch holds the keyboard while it stands: Escape puts
+        // it away, Enter goes, the arrows move. Tab itself arrives through
+        // `cycle_tab`.
+        if let Some(switch) = self.quick_switch.as_mut() {
+            match key {
+                Key::Named(winit::keyboard::NamedKey::Escape) => self.quick_switch = None,
+                Key::Named(winit::keyboard::NamedKey::Enter) => {
+                    self.finish_quick_switch();
+                }
+                Key::Named(winit::keyboard::NamedKey::Tab) => {
+                    switch.step(if mods.shift_key() { -1 } else { 1 })
+                }
+                Key::Named(winit::keyboard::NamedKey::ArrowDown) => switch.step(1),
+                Key::Named(winit::keyboard::NamedKey::ArrowUp) => switch.step(-1),
+                // Anything else is consumed while the list stands, and does
+                // nothing — there is no field to type into.
+                _ => {}
+            }
+            return true;
+        }
+        // **Ctrl+T while the + menu stands moves it to the next pane's `+`**,
+        // so the chord cycles the split panes' create points rather than being
+        // swallowed by the open menu.
+        if self.menu.is_some() && keys::resolve(key, text, mods) == Some(Chord::NewTab) {
+            self.menu = None;
+            self.submenu = None;
+            self.nested = None;
+            self.focus_next_pane();
+            self.open_new_tab_menu();
+            return true;
+        }
+        // **Writing is using.** A key that types, with nothing standing over
+        // the page to take it, stamps the tab in front as the one last used:
+        // what the quick switch orders by.
+        let types = !mods.control_key()
+            && !mods.alt_key()
+            && !mods.super_key()
+            && (text.is_some_and(|t| t.chars().any(|ch| !ch.is_control()))
+                || matches!(
+                    key,
+                    Key::Named(
+                        winit::keyboard::NamedKey::Enter
+                            | winit::keyboard::NamedKey::Backspace
+                            | winit::keyboard::NamedKey::Delete
+                    )
+                ));
+        if types && self.search.is_none() && self.menu.is_none() {
+            self.mark_tab_used();
         }
         self.trace_input_state("key");
         // **The blocking prefix, in an order this function no longer owns.**
@@ -16623,6 +17439,24 @@ impl MainView {
             // destination is already unambiguous.
             return true;
         }
+        // **The quick filter, while the sidebar holds the keyboard**: what
+        // types narrows its rows (`explore/quick_filter.rs`). Ahead of the
+        // navigation keys, which it leaves alone.
+        if self.sidebar.is_open()
+            && self.explore.has_focus()
+            && !self.tabs().active_tab().view.is_prompting()
+            && self
+                .explore
+                .quick_filter_key(&mut self.engine, key, text, mods)
+        {
+            inputdebug::write(format_args!(
+                "[Koru][input] view key claimed=explore-filter"
+            ));
+            if self.explore.take_quick_filter_stale() {
+                self.explore_stale = true;
+            }
+            return true;
+        }
         // **The tree, while it holds the keyboard.** Only the navigation keys —
         // everything else falls through, so typing still reaches the document
         // you are writing in. It is checked before the chords only in the sense
@@ -16671,7 +17505,8 @@ impl MainView {
                 return true;
             }
             return match chord {
-                Chord::NewTab => self.new_tab(),
+                // Ctrl+T is the tab strip's `+`: the New menu, not a document.
+                Chord::NewTab => self.open_new_tab_menu(),
                 Chord::New => self.open_launcher(),
                 Chord::CloseTab => self.close_requested(self.tabs().active()),
                 Chord::ReopenClosedTab => self.reopen_closed_tab(),
@@ -18551,6 +19386,25 @@ impl MainView {
         })
     }
 
+    /// The `+` button the pointer is over, whichever pane it belongs to — the
+    /// New-tab tooltip anchors to this, not to the focused pane's `+`.
+    fn hovered_new_tab_rect(&self) -> Option<Rect> {
+        for (path, _) in self.panes.leaf_rects(self.content()) {
+            let Some(header) = self.lane_rect_for(&path) else {
+                continue;
+            };
+            if !header.contains(self.pointer.0, self.pointer.1) {
+                continue;
+            }
+            let group = self.panes.group(&path)?;
+            let button = tabs::new_tab(header, &group.widths, group.scroll);
+            if button.w > 0.0 {
+                return Some(button);
+            }
+        }
+        None
+    }
+
     fn caption_tooltip(&self, hit: Hit) -> Option<TooltipContent> {
         if self.carrying() || self.sidebar.animating() {
             return None;
@@ -18616,16 +19470,14 @@ impl MainView {
                 ),
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReminderAttention),
             )),
-            Hit::NewTab => {
-                let slot = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
-                (slot.w > 0.0).then(|| {
-                    TooltipContent::new(
-                        4,
-                        slot,
-                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::LauncherTooltip),
-                    )
-                })
-            }
+            Hit::NewTab => self.hovered_new_tab_rect().map(|slot| {
+                TooltipContent::new(
+                    4,
+                    slot,
+                    koru_keys::registry::get(koru_keys::ShortcutId::NewTab).label,
+                )
+                .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
+            }),
             // A hovered history row answers with the exact moment behind its
             // relative time. Keys sit past the caption buttons' 1..4 so a
             // pointer sliding between rows re-anchors while staying warm.

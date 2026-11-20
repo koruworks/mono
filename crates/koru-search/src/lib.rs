@@ -46,6 +46,7 @@
 
 pub mod fragments;
 mod fuzzy;
+pub mod lists;
 pub mod model;
 mod normalize;
 mod query;
@@ -60,6 +61,7 @@ use std::sync::Mutex;
 use koru_projection::worker::Sweeps;
 use koru_store_core::ids::WorkspaceId;
 
+pub use lists::{ListNames, ListRow};
 pub use model::{
     Fragment, FuzzyIndexState, FuzzyIndexStats, IndexStats, Lifecycle, LifecycleFilter, MatchSpan,
     PreviewBlock, ReadingCounts, RecentQuery, SearchError, SearchFacet, SearchFacets, SearchHit,

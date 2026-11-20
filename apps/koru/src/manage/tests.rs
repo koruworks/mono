@@ -137,13 +137,14 @@ fn the_nav_lays_out_in_order_and_every_row_is_pressed_where_it_is_drawn() {
     assert_eq!(
         order,
         vec![
+            nav::Entry::Cloud,
+            nav::Entry::Devices,
             nav::Entry::Profile(a),
             nav::Entry::Profile(b),
             nav::Entry::Hidden,
             nav::Entry::NewProfile,
-            nav::Entry::Devices,
-            nav::Entry::Cloud,
-        ]
+        ],
+        "Sync options lead, then the Profiles"
     );
     // Top to bottom, inside the nav, none overlapping.
     for pair in laid.rows.windows(2) {
@@ -154,11 +155,18 @@ fn the_nav_lays_out_in_order_and_every_row_is_pressed_where_it_is_drawn() {
         assert_eq!(rect.h.round(), if rect.h < 30.0 { 24.0 } else { 30.0 });
     }
     assert_eq!(
-        laid.profiles_caption.y, area.y,
+        laid.sync_caption.y, area.y,
         "the first caption is level with a title"
     );
-    assert!(laid.profiles_caption.y + laid.profiles_caption.h <= laid.rows[0].1.y);
-    assert!(laid.computer_caption.y + laid.computer_caption.h <= row(&laid, nav::Entry::Devices).y);
+    assert!(laid.sync_caption.y + laid.sync_caption.h <= laid.rows[0].1.y);
+    assert!(
+        row(&laid, nav::Entry::Cloud).y + row(&laid, nav::Entry::Cloud).h
+            <= laid.profiles_caption.y,
+        "the Profiles' caption comes after the sync options"
+    );
+    assert!(
+        laid.profiles_caption.y + laid.profiles_caption.h <= row(&laid, nav::Entry::Profile(a)).y
+    );
 
     // The tab's own hit test answers each row back to itself.
     let (view, personal, work) = manage();
@@ -237,8 +245,11 @@ fn arrows_walk_the_nav_and_enter_shows_the_row() {
     assert_eq!(view.focus(), Some(nav::Entry::Profile(work.id)));
     assert!(key(&mut view, NamedKey::Enter));
     assert_eq!(view.page(), Some(Page::Profile(work.id)));
-    // Up from the first row wraps to the last.
+    // Up walks back out of the Profiles into the sync options: *Linked
+    // devices*, then *Koru Cloud* at the top.
     assert!(key(&mut view, NamedKey::ArrowUp));
+    assert!(key(&mut view, NamedKey::ArrowUp));
+    assert_eq!(view.focus(), Some(nav::Entry::Devices));
     assert!(key(&mut view, NamedKey::ArrowUp));
     assert_eq!(view.focus(), Some(nav::Entry::Cloud));
     assert!(key(&mut view, NamedKey::Enter));
@@ -284,7 +295,7 @@ fn the_nav_and_the_page_are_settings_centred_group() {
     assert_eq!(column, shell.column((1600.0, 900.0), 0.0));
     assert_eq!(column.x, nav.x + nav.w + koru_ui::PageShell::PAGE_MARGIN);
     let laid = view.nav_layout();
-    assert_eq!(laid.profiles_caption.y, column.y);
+    assert_eq!(laid.sync_caption.y, column.y);
     // The title is the Profile's name, the tile before it on its line.
     let header = &view.laid().header;
     assert_eq!(header.name_text, personal.name);
@@ -304,7 +315,7 @@ fn the_nav_and_the_page_are_settings_centred_group() {
 }
 
 /// Narrower than Settings' compact width the nav is chips across the top —
-/// every Profile, *New profile*, *Linked devices* and *Koru Cloud* — and the
+/// every Profile, *New profile*, *Koru Cloud* and *Linked devices* — and the
 /// page starts under them.
 #[test]
 fn a_narrow_tab_puts_the_nav_in_chips_above_the_page() {
@@ -317,11 +328,11 @@ fn a_narrow_tab_puts_the_nav_in_chips_above_the_page() {
     assert_eq!(
         order,
         vec![
+            nav::Entry::Cloud,
+            nav::Entry::Devices,
             nav::Entry::Profile(personal.id),
             nav::Entry::Profile(work.id),
             nav::Entry::NewProfile,
-            nav::Entry::Devices,
-            nav::Entry::Cloud,
         ]
     );
     let band = view.sidebar();
@@ -611,23 +622,31 @@ fn a_screen_reader_hears_the_nav_as_options_and_the_page_as_a_heading() {
     let nav = &tree.children[0];
     assert_eq!(nav.role, accesskit::Role::ListBox);
     assert_eq!(nav.size_of_set, Some(nav.children.len()));
-    assert_eq!(nav.children.len(), 5, "two Profiles, New, Devices, Cloud");
+    assert_eq!(nav.children.len(), 5, "Cloud, Devices, two Profiles, New");
+    assert!(
+        nav.children[0]
+            .label
+            .as_deref()
+            .is_some_and(|label| label.starts_with("Koru Cloud")),
+        "Koru Cloud is the first sync option: {:?}",
+        nav.children[0].label
+    );
     assert!(
         nav.children
             .iter()
             .all(|option| option.role == accesskit::Role::ListBoxOption)
     );
-    assert_eq!(nav.children[0].label.as_deref(), Some("Personal, open"));
+    assert_eq!(nav.children[2].label.as_deref(), Some("Personal, open"));
     // Bounds are the drawn rows, moved into the window.
     let first = row_of(&view, nav::Entry::Profile(personal.id));
-    let bounds = nav.children[0].bounds.unwrap();
+    let bounds = nav.children[2].bounds.unwrap();
     assert_eq!((bounds.x, bounds.y), (first.x + 40.0, first.y + 60.0));
     let heading = &tree.children[1];
     assert_eq!(heading.role, accesskit::Role::Heading);
     assert_eq!(heading.label.as_deref(), Some("Personal"));
 
     // Pressing an option is the click.
-    let devices: Occurrence = nav.children[3].occurrence;
+    let devices: Occurrence = nav.children[1].occurrence;
     assert!(view.accessibility_action(&cx, devices, accesskit::Action::Click));
     assert_eq!(view.page(), Some(Page::Devices));
     let tree = view.semantics(&cx);
@@ -683,10 +702,12 @@ fn recovery_sections_appear_with_something_to_recover_and_restore_asks_the_contr
             targets: 2,
             expired_or_purged: 1,
         }],
+        trashed_in_account: Vec::new(),
     });
     view.refresh_workspaces();
     let laid = view.laid().clone();
     let section = laid.recovery.as_ref().expect("both lists");
+    assert!(section.trashed.is_none(), "nothing of the third kind");
     let unassigned = section.unassigned.as_ref().expect("the Unassigned list");
     assert_eq!(unassigned.label.1, "Unassigned (from deleted Profile)");
     assert_eq!(unassigned.rows[0].full_name, "Orphan");
@@ -797,4 +818,105 @@ fn recovery_sections_appear_with_something_to_recover_and_restore_asks_the_contr
     w.borrow_mut().fixture_recovery(Recovery::default());
     view.refresh_workspaces();
     assert!(view.laid().recovery.is_none());
+}
+
+/// **In the Trash here, still in the account** (trash-recovery P2). The row
+/// is on the page of the Profile the account keeps the workspace in and on
+/// no other; its one button names that Profile, asks the controller's
+/// question, and is dimmed with the other destructive controls.
+#[test]
+fn a_workspace_trashed_here_shows_only_on_the_accounts_profile_page_and_asks_to_restore() {
+    use koru_workspaces_ui::{Authorization, ProfileRow, Recovery, TrashedInAccountRow};
+    let w: SharedWorkspaces = std::rc::Rc::new(std::cell::RefCell::new(
+        koru_workspaces_ui::WorkspacesController::new(),
+    ));
+    let mut view = ManageView::with_workspace_controller(w.clone());
+    let personal = profile("Personal");
+    let work = profile("Work");
+    view.delegate(|c| {
+        c.take_request();
+        c.set_profiles(vec![personal.clone(), work.clone()], personal.id, &[])
+    });
+    View::set_viewport(&mut view, 1000.0, 700.0);
+
+    let pm = koru_store_core::ids::WorkspaceId::new();
+    {
+        let mut w = w.borrow_mut();
+        w.set_authorization(Authorization::Vouched);
+        w.adopt_profiles(&[
+            ProfileRow {
+                id: workspaces::catalog_profile(personal.id),
+                name: "Personal".into(),
+            },
+            ProfileRow {
+                id: workspaces::catalog_profile(work.id),
+                name: "Work".into(),
+            },
+        ]);
+        w.fixture_recovery(Recovery {
+            trashed_in_account: vec![TrashedInAccountRow {
+                id: pm,
+                name: "PM".into(),
+                icon: None,
+                color: None,
+                profile: workspaces::catalog_profile(work.id),
+                acknowledged: true,
+            }],
+            ..Recovery::default()
+        });
+    }
+
+    // Not every Profile's, unlike an Unassigned row.
+    view.show(Page::Profile(personal.id));
+    view.refresh_workspaces();
+    assert!(
+        view.laid().recovery.is_none(),
+        "not on another Profile's page"
+    );
+
+    view.show(Page::Profile(work.id));
+    view.refresh_workspaces();
+    let laid = view.laid().clone();
+    let section = laid.recovery.as_ref().expect("the third list alone");
+    assert!(section.unassigned.is_none() && section.deleted.is_none());
+    let trashed = section.trashed.as_ref().expect("the list");
+    assert_eq!(trashed.label.1, "In the Trash on this device");
+    assert_eq!(trashed.rows[0].full_name, "PM");
+    assert_eq!(
+        trashed.rows[0].sub.1,
+        "In the Trash here, still in your Koru account"
+    );
+    let button = laid
+        .placed(profile_page::Control::RestoreTrashedTo(pm))
+        .expect("the row's one action");
+    assert_eq!(button.label, "Restore to Work");
+    assert!(
+        !laid
+            .disabled
+            .contains(&profile_page::Control::RestoreTrashedTo(pm))
+    );
+    // Under the Workspaces section, above *Delete profile…*.
+    let workspaces_rect = laid.workspaces.as_ref().unwrap().rect;
+    assert!(section.rect.y >= workspaces_rect.y + workspaces_rect.h);
+    assert!(section.rect.y + section.rect.h <= laid.footer.unwrap().y);
+
+    // The press asks; nothing is sent until the question is accepted.
+    assert!(press(&mut view, button.rect));
+    {
+        let w = w.borrow();
+        let dialog = w.dialog().expect("the controller's question");
+        assert_eq!(dialog.title(), "Restore PM to Work?");
+        assert!(!w.has_pending());
+    }
+    assert!(w.borrow_mut().answer(koru_ui::confirm::Outcome::Confirm));
+    assert!(w.borrow().has_pending(), "the restore is on its way");
+
+    // An unvouched window keeps the control and dims it.
+    w.borrow_mut().set_authorization(Authorization::Refused);
+    view.refresh_workspaces();
+    assert!(
+        view.laid()
+            .disabled
+            .contains(&profile_page::Control::RestoreTrashedTo(pm))
+    );
 }

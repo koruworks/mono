@@ -398,7 +398,8 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     );
     assert_eq!(
         MenuAction::NewDocument.shortcut(),
-        Some(koru_keys::label_of(koru_keys::ShortcutId::NewTab))
+        None,
+        "Ctrl+T now opens the New menu, so it is not New document's chord"
     );
     // Ctrl+I is Italic; New chat has no chord of its own.
     assert_eq!(MenuAction::NewAiChat.shortcut(), None);
@@ -488,6 +489,88 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
     );
     assert_eq!(chat_plus_items(), vec![MenuAction::NewAiChat]);
     assert_eq!(shell_plus_items(), shell_profile_items());
+}
+
+/// The Tasks flyout: *New list* first, then a rule and each list, nested and
+/// wearing its colour. With no lists it is just *New list*.
+#[test]
+fn the_tasks_flyout_lists_nested_coloured_lists_under_new_list() {
+    use koru_core::ids::ListId;
+    let top = ListId::new();
+    let child = ListId::new();
+    set_task_lists(vec![
+        (top, "Top".into(), Some("red"), 0),
+        (child, "Child".into(), None, 1),
+    ]);
+    assert_eq!(
+        task_plus_items(),
+        vec![
+            MenuAction::NewList,
+            MenuAction::Divider,
+            MenuAction::TaskListRow(top, Some("red"), 0),
+            MenuAction::TaskListRow(child, None, 1),
+        ]
+    );
+
+    // A row reads its name, colour and depth.
+    let child = MenuAction::TaskListRow(child, None, 1);
+    assert_eq!(child.label(), "Child");
+    assert_eq!(koru_ui::MenuItem::indent(&child), 1);
+    let top = MenuAction::TaskListRow(top, Some("red"), 0);
+    assert_eq!(koru_ui::MenuItem::swatch(&top), Some(Some("red")));
+    assert_eq!(koru_ui::MenuItem::indent(&top), 0);
+
+    // The `+` menu carries the flyout.
+    assert!(new_tab_items().contains(&MenuAction::Tasks));
+    assert_eq!(submenu(MenuAction::Tasks), Some(task_plus_items()));
+
+    // Nothing to list: only *New list*.
+    set_task_lists(vec![]);
+    assert_eq!(task_plus_items(), vec![MenuAction::NewList]);
+}
+
+/// The `+` menu's flyouts wear the letters the launcher already uses, so a
+/// plain key opens the same door the grid's letter does.
+#[test]
+fn the_plus_menu_flyouts_carry_mnemonic_letters() {
+    assert_eq!(MenuAction::Documents.mnemonic(), Some('d'));
+    assert_eq!(MenuAction::Canvases.mnemonic(), Some('v'));
+    assert_eq!(MenuAction::Tasks.mnemonic(), Some('t'));
+    assert_eq!(MenuAction::NewShell.mnemonic(), Some('s'));
+    assert_eq!(MenuAction::NewAgent.mnemonic(), Some('a'));
+    assert_eq!(MenuAction::Chats.mnemonic(), Some('c'));
+    assert_eq!(MenuAction::ImportAs.mnemonic(), Some('i'));
+    assert_eq!(MenuAction::OpenWelcome.mnemonic(), None, "no letter");
+}
+
+/// The Move flyout offers the four edges, and the `+` menu carries it between
+/// Socials and Import.
+#[test]
+fn the_move_flyout_offers_the_four_edges() {
+    use koru_editor::SplitSide;
+    assert_eq!(
+        submenu(MenuAction::Move),
+        Some(vec![
+            MenuAction::MoveToSplit(SplitSide::Up),
+            MenuAction::MoveToSplit(SplitSide::Right),
+            MenuAction::MoveToSplit(SplitSide::Down),
+            MenuAction::MoveToSplit(SplitSide::Left),
+        ])
+    );
+    assert_eq!(MenuAction::Move.mnemonic(), Some('m'));
+    let items = new_tab_items();
+    let socials = items
+        .iter()
+        .position(|a| *a == MenuAction::Socials)
+        .unwrap();
+    let import = items
+        .iter()
+        .position(|a| *a == MenuAction::ImportAs)
+        .unwrap();
+    assert!(
+        items[socials + 1..import].contains(&MenuAction::Move),
+        "Move sits below Socials and above Import"
+    );
 }
 
 // ------------------------------------------------ the + menu's profile rows

@@ -625,7 +625,7 @@ impl View for BuiltInDocument {
     /// accent crosses this seam. A list with no colour, and one this table has
     /// never heard of, both resolve to `None`: the chip draws neutral, the same
     /// answer a forgotten tag gets and for the same reason.
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         if self.list_table == lists {
             return false;
         }
@@ -633,7 +633,19 @@ impl View for BuiltInDocument {
         self.editor.view.lists.replace_named(
             lists
                 .iter()
-                .map(|l| (l.id, l.name.clone(), l.color.clone())),
+                .map(|l| (l.entry.id, l.entry.name.clone(), l.entry.color.clone())),
+        );
+        // Where each list sits, for the chip and the picker: a name alone no
+        // longer says which list it is once two may share one.
+        self.editor.view.lists.set_places(
+            koru_core::system::shared_name_paths(
+                lists,
+                koru_i18n::t(koru_i18n::current(), koru_i18n::Key::TaskListPathSeparator),
+            ),
+            lists
+                .iter()
+                .filter(|l| l.parent.is_some())
+                .map(|l| l.entry.id),
         );
         // A recoloured list is the same rows with a new face — repaint, no
         // reflow. The accent changes no width; that is why it may be pushed
@@ -771,6 +783,14 @@ impl View for BuiltInDocument {
 
     fn take_wants_read_again(&mut self) -> Option<String> {
         BuiltInDocument::take_wants_read_again(self)
+    }
+
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        BuiltInDocument::take_wants_picture_texts(self)
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        BuiltInDocument::set_picture_text(self, hash, text)
     }
 
     fn set_reading_offers(

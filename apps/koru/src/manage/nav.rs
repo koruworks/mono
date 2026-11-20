@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The Manage tab's nav: this device's Profiles, *New profile*, and what
-//! belongs to this computer.
+//! The Manage tab's nav: how this device syncs, then this device's Profiles
+//! and *New profile*.
 //!
 //! **The account's Profiles that are not on this computer are not here**
 //! (maintainer, 2026-11-11). They used to sit under *Other Profiles* with a
@@ -10,22 +10,27 @@
 //! switch that brings it here (`manage::cloud`).
 //!
 //! ```text
-//! Profiles                    caption, as Settings captions a card
+//! Sync options                caption, as Settings captions a card
+//! │Koru Cloud       •   On
+//! │Linked devices        3
+//! Profiles                    caption
 //! ┃[tile] Personal      •     current Profile: an accent dot (decision 19)
 //! │[tile] Work          ⚠     needs attention: a warning mark
 //!  2 Profiles hidden          a quiet line (decision 16)
 //! │[+]   New profile          the dashed add square
-//! This computer               caption
-//! │Linked devices        3
-//! │Koru Cloud       •   On
 //! ```
+//!
+//! *Sync options* leads (maintainer, 2026-11-17; it was *This computer*,
+//! under the Profiles): what the device does comes before the Profiles it
+//! does it for. *Koru Cloud* is its first row, above *Linked devices*
+//! (maintainer, the same day).
 //!
 //! **Settings' nav** (maintainers, 2026-10-07): no panel and no edge — the rows sit on
 //! the page's own background, each on the shared `koru_ui::NavList`'s 2 px
 //! rule, the current page's in the accent. Where the column goes is the
 //! shared `koru_ui::PageShell`; narrower than its compact width the nav is
-//! `ChipNav` chips across the top instead — the Profiles, *New profile*,
-//! *Linked devices* and *Koru Cloud*.
+//! `ChipNav` chips across the top instead, in the same order — *Koru Cloud*
+//! and *Linked devices*, then the Profiles and *New profile*.
 //!
 //! **One function places all of it** — [`layout`], or the chips the last
 //! relayout made — and drawing, the hit test, keyboard order and the
@@ -52,7 +57,10 @@ const END_PAD: f32 = 16.0;
 
 /// The words on the nav, and on its chips.
 const PROFILES: &str = "Profiles";
-const THIS_COMPUTER: &str = "This computer";
+const SYNC_OPTIONS: &str = "Sync options";
+/// The *Sync options* rows, top to bottom. One order for where they are
+/// placed, how they are drawn and which chip comes first.
+const SYNC_ENTRIES: [Entry; 2] = [Entry::Cloud, Entry::Devices];
 pub(super) const NEW_PROFILE: &str = "New profile";
 pub(super) const DEVICES: &str = "Linked devices";
 pub(super) const CLOUD: &str = "Koru Cloud";
@@ -92,8 +100,10 @@ pub(crate) struct Laid {
     pub profiles: Rect,
     pub hidden: Option<Rect>,
     pub new_profile: Rect,
-    pub computer_caption: Rect,
-    pub computer: Rect,
+    /// *Sync options*: how this device syncs, above the Profiles it syncs.
+    pub sync_caption: Rect,
+    /// The `NavList` area of *Koru Cloud* and *Linked devices*.
+    pub sync: Rect,
     /// Every pressable row (or chip), top to bottom — which is also keyboard
     /// order.
     pub rows: Vec<(Entry, Rect)>,
@@ -119,6 +129,17 @@ pub(crate) fn layout(area: Rect, profiles: &[ProfileId], hidden: bool, scroll: f
         area
     };
 
+    let sync_caption = Rect::new(x, y, w, Card::TITLE_H);
+    y += CAPTION_H;
+    // *Koru Cloud* is a row only in a build that shows it (koru-features);
+    // *Linked devices* is peer-to-peer and always is.
+    let sync = list(
+        &mut y,
+        &mut SYNC_ENTRIES
+            .into_iter()
+            .filter(|entry| *entry != Entry::Cloud || koru_features::cloud_sync()),
+    );
+    y += GROUP_GAP;
     let profiles_caption = Rect::new(x, y, w, Card::TITLE_H);
     y += CAPTION_H;
     let profiles = list(&mut y, &mut profiles.iter().copied().map(Entry::Profile));
@@ -130,17 +151,6 @@ pub(crate) fn layout(area: Rect, profiles: &[ProfileId], hidden: bool, scroll: f
     });
     y += SMALL_GAP;
     let new_profile = list(&mut y, &mut std::iter::once(Entry::NewProfile));
-    y += GROUP_GAP;
-    let computer_caption = Rect::new(x, y, w, Card::TITLE_H);
-    y += CAPTION_H;
-    // *Koru Cloud* is a row only in a build that shows it (koru-features);
-    // *Linked devices* is peer-to-peer and always is.
-    let computer = list(
-        &mut y,
-        &mut [Entry::Devices, Entry::Cloud]
-            .into_iter()
-            .filter(|entry| *entry != Entry::Cloud || koru_features::cloud_sync()),
-    );
     if let Some(line) = hidden {
         // In order: the hidden line sits between the Profiles and *New
         // profile*, so keyboard order is visual order.
@@ -156,8 +166,8 @@ pub(crate) fn layout(area: Rect, profiles: &[ProfileId], hidden: bool, scroll: f
         profiles,
         hidden,
         new_profile,
-        computer_caption,
-        computer,
+        sync_caption,
+        sync,
         rows,
         height: y + scroll - area.y + END_PAD,
     }
@@ -178,8 +188,8 @@ impl ManageView {
                 profiles: none,
                 hidden: None,
                 new_profile: none,
-                computer_caption: none,
-                computer: none,
+                sync_caption: none,
+                sync: none,
                 rows: self.nav_chips.clone(),
                 height: 0.0,
             };
@@ -202,20 +212,23 @@ impl ManageView {
         self.nav_layout_scrolled(0.0)
     }
 
-    /// What the compact chips are, in order: the Profiles, then *New
-    /// profile*, *Linked devices* and *Koru Cloud*.
+    /// What the compact chips are, in the column's order: *Koru Cloud* and
+    /// *Linked devices*, then the Profiles and *New profile*.
     fn chip_entries(&self) -> Vec<(Entry, String)> {
-        self.c
-            .profiles()
-            .iter()
-            .map(|row| (Entry::Profile(row.id), row.name.clone()))
-            .chain([
-                (Entry::NewProfile, NEW_PROFILE.to_owned()),
-                (Entry::Devices, DEVICES.to_owned()),
-                (Entry::Cloud, CLOUD.to_owned()),
-            ])
-            .filter(|(entry, _)| *entry != Entry::Cloud || koru_features::cloud_sync())
-            .collect()
+        [
+            (Entry::Cloud, CLOUD.to_owned()),
+            (Entry::Devices, DEVICES.to_owned()),
+        ]
+        .into_iter()
+        .chain(
+            self.c
+                .profiles()
+                .iter()
+                .map(|row| (Entry::Profile(row.id), row.name.clone())),
+        )
+        .chain([(Entry::NewProfile, NEW_PROFILE.to_owned())])
+        .filter(|(entry, _)| *entry != Entry::Cloud || koru_features::cloud_sync())
+        .collect()
     }
 
     /// Lay the compact chips out, and so the band's height — before the
@@ -319,6 +332,28 @@ impl ManageView {
         canvas.push_clip_layer(Fill::NonZero, root, &panel);
         let _clip = inspect::clip(root, panel);
         let laid = self.nav_layout();
+        self.paint_nav_caption(canvas, root, laid.sync_caption, SYNC_OPTIONS);
+        let devices = self.linked_count().to_string();
+        let cloud = self.cloud_word();
+        // A computer and a cloud left of the labels (the review's note).
+        let mut cloud_item = NavItem::new(CLOUD).with_glyph(koru_draw::icons::CLOUD);
+        if let Some((word, on)) = cloud {
+            cloud_item = cloud_item.with_trailing(word);
+            if on {
+                cloud_item = cloud_item.with_dot(dot_on());
+            }
+        }
+        let devices_item = NavItem::new(DEVICES)
+            .with_glyph(koru_draw::icons::DESKTOP)
+            .with_trailing(&devices);
+        // The same order `layout` placed them in; a build with no Koru Cloud
+        // has the one row.
+        let (sync, entries): (Vec<NavItem<'_>>, &[Entry]) = if koru_features::cloud_sync() {
+            (vec![cloud_item, devices_item], &SYNC_ENTRIES)
+        } else {
+            (vec![devices_item], &[Entry::Devices])
+        };
+        self.paint_list(canvas, root, laid.sync, &sync, entries);
         self.paint_nav_caption(canvas, root, laid.profiles_caption, PROFILES);
         self.paint_profiles(canvas, root, &laid);
         if let Some(line) = laid.hidden {
@@ -331,30 +366,6 @@ impl ManageView {
             laid.new_profile,
             &new_items,
             &[Entry::NewProfile],
-        );
-        self.paint_nav_caption(canvas, root, laid.computer_caption, THIS_COMPUTER);
-        let devices = self.linked_count().to_string();
-        let cloud = self.cloud_word();
-        // A computer and a cloud left of the labels (the review's note).
-        let mut cloud_item = NavItem::new(CLOUD).with_glyph(koru_draw::icons::CLOUD);
-        if let Some((word, on)) = cloud {
-            cloud_item = cloud_item.with_trailing(word);
-            if on {
-                cloud_item = cloud_item.with_dot(dot_on());
-            }
-        }
-        let computer = [
-            NavItem::new(DEVICES)
-                .with_glyph(koru_draw::icons::DESKTOP)
-                .with_trailing(&devices),
-            cloud_item,
-        ];
-        self.paint_list(
-            canvas,
-            root,
-            laid.computer,
-            &computer,
-            &[Entry::Devices, Entry::Cloud],
         );
         canvas.pop_layer();
     }

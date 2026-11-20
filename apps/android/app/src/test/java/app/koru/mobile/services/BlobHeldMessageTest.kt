@@ -13,6 +13,20 @@ import org.junit.Test
  */
 class BlobHeldMessageTest {
     @Test
+    fun upload_admission_holds_use_specific_localized_messages() {
+        assertEquals(R.string.cloud_upload_file_allowance, blobHeldMessage("file_exceeds_plan_allowance"))
+        assertEquals(R.string.cloud_upload_account_quota, blobHeldMessage("account_over_quota"))
+        assertEquals(R.string.cloud_upload_usage_unknown, blobHeldMessage("usage_unknown"))
+        assertEquals(R.string.cloud_upload_policy_unavailable, blobHeldMessage("cloud_policy_unavailable"))
+        assertEquals(R.string.cloud_upload_plan_required, blobHeldMessage("cloud_plan_required"))
+        assertEquals(R.string.cloud_upload_document_count, blobHeldMessage("cloud_document_count_limit"))
+        assertEquals(R.string.cloud_upload_document_bytes, blobHeldMessage("cloud_stored_document_bytes_limit"))
+        assertEquals(R.string.cloud_upload_physical_bytes, blobHeldMessage("cloud_physical_bytes_limit"))
+        assertEquals(R.string.cloud_upload_staging_bytes, blobHeldMessage("cloud_staging_bytes_limit"))
+        assertEquals(R.string.cloud_upload_removal_capacity, blobHeldMessage("cloud_removal_capacity_limit"))
+    }
+
+    @Test
     fun nobody_reachable_has_it() {
         assertEquals(R.string.image_waiting_no_holder, blobHeldMessage("blob_waiting_for_peer"))
         assertEquals(R.string.image_waiting_no_holder, blobHeldMessage("blob_not_found"))

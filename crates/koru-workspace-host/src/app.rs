@@ -1218,6 +1218,13 @@ enum ImportMessage {
         target: crate::reading_file::ReadingTarget,
         offers: Option<crate::reading_requests::ReadingOffers>,
     },
+    /// The words read out of pictures (OCR), by blob address, for in-page
+    /// find, *Copy text* and accessibility. `None`: the picture has no
+    /// reading. A picture whose reading could not be asked for is left out,
+    /// so a failed fetch never takes away words a view already has.
+    PictureTexts {
+        texts: Vec<(String, Option<String>)>,
+    },
     ReadingRescanFinished(Result<reading_rescan::Summary, ()>),
     FileOpened {
         name: String,
@@ -1844,13 +1851,41 @@ fn fetch_offers(
     target: &crate::reading_file::ReadingTarget,
     workspace: Option<koru_store_core::ids::WorkspaceId>,
 ) -> Option<crate::reading_requests::ReadingOffers> {
-    let (client, workspace, hash, _) =
-        locate_reading_item(segment, root, target, workspace).ok()?;
-    client
-        .reading(workspace, &hash)
+    fetch_reading(segment, root, target, workspace)
         .ok()
         .flatten()
         .map(|answer| answer.offers)
+}
+
+/// **One item's reading**, on a worker. `Ok(None)` when nothing has been
+/// read of it; `Err` when the Store could not be asked.
+fn fetch_reading(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Result<Option<koru_api_client::ReadingAnswer>, String> {
+    let (client, workspace, hash, _) = locate_reading_item(segment, root, target, workspace)?;
+    client.reading(workspace, &hash).map_err(|e| e.to_string())
+}
+
+/// A picture's words from the reading its menu just fetched (OCR), so *Copy
+/// text* is as fresh as *Read again*. `None` for a file, or when the Store
+/// could not be asked: no answer is not the answer "no words".
+fn picture_text_message(
+    target: &crate::reading_file::ReadingTarget,
+    answer: &Result<Option<koru_api_client::ReadingAnswer>, String>,
+) -> Option<ImportMessage> {
+    let crate::reading_file::ReadingTarget::Picture { hash } = target else {
+        return None;
+    };
+    let answer = answer.as_ref().ok()?;
+    Some(ImportMessage::PictureTexts {
+        texts: vec![(
+            hash.clone(),
+            crate::reading_details::picture_text(answer.as_ref()),
+        )],
+    })
 }
 
 /// **Fetch one item's reading and turn it into the file's text**, on a
@@ -2888,7 +2923,7 @@ struct App<H: Host> {
     /// the same rule — the tasks rail resolves a `koru.list` value to a name
     /// and a swatch without ever reaching the store, because names are the
     /// workspace's and only counts come off the wire.
-    list_table: Vec<koru_core::system::ListEntry>,
+    list_table: Vec<koru_core::system::ListNode>,
     /// When [`poll_pane_context`] last requested the Store catalog. `None` until
     /// the first poll, so a window shows its cached switcher rows immediately.
     ///
@@ -6793,7 +6828,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .filter_map(|(_, pane)| pane.view.take_wants_join_new_list())
             .collect();
         for (nodes, name, color) in joins {
-            let Some(list) = self.runtime.workspace.create_list(&name, color.as_deref()) else {
+            // At the top level, first (nested-lists D8, Q17): the picker has
+            // no parent chooser. A top-level list that already has the name
+            // answers, and the rows join that one.
+            let Some(list) = self
+                .runtime
+                .workspace
+                .create_list_under(None, &name, color.as_deref())
+                .map(koru_core::system::ListCreation::id)
+            else {
                 continue;
             };
             let mut host = crate::tasks::TaskHost::default();
@@ -6823,13 +6866,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // The rail's "+ New list", committed. Nothing is applied to a node:
         // a list is a filter, so creating one only adds a row to the table,
         // and membership is set later on a task like any other attribute.
-        let wanted: Vec<(String, Option<String>)> = self
+        let wanted: Vec<crate::tasks::ListCreate> = self
             .panes
             .iter_mut()
             .filter_map(|(_, pane)| pane.view.take_wants_create_list())
             .collect();
-        for (name, color) in wanted {
-            self.runtime.workspace.create_list(&name, color.as_deref());
+        for list in wanted {
+            self.runtime.workspace.create_list_under(
+                list.parent,
+                &list.name,
+                list.color.as_deref(),
+            );
         }
         // ...and the rail's management of the lists that already exist. Renames
         // and recolours touch the registry alone; a delete tombstones the record
@@ -6961,7 +7008,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             crate::spelling::set_workspace_words(self.runtime.workspace.workspace_dictionary());
         }
         if self.runtime.workspace.take_lists_changed() {
-            self.list_table = self.runtime.workspace.lists_snapshot();
+            self.list_table = self.runtime.workspace.list_tree_snapshot().nodes().to_vec();
         }
         // Pushed every turn, compared inside the view: a pane or tab opened
         // since the last change still has to be given the table, and the
@@ -7096,6 +7143,20 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 crate::reading_file::ReadingTarget::Picture { hash },
                 crate::reading_requests::ReadRequestKind::ReadAgain,
             );
+        }
+        // The pictures whose read words a view has not had yet (OCR), for
+        // in-page find, *Copy text* and accessibility. Nothing to do, and no
+        // worker, when no view has anything new.
+        let mut picture_asks: Vec<String> = Vec::new();
+        for pane in self.panes.values_mut() {
+            for hash in pane.view.take_wants_picture_texts() {
+                if !picture_asks.contains(&hash) {
+                    picture_asks.push(hash);
+                }
+            }
+        }
+        if !picture_asks.is_empty() {
+            self.fetch_picture_texts(picture_asks);
         }
         // /attach and /image both open a native picker on the main thread,
         // matching each other: no parent window (a parented rfd dialog from
@@ -8567,6 +8628,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         trash_root: Option<NodeId>,
         match_text: Option<&str>,
         source_only: bool,
+        // A list or a task to open in Tasks instead of a document.
+        tasks: Option<crate::TasksTarget>,
     ) -> bool {
         let started = Instant::now();
         tracing::info!(
@@ -8618,7 +8681,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 );
                 continue;
             };
-            let accepted = if file {
+            let accepted = if let Some(tasks) = tasks {
+                pane.view.open_tasks_target(tasks, match_text)
+            } else if file {
                 document.is_some_and(|file| pane.view.open_file_search_target(file))
             } else {
                 pane.view.open_search_target(
@@ -8897,6 +8962,110 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.navigate_with_retry(event_loop, source, target, match_text, disposition, true);
     }
 
+    /// Open a list or a task in Tasks, when this process can. Answers `None`
+    /// when it did, and otherwise **the target to open instead**: the target
+    /// itself when it was never a Tasks one, the list's workspace, or the
+    /// task's own document at its line.
+    ///
+    /// **What this process can do** is the profile it already has open: the
+    /// workspace is switched to if it is another one, and a new window is a
+    /// second pane of this process. A workspace in a profile this process
+    /// does not hold, or one that will not switch, is handed on as its
+    /// fallback — a real place, and for a task the same place a landing that
+    /// cannot find the task ends up.
+    fn navigate_to_tasks(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        source: WindowId,
+        target: crate::NavigationTarget,
+        match_text: &Option<String>,
+        disposition: SearchTargetDisposition,
+    ) -> Option<crate::NavigationTarget> {
+        let (profile, workspace, tasks, fallback) = match target {
+            crate::NavigationTarget::TaskList {
+                profile,
+                workspace,
+                list,
+            } => (
+                profile,
+                workspace,
+                crate::TasksTarget::List(list),
+                crate::NavigationTarget::Workspace { profile, workspace },
+            ),
+            crate::NavigationTarget::TaskQueue {
+                profile,
+                workspace,
+                bucket,
+            } => (
+                profile,
+                workspace,
+                crate::TasksTarget::Queue(bucket),
+                crate::NavigationTarget::Workspace { profile, workspace },
+            ),
+            crate::NavigationTarget::Task { document, node } => {
+                let fallback = crate::NavigationTarget::Document {
+                    document,
+                    node: Some(node),
+                };
+                let located = self.runtime.workspace.store_client().and_then(|client| {
+                    client
+                        .locate_document(koru_store_core::ids::DocumentId::from_uuid(
+                            document.as_uuid(),
+                        ))
+                        .ok()
+                });
+                // Not located: the document path below says so, in its words.
+                let Some(location) = located else {
+                    return Some(fallback);
+                };
+                (
+                    koru_core::ProfileId::from_uuid(location.profile.as_uuid()),
+                    WorkspaceId::from_uuid(location.workspace.as_uuid()),
+                    crate::TasksTarget::Task { document, node },
+                    fallback,
+                )
+            }
+            other => return Some(other),
+        };
+        if self.runtime.profile.id() != Some(profile) {
+            tasks_debug_log(format_args!(
+                "search landing handed on: another profile, list={}",
+                !matches!(tasks, crate::TasksTarget::Task { .. })
+            ));
+            return Some(fallback);
+        }
+        if self.runtime.current != workspace {
+            self.switch_workspace(workspace);
+        }
+        if self.runtime.current != workspace {
+            return Some(fallback);
+        }
+        if disposition == SearchTargetDisposition::NewWindow {
+            let mut view = self.host.duplicate(&self.runtime.workspace.ws);
+            if !view.open_tasks_target(tasks, match_text.as_deref()) {
+                return Some(fallback);
+            }
+            let title = self.app_window_title();
+            let id = self.open_pane(event_loop, view, &title);
+            self.reveal_pane(id);
+            if let Some(pane) = self.panes.get(&id) {
+                pane.window.focus_window();
+            }
+            self.request_redraw(id);
+            return None;
+        }
+        let opened = self.open_search_target_in_panes(
+            source,
+            None,
+            None,
+            None,
+            match_text.as_deref(),
+            disposition == SearchTargetDisposition::SourceWindow,
+            Some(tasks),
+        );
+        if opened { None } else { Some(fallback) }
+    }
+
     fn navigate_with_retry(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -8907,7 +9076,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
         retry_moved_document: bool,
     ) {
         let started = Instant::now();
+        // A list or a task opens in Tasks; where that cannot be done from
+        // this process it opens the workspace or the task's own document,
+        // through everything below.
+        let target =
+            match self.navigate_to_tasks(event_loop, source, target, &match_text, disposition) {
+                Some(fallback) => fallback,
+                None => return,
+            };
         match &target {
+            crate::NavigationTarget::TaskList { .. }
+            | crate::NavigationTarget::TaskQueue { .. }
+            | crate::NavigationTarget::Task { .. } => {}
             crate::NavigationTarget::Workspace { profile, workspace } => tracing::info!(
                 target: "koru::navigation",
                 profile = %profile.to_storage(),
@@ -8922,6 +9102,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ),
         }
         let resolved = match target {
+            // Both were turned into one of the two below by
+            // `navigate_to_tasks`.
+            crate::NavigationTarget::TaskList { .. }
+            | crate::NavigationTarget::TaskQueue { .. }
+            | crate::NavigationTarget::Task { .. } => {
+                return;
+            }
             crate::NavigationTarget::Workspace { profile, workspace } => {
                 Ok((profile, workspace, None, None))
             }
@@ -9114,6 +9301,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         None,
                         match_text.as_deref(),
                         disposition == SearchTargetDisposition::SourceWindow,
+                        None,
                     )
                 };
                 crate::search_debug!(
@@ -10991,6 +11179,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .with_details(error),
                 ),
             },
+            ImportMessage::PictureTexts { texts } => {
+                for pane in self.panes.values_mut() {
+                    let mut changed = false;
+                    for (hash, text) in &texts {
+                        changed |= pane.view.set_picture_text(hash, text.as_deref());
+                    }
+                    if changed {
+                        pane.needs_frame.set(true);
+                        pane.window.request_redraw();
+                    }
+                }
+            }
             ImportMessage::ReadingOffers { target, offers } => {
                 for pane in self.panes.values_mut() {
                     if pane.view.set_reading_offers(&target, offers) {
@@ -11308,7 +11508,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let spawned = std::thread::Builder::new()
             .name("koru-reading-offers".into())
             .spawn(move || {
-                let offers = fetch_offers(&segment, root.as_deref(), &target, workspace);
+                let answer = fetch_reading(&segment, root.as_deref(), &target, workspace);
+                if let Some(message) = picture_text_message(&target, &answer) {
+                    let _ = tx.send(message);
+                }
+                let offers = answer.ok().flatten().map(|answer| answer.offers);
                 let _ = tx.send(ImportMessage::ReadingOffers { target, offers });
                 let _ = proxy.send_event(Wake::Import);
             });
@@ -11356,6 +11560,43 @@ Nothing was written. The store starts on demand, so this usually means it could 
             });
         if let Err(error) = spawned {
             tracing::debug!(%error, "a reading request could not be sent");
+        }
+    }
+
+    /// **Ask the Store for the words read out of pictures** (OCR), for in-page
+    /// find, *Copy text* and accessibility. One worker for the batch, which
+    /// asks for each in turn and answers once; the words reach every view
+    /// through `View::set_picture_text`.
+    fn fetch_picture_texts(&mut self, hashes: Vec<String>) {
+        let Some(workspace) = self.current_store_workspace() else {
+            return;
+        };
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let spawned = std::thread::Builder::new()
+            .name("koru-picture-texts".into())
+            .spawn(move || {
+                let Ok(client) = client_at_segment(&segment, root.as_deref()) else {
+                    return;
+                };
+                let texts: Vec<(String, Option<String>)> = hashes
+                    .into_iter()
+                    .filter_map(|hash| {
+                        let blob = koru_store_core::model::BlobHash::parse(&hash).ok()?;
+                        let answer = client.reading(workspace, &blob).ok()?;
+                        let text = crate::reading_details::picture_text(answer.as_ref());
+                        Some((hash, text))
+                    })
+                    .collect();
+                if !texts.is_empty() {
+                    let _ = tx.send(ImportMessage::PictureTexts { texts });
+                    let _ = proxy.send_event(Wake::Import);
+                }
+            });
+        if let Err(error) = spawned {
+            tracing::debug!(%error, "the pictures' words could not be asked for");
         }
     }
 
@@ -13010,7 +13251,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
         parent: koru_core::DocumentId,
         title: &str,
     ) {
-        let created = self.runtime.workspace.create_document_in(title, parent);
+        // A draft made by the row's `+` is promoted here, with what was typed
+        // into it, exactly as `create_document` promotes any other draft.
+        let created = match self.panes.get(&source).and_then(|pane| {
+            pane.view
+                .draft_document_content(self.runtime.profile_id(), Some(self.runtime.current))
+        }) {
+            Some(Ok(cutting)) => self
+                .runtime
+                .workspace
+                .create_document_from_cutting_in(title, parent, &cutting),
+            Some(Err(_)) => Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "the private draft could not be read for initialization",
+            )),
+            None => self.runtime.workspace.create_document_in(title, parent),
+        };
         self.settle_created_document(source, created, false);
     }
 
@@ -18461,6 +18717,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         for pane in self.panes.values_mut() {
                             pane.view.set_mods(mods);
                         }
+                        // A view may act on a modifier let go (the quick
+                        // switch goes to its tab when Control comes up).
+                        self.wake(id);
                     }
                     for pane in self.panes.values_mut() {
                         pane.quarantine.released(event.physical_key);

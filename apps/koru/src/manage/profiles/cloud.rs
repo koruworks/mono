@@ -188,8 +188,15 @@ impl ProfilesController {
                 enabled,
             });
         }
-        // Per-Profile sync waits for confirmed account access.
-        if self.cloud.sync_due && self.cloud_access() == Some(true) {
+        // Per-Profile sync waits for the account's answer, whichever it is:
+        // an account with no Koru Cloud yet still has rows to read, a Koru
+        // Free place being asked for or the refusal that it is full.
+        // A lapsed purchase stays as it was: no per-Profile read.
+        let readable = match self.cloud_access() {
+            Some(access) => access || self.cloud.status != Status::Manage,
+            None => false,
+        };
+        if self.cloud.sync_due && readable {
             let id = next_request_id();
             self.cloud.sync_due = false;
             self.cloud.sync_pending = Some(SyncPending {
@@ -362,8 +369,10 @@ impl ProfilesController {
                     None => Status::Unavailable,
                 };
                 self.cloud.pending = None;
-                // Confirmed access makes the per-Profile state worth reading.
-                if self.cloud_access() == Some(true) {
+                // Confirmed access makes the per-Profile state worth reading,
+                // and so does an account with no purchase: its rows carry a
+                // Koru Free place being asked for, or the refusal.
+                if self.cloud_access() == Some(true) || self.cloud.status == Status::Subscribe {
                     self.cloud.sync_due = true;
                 } else {
                     self.cloud.sync = None;
@@ -589,7 +598,9 @@ impl ProfilesController {
             if self.cloud.status == Status::Manage {
                 return SyncAvailability::Disabled(TextKey::CloudAccessInactive);
             }
-            return SyncAvailability::Disabled(TextKey::CloudSyncSubscribeReason);
+            // No Koru Cloud yet is not a dead switch: turning it on is how an
+            // account asks for its Koru Free place (M3), and the hosted side
+            // claims one or refuses the enable whole.
         }
         match self.account.active_account_id.as_deref() {
             Some(active) if binding.identity_id() == active => SyncAvailability::Enabled,
@@ -662,6 +673,15 @@ impl ProfilesController {
     /// label. `None` when the row has nothing Cloud-related to say.
     pub fn cloud_sync_subtitle(&self, profile: &ProfileSummary) -> Option<String> {
         let lang = crate::format::lang();
+        // A full Koru Free is said in words, and before the connection is
+        // read: the switch stays on, but nothing is connecting.
+        if self.cloud_sync_pending_for(profile.id).is_none()
+            && self
+                .cloud_sync_row(profile.id)
+                .is_some_and(|row| row.error.as_deref() == Some(FREE_CAPACITY_FULL))
+        {
+            return Some(koru_i18n::t(lang, TextKey::CloudSyncFreeFull).to_owned());
+        }
         if self.cloud_sync_on(profile.id) && self.cloud_sync_pending_for(profile.id).is_none() {
             return Some(self.cloud_connection(profile.id).sentence(lang));
         }
@@ -710,6 +730,10 @@ impl ProfilesController {
         self.cloud.set_request = Some((profile.to_storage(), enabled));
     }
 }
+
+/// The stable code the Agent puts on a Cloud sync row when the account has
+/// no Koru Free place and none is open (the runtime's `FREE_CAPACITY_FULL`).
+const FREE_CAPACITY_FULL: &str = "cloud_free_capacity_full";
 
 /// Whether a Profile row carries a Cloud sync switch, and why it is inert.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

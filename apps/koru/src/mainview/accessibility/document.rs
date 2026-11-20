@@ -352,6 +352,11 @@ impl MainView {
             // reshaping. What is forgotten is only what the client has.
             access.forget_published();
         }
+        // One comparison unless a picture's read words arrived or changed.
+        access.set_picture_texts(
+            &editor.view.picture_texts,
+            editor.view.picture_texts_revision,
+        );
         let update = access.body(
             &editor.body.rows,
             ViewGeometry {
@@ -890,6 +895,16 @@ fn paragraph(cx: &Shell, row: &RowUpdate, read_only: bool) -> SemanticNode {
     // paragraph's own, read and selected like any other row's.
     if let Some(narration) = &row.diagram {
         node = node.with_label(narration.clone());
+    }
+    // **A picture's read words are its description** (OCR). A picture in
+    // Koru has no author-written alt text to prefer, so the words read out
+    // of it are the best account there is of what it shows. User content:
+    // read as written, inside words from `koru-i18n`.
+    if let Some(text) = &row.picture_text {
+        node = node.with_description(koru_i18n::fill(
+            t(cx.lang, Key::ReadingPictureText),
+            &[text],
+        ));
     }
     let objects: Vec<SemanticNode> = row
         .objects

@@ -91,7 +91,7 @@ pub use links::{MANAGER_SCOPES, WorkspaceLinks};
 pub use pending::CommandId;
 pub use state::{
     Authority, Authorization, Availability, DeletedProfileRow, Group, Notice, ProfileRow, Recovery,
-    Row, UnassignedRow,
+    Row, TrashedInAccountRow, UnassignedRow,
 };
 
 /// The classifications [`links`] hands back, worded here.

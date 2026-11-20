@@ -1186,6 +1186,7 @@ fn recovery_controller(unassigned: koru_core::WorkspaceId) -> crate::manage::Sha
             targets: 2,
             expired_or_purged: 0,
         }],
+        trashed_in_account: Vec::new(),
     });
     std::rc::Rc::new(std::cell::RefCell::new(controller))
 }
@@ -1312,6 +1313,138 @@ fn the_unassigned_group_leads_the_menu_and_is_absent_without_anything_unassigned
             .unwrap()
             > at,
         "the group comes first"
+    );
+    assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+}
+
+/// One workspace in the Trash here that the account keeps under `profile`.
+fn trashed_controller(
+    workspace: koru_core::WorkspaceId,
+    profile: ProfileId,
+) -> crate::manage::SharedWorkspaces {
+    use koru_workspaces_ui::{ProfileRow, Recovery, TrashedInAccountRow, WorkspacesController};
+    let profile = crate::manage::workspaces::catalog_profile(profile);
+    let mut controller = WorkspacesController::new();
+    controller.adopt_profiles(&[ProfileRow {
+        id: profile,
+        name: "Work".into(),
+    }]);
+    controller.fixture_recovery(Recovery {
+        trashed_in_account: vec![TrashedInAccountRow {
+            id: crate::manage::workspaces::catalog_workspace(workspace),
+            name: "PM".into(),
+            icon: None,
+            color: None,
+            profile,
+            acknowledged: true,
+        }],
+        ..Recovery::default()
+    });
+    std::rc::Rc::new(std::cell::RefCell::new(controller))
+}
+
+/// **In the Trash here, still in the account** (trash-recovery P2): the
+/// group is in the menu of the Profile the account keeps the workspace in —
+/// above that Profile's own rows — and in no other Profile's; its row is
+/// words, its one action asks to restore into that Profile, and a reader
+/// hears both.
+#[test]
+fn a_workspace_trashed_here_is_offered_only_in_the_menu_of_the_accounts_profile() {
+    let pm = WorkspaceId::from_uuid(uuid(78));
+    let here = ProfileId::from_uuid(uuid(900));
+    let a = area(dtheme::SIDEBAR_MIN_W);
+
+    // The account keeps it under another Profile: nothing in this menu.
+    let mut v = opened(workspaces(2));
+    v.set_workspace_controller(trashed_controller(pm, ProfileId::from_uuid(uuid(555))));
+    assert!(
+        !v.rows_for(PopoverKind::Summary)
+            .iter()
+            .any(|row| matches!(row, PopoverRow::TrashedInAccount(_)))
+    );
+    let (_, frame) = lay(&v, a);
+    assert!(
+        frame
+            .node(workspace_menu_elements::TRASHED_HEADING)
+            .is_none()
+    );
+
+    // Under this window's Profile: the row and its action, above the heading.
+    let mut v = opened(workspaces(2));
+    v.set_workspace_controller(trashed_controller(pm, here));
+    let rows = v.rows_for(PopoverKind::Summary);
+    let heading = rows
+        .iter()
+        .position(|row| *row == PopoverRow::WorkspacesHeading)
+        .unwrap();
+    assert_eq!(
+        &rows[heading - 2..heading],
+        &[
+            PopoverRow::TrashedInAccount(0),
+            PopoverRow::TrashedRestoreTo(0),
+        ]
+    );
+    let (_, frame) = lay(&v, a);
+    let group_heading = frame
+        .node(workspace_menu_elements::TRASHED_HEADING)
+        .expect("the group's heading");
+    let own_heading = frame.node(HEADING).expect("this Profile's heading");
+    assert!(group_heading.rect.y < own_heading.rect.y);
+    let row_rect = frame
+        .node(workspace_menu_elements::trashed(pm))
+        .expect("the row")
+        .rect;
+    let restore_rect = frame
+        .node(workspace_menu_elements::trashed_restore(pm))
+        .expect("Restore to Work")
+        .rect;
+    assert!(row_rect.y < restore_rect.y);
+    let page_rows = v.page_rows(&frame);
+    for row in [
+        PopoverRow::TrashedInAccount(0),
+        PopoverRow::TrashedRestoreTo(0),
+    ] {
+        assert!(
+            page_rows.iter().any(|(r, _)| *r == row),
+            "{row:?} is placed"
+        );
+    }
+
+    // The row does nothing; its action restores into this Profile.
+    assert_eq!(
+        v.choose(PopoverRow::TrashedInAccount(0), PopoverPart::Row),
+        Outcome::Consumed
+    );
+    assert_eq!(
+        v.choose(PopoverRow::TrashedRestoreTo(0), PopoverPart::Row),
+        Outcome::RestoreWorkspaceTo {
+            workspace: pm,
+            profile: here,
+        }
+    );
+
+    let cx = cx(a, Lang::En);
+    let nodes = v.element_semantics(&cx, &frame);
+    let menu = &nodes[0];
+    let labels: Vec<&str> = menu
+        .children
+        .iter()
+        .filter_map(|child| child.label.as_deref())
+        .collect();
+    let at = labels
+        .iter()
+        .position(|label| *label == "In the Trash on this device")
+        .expect("the group heading is published");
+    assert_eq!(menu.children[at].role, AkRole::Heading);
+    assert_eq!(
+        labels[at + 1],
+        "PM, In the Trash here, still in your Koru account"
+    );
+    assert_eq!(labels[at + 2], "Restore to Work: PM");
+    assert_eq!(menu.children[at + 2].role, AkRole::MenuItem);
+    assert_eq!(
+        menu.children[at + 2].actions,
+        [AkAction::Click, AkAction::Focus]
     );
     assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
 }

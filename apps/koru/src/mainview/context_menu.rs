@@ -244,6 +244,9 @@ pub enum MenuAction {
     ClearRecents,
     /// Select the existing Welcome tab, or reopen it.
     OpenWelcome,
+    /// *View open tabs*: the quick switch, from the New menu, with its
+    /// chord beside it so the menu teaches it.
+    ViewOpenTabs,
     ImportAs,
     /// One registered import format's row, carrying the format's stable id.
     /// The label comes from the format's descriptor — the registry decides
@@ -294,11 +297,22 @@ pub enum MenuAction {
     Chats,
     /// Open a new Koru AI chat as a main tab.
     NewAiChat,
+    /// Parent of the Tasks flyout on the `+` menu: *New list*, then the
+    /// workspace's lists, nested and wearing their colours.
+    Tasks,
+    /// *New list* — the Tasks flyout's first row: create a list.
+    NewList,
     /// **Open in chat**, on a document's `…`: a new Koru AI chat in a split
     /// beside the document, the document already a chip in its composer.
     OpenInChat,
     NewSocialPost,
     Socials,
+    /// Parent of the Move flyout on the `+` menu: the current document moves
+    /// into a new pane split off on the chosen side.
+    Move,
+    /// One arm of *Move*: split the focused pane and put the current document
+    /// on that side.
+    MoveToSplit(koru_editor::SplitSide),
     /// Start a delegation without a document or task as its context.
     Delegate,
     /// *Delegate…* on a task (ROADMAP D7): its title becomes the objective's
@@ -309,6 +323,9 @@ pub enum MenuAction {
     /// Shift+T list: the queues, then the person's lists. Choosing one opens
     /// the page with the caret in its *Add a task* row.
     NewTaskIn(crate::panes::explore::rail::RailTarget),
+    /// A task list in the Tasks flyout, wearing its colour and its depth.
+    /// Choosing it adds a task to that list.
+    TaskListRow(ListId, Option<&'static str>, usize),
     /// *Import files…* — the file picker, files kept as files. The first
     /// row of the New… launcher's Import list, above the content formats.
     ImportFiles,
@@ -555,6 +572,12 @@ pub enum MenuAction {
     // Borrowing the row would print a shortcut that does something else.
     /// Rename the list, in a field over the row it is already on.
     ListRename,
+    /// Make a list inside this one: the row's hover `+`, reachable without a
+    /// pointer.
+    ListNewInside,
+    /// Take a nested list out to the top level. Only on a list that is
+    /// inside another.
+    ListMoveToTop,
     /// Parent of the swatch submenu. No ellipsis: it opens rows rather than a
     /// picker, which is the difference `ExportAs` already draws.
     ListColor,
@@ -664,14 +687,15 @@ fn checked(name: &str, on: bool) -> Cow<'static, str> {
 }
 
 thread_local! {
-    /// The device's projects, for the *Move to project ▸* flyout's row labels.
-    /// A session menu carries project **names**, which are device state — the
-    /// one kind of row text [`MenuAction::label`] cannot derive from the `Copy`
-    /// action alone — so the container snapshots them here when it opens the
-    /// menu, the same way `label` already reaches the global `format::lang()`.
-    /// Only the UI thread ever touches it, and only one such menu is open at a
-    /// time.
-    static TASK_LIST_NAMES: RefCell<Vec<(ListId, String)>> = const { RefCell::new(Vec::new()) };
+    /// The person's task lists, for the Tasks flyout's rows: `(id, name,
+    /// colour token, depth)`. A session menu carries project **names**, which
+    /// are device state — the one kind of row text [`MenuAction::label`]
+    /// cannot derive from the `Copy` action alone — so the container snapshots
+    /// them here when it opens the menu, the same way `label` already reaches
+    /// the global `format::lang()`. Only the UI thread ever touches it, and
+    /// only one such menu is open at a time.
+    static TASK_LISTS: RefCell<Vec<(ListId, String, Option<&'static str>, usize)>> =
+        const { RefCell::new(Vec::new()) };
     static SESSION_PROJECT_NAMES: RefCell<Vec<(ProjectId, String)>> =
         const { RefCell::new(Vec::new()) };
     /// Why *Terminate* is refused for the session the open menu is about, or
@@ -893,14 +917,23 @@ fn workspace_menu_refusal(action: MenuAction) -> Option<String> {
     })
 }
 
-/// Snapshot the projects the *Move to project ▸* flyout offers. Called by the
-/// container as it opens a session's menu; the flyout's rows and their labels
-/// read it.
-/// Snapshot the person's task lists, by id, for the New… launcher's
-/// Shift+T list — `SESSION_PROJECT_NAMES`' reason: a row's label is read
-/// while the menu draws, long after the table it came from may have moved.
-pub fn set_task_list_names(names: Vec<(ListId, String)>) {
-    TASK_LIST_NAMES.with(|cell| *cell.borrow_mut() = names);
+/// Snapshot the person's task lists — id, name, colour and depth — for the
+/// Tasks flyout, `SESSION_PROJECT_NAMES`' reason: a row's label is read while
+/// the menu draws, long after the table it came from may have moved.
+pub fn set_task_lists(lists: Vec<(ListId, String, Option<&'static str>, usize)>) {
+    TASK_LISTS.with(|cell| *cell.borrow_mut() = lists);
+}
+
+/// A list's stored colour token, as the static token the palette knows —
+/// `None` for a token this build's palette does not carry (drawn neutral, as
+/// [`theme::accent_tone`] draws it).
+pub fn static_accent_token(color: Option<&str>) -> Option<&'static str> {
+    color.and_then(|token| {
+        koru_draw::theme::ACCENT_TOKENS
+            .iter()
+            .copied()
+            .find(|t| *t == token)
+    })
 }
 
 /// The Shift+T list: the four queues, then a rule and each snapshotted
@@ -911,7 +944,7 @@ pub fn task_destination_items() -> Vec<MenuAction> {
         .into_iter()
         .map(|bucket| MenuAction::NewTaskIn(RailTarget::Bucket(bucket)))
         .collect();
-    TASK_LIST_NAMES.with(|cell| {
+    TASK_LISTS.with(|cell| {
         let lists = cell.borrow();
         if !lists.is_empty() {
             items.push(MenuAction::Divider);
@@ -919,23 +952,46 @@ pub fn task_destination_items() -> Vec<MenuAction> {
         items.extend(
             lists
                 .iter()
-                .map(|(id, _)| MenuAction::NewTaskIn(RailTarget::List(*id))),
+                .map(|(id, ..)| MenuAction::NewTaskIn(RailTarget::List(*id))),
         );
     });
     items
+}
+
+/// The Tasks flyout on the `+` menu: *New list*, then a rule and each list,
+/// nested and wearing its colour.
+pub fn task_plus_items() -> Vec<MenuAction> {
+    let mut items = vec![MenuAction::NewList];
+    TASK_LISTS.with(|cell| {
+        let lists = cell.borrow();
+        if !lists.is_empty() {
+            items.push(MenuAction::Divider);
+        }
+        items.extend(
+            lists
+                .iter()
+                .map(|(id, _, color, depth)| MenuAction::TaskListRow(*id, color.clone(), *depth)),
+        );
+    });
+    items
+}
+
+/// A list row's name from the snapshot, by id.
+fn task_list_name(id: ListId) -> String {
+    TASK_LISTS.with(|cell| {
+        cell.borrow()
+            .iter()
+            .find(|(list, ..)| *list == id)
+            .map(|(_, name, ..)| name.clone())
+            .unwrap_or_else(|| "List".to_owned())
+    })
 }
 
 fn task_destination_label(target: crate::panes::explore::rail::RailTarget) -> String {
     use crate::panes::explore::rail::{RailTarget, bucket_label, reminders_label};
     match target {
         RailTarget::Bucket(bucket) => bucket_label(bucket).to_owned(),
-        RailTarget::List(id) => TASK_LIST_NAMES.with(|cell| {
-            cell.borrow()
-                .iter()
-                .find(|(list, _)| *list == id)
-                .map(|(_, name)| name.clone())
-                .unwrap_or_else(|| "List".to_owned())
-        }),
+        RailTarget::List(id) => task_list_name(id),
         RailTarget::Reminders => reminders_label(crate::format::lang()).to_owned(),
     }
 }
@@ -1054,6 +1110,8 @@ impl MenuAction {
             | Self::TaskList
             | Self::TaskRemove
             | Self::ListRename
+            | Self::ListNewInside
+            | Self::ListMoveToTop
             | Self::ListColor
             | Self::ListSwatch(_)
             | Self::ListDelete
@@ -1068,6 +1126,7 @@ impl MenuAction {
             // Socials authoring (the Agent's publisher runs regardless).
             Self::Socials | Self::NewSocialPost => f::socials(),
             Self::NewTaskIn(_) => f::tasks(),
+            Self::Tasks | Self::NewList | Self::TaskListRow(..) => f::tasks(),
             _ => true,
         }
     }
@@ -1145,6 +1204,14 @@ impl MenuAction {
             MenuAction::Divider => "",
             MenuAction::Documents => "Documents",
             MenuAction::OpenWelcome => "Welcome",
+            MenuAction::ViewOpenTabs => "View open tabs",
+            MenuAction::Move => "Move",
+            MenuAction::MoveToSplit(side) => match side {
+                koru_editor::SplitSide::Up => "Top",
+                koru_editor::SplitSide::Right => "Right",
+                koru_editor::SplitSide::Down => "Bottom",
+                koru_editor::SplitSide::Left => "Left",
+            },
             MenuAction::Socials => {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
@@ -1179,6 +1246,8 @@ impl MenuAction {
             }
             MenuAction::Chats => "Chats",
             MenuAction::NewAiChat => "New",
+            MenuAction::Tasks => "Tasks",
+            MenuAction::NewList => "New list",
             MenuAction::OpenInChat => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::DocumentOpenInChat)
             }
@@ -1400,6 +1469,9 @@ impl MenuAction {
             MenuAction::NewTaskIn(target) => {
                 return Cow::Owned(task_destination_label(target));
             }
+            MenuAction::TaskListRow(id, ..) => {
+                return Cow::Owned(task_list_name(id));
+            }
             MenuAction::TaskGoToOrigin => "Open document",
             MenuAction::TaskGoToList => "Go to list",
             MenuAction::TaskCreateDocument => "Add document",
@@ -1410,6 +1482,12 @@ impl MenuAction {
             MenuAction::TaskDue => "Due",
             MenuAction::TaskPriority => "Priority",
             MenuAction::TaskList => "List",
+            MenuAction::ListNewInside => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TaskListNewInside)
+            }
+            MenuAction::ListMoveToTop => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TaskListMoveToTop)
+            }
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
             MenuAction::PageDescription { shown: false } => {
@@ -1468,6 +1546,27 @@ impl MenuAction {
         .into()
     }
 
+    /// The letter a plain key chooses while the menu is open — underlined in
+    /// the label. `None` for a row without one. Only the `+` menu's flyouts
+    /// and launchers carry one; the letters echo the launcher's (D, T, C, A,
+    /// S, I) where they overlap.
+    pub fn mnemonic(self) -> Option<char> {
+        match self {
+            MenuAction::Documents => Some('d'),
+            MenuAction::Canvases => Some('v'),
+            MenuAction::Tasks => Some('t'),
+            MenuAction::NewShell => Some('s'),
+            MenuAction::NewAgent => Some('a'),
+            MenuAction::Delegate => Some('g'),
+            MenuAction::Chats => Some('c'),
+            MenuAction::Socials => Some('o'),
+            MenuAction::Move => Some('m'),
+            MenuAction::ImportAs => Some('i'),
+            MenuAction::ViewOpenTabs => Some('w'),
+            _ => None,
+        }
+    }
+
     /// The chord that does the same thing, set quietly at the row's right-hand
     /// end. A blank column says "no shortcut" more honestly than an invented
     /// chord — which is why `Rename` names F2 and nothing else claims one.
@@ -1507,6 +1606,9 @@ impl MenuAction {
             // **Windows' own window-management chords**, which exist only there:
             // the rows carrying them are `#[cfg(windows)]` for the same reason
             // (`snap::place` is a no-op elsewhere).
+            // Literal Control on every platform: the chord is resolved from
+            // the physical key by the shell and is not in the registry.
+            MenuAction::ViewOpenTabs => Some("Ctrl+Tab".to_string()),
             MenuAction::WindowSnapLeft => cfg!(windows).then(|| "Win+Left".to_string()),
             MenuAction::WindowSnapRight => cfg!(windows).then(|| "Win+Right".to_string()),
             _ => self.shortcut_id().map(koru_keys::label_of),
@@ -1530,7 +1632,6 @@ impl MenuAction {
         use koru_keys::ShortcutId;
         Some(match self {
             MenuAction::RailView { slot, .. } => return koru_keys::rail_slot(slot),
-            MenuAction::NewDocument => ShortcutId::NewTab,
             MenuAction::Close => ShortcutId::CloseTab,
             MenuAction::Rename | MenuAction::ScheduleRename => ShortcutId::RenameDocument,
             MenuAction::RevealInExplore => ShortcutId::ToggleExplore,
@@ -1578,6 +1679,14 @@ impl MenuAction {
             MenuAction::OpenInChat => Some(koru_draw::icons::SPARKLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
+            MenuAction::ViewOpenTabs => Some(koru_draw::icons::TABS),
+            MenuAction::Move => Some(koru_draw::icons::ARROWS_IN_SIMPLE),
+            MenuAction::MoveToSplit(side) => Some(match side {
+                koru_editor::SplitSide::Up => koru_draw::icons::CARET_UP,
+                koru_editor::SplitSide::Right => koru_draw::icons::CARET_RIGHT,
+                koru_editor::SplitSide::Down => koru_draw::icons::CARET_DOWN,
+                koru_editor::SplitSide::Left => koru_draw::icons::CARET_LEFT,
+            }),
             MenuAction::NewTaskIn(crate::panes::explore::rail::RailTarget::Bucket(bucket)) => {
                 Some(crate::panes::explore::rail::bucket_glyph(bucket))
             }
@@ -1589,6 +1698,10 @@ impl MenuAction {
             // A result is a document, and it opens as one.
             MenuAction::OpenRunResult(_) => Some(koru_draw::icons::FILE),
             MenuAction::Chats => Some(koru_draw::icons::CHATS_CIRCLE),
+            MenuAction::Tasks | MenuAction::NewList => Some(koru_draw::icons::LIST),
+            // A list row wears its colour square, never a glyph — the rail's
+            // rule, so the square here and the square in the rail are one list.
+            MenuAction::TaskListRow(..) => None,
             MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
             // Destinations shared with the help popover.
@@ -1611,6 +1724,8 @@ impl MenuAction {
             MenuAction::TaskGoToList => Some(koru_draw::icons::LIST),
             MenuAction::TaskCreateDocument => Some(koru_draw::icons::DOCUMENT),
             MenuAction::ListColor => Some(koru_draw::icons::PALETTE),
+            MenuAction::ListNewInside => Some(koru_draw::icons::PLUS),
+            MenuAction::ListMoveToTop => Some(koru_draw::icons::ARROW_UP),
             MenuAction::PageDescription { .. } => Some(koru_draw::icons::NOTE),
             MenuAction::PageAttach => Some(koru_draw::icons::PAPERCLIP),
             MenuAction::PageAddExisting => Some(koru_draw::icons::LINK),
@@ -1727,12 +1842,24 @@ impl koru_ui::MenuItem for MenuAction {
 
     /// A colour row shows its colour: the rail's swatch at the row's scale,
     /// from the same accent token the list stores (acceptance round 2 —
-    /// the rows were names alone).
+    /// the rows were names alone). A task-list row does the same.
     fn swatch(&self) -> Option<Option<&str>> {
         match self {
             MenuAction::ListSwatch(token) => Some(Some(token)),
+            MenuAction::TaskListRow(_, color, _) => Some(color.as_deref()),
             _ => None,
         }
+    }
+
+    fn indent(&self) -> usize {
+        match self {
+            MenuAction::TaskListRow(_, _, depth) => *depth,
+            _ => 0,
+        }
+    }
+
+    fn mnemonic(&self) -> Option<char> {
+        (*self).mnemonic()
     }
 
     fn shortcut(&self) -> Option<String> {
@@ -2091,13 +2218,17 @@ pub fn new_tab_items() -> Vec<MenuAction> {
         MenuAction::OpenWelcome,
         MenuAction::Documents,
         MenuAction::Canvases,
+        MenuAction::Tasks,
         MenuAction::NewShell,
         MenuAction::NewAgent,
         MenuAction::Delegate,
         MenuAction::Chats,
         MenuAction::Socials,
         MenuAction::Divider,
+        MenuAction::Move,
+        MenuAction::Divider,
         MenuAction::ImportAs,
+        MenuAction::ViewOpenTabs,
     ]
 }
 
@@ -2485,15 +2616,24 @@ pub fn document_items() -> Vec<MenuAction> {
 /// gesture when it grows one, and *Open* is what the row already does on a plain
 /// click. The divider is what keeps the red row from sitting flush against the
 /// two that change a label.
-pub fn list_items() -> Vec<MenuAction> {
-    vec![
+pub fn list_items(nested: bool) -> Vec<MenuAction> {
+    let mut items = vec![
         MenuAction::RailOpenInNewTab,
+        MenuAction::Divider,
+        MenuAction::ListNewInside,
+    ];
+    // Only a list that is inside another has somewhere to be moved out to.
+    if nested {
+        items.push(MenuAction::ListMoveToTop);
+    }
+    items.extend([
         MenuAction::Divider,
         MenuAction::ListRename,
         MenuAction::ListColor,
         MenuAction::Divider,
         MenuAction::ListDelete,
-    ]
+    ]);
+    items
 }
 
 /// A queue row's menu: one row, because a computed queue has nothing to rename,
@@ -2828,6 +2968,18 @@ pub fn submenu(self_: MenuAction) -> Option<Vec<MenuAction>> {
     }
     if self_ == MenuAction::Chats {
         return Some(chat_plus_items());
+    }
+    if self_ == MenuAction::Tasks {
+        return Some(task_plus_items());
+    }
+    if self_ == MenuAction::Move {
+        use koru_editor::SplitSide;
+        return Some(vec![
+            MenuAction::MoveToSplit(SplitSide::Up),
+            MenuAction::MoveToSplit(SplitSide::Right),
+            MenuAction::MoveToSplit(SplitSide::Down),
+            MenuAction::MoveToSplit(SplitSide::Left),
+        ]);
     }
     if self_ == MenuAction::SessionMoveToProject {
         return Some(session_project_items());

@@ -147,6 +147,31 @@ pub fn format(name: String, answer: Option<&ReadingAnswer>, lang: Lang) -> Readi
     }
 }
 
+/// **The words a picture carries**, as in-page find, *Copy text* and a
+/// screen reader use them: the correction a person selected when there is
+/// one, else the pages' words, a blank line between pages (the same text the
+/// reading view shows as current). `None` without a reading, or when it holds
+/// nothing but whitespace. Built on the fetching worker, never in a frame.
+pub fn picture_text(answer: Option<&ReadingAnswer>) -> Option<String> {
+    let answer = answer?;
+    let corrections = &answer.corrections;
+    let corrected = corrections
+        .versions
+        .iter()
+        .find(|v| Some(&v.id) == corrections.selected.as_ref())
+        .and_then(|v| v.text.clone());
+    let text = corrected.unwrap_or_else(|| {
+        answer
+            .pages
+            .iter()
+            .map(|page| page.text.trim_end())
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    });
+    (!text.trim().is_empty()).then_some(text)
+}
+
 /// Literal paragraphs, built on the reading worker. OCR is never Markdown.
 pub fn plain_snapshot(text: &str) -> Result<Vec<u8>, String> {
     use koru_core::{

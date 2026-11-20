@@ -2593,3 +2593,230 @@ async fn a_released_file_is_not_fetched_back_until_it_is_opened() {
     assert_eq!(pass.downloaded, 1, "{pass:?}");
     assert_eq!(harness.store.object_bytes(&hash), Some(bytes));
 }
+
+fn admission_observation(
+    workspace: WorkspaceId,
+) -> koru_account_core::cloud_admission::Observation {
+    use koru_account_core::{
+        cloud_admission::{Binding, Observation},
+        cloud_plan::CloudAllowance,
+    };
+    let now = now_millis();
+    Observation {
+        binding: Binding {
+            owner: uuid::Uuid::from_u128(1),
+            workspace: workspace.as_uuid(),
+            incarnation: uuid::Uuid::from_u128(3),
+            account_generation: 1,
+            authority_generation: 1,
+        },
+        usage_revision: 1,
+        policy_revision: 1,
+        generation: Some(uuid::Uuid::from_u128(4)),
+        observed_at_millis: now,
+        valid_until_millis: now + 60_000,
+        allowance: CloudAllowance::Finite {
+            base_bytes: 100,
+            effective_bytes: 100,
+        },
+        read: true,
+        ordinary_write: true,
+        remove: true,
+        complete_usage: true,
+        used_bytes: Some(90),
+        reserved_bytes: Some(0),
+    }
+}
+
+#[tokio::test]
+async fn quota_upload_hold_allows_smaller_neighbor_and_requested_download() {
+    let h = Harness::new();
+    let large = picture(20, 150);
+    let large_hash = hash_of(&large);
+    h.store.hold(h.workspace, &large, "image/png", None);
+    h.store.document(h.workspace, &[(&large_hash, "image/png")]);
+    let observation = admission_observation(h.workspace);
+    h.engine.observe_admission(observation);
+    h.plane.refuse_once("allocate", BlobCode::AccountOverQuota);
+    let first = h.engine.reconcile(h.workspace, Trigger::Enabled).await;
+    assert_eq!(
+        first.parked,
+        vec![(large_hash.clone(), "account_over_quota")]
+    );
+    let small = picture(21, 5);
+    let small_hash = hash_of(&small);
+    let remote = picture(22, 7);
+    let remote_hash = hash_of(&remote);
+    h.store.hold(h.workspace, &small, "image/png", None);
+    h.store.document(
+        h.workspace,
+        &[(&small_hash, "image/png"), (&remote_hash, "image/png")],
+    );
+    h.plane.publish(h.workspace, &remote, "image/png");
+    h.engine.request(h.workspace, &remote_hash);
+    let next = h
+        .engine
+        .reconcile(h.workspace, Trigger::Requested(remote_hash))
+        .await;
+    assert_eq!(next.uploaded, 1, "{next:?}");
+    assert_eq!(next.downloaded, 1, "{next:?}");
+    assert_eq!(
+        next.parked,
+        vec![(large_hash.clone(), "account_over_quota")]
+    );
+    assert_eq!(h.engine.file(h.workspace, small_hash).await.hold, None);
+    // Same-value refresh is not a replay. A second-device removal changes the
+    // owner revision, which permits exactly one fresh intended admission.
+    h.engine.observe_admission(observation);
+    assert_eq!(
+        h.engine
+            .reconcile(h.workspace, Trigger::MappingChanged)
+            .await
+            .uploaded,
+        0
+    );
+    h.engine
+        .observe_admission(koru_account_core::cloud_admission::Observation {
+            usage_revision: 2,
+            used_bytes: Some(0),
+            ..observation
+        });
+    assert_eq!(
+        h.engine
+            .reconcile(h.workspace, Trigger::Recovery)
+            .await
+            .uploaded,
+        1
+    );
+}
+
+#[tokio::test]
+async fn oversized_hold_survives_generic_wakes_but_increased_allowance_retries() {
+    let h = Harness::new();
+    let bytes = picture(23, 150);
+    let hash = hash_of(&bytes);
+    h.store.hold(h.workspace, &bytes, "image/png", None);
+    h.store.document(h.workspace, &[(&hash, "image/png")]);
+    let observation = admission_observation(h.workspace);
+    h.engine.observe_admission(observation);
+    h.plane
+        .refuse_once("allocate", BlobCode::FileExceedsPlanAllowance);
+    assert_eq!(
+        h.engine
+            .reconcile(h.workspace, Trigger::Enabled)
+            .await
+            .uploaded,
+        0
+    );
+    for trigger in [
+        Trigger::Enabled,
+        Trigger::MappingChanged,
+        Trigger::PolicyPermissive,
+        Trigger::Recovery,
+        Trigger::Requested(hash.clone()),
+    ] {
+        h.engine.request(h.workspace, &hash);
+        let pass = h.engine.reconcile(h.workspace, trigger).await;
+        assert_eq!(pass.uploaded, 0);
+        assert_eq!(
+            pass.parked,
+            vec![(hash.clone(), "file_exceeds_plan_allowance")]
+        );
+    }
+    h.engine
+        .observe_admission(koru_account_core::cloud_admission::Observation {
+            usage_revision: 9,
+            used_bytes: Some(0),
+            ..observation
+        });
+    assert_eq!(
+        h.engine
+            .reconcile(h.workspace, Trigger::Recovery)
+            .await
+            .uploaded,
+        0
+    );
+    h.engine
+        .observe_admission(koru_account_core::cloud_admission::Observation {
+            allowance: koru_account_core::cloud_plan::CloudAllowance::Unbounded,
+            ..observation
+        });
+    assert_eq!(
+        h.engine
+            .reconcile(h.workspace, Trigger::Recovery)
+            .await
+            .uploaded,
+        1
+    );
+}
+
+/// The Free journey: files upload, then one does not fit the plan. It stays
+/// on this device with its own reason, and its neighbors keep uploading.
+#[tokio::test]
+async fn a_file_that_does_not_fit_the_plan_stays_here_with_its_reason_while_others_upload() {
+    let h = Harness::new();
+    let (first, second) = (picture(30, 5), picture(31, 6));
+    let (first_hash, second_hash) = (hash_of(&first), hash_of(&second));
+    h.store.hold(h.workspace, &first, "image/png", None);
+    h.store.hold(h.workspace, &second, "image/png", None);
+    h.store.document(
+        h.workspace,
+        &[(&first_hash, "image/png"), (&second_hash, "image/png")],
+    );
+    h.engine
+        .observe_admission(admission_observation(h.workspace));
+    let pass = h.engine.reconcile(h.workspace, Trigger::Enabled).await;
+    assert_eq!(pass.uploaded, 2, "{pass:?}");
+
+    let large = picture(32, 150);
+    let large_hash = hash_of(&large);
+    h.store.hold(h.workspace, &large, "image/png", None);
+    h.store.document(h.workspace, &[(&large_hash, "image/png")]);
+    h.plane
+        .refuse_once("allocate", BlobCode::FileExceedsPlanAllowance);
+    let pass = h
+        .engine
+        .reconcile(h.workspace, Trigger::MappingChanged)
+        .await;
+    assert_eq!(pass.uploaded, 0, "{pass:?}");
+    assert_eq!(
+        pass.parked,
+        vec![(large_hash.clone(), "file_exceeds_plan_allowance")]
+    );
+    // Kept locally, and said so on the file itself and on its Workspace.
+    assert_eq!(h.store.object_bytes(&large_hash), Some(large.clone()));
+    let facts = h.engine.file(h.workspace, large_hash.clone()).await;
+    assert!(facts.local.is_some());
+    assert_eq!(facts.hold, Some("file_exceeds_plan_allowance"));
+    assert_eq!(
+        h.engine.status(h.workspace).pending_reason,
+        Some("file_exceeds_plan_allowance")
+    );
+    // A file that did upload does not inherit its neighbor's reason.
+    assert_eq!(h.engine.file(h.workspace, first_hash).await.hold, None);
+
+    let later = picture(33, 7);
+    let later_hash = hash_of(&later);
+    h.store.hold(h.workspace, &later, "image/png", None);
+    h.store.document(h.workspace, &[(&later_hash, "image/png")]);
+    let pass = h
+        .engine
+        .reconcile(h.workspace, Trigger::MappingChanged)
+        .await;
+    assert_eq!(pass.uploaded, 1, "{pass:?}");
+    assert_eq!(
+        pass.parked,
+        vec![(large_hash.clone(), "file_exceeds_plan_allowance")]
+    );
+    assert_eq!(h.engine.file(h.workspace, later_hash).await.hold, None);
+    assert_eq!(
+        h.engine.file(h.workspace, large_hash.clone()).await.hold,
+        Some("file_exceeds_plan_allowance")
+    );
+    // The Workspace still says why something of its own is waiting.
+    assert_eq!(
+        h.engine.status(h.workspace).pending_reason,
+        Some("file_exceeds_plan_allowance")
+    );
+    assert_eq!(h.store.object_bytes(&large_hash), Some(large));
+}

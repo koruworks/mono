@@ -1009,7 +1009,7 @@ impl View for Leaf {
         }
     }
 
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         match self {
             Self::Document(d) => View::set_list_table(d, lists),
         }
@@ -1052,6 +1052,18 @@ impl View for Leaf {
     ) -> bool {
         match self {
             Self::Document(d) => View::set_reading_offers(d, target, offers),
+        }
+    }
+
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        match self {
+            Self::Document(d) => View::take_wants_picture_texts(d),
+        }
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        match self {
+            Self::Document(d) => View::set_picture_text(d, hash, text),
         }
     }
 

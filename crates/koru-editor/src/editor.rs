@@ -351,6 +351,34 @@ pub fn prepare(workspace: &mut Workspace) {
 }
 
 impl Editor {
+    /// The words read out of the picture whose blob address is `hash`, when
+    /// the host has them. See [`ViewState::picture_texts`].
+    pub fn picture_text(&self, hash: &str) -> Option<&str> {
+        self.view.picture_texts.get(hash).map(|text| &**text)
+    }
+
+    /// Record the words read out of one picture, or forget them with `None`.
+    /// Text that is only whitespace counts as none: there is nothing to find,
+    /// copy or say. Returns whether anything changed.
+    pub fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        let text = text.filter(|text| !text.trim().is_empty());
+        if self.picture_text(hash) == text {
+            return false;
+        }
+        match text {
+            Some(text) => {
+                self.view
+                    .picture_texts
+                    .insert(hash.to_owned(), std::sync::Arc::from(text));
+            }
+            None => {
+                self.view.picture_texts.remove(hash);
+            }
+        }
+        self.view.picture_texts_revision = self.view.picture_texts_revision.wrapping_add(1);
+        true
+    }
+
     /// A view over a document that already exists — another window, or a test.
     /// It adds nothing to the document — pair it with [`prepare`] when the
     /// workspace may be empty.
@@ -645,12 +673,20 @@ pub trait Editing {
     /// Make the transcript real: one logical edit and one undo step. An empty
     /// final transcript cancels rather than deleting the selection.
     fn commit_dictation(&mut self, ws: &mut WorkspaceDoc, text: &str) {
+        let before = ws.version();
         crate::dictation::commit(self.body_mut(), ws, text);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
     }
 
     /// Throw the composition away: no edit, no undo entry, no trace.
     fn cancel_dictation(&mut self, ws: &mut WorkspaceDoc) {
+        let before = ws.version();
         crate::dictation::cancel(self.body_mut(), ws);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
     }
 
     /// Where the provisional text is, in **view** coordinates. `None` when
@@ -785,6 +821,7 @@ pub trait Editing {
             return false;
         }
         self.body_mut().refresh(ws, pending.identity.node);
+        self.body_mut().settle_local(ws);
         self.body_mut().focus_on(pending.identity.node);
         self.place_caret(start);
         self.reflow();
@@ -2013,6 +2050,35 @@ pub trait Editing {
         self.view_mut().search_flash = Some(SearchFlash {
             node: id,
             range,
+            until: Instant::now() + SEARCH_FLASH_DURATION,
+        });
+        true
+    }
+
+    /// **Land in-page find on a picture whose read words matched** (OCR
+    /// EXPERIENCE §3), the way global search lands on one: the picture's row
+    /// is brought into the search band and its frame flashed for the same
+    /// deadline. Like [`reveal_text_range`](Self::reveal_text_range) it leaves
+    /// the selection alone, so the find field keeps the keyboard; the words
+    /// that matched are not in the document, so there is nothing to light.
+    fn reveal_picture(&mut self, id: NodeId) -> bool {
+        let Some(i) = self.body().index_of(id) else {
+            return false;
+        };
+        self.shape_row_now(i);
+        let Some(row) = self.body().rows.get(i) else {
+            return false;
+        };
+        if row.image.is_none() {
+            return false;
+        }
+        let (top, bottom) = (row.y, row.y + row.height);
+        self.body_mut().focus = i;
+        self.view_mut().desired_x = None;
+        self.scroll_search_band_into_view(top, bottom);
+        self.view_mut().search_flash = Some(SearchFlash {
+            node: id,
+            range: 0..0,
             until: Instant::now() + SEARCH_FLASH_DURATION,
         });
         true
@@ -4182,6 +4248,7 @@ pub trait Editing {
         }
 
         self.body_mut().refresh(ws, id);
+        self.body_mut().settle_local(ws);
         // Past the gap either way, so re-picking a pill that already had one
         // does not stack up spaces or strand the caret behind them.
         self.place_caret(after + 1);
@@ -4541,7 +4608,22 @@ pub trait Editing {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        let before = ws.version();
         self.ime_cancel(ws);
+        let handled = self.key_inner(ws, key, text, mods);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn key_inner(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> bool {
         if self.view().body_tone_strip.is_some() {
             if matches!(key, Key::Named(NamedKey::Escape)) {
                 self.view_mut().body_tone_strip = None;
@@ -6327,15 +6409,16 @@ pub trait Editing {
     /// The list picker over `nodes`: the workspace's lists as the container
     /// last pushed them, the one the (first) node is in checked.
     fn open_list_chooser(&mut self, ws: &WorkspaceDoc, trigger: Trigger, nodes: Vec<NodeId>) {
-        let table: Vec<list_picker::ListChoice> = self
-            .view()
-            .lists
+        let lists = &self.view().lists;
+        let table: Vec<list_picker::ListChoice> = lists
             .listed()
             .iter()
             .map(|(id, name, color)| list_picker::ListChoice {
                 id: *id,
                 name: name.clone(),
                 color: color.clone(),
+                path: lists.path(*id).map(str::to_owned),
+                top_level: lists.is_top_level(*id),
             })
             .collect();
         let current = current_list(ws, nodes.first().copied());
@@ -8705,7 +8788,16 @@ pub trait Editing {
 
     /// Returns true if a redraw is needed.
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        let before = ws.version();
         self.ime_cancel(ws);
+        let handled = self.mouse_down_inner(ws, x, y, ctrl);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn mouse_down_inner(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         // A new press is a new drag, of whichever of the three kinds. Cleared
         // here rather than in each arm, so a press that lands on a row cannot
         // inherit the last field drag.
@@ -9785,6 +9877,15 @@ pub trait Editing {
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_up_inner(ws);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn mouse_up_inner(&mut self, ws: &mut WorkspaceDoc) -> bool {
         self.view_mut().dragging = false;
         self.view_mut().drag_scroll_tick = None;
         // Short-click on a body emoji: drop the armed long-press, leave the caret.
@@ -14883,7 +14984,7 @@ mod tests {
         assert_eq!(e.view.cursor_icon(), koru_ui::cursor::PRESS);
     }
 
-    /// Ctrl+Shift+L after Ctrl+Shift+E has to bring the row back to the left.
+    /// Ctrl+L after Ctrl+E has to bring the row back to the left.
     ///
     /// `set_align`'s "press it again to undo it" rule reads the *current*
     /// alignment, and left is the value an unaligned row already reports — so

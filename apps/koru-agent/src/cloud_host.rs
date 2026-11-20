@@ -95,6 +95,9 @@ pub struct DesktopCloudHost {
     /// The account and generation the last acknowledged context named, so
     /// a fence can be addressed to it.
     context: Mutex<Option<(CloudId, u64)>>,
+    /// Where the placement refusals are kept across restarts
+    /// ([`Host::remembered_refusals`]); `None` keeps nothing.
+    refusals_path: Option<std::path::PathBuf>,
     /// Shared worker connections and their per-dataset handshake generations.
     connections: dial::Pool,
     /// At most the installed permit budget. The gateway owns the retained
@@ -116,8 +119,10 @@ impl DesktopCloudHost {
         local_endpoint: ReplicationEndpointId,
         local_profiles: Arc<dyn LocalProfileInventory>,
         api_origin: String,
+        refusals_path: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
+            refusals_path,
             control,
             network,
             tokio,
@@ -229,6 +234,43 @@ impl Host for DesktopCloudHost {
         )
     }
 
+    fn remembered_refusals(
+        &self,
+        account: KoruIdentityId,
+    ) -> Option<koru_account_runtime::cloud::RememberedRefusals> {
+        let path = self.refusals_path.as_ref()?;
+        let bytes = std::fs::read(path).ok()?;
+        let mut kept: std::collections::BTreeMap<
+            String,
+            koru_account_runtime::cloud::RememberedRefusals,
+        > = serde_json::from_slice(&bytes).ok()?;
+        kept.remove(&account.as_uuid().to_string())
+    }
+
+    fn remember_refusals(
+        &self,
+        account: KoruIdentityId,
+        remembered: &koru_account_runtime::cloud::RememberedRefusals,
+    ) {
+        let Some(path) = &self.refusals_path else {
+            return;
+        };
+        let mut kept: std::collections::BTreeMap<
+            String,
+            koru_account_runtime::cloud::RememberedRefusals,
+        > = std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        kept.insert(account.as_uuid().to_string(), remembered.clone());
+        let written = serde_json::to_vec_pretty(&kept)
+            .map_err(std::io::Error::other)
+            .and_then(|body| crate::account::cloud_sync::write_replacing(path, &body));
+        if written.is_err() {
+            tracing::info!("cloud host: refused units not kept; they are asked again next start");
+        }
+    }
+
     fn local_workspace(
         &self,
         account: KoruIdentityId,
@@ -255,6 +297,33 @@ impl Host for DesktopCloudHost {
             manifest_document_id: manifest.as_uuid(),
             allows_cloud,
         }))
+    }
+
+    fn reconcile_account_live(
+        &self,
+        account: KoruIdentityId,
+        listed: &[(WorkspaceId, ProfileId)],
+    ) -> Result<std::collections::BTreeSet<WorkspaceId>, Failure> {
+        let response = self.ask(ControlRequest::ReconcileCloudAccountLive {
+            control_session_id: self.session()?,
+            account_id: cloud(account.as_uuid()),
+            workspaces: listed
+                .iter()
+                .map(
+                    |(workspace, profile)| koru_sync_control::cloud::CloudAccountLiveWorkspace {
+                        workspace_id: cloud(workspace.as_uuid()),
+                        profile_id: cloud(profile.as_uuid()),
+                    },
+                )
+                .collect(),
+        })?;
+        let ControlResponse::CloudAccountLiveTrashed { trashed, .. } = response else {
+            return Err(Failure::Unavailable);
+        };
+        Ok(trashed
+            .into_iter()
+            .map(|workspace| WorkspaceId::from_uuid(workspace.as_uuid()))
+            .collect())
     }
 
     /// The Profile whose Identity/Private units are about to sync must be
@@ -781,12 +850,14 @@ pub(crate) const HEARTBEAT: Duration = Duration::from_secs(30);
 /// dial a worker: no regional credential policy (which names the region and
 /// issuer the sync credential is verified against), no device network, no
 /// gateway control channel, or no device identity.
+#[allow(clippy::too_many_arguments)]
 pub fn compose(
     origin: &str,
     control: Option<SyncControl>,
     signing_secret: Option<[u8; 32]>,
     endpoint_secret: Option<[u8; 32]>,
     local_profiles: Arc<dyn LocalProfileInventory>,
+    refusals_path: Option<std::path::PathBuf>,
     waker: crate::event::Waker,
 ) -> Option<Arc<koru_account_runtime::cloud::Control>> {
     let policy = koru_env::value(koru_env::name::KORU_PUBLIC_API_CREDENTIAL_ROLLOUT)
@@ -817,6 +888,7 @@ pub fn compose(
         koru_account_client::validate_api_origin(origin)
             .ok()?
             .to_string(),
+        refusals_path,
     );
     let coordinator = Arc::new(koru_account_runtime::cloud::Control::start(
         koru_account_runtime::cloud::HostedApi::new(client),
@@ -832,7 +904,11 @@ pub fn compose(
                 let Some(coordinator) = heartbeat.upgrade() else {
                     return;
                 };
-                coordinator.wake();
+                // A tick, not a wake: it keeps the live sessions current and
+                // checks the account only every few minutes. What changes the
+                // account from here wakes it at once (`run.rs`'s catalog
+                // watch, the reconcile, a sign-in).
+                coordinator.tick();
             }
         })
         .is_err()

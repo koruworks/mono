@@ -13,9 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 use crate::{
-    CachedPackage, CheckReason, FetchResult, ReleaseChannel, UpdateClient, UpdateFailure,
-    UpdateManifest, UpdatePaths, UpdateState, UpdateStatus, UpdateTarget, build_info,
-    verify_package,
+    CachedPackage, CheckReason, FetchResult, ReleaseChannel, UpdateFailure, UpdateManifest,
+    UpdatePaths, UpdateState, UpdateStatus, UpdateTarget, build_info, verify_package,
 };
 
 /// How long after start the first automatic check waits. Long enough that it
@@ -117,6 +116,9 @@ enum WorkerEvent {
         reason: CheckReason,
         result: Result<FetchResult, String>,
         etag_key: String,
+        /// The UTC day this check was counted on by www.koru.do, when it sent
+        /// `first_today=1` and the site answered it.
+        counted_day: Option<u64>,
     },
     Progress {
         received: u64,
@@ -409,7 +411,7 @@ impl UpdateController {
     }
 
     pub fn check(&self, reason: CheckReason) {
-        let (base_url, target, etag, etag_key, events) = {
+        let (base_url, target, etag, etag_key, events, counting) = {
             let mut shared = self.shared.lock().unwrap_or_else(|e| e.into_inner());
             if shared.worker.is_some() {
                 return;
@@ -439,6 +441,8 @@ impl UpdateController {
             };
             let etag_key = etag_key(&shared.base_url, &target);
             let etag = shared.state.etag(&etag_key).map(str::to_owned);
+            let today = crate::site::utc_day(SystemTime::now());
+            let first_today = crate::site::first_today(shared.state.site_counted_day, today);
             let (tx, rx) = mpsc::channel();
             let events = Events {
                 tx,
@@ -446,19 +450,35 @@ impl UpdateController {
             };
             shared.worker = Some(rx);
             shared.status = UpdateStatus::Checking;
-            (shared.base_url.clone(), target, etag, etag_key, events)
+            (
+                shared.base_url.clone(),
+                target,
+                etag,
+                etag_key,
+                events,
+                first_today.then_some(today),
+            )
         };
         let info = *build_info();
         let _ = thread::Builder::new()
             .name("koru-update-check".into())
             .spawn(move || {
                 let agent = format!("Koru/{} (build {})", info.version, info.build_number);
-                let result = UpdateClient::new(&base_url, &agent)
-                    .and_then(|client| client.fetch_manifest(&target, etag.as_deref()));
+                // Through www.koru.do first for a production feed, which
+                // counts the build and redirects to the same manifest; any
+                // failure there falls back to the origin (crate::site).
+                let check = crate::site::check(
+                    &base_url,
+                    &agent,
+                    &target,
+                    etag.as_deref(),
+                    counting.is_some(),
+                );
                 events.send(WorkerEvent::CheckDone {
                     reason,
-                    result,
+                    result: check.result,
                     etag_key,
+                    counted_day: counting.filter(|_| check.site_answered),
                 });
             });
     }
@@ -600,9 +620,13 @@ impl UpdateController {
                 reason,
                 result,
                 etag_key,
+                counted_day,
             } => {
                 shared.worker = None;
                 shared.state.last_check_at = Some(unix_timestamp());
+                if counted_day.is_some() {
+                    shared.state.site_counted_day = counted_day;
+                }
                 match result {
                     // **A 304 answers with what a 200 would have.** It means
                     // the manifest has not changed since the ETag we sent —
@@ -1339,7 +1363,42 @@ mod tests {
                 etag: None,
             }),
             etag_key: "channels/beta/macos-aarch64.json".into(),
+            counted_day: None,
         });
+    }
+
+    /// The day a check was counted by www.koru.do is kept, and a check the
+    /// site did not count (it failed, or the day was already counted) leaves
+    /// it alone, so `first_today` is sent until a check reaches the site.
+    #[test]
+    fn the_site_counted_day_moves_only_when_the_site_counted_a_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let controller = controller_over(temp_paths(&dir));
+        let counted = |controller: &UpdateController| {
+            controller.shared.lock().unwrap().state.site_counted_day
+        };
+        assert_eq!(counted(&controller), None);
+        let done = |day: Option<u64>| WorkerEvent::CheckDone {
+            reason: CheckReason::Startup,
+            result: Ok(FetchResult::Manifest {
+                manifest: offered_manifest(build_info().build_number + 1),
+                etag: None,
+            }),
+            etag_key: "channels/beta/macos-aarch64.json".into(),
+            counted_day: day,
+        };
+        controller.apply(done(Some(20_000)));
+        assert_eq!(counted(&controller), Some(20_000));
+        controller.apply(done(None));
+        assert_eq!(
+            counted(&controller),
+            Some(20_000),
+            "an uncounted check keeps the day"
+        );
+        assert!(!crate::site::first_today(counted(&controller), 20_000));
+        assert!(crate::site::first_today(counted(&controller), 20_001));
+        let saved = UpdateState::load(&temp_paths(&dir).state_file());
+        assert_eq!(saved.site_counted_day, Some(20_000), "the day is persisted");
     }
 
     /// Seen from the tray on a Mac: beta.6 was downloaded, the Ready banner

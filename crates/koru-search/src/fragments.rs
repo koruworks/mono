@@ -150,6 +150,19 @@ pub fn fragments(
 /// node model to ask.
 pub const READ_KINDS: [&str; 2] = ["image", "file"];
 
+/// What makes a node a task, as the task model says it: the marker, or a due.
+pub const TASK_ROLES: [&str; 2] = ["koru.task", "koru.due"];
+
+/// The first character of the kind of a row the index writes for itself.
+pub const GENERATED_KIND_PREFIX: char = '@';
+
+/// The kind — and, for want of anything truer, the role — of the generated
+/// row that marks a document's root as a task. **Readers test the kind.**
+/// Roles are not reserved: a workspace may define an attribute spelled
+/// `@root-task`, and it is copied as an authored row with an authored kind,
+/// neither read as this marker nor removed.
+pub const ROOT_TASK_KIND: &str = "@root-task";
+
 /// The distinct blob hashes of a document's **live** pictures and files — what
 /// the indexer asks the [`Readings`](crate::Readings) seam about when it
 /// indexes this document. In document order, each once.
@@ -245,12 +258,49 @@ pub fn attr_values(
     projection: &DocumentProjection,
 ) -> Vec<AttrRow> {
     let mut out = Vec::new();
+    // **The one generated row.** A hit on a document's title names no node,
+    // and the index does not otherwise record which node is a document's
+    // root — so a page that is itself a task could not say so. For a live
+    // root carrying `koru.task` or `koru.due`, one row marks it. Emitted for
+    // the root only and at most once, in the same pass and the same
+    // transaction as the document's other rows, so marking, unmarking or
+    // trashing the root replaces or removes it with everything else.
+    let root = projection
+        .nodes
+        .first()
+        .filter(|node| node.kind == "document" && !node.in_trash);
+    if let Some(root) = root
+        && root
+            .attrs
+            .iter()
+            .any(|attr| TASK_ROLES.contains(&attr.role.as_str()) && !attr.value.trim().is_empty())
+    {
+        out.push(AttrRow {
+            workspace: workspace.to_owned(),
+            document: document.to_owned(),
+            node: root.id.clone(),
+            role: ROOT_TASK_KIND.to_owned(),
+            kind: ROOT_TASK_KIND.to_owned(),
+            value: "1".to_owned(),
+            num: None,
+            zone: None,
+        });
+    }
     for node in &projection.nodes {
         if node.in_trash {
             continue;
         }
         for attr in &node.attrs {
             if attr.value.trim().is_empty() {
+                continue;
+            }
+            // **An authored row never carries a kind beginning with `@`**:
+            // that prefix is how the index tells its own rows from a
+            // person's. A projected attribute's kind is one of the declared
+            // value kinds, so this drops nothing today; it is here so the
+            // guarantee is the index's own and not an assumption about the
+            // projection.
+            if attr.kind.starts_with(GENERATED_KIND_PREFIX) {
                 continue;
             }
             out.push(AttrRow {
@@ -313,6 +363,23 @@ pub fn title_fragment(workspace: &str, document: &str, title: &str) -> Option<Fr
 ///
 /// It belongs to no document, which is also what keeps
 /// `DELETE FROM fragments WHERE document_id = ?` from ever touching it.
+/// One task list's name. No document: the list lives in the system document's
+/// registry. Its node is the list's id, so a hit names the list and two lists'
+/// evidence never mix; its key is what the list path owns it by.
+pub fn list_fragment(workspace: &str, list: &str, name: &str) -> Option<Fragment> {
+    (!name.trim().is_empty()).then(|| Fragment {
+        key: format!("list:{workspace}:{list}"),
+        workspace: workspace.to_owned(),
+        document: None,
+        node: Some(list.to_owned()),
+        seq: 0,
+        kind: field::TASK_LIST.into(),
+        field: field::TASK_LIST.into(),
+        text: name.to_owned(),
+        page: None,
+    })
+}
+
 pub fn workspace_fragment(workspace: &str, name: &str) -> Option<Fragment> {
     (!name.trim().is_empty()).then(|| Fragment {
         key: format!("workspace:{workspace}"),

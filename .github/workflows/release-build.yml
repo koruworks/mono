@@ -93,6 +93,18 @@ jobs:
       - name: Fetch fonts
         if: steps.fonts.outputs.cache-hit != 'true'
         run: bash scripts/setup/fetch-fonts.sh
+      # **The read worker's recognition links ONNX Runtime** from upstream's
+      # TTS-free Linux sherpa-onnx archive, which the fetch script places and
+      # verifies, extracting the one library `koru-release` points
+      # ORT_LIB_PATH at. Linux builds no voice from it (D4).
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.sh') }}
+      - name: Fetch the reader's ONNX Runtime
+        run: bash scripts/setup/fetch-voice-runtime.sh
       # **No notes, no release**, found before anything is built. A nightly's
       # are the one releases/nightly/*.toml added since the tag's previous
       # position (an all-zero `before` is the tag's first push); a stable
@@ -152,6 +164,25 @@ jobs:
           tar -xzf "${archives[0]}" -C "$smoke"
           timeout 30 "$smoke/koru" --help >/dev/null
           timeout 30 "$smoke/koru-agent" --help >/dev/null
+      # **The glibc floor is 2.35** (Ubuntu 22.04, TECHNICAL.final.md): no
+      # packaged binary may ask for a newer symbol version. Building on
+      # ubuntu-22.04 is what keeps it there; this proves it, including for the
+      # statically linked ONNX Runtime the read worker carries.
+      - name: Check the glibc floor
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/koru-package"
+          status=0
+          while IFS= read -r -d '' binary; do
+            [ "$(head -c 4 "$binary" | tail -c 3)" = ELF ] || continue
+            newest="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/^GLIBC_//' | sort -V | tail -n 1 || true)"
+            echo "${binary#"$smoke"/}: GLIBC_${newest:-none}"
+            if [ -n "$newest" ] && [ "$(printf '%s\n2.35\n' "$newest" | sort -V | tail -n 1)" != 2.35 ]; then
+              echo "::error::${binary#"$smoke"/} needs GLIBC_$newest, newer than the 2.35 floor"
+              status=1
+            fi
+          done < <(find "$smoke" -type f -perm -u+x -print0)
+          exit "$status"
       # actions/attest-build-provenance v4.2.2
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
@@ -498,8 +529,9 @@ jobs:
           fi
           echo "signed=true" >> "$GITHUB_OUTPUT"
       # The setup is the other jobs': patched crates, the pinned sherpa-onnx
-      # archive the voice runtime links, the bundled fonts. Xcode's swiftc,
-      # codesign and hdiutil are on the image.
+      # archive the voice runtime links (and the ONNX Runtime library the read
+      # worker's recognition links, extracted from it), the bundled fonts.
+      # Xcode's swiftc, codesign and hdiutil are on the image.
       - name: Fetch third-party code
         run: bash scripts/setup/fetch-third-party.sh
       # mozilla-actions/sccache-action v0.0.11
@@ -973,9 +1005,14 @@ jobs:
   ios:
     name: build (ios)
     if: inputs.platform == 'ios'
-    # Xcode 26.5 is the project's floor (apps/ios/README.md), and the macOS 26
-    # image is the one that carries it.
-    runs-on: macos-26
+    # **Built with Xcode 27.2, the iOS 27.2 SDK.** App Store Connect warns on
+    # an iOS 26 SDK build (ITMS-90725) and refuses one from April 2027. The
+    # macOS 26 image stops at Xcode 26.6, which still carries the iOS 26.5
+    # SDK; Xcode 27 is on GitHub's `xcode-27` image (macOS 27), a preview
+    # since 2026-07-16 (actions/runner-images#14404). A preview can queue or
+    # break, and an iOS failure holds back no other platform. Developing on
+    # Xcode 26.5 still works (apps/ios/README.md); only the upload needs 27.
+    runs-on: xcode-27
     timeout-minutes: 120
     environment: ${{ inputs.channel }}
     permissions:
@@ -985,7 +1022,7 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
-      XCODE_APP: /Applications/Xcode_26.5.app
+      XCODE_APP: /Applications/Xcode_27.2.app
     steps:
       # actions/checkout v6.1.0
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

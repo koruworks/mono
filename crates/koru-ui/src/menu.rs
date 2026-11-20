@@ -51,6 +51,16 @@ pub trait MenuItem {
     fn swatch(&self) -> Option<Option<&str>> {
         None
     }
+    /// Levels a nested row is indented, so a list's tree shape reads in the
+    /// flat rows of a menu. `0` for a top-level row.
+    fn indent(&self) -> usize {
+        0
+    }
+    /// The letter underlined in the label and chosen by a plain key while the
+    /// menu is open. `None` for a row without one.
+    fn mnemonic(&self) -> Option<char> {
+        None
+    }
     /// A product's mark drawn as vector path data — for a row naming a
     /// third-party product whose logo the icon font cannot carry (a launch
     /// profile's row). When set it takes the leading slot and
@@ -203,6 +213,8 @@ pub const ROW_PAD_X: f32 = 10.0;
 const SHORTCUT_GAP: f32 = 28.0;
 /// The colour square a row may lead with — the rail's, at a row's scale.
 const SWATCH: f32 = 12.0;
+/// How far each nesting level indents a row's leading slot and label.
+const INDENT: f32 = 16.0;
 /// A stepper button's square. Wider than the glyph inside it on purpose: this
 /// is a target pressed repeatedly, so it is sized for the finger rather than
 /// for the mark.
@@ -1150,8 +1162,9 @@ impl<T: MenuItem> Menu<T> {
                 (true, false) => pal.text,
             };
             // A row with a leading slot — its own icon — draws it first, then
-            // the label indented past it.
-            let mut text_x = p.x + ROW_PAD_X;
+            // the label indented past it. A nested row indents its whole
+            // leading edge one [`INDENT`] per level.
+            let mut text_x = p.x + ROW_PAD_X + item.indent() as f32 * INDENT;
             if leading(item).is_none()
                 && let Some(token) = item.swatch()
             {
@@ -1241,6 +1254,30 @@ impl<T: MenuItem> Menu<T> {
                 "theme::role::row()",
                 colour,
             );
+            // Underline the letter a plain key chooses, so the mnemonic is
+            // visible where the label is. Only for rows short enough that the
+            // letter survives — a mnemonic row's label always is.
+            if let Some(mnemonic) = item.mnemonic()
+                && let Some(needle) = mnemonic.to_lowercase().next()
+                && let Some(idx) = item.label().to_lowercase().find(needle)
+            {
+                let text = item.label();
+                let prefix_w = engine
+                    .simple_layout(&text[..idx], theme::role::row())
+                    .width();
+                let letter = text[idx..].chars().next().unwrap_or(' ');
+                let letter_w = engine
+                    .simple_layout(&letter.to_string(), theme::role::row())
+                    .width();
+                let baseline = label.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                let underline_y = r.y + (r.h - line_h) * 0.5 + baseline + 1.5;
+                scene::fill(
+                    scene,
+                    root,
+                    colour,
+                    &scene::rect(text_x + prefix_w, underline_y, letter_w, 1.0),
+                );
+            }
             // **A toggle's check, at the far right** — drawn only while set,
             // in a lane reserved either way, so toggling moves nothing. A
             // chord, `›` or trailing glyph the row also has sits just left

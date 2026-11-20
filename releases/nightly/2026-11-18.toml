@@ -1,0 +1,58 @@
+title = "Bring back a workspace from this device's Trash, and see moved tasks at once"
+
+summary = [
+  "A workspace in this device's Trash that your Koru account still has is pointed out, with one press to restore it into the right Profile.",
+  "Each Profile and each workspace in Manage has its own Sync off, P2P or Cloud choice.",
+  "Tasks moved or ticked elsewhere show up right away, and Koru does far less in the background while nothing is happening.",
+]
+
+body = """
+## A workspace in the Trash here, still in your account
+
+A workspace can end up in this device's Trash while your Koru account still
+keeps it, under one of your Profiles — for example after the Profile it was
+in was removed from this device. Koru now tells you once when it finds one,
+and lists it under "In the Trash on this device": in Manage, on the page of
+the Profile your account keeps it in, and in the Workspace menu.
+
+"Restore to" that Profile brings it back here, under that Profile, in one
+step, and it syncs again. Until you decide, its row in the Trash says "Still
+in your account under" the Profile, the Profile's sync progress counts it,
+and it is not removed from this device after 30 days.
+
+## Sync choices in Manage
+
+- A Profile's page has Sync off, P2P and Cloud at its top right: this
+  device's choice for all of that Profile's workspaces, with a link to the
+  Koru Cloud settings.
+- Each workspace row has the same choice for that workspace alone.
+- Sign-in and sync sits right under the Profile's name. In the sidebar,
+  "Sync options" — Koru Cloud, then Linked devices — comes before the
+  Profiles.
+
+## Tasks update as they change
+
+A task moved, ticked or dated on another device, or in another window, now
+shows on the task list and in the sidebar's counts at once, without
+switching views.
+
+## Quieter in the background
+
+Koru no longer re-reads your account and every Profile's sync settings every
+half minute. It checks when something changes on this device, and every few
+minutes otherwise. A workspace created, moved or deleted on another device
+can take up to five minutes to appear here; edits inside documents sync as
+they did. The app and its background helper also stop telling each other the
+same thing several times a second.
+
+## Fixes
+
+- A workspace moved to another Profile on another device now moves here
+  too, including when that Profile reaches this device later.
+- "A Profile on this device was deleted from Koru" no longer comes back
+  every time Koru checks.
+- Two split panes showing the same document stay in step while you edit.
+- Escape clears the sidebar filter even when it matched nothing.
+- On Windows, the taskbar's Jump List no longer fails to update when Koru
+  starts.
+"""

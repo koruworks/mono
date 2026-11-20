@@ -147,7 +147,7 @@ impl MainView {
             && !self
                 .list_table
                 .iter()
-                .any(|list| list.id.as_uuid() == *id && list.deleted_ms.is_none())
+                .any(|list| list.entry.id.as_uuid() == *id && list.entry.deleted_ms.is_none())
         {
             return refuse("task_list_unavailable");
         }

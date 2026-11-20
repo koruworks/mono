@@ -5957,6 +5957,11 @@
             "default": false,
             "type": "boolean"
           },
+          "include_lists": {
+            "default": false,
+            "description": "Answer with task lists too: a list whose name matches is a hit of its\nown, ahead of every other result in every sort. **Off by default**, and\nwith it off no list is a candidate and no list's name changes a typo\ncorrection: the answer is what it was before lists were indexed.",
+            "type": "boolean"
+          },
           "kinds": {
             "default": [],
             "description": "`Kind::as_str()` values, as documents store them.",
@@ -6029,6 +6034,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "task_results": {
+            "default": false,
+            "description": "Answer with tasks as tasks: a hit on a task carries\n[`SearchHit::task`], a task's own text ranks like a title, and text\nread from pictures and files keeps one result per task rather than one\nper document. **Off by default**; with it off hits, scores, order and\npage membership are unchanged.",
+            "type": "boolean"
           },
           "text": {
             "type": "string"
@@ -7988,6 +7998,31 @@
         },
         "required": [
           "families"
+        ],
+        "type": "object"
+      },
+      "ListHit": {
+        "description": "What a list result carries beyond its name.",
+        "properties": {
+          "color": {
+            "description": "Its swatch, as an accent token; absent for a list wearing no color.",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "description": "The list's id, in storage form.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The names of the lists it is inside, outermost first, as the rail\ndraws them. Empty for a top-level list.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
         ],
         "type": "object"
       },
@@ -13931,6 +13966,20 @@
           "lifecycle": {
             "$ref": "#/components/schemas/Lifecycle"
           },
+          "list": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListHit"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**This hit is a task list**, not a document: `kind` is `task_list`,\n`document` is absent and `title` is the list's name. Only in an answer\nto a query that set [`SearchQuery::include_lists`]."
+          },
           "mime": {
             "default": null,
             "description": "MIME type of an opaque file, when the manifest recorded one.",
@@ -13971,6 +14020,20 @@
               "$ref": "#/components/schemas/MatchSpan"
             },
             "type": "array"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskHit"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**This hit is a task**: a node carrying `koru.task` or `koru.due`, or\nthe title of a page that is itself one. Only in an answer to a query\nthat set [`SearchQuery::task_results`]. A surface opens Tasks on\n`task.node`; the hit's own `node` is what it always was (absent for a\ntitle)."
           },
           "title": {
             "description": "The document's name, from the listing.",
@@ -14094,6 +14157,11 @@
             "description": "Also return the workspaces the index knows, for a scope picker.",
             "type": "boolean"
           },
+          "include_lists": {
+            "default": false,
+            "description": "Answer with task lists too: a list whose name matches is a hit of its\nown, ahead of every other result in every sort. **Off by default**, and\nwith it off no list is a candidate and no list's name changes a typo\ncorrection: the answer is what it was before lists were indexed.",
+            "type": "boolean"
+          },
           "kinds": {
             "default": [],
             "description": "`Kind::as_str()` values, as documents store them.",
@@ -14153,6 +14221,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "task_results": {
+            "default": false,
+            "description": "Answer with tasks as tasks: a hit on a task carries\n[`SearchHit::task`], a task's own text ranks like a title, and text\nread from pictures and files keeps one result per task rather than one\nper document. **Off by default**; with it off hits, scores, order and\npage membership are unchanged.",
+            "type": "boolean"
           },
           "text": {
             "type": "string"
@@ -16236,6 +16309,24 @@
         ],
         "type": "object"
       },
+      "TaskHit": {
+        "description": "What a task result carries: which node is the task, and whether it is done.",
+        "properties": {
+          "node": {
+            "description": "The task's node. For a node hit, the hit's own node; for the title of\na page that is a task, that page's root node.",
+            "type": "string"
+          },
+          "state": {
+            "description": "The task's lifecycle token as indexed — `open` when none is recorded.\nA hint for drawing; where the task is opened is decided from the task\nas it is at that moment, never from this.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "state"
+        ],
+        "type": "object"
+      },
       "TaskQuery": {
         "description": "`POST /v1/tasks/query`.\n\nEvery filter is optional and absent means \"no constraint\". Filters compose\nwith AND; the values inside `tags` compose with OR (any of). The base set is\n**derived, never marked in a second table**: a node is a task when it\ncarries the `koru.task` marker or a due date, which is the whole derivation\n([ADR-285]).\n\n[ADR-285]: ../../../docs/decisions/ADR-276-300.md#adr-285-taskmodel--a-task-is-a-marked-node-and-the-marker-or-a-due-date-is-the-whole-derivation",
         "properties": {
@@ -16345,6 +16436,14 @@
             "description": "Only tasks **not** carrying this key.",
             "nullable": true,
             "type": "string"
+          },
+          "only": {
+            "description": "**Exactly these tasks**, and nothing else. Absent means no selector.\n\nFor opening one task from somewhere that already knows which: the\nanswer is that task **as it is now**, whatever page it is on — open or\ncompleted, however long ago it was finished.\n\n**The selector is exclusive, not a filter that quietly wins.** With it\npresent:\n\n- `workspaces` must name exactly one workspace;\n- 1 to [`MAX_ONLY`] entries, each a node id that parses;\n- `bucket`, `list`, `due`, `priority`, `min_priority`, `tags`, `has`,\n  `missing`, `after` and `group_by` are refused (400);\n- `lifecycle`, `completed_on_or_after` and `recently_completed_since`\n  are not applied, and neither is `limit` — the selector bounds the\n  answer;\n- `include_trashed` applies as always;\n- `bucket_windows` is allowed, and fills [`TaskRow::bucket`].\n\nA reference that is not in that workspace, or is not a task, is simply\nnot in the answer. That is not an error.",
+            "items": {
+              "$ref": "#/components/schemas/TaskRef"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "overdue": {
             "anyOf": [
@@ -16478,6 +16577,23 @@
         ],
         "type": "object"
       },
+      "TaskRef": {
+        "description": "One task, named exactly: the document it is written in and its node.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "node": {
+            "description": "The task's node id, in storage form.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "node"
+        ],
+        "type": "object"
+      },
       "TaskRow": {
         "description": "One task. The identity is `(workspace, document, node)`, carried together —\nnever a node id on its own — and [`task`](Self::task) is the same triple as\nthe one string that is also its pagination key and its activity subject.",
         "properties": {
@@ -16490,6 +16606,11 @@
           },
           "breadcrumb": {
             "description": "Where the task lives: the workspace, then the document path, then the\nancestor rows, joined by `\" / \"` — one rule, computed the same way by\nthe desktop from an open document and by the store from the projection.",
+            "type": "string"
+          },
+          "bucket": {
+            "description": "**The task's natural bucket**: one of the five tokens, placed by the\nsame ordered rule the rail's counts use, so the five are a partition.\nA task pinned to Today with a later due keeps its natural bucket here\n(`upcoming`, say); the pin is the row's own `koru.today` attribute.\n\nPresent only in an answer to a query that named tasks with\n[`TaskQuery::only`] **and** sent\n[`bucket_windows`](TaskQuery::bucket_windows). Without the windows the\nstore does not know what *today* is and never guesses a day or a zone.",
+            "nullable": true,
             "type": "string"
           },
           "document": {
@@ -18082,6 +18203,37 @@
         "required": [
           "header",
           "document"
+        ],
+        "type": "object"
+      },
+      "TrashedInAccount": {
+        "description": "One Workspace that is in the Trash here and live in the account, as the\nrecovery surfaces list it.",
+        "properties": {
+          "acknowledged_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "first_seen_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "profile": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              }
+            ],
+            "description": "The Profile the account keeps it under: where *Restore* puts it."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "profile",
+          "first_seen_ms"
         ],
         "type": "object"
       },
@@ -36534,6 +36686,54 @@
         "summary": "Create a workspace and its manifest"
       }
     },
+    "/v1/workspaces/trashed-in-account": {
+      "get": {
+        "description": "each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrashedInAccount"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Workspaces in this device's trash that the account still holds live"
+      }
+    },
     "/v1/workspaces/unassigned": {
       "get": {
         "description": "each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore",
@@ -38181,6 +38381,71 @@
         "summary": "Restore a soft-deleted workspace"
       }
     },
+    "/v1/workspaces/{id}/restore-to": {
+      "post": {
+        "description": "the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveWorkspace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Restore a soft-deleted workspace into a profile"
+      }
+    },
     "/v1/workspaces/{id}/snapshot/{document}": {
       "post": {
         "description": "application/octet-stream — a Loro snapshot, ready to import",
@@ -38300,6 +38565,54 @@
           }
         ],
         "summary": "Move a document and its explore subtree into another workspace"
+      }
+    },
+    "/v1/workspaces/{id}/trashed-in-account/acknowledge": {
+      "post": {
+        "description": "null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Record that the person was told a trashed workspace is still in the account"
       }
     },
     "/v1/workspaces/{id}/versions/{version}/snapshot": {

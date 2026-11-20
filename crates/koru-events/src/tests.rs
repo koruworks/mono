@@ -250,6 +250,7 @@ fn the_store_catalog_rows_carry_ids_and_closed_tokens_only() {
         "workspace.catalog.moved",
         "workspace.catalog.imported",
         "workspace.catalog.reordered",
+        "workspace.catalog.trashed_in_account_changed",
     ];
     for name in CATALOG {
         let spec = registry::spec(name).unwrap_or_else(|| panic!("{name} is not declared"));

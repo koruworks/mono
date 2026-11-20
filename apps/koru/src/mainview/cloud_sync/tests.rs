@@ -963,3 +963,64 @@ fn a_file_with_no_answer_yet_claims_nothing_about_its_bytes() {
         Some("Not checked against Koru Cloud yet"),
     );
 }
+
+#[test]
+fn quota_holds_explain_local_retention_without_stopping_other_files() {
+    let oversized = hold_sentence(Lang::En, "file_exceeds_plan_allowance");
+    assert!(oversized.contains("stays on this device"));
+    assert!(oversized.contains("need Plus"));
+    assert!(oversized.contains("Other files can still sync"));
+    let quota = hold_sentence(Lang::En, "account_over_quota");
+    assert!(quota.contains("for this upload"));
+    assert!(quota.contains("Smaller files may still sync"));
+    for lang in Lang::ALL {
+        for code in [
+            "cloud_policy_unavailable",
+            "cloud_plan_required",
+            "file_exceeds_plan_allowance",
+            "usage_unknown",
+            "account_over_quota",
+            "cloud_document_count_limit",
+            "cloud_stored_document_bytes_limit",
+            "cloud_physical_bytes_limit",
+            "cloud_staging_bytes_limit",
+            "cloud_removal_capacity_limit",
+        ] {
+            assert!(!hold_sentence(lang, code).contains(code));
+        }
+    }
+}
+
+/// The Free journey on the desktop: the file that did not fit is still on
+/// this device, and its note says why and what would change it.
+#[test]
+fn a_file_refused_for_space_says_it_stays_here_and_what_to_do() {
+    let oversized = with_selected_file(Some(file_report(
+        true,
+        Some("missing"),
+        Some("file_exceeds_plan_allowance"),
+    )));
+    assert_eq!(
+        value(&oversized, "Where").as_deref(),
+        Some("On this device only"),
+    );
+    assert_eq!(
+        oversized.note.as_deref(),
+        Some(
+            "This file stays on this device because it exceeds the Cloud allowance. \
+             Files above Koru Free’s 1 GB need Plus. Other files can still sync."
+        ),
+    );
+    let full = with_selected_file(Some(file_report(
+        true,
+        Some("missing"),
+        Some("account_over_quota"),
+    )));
+    assert_eq!(
+        full.note.as_deref(),
+        Some(
+            "There is not enough Cloud space for this upload. Free some space or \
+             increase your allowance. Smaller files may still sync."
+        ),
+    );
+}

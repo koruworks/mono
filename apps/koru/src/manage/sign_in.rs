@@ -110,7 +110,9 @@ impl ManageView {
         } else {
             self.lay_sign_in_rows(profile, column, &mut cy, &mut rows, controls);
         }
-        self.lay_sync_modes(profile, column, &mut cy, &mut rows, controls);
+        // The sync choices themselves are on the head (the Profile's) and in
+        // each Workspace's row; what stays here is the way to Koru Cloud.
+        self.lay_get_cloud(column, &mut cy, &mut rows, controls);
         Section {
             rect: Rect::new(column.x, y, column.w, cy - y),
             repair,
@@ -366,17 +368,11 @@ impl ManageView {
                     self.paint_controls_in(canvas, root, row.rect, laid);
                 }
                 None => {
+                    // The only strip left in this card: the sync choices are
+                    // on the page's head and in the Workspaces' rows.
                     let s = row.rect;
-                    let sync_choices = laid.controls.iter().any(|placed| {
-                        matches!(placed.control, Control::SyncMode(..))
-                            && s.contains(placed.rect.x, placed.rect.y)
-                    });
                     let _strip = inspect::scope(
-                        if sync_choices {
-                            "Manage sync choices"
-                        } else {
-                            "Manage account actions"
-                        },
+                        "Manage account actions",
                         "part",
                         root,
                         scene::rect(s.x, s.y, s.w, s.h),

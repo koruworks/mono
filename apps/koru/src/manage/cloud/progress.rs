@@ -60,7 +60,15 @@ impl ManageView {
         y: f32,
         controls: &mut Vec<Placed>,
     ) -> Option<ProgressLaid> {
-        let lines = self.c.cloud_progress_lines()?;
+        // Beside *held* on the summary line: what the account keeps under
+        // this Profile that is in the Trash here (trash-recovery P4).
+        let trashed_here = self.c.cloud_progress_profile().map_or(0, |profile| {
+            self.w
+                .borrow()
+                .trashed_in_account_of(crate::manage::workspaces::catalog_profile(profile))
+                .len()
+        });
+        let lines = self.c.cloud_progress_lines(trashed_here)?;
         let lang = crate::format::lang();
         let text_x = x + DISCLOSURE_W;
         let text_w = (w - DISCLOSURE_W).max(1.0);

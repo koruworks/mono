@@ -58,7 +58,7 @@ pub use catalog::{
     WorkspaceCatalogCreated, WorkspaceCatalogDeleted, WorkspaceCatalogImported,
     WorkspaceCatalogMoved, WorkspaceCatalogRenamed, WorkspaceCatalogReordered,
     WorkspaceCatalogRestored, WorkspaceCatalogUnarchived, WorkspaceCreated, WorkspaceDeleted,
-    WorkspaceImportMode, WorkspaceSource, bucket,
+    WorkspaceImportMode, WorkspaceSource, WorkspaceTrashedInAccountChanged, bucket,
 };
 pub use envelope::{
     Actor, ActorId, ActorKind, AttrKey, AttrValue, DeviceId, Envelope, EventId, EventName, Origin,

@@ -33,9 +33,26 @@ use koru_draw::theme;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ListChoice {
     pub id: ListId,
+    /// The list's own name: what the search box filters on, and what the
+    /// create row compares against.
     pub name: String,
     /// The list's accent token, for the row's swatch.
     pub color: Option<String>,
+    /// The lists it is inside, ready to be shown ahead of the name — only
+    /// when another list shares the name, so the row says which one it is.
+    pub path: Option<String>,
+    /// Whether it sits at the top level, which is where *New list* creates.
+    pub top_level: bool,
+}
+
+impl ListChoice {
+    /// What the row reads: the name, behind its path when it has one.
+    pub fn label(&self) -> String {
+        match &self.path {
+            Some(path) => format!("{path}{}", self.name),
+            None => self.name.clone(),
+        }
+    }
 }
 
 /// Which of the picker's two faces is showing.
@@ -339,15 +356,21 @@ fn filter_table(table: &[ListChoice], q: &str) -> Vec<usize> {
 }
 
 /// The name the create row offers, or `None` when nothing is typed or the
-/// name already names a list — the table's own fold, so *birthday tasks* and
-/// *Birthday Tasks* are one list.
+/// name already names a **top-level** list — the table's own fold, so
+/// *birthday tasks* and *Birthday Tasks* are one list.
+///
+/// The picker creates at the top level and has no parent chooser, and a name
+/// is unique among siblings only. So a namesake inside another list does not
+/// take the name: it is listed by its path **and** the create row is offered.
 fn offer_create_for(table: &[ListChoice], q: &str) -> Option<String> {
     let name = q.trim();
     if name.is_empty() {
         return None;
     }
     let key = tags::fold_key(name);
-    let exists = table.iter().any(|list| tags::fold_key(&list.name) == key);
+    let exists = table
+        .iter()
+        .any(|list| list.top_level && tags::fold_key(&list.name) == key);
     (!exists).then(|| name.to_owned())
 }
 
@@ -361,11 +384,15 @@ mod tests {
                 id: ListId::new(),
                 name: "Birthday Tasks".to_owned(),
                 color: Some("red".to_owned()),
+                path: None,
+                top_level: true,
             },
             ListChoice {
                 id: ListId::new(),
                 name: "Bike Project".to_owned(),
                 color: Some("orange".to_owned()),
+                path: None,
+                top_level: true,
             },
         ]
     }
@@ -489,5 +516,50 @@ mod tests {
             ),
             Outcome::Close
         ));
+    }
+
+    fn choice(name: &str, path: Option<&str>) -> ListChoice {
+        ListChoice {
+            id: ListId::new(),
+            name: name.to_owned(),
+            color: None,
+            path: path.map(str::to_owned),
+            top_level: path.is_none(),
+        }
+    }
+
+    /// The picker creates at the top level, so only a top-level namesake
+    /// takes the name: one inside another list is shown by its path **and**
+    /// the create row is still offered.
+    #[test]
+    fn a_namesake_inside_another_list_does_not_take_the_name() {
+        let nested = vec![choice("Backlog", Some("Top 3 / "))];
+        assert_eq!(
+            offer_create_for(&nested, "backlog"),
+            Some("backlog".to_owned())
+        );
+        assert_eq!(nested[0].label(), "Top 3 / Backlog");
+        assert_eq!(
+            filter_table(&nested, "back"),
+            vec![0],
+            "and it is still found by its own name"
+        );
+        assert!(
+            filter_table(&nested, "top").is_empty(),
+            "the path is shown, never searched"
+        );
+
+        let both = vec![choice("Backlog", Some("Top 3 / ")), choice("Backlog", None)];
+        assert_eq!(
+            offer_create_for(&both, "Backlog"),
+            None,
+            "a top-level list already has the name"
+        );
+        assert_eq!(both[1].label(), "Backlog");
+        assert_eq!(
+            filter_table(&both, "backlog").len(),
+            2,
+            "both are selectable"
+        );
     }
 }

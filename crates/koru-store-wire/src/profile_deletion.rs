@@ -23,7 +23,7 @@
 pub use koru_store_core::ids::{BatchId, DeletionId};
 pub use koru_store_core::service::{
     DeletedProfile, ProfileDeletionBatch, ProfileDeletionPreview, ProfileRestoreOutcome,
-    UnassignedReason, UnassignedWorkspace,
+    TrashedInAccount, UnassignedReason, UnassignedWorkspace,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

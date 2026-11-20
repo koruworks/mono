@@ -223,7 +223,7 @@ impl MainView {
                         !self
                             .list_table
                             .iter()
-                            .any(|l| l.id.as_uuid() == id && l.deleted_ms.is_none())
+                            .any(|l| l.entry.id.as_uuid() == id && l.entry.deleted_ms.is_none())
                     })
                 {
                     return self.artifact_notice(koru_i18n::Key::MiniAppArtifactOpenFailed);

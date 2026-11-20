@@ -866,6 +866,25 @@ pub enum Key {
     WorkspacesRestorePurgedMany,
     /// The batch restore refused or did not answer. Nothing moved.
     WorkspacesRestoreProfileFailed,
+    /// **In the Trash here, live in the account** (trash-recovery): the
+    /// recovery group's third list — its caption, and the hint under a row.
+    WorkspacesTrashedInAccountHeading,
+    WorkspacesTrashedInAccountHint,
+    /// The row's one action; `{}` is the Profile the account keeps it under.
+    WorkspacesRestoreTo,
+    /// The question that action asks: the workspace, then the Profile; and
+    /// the body, which names the Profile.
+    WorkspacesRestoreToTitle,
+    WorkspacesRestoreToBody,
+    /// What it came to: the workspace, then the Profile; or the workspace
+    /// alone when nothing changed.
+    WorkspacesRestoredTo,
+    WorkspacesRestoreToFailed,
+    /// The notice shown once when this device first learns of one: the
+    /// workspace.
+    WorkspacesTrashedInAccountNotice,
+    /// A Trash row's second line, in place of *Opened …*: the Profile.
+    WorkspacesTrashStillInAccount,
     /// An empty Profile (§3.10): the Workspace menu's list and the waiting
     /// pane say so, beside the one explicit way out — *New workspace*.
     ProfileEmptyWorkspaces,
@@ -2084,6 +2103,16 @@ pub enum Key {
     CloudStorageStale,
     CloudStorageBasis,
     CloudStorageUploads,
+    CloudUploadPolicyUnavailable,
+    CloudUploadPlanRequired,
+    CloudUploadFileAllowance,
+    CloudUploadUsageUnknown,
+    CloudUploadAccountQuota,
+    CloudUploadDocumentCount,
+    CloudUploadDocumentBytes,
+    CloudUploadPhysicalBytes,
+    CloudUploadStagingBytes,
+    CloudUploadRemovalCapacity,
     CloudTitle,
     CloudSubscribe,
     CloudManage,
@@ -2101,6 +2130,7 @@ pub enum Key {
     CloudSyncTurningOff,
     CloudSyncProgress,
     CloudSyncError,
+    CloudSyncFreeFull,
     CloudSyncOn,
     CloudConnectionConnecting,
     CloudConnectionRetrying,
@@ -2677,6 +2707,9 @@ pub enum Key {
     CloudProgressDocuments,
     CloudProgressFiles,
     CloudProgressHeld,
+    /// Beside it on the same summary line: how many of the account's
+    /// workspaces are in the Trash on this device (trash-recovery).
+    CloudProgressTrashedHere,
     CloudProgressMore,
     // An expanded held Workspace: one line per document waiting on a file
     // Koru Cloud does not hold yet, and whom it is waiting for.
@@ -2989,7 +3022,7 @@ pub enum Key {
     ShowSidebar,
     /// The lane's Search, and the command bar's placeholder.
     SearchOrTypeACommand,
-    /// The Search tooltip's chords: `{}` is this window's (`Ctrl+P`), then
+    /// The Search tooltip's chords: `{}` is this window's (`Ctrl+K`), then
     /// the agent's machine-wide one (`Ctrl+Shift+K`), which opens search from
     /// any app.
     SearchChordsAnywhere,
@@ -4342,6 +4375,7 @@ pub enum Key {
     ReadingCopyText,
     ReadingCopyFailed,
     ReadingForceOcr,
+    ReadingPictureText,
 
     // ---- Text in pictures and PDFs: off, and the partly read list (OCR
     // Plan 3.5). EXPERIENCE §4 gives no words for these; each is the
@@ -4379,13 +4413,46 @@ pub enum Key {
     ImportContentFailedBody,
     UiLabOcrTabName,
     UiLabOcrTabPurpose,
+    // ---- nested task lists, and lists and tasks in search
+    /// The Lists section of the tasks rail: its heading, and the name a screen reader gives the tree of lists.
+    TaskListsHeading,
+    /// The `+` beside *Lists*: what it is called, to a screen reader and in a hint.
+    TaskListNew,
+    /// The placeholder in the field a list is named in.
+    TaskListNameHint,
+    /// Shown beside that field when a list beside this one already has the name.
+    TaskListNameTaken,
+    /// A list row's menu, and its hover `+`: make a list inside this one.
+    TaskListNewInside,
+    /// A nested list row's menu: take it out of the list it is inside.
+    TaskListMoveToTop,
+    /// The question before deleting a list with exactly one list inside it. `{}` is the list's name.
+    TaskListDeleteNestedOne,
+    /// The same question for two or more. `{}` is the list's name, then how many lists are inside it, already written as a number.
+    TaskListDeleteNestedMany,
+    /// Under that question: what is not lost.
+    TaskListDeleteNestedBody,
+    /// The button that agrees to it.
+    TaskListDeleteNestedConfirm,
+    /// Between the names of a list's path, where a list is shown outside the tree: *Top 3 / Backlog*. Spaces included.
+    TaskListPathSeparator,
+    /// Said briefly when a search result named a list that has since been deleted.
+    TaskListGone,
+    /// The first part of a list result's path in search: *Tasks / Top 3 / Backlog*.
+    SearchTasksCrumb,
+    /// The band at the top of a Tasks page holding a task opened from search that the page would not otherwise show.
+    TasksFromSearch,
+    /// That band's close control.
+    TasksFromSearchDismiss,
+    /// A task result's menu: open the document the task is written in, at its line.
+    SearchOpenInDocument,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3329] = [
+    pub const ALL: [Key; 3367] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5021,6 +5088,15 @@ impl Key {
         Key::WorkspacesRestorePurgedOne,
         Key::WorkspacesRestorePurgedMany,
         Key::WorkspacesRestoreProfileFailed,
+        Key::WorkspacesTrashedInAccountHeading,
+        Key::WorkspacesTrashedInAccountHint,
+        Key::WorkspacesRestoreTo,
+        Key::WorkspacesRestoreToTitle,
+        Key::WorkspacesRestoreToBody,
+        Key::WorkspacesRestoredTo,
+        Key::WorkspacesRestoreToFailed,
+        Key::WorkspacesTrashedInAccountNotice,
+        Key::WorkspacesTrashStillInAccount,
         Key::ProfileEmptyWorkspaces,
         Key::ProfileDeleteTargetsOne,
         Key::ProfileDeleteTargetsMany,
@@ -5861,6 +5937,16 @@ impl Key {
         Key::CloudStorageStale,
         Key::CloudStorageBasis,
         Key::CloudStorageUploads,
+        Key::CloudUploadPolicyUnavailable,
+        Key::CloudUploadPlanRequired,
+        Key::CloudUploadFileAllowance,
+        Key::CloudUploadUsageUnknown,
+        Key::CloudUploadAccountQuota,
+        Key::CloudUploadDocumentCount,
+        Key::CloudUploadDocumentBytes,
+        Key::CloudUploadPhysicalBytes,
+        Key::CloudUploadStagingBytes,
+        Key::CloudUploadRemovalCapacity,
         Key::CloudTitle,
         Key::CloudSubscribe,
         Key::CloudManage,
@@ -5878,6 +5964,7 @@ impl Key {
         Key::CloudSyncTurningOff,
         Key::CloudSyncProgress,
         Key::CloudSyncError,
+        Key::CloudSyncFreeFull,
         Key::CloudSyncOn,
         Key::CloudConnectionConnecting,
         Key::CloudConnectionRetrying,
@@ -6242,6 +6329,7 @@ impl Key {
         Key::CloudProgressDocuments,
         Key::CloudProgressFiles,
         Key::CloudProgressHeld,
+        Key::CloudProgressTrashedHere,
         Key::CloudProgressMore,
         Key::CloudProgressWaitingOneFile,
         Key::CloudProgressWaitingFiles,
@@ -7696,6 +7784,7 @@ impl Key {
         Key::ReadingCopyText,
         Key::ReadingCopyFailed,
         Key::ReadingForceOcr,
+        Key::ReadingPictureText,
         Key::SettingsReaderOff,
         Key::SettingsReaderPartlyRead,
         Key::SettingsReaderPagesRead,
@@ -7715,6 +7804,22 @@ impl Key {
         Key::ImportContentFailedBody,
         Key::UiLabOcrTabName,
         Key::UiLabOcrTabPurpose,
+        Key::TaskListsHeading,
+        Key::TaskListNew,
+        Key::TaskListNameHint,
+        Key::TaskListNameTaken,
+        Key::TaskListNewInside,
+        Key::TaskListMoveToTop,
+        Key::TaskListDeleteNestedOne,
+        Key::TaskListDeleteNestedMany,
+        Key::TaskListDeleteNestedBody,
+        Key::TaskListDeleteNestedConfirm,
+        Key::TaskListPathSeparator,
+        Key::TaskListGone,
+        Key::SearchTasksCrumb,
+        Key::TasksFromSearch,
+        Key::TasksFromSearchDismiss,
+        Key::SearchOpenInDocument,
     ];
 }
 
@@ -12697,6 +12802,15 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::WorkspacesRestorePurgedOne, en: "1 is no longer available.", es: "1 ya no está disponible.", pt_br: "1 não está mais disponível.", de: "1 ist nicht mehr verfügbar.", fr: "1 n'est plus disponible.", ar: "واحدة لم تعد متاحة.", zh_hans: "1 个已不可用。", ja: "1 件は利用できません。" },
     Row { key: Key::WorkspacesRestorePurgedMany, en: "{} are no longer available.", es: "{} ya no están disponibles.", pt_br: "{} não estão mais disponíveis.", de: "{} sind nicht mehr verfügbar.", fr: "{} ne sont plus disponibles.", ar: "{} لم تعد متاحة.", zh_hans: "{} 个已不可用。", ja: "{} 件は利用できません。" },
     Row { key: Key::WorkspacesRestoreProfileFailed, en: "Koru couldn't restore this Profile. Nothing was changed.", es: "Koru no pudo restaurar este perfil. No se cambió nada.", pt_br: "O Koru não conseguiu restaurar este perfil. Nada foi alterado.", de: "Koru konnte dieses Profil nicht wiederherstellen. Es wurde nichts geändert.", fr: "Koru n'a pas pu restaurer ce profil. Rien n'a été modifié.", ar: "تعذّر على Koru استعادة ملف التعريف هذا. لم يتغيّر شيء.", zh_hans: "Koru 无法恢复此配置文件。未做任何更改。", ja: "Koru はこのプロファイルを復元できませんでした。何も変更されていません。" },
+    Row { key: Key::WorkspacesTrashedInAccountHeading, en: "In the Trash on this device", es: "En la papelera de este dispositivo", pt_br: "Na Lixeira deste dispositivo", de: "Im Papierkorb auf diesem Gerät", fr: "Dans la corbeille de cet appareil", ar: "في المهملات على هذا الجهاز", zh_hans: "在此设备的回收站中", ja: "このデバイスのゴミ箱にあります" },
+    Row { key: Key::WorkspacesTrashedInAccountHint, en: "In the Trash here, still in your Koru account", es: "En la papelera aquí, pero sigue en tu cuenta de Koru", pt_br: "Na Lixeira aqui, mas ainda na sua conta Koru", de: "Hier im Papierkorb, aber noch in deinem Koru-Konto", fr: "Dans la corbeille ici, mais toujours dans votre compte Koru", ar: "في المهملات هنا، لكنها ما زالت في حسابك على Koru", zh_hans: "在此处的回收站中，但仍在你的 Koru 账户中", ja: "ここではゴミ箱にありますが、Koru アカウントにはまだあります" },
+    Row { key: Key::WorkspacesRestoreTo, en: "Restore to {}", es: "Restaurar en {}", pt_br: "Restaurar em {}", de: "In {} wiederherstellen", fr: "Restaurer dans {}", ar: "استعادة إلى {}", zh_hans: "恢复到 {}", ja: "{} に復元" },
+    Row { key: Key::WorkspacesRestoreToTitle, en: "Restore {} to {}?", es: "¿Restaurar {} en {}?", pt_br: "Restaurar {} em {}?", de: "{} in {} wiederherstellen?", fr: "Restaurer {} dans {} ?", ar: "استعادة {} إلى {}؟", zh_hans: "将 {} 恢复到 {}？", ja: "{} を {} に復元しますか？" },
+    Row { key: Key::WorkspacesRestoreToBody, en: "It is in the Trash on this device, but your Koru account still has it under {}. Restoring brings it back here and keeps it in sync.", es: "Está en la papelera de este dispositivo, pero tu cuenta de Koru aún lo conserva en {}. Al restaurarlo vuelve aquí y sigue sincronizándose.", pt_br: "Está na Lixeira deste dispositivo, mas sua conta Koru ainda o mantém em {}. Restaurar o traz de volta para cá e o mantém sincronizado.", de: "Er liegt auf diesem Gerät im Papierkorb, aber dein Koru-Konto führt ihn noch unter {}. Beim Wiederherstellen kommt er hierher zurück und wird wieder synchronisiert.", fr: "Il est dans la corbeille de cet appareil, mais votre compte Koru le conserve encore sous {}. La restauration le ramène ici et le maintient synchronisé.", ar: "إنها في المهملات على هذا الجهاز، لكن حسابك على Koru ما زال يحتفظ بها ضمن {}. الاستعادة تعيدها إلى هنا وتُبقيها متزامنة.", zh_hans: "它在此设备的回收站中，但你的 Koru 账户仍将它保留在 {} 下。恢复后它会回到这里并继续同步。", ja: "このデバイスではゴミ箱にありますが、Koru アカウントでは {} にまだ残っています。復元するとここに戻り、引き続き同期されます。" },
+    Row { key: Key::WorkspacesRestoredTo, en: "{} was restored to {}.", es: "{} se restauró en {}.", pt_br: "{} foi restaurado em {}.", de: "{} wurde in {} wiederhergestellt.", fr: "{} a été restauré dans {}.", ar: "تمت استعادة {} إلى {}.", zh_hans: "{} 已恢复到 {}。", ja: "{} を {} に復元しました。" },
+    Row { key: Key::WorkspacesRestoreToFailed, en: "Koru couldn't restore {}. It is still in the Trash.", es: "Koru no pudo restaurar {}. Sigue en la papelera.", pt_br: "O Koru não conseguiu restaurar {}. Ele continua na Lixeira.", de: "Koru konnte {} nicht wiederherstellen. Er liegt weiterhin im Papierkorb.", fr: "Koru n'a pas pu restaurer {}. Il est toujours dans la corbeille.", ar: "تعذّر على Koru استعادة {}. ما زالت في المهملات.", zh_hans: "Koru 无法恢复 {}。它仍在回收站中。", ja: "Koru は {} を復元できませんでした。まだゴミ箱にあります。" },
+    Row { key: Key::WorkspacesTrashedInAccountNotice, en: "{} is in the Trash on this device but still in your Koru account.", es: "{} está en la papelera de este dispositivo, pero sigue en tu cuenta de Koru.", pt_br: "{} está na Lixeira deste dispositivo, mas continua na sua conta Koru.", de: "{} liegt auf diesem Gerät im Papierkorb, ist aber noch in deinem Koru-Konto.", fr: "{} est dans la corbeille de cet appareil, mais toujours dans votre compte Koru.", ar: "{} في المهملات على هذا الجهاز، لكنها ما زالت في حسابك على Koru.", zh_hans: "{} 在此设备的回收站中，但仍在你的 Koru 账户中。", ja: "{} はこのデバイスのゴミ箱にありますが、Koru アカウントにはまだあります。" },
+    Row { key: Key::WorkspacesTrashStillInAccount, en: "Still in your account under {}", es: "Sigue en tu cuenta, en {}", pt_br: "Ainda na sua conta, em {}", de: "Noch in deinem Konto unter {}", fr: "Toujours dans votre compte, sous {}", ar: "ما زالت في حسابك ضمن {}", zh_hans: "仍在你的账户中，位于 {} 下", ja: "アカウントでは {} にまだあります" },
     Row { key: Key::ProfileEmptyWorkspaces, en: "This profile has no workspaces", es: "Este perfil no tiene espacios de trabajo", pt_br: "Este perfil não tem espaços de trabalho", de: "Dieses Profil hat keine Arbeitsbereiche", fr: "Ce profil n'a aucun espace de travail", ar: "لا توجد مساحات عمل في ملف التعريف هذا", zh_hans: "此配置文件没有工作区", ja: "このプロファイルにはワークスペースがありません" },
     Row { key: Key::ProfileDeleteTargetsOne, en: "This moves 1 workspace to Trash: {}", es: "Esto mueve 1 espacio de trabajo a la papelera: {}", pt_br: "Isto move 1 espaço de trabalho para a Lixeira: {}", de: "Dadurch wird 1 Arbeitsbereich in den Papierkorb verschoben: {}", fr: "Cela déplace 1 espace de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل مساحة عمل واحدة إلى المهملات: {}", zh_hans: "这会将 1 个工作区移到回收站：{}", ja: "ワークスペース 1 件をゴミ箱に移動します: {}" },
     Row { key: Key::ProfileDeleteTargetsMany, en: "This moves {} workspaces to Trash: {}", es: "Esto mueve {} espacios de trabajo a la papelera: {}", pt_br: "Isto move {} espaços de trabalho para a Lixeira: {}", de: "Dadurch werden {} Arbeitsbereiche in den Papierkorb verschoben: {}", fr: "Cela déplace {} espaces de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل {} مساحات عمل إلى المهملات: {}", zh_hans: "这会将 {} 个工作区移到回收站：{}", ja: "ワークスペース {} 件をゴミ箱に移動します: {}" },
@@ -17926,6 +18040,16 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudStorageStale, en: "Last checked {}; may be out of date", es: "Última comprobación: {}; puede estar desactualizado", pt_br: "Última verificação: {}; os dados podem estar desatualizados", de: "Zuletzt geprüft: {}; möglicherweise veraltet", fr: "Dernière vérification : {} ; peut être obsolète", ar: "آخر تحقق: {}؛ قد تكون البيانات قديمة", zh_hans: "上次检查：{}；数据可能已过期", ja: "最終確認：{}。情報が古い可能性があります" },
     Row { key: Key::CloudStorageBasis, en: "Files count by their original size. Writing does not count yet.", es: "Los archivos cuentan por su tamaño original. El texto aún no cuenta.", pt_br: "Os arquivos contam pelo tamanho original. A escrita ainda não conta.", de: "Dateien zählen mit ihrer Originalgröße. Geschriebener Text zählt noch nicht.", fr: "Les fichiers comptent selon leur taille d’origine. Le texte ne compte pas encore.", ar: "تُحتسب الملفات بحجمها الأصلي. لا تُحتسب الكتابة بعد.", zh_hans: "文件按原始大小计入用量。文字暂不计入。", ja: "ファイルは元のサイズで計上されます。文章はまだ計上されません。" },
     Row { key: Key::CloudStorageUploads, en: "Uploads in progress: {} bytes", es: "Cargas en curso: {} bytes", pt_br: "Uploads em andamento: {} bytes", de: "Laufende Uploads: {} Bytes", fr: "Envois en cours : {} octets", ar: "التحميلات الجارية: {} بايت", zh_hans: "上传中：{} 字节", ja: "アップロード中：{} バイト" },
+    Row { key: Key::CloudUploadPolicyUnavailable, en: "Cloud permissions could not be checked. This upload is waiting.", es: "No se pudieron comprobar los permisos de Cloud. Esta carga está en espera.", pt_br: "Não foi possível verificar as permissões do Cloud. Este upload está aguardando.", de: "Die Cloud-Berechtigungen konnten nicht geprüft werden. Dieser Upload wartet.", fr: "Les autorisations Cloud n’ont pas pu être vérifiées. Cet envoi est en attente.", ar: "تعذّر التحقق من أذونات Cloud. هذا الرفع قيد الانتظار.", zh_hans: "无法检查 Cloud 权限。此上传正在等待。", ja: "Cloud の権限を確認できませんでした。このアップロードは待機中です。" },
+    Row { key: Key::CloudUploadPlanRequired, en: "Your plan currently does not allow Cloud uploads. Your content stays on this device.", es: "Tu plan no permite cargas a Cloud actualmente. Tu contenido permanece en este dispositivo.", pt_br: "Seu plano não permite uploads para o Cloud no momento. Seu conteúdo fica neste dispositivo.", de: "Dein Tarif erlaubt derzeit keine Cloud-Uploads. Deine Inhalte bleiben auf diesem Gerät.", fr: "Votre forfait ne permet pas les envois Cloud actuellement. Votre contenu reste sur cet appareil.", ar: "لا تسمح خطتك حاليًا بالرفع إلى Cloud. يبقى محتواك على هذا الجهاز.", zh_hans: "你的套餐目前不允许上传到 Cloud。内容仍保留在此设备上。", ja: "現在のプランでは Cloud にアップロードできません。コンテンツはこのデバイスに残ります。" },
+    Row { key: Key::CloudUploadFileAllowance, en: "This file stays on this device because it exceeds the Cloud allowance. Files above Koru Free’s 1 GB need Plus. Other files can still sync.", es: "Este archivo permanece en este dispositivo porque supera la cuota de Cloud. Los archivos de más de 1 GB de Koru Free necesitan Plus. Los demás archivos pueden seguir sincronizándose.", pt_br: "Este arquivo fica neste dispositivo porque excede a cota do Cloud. Arquivos acima de 1 GB do Koru Free precisam do Plus. Outros arquivos podem continuar sincronizando.", de: "Diese Datei bleibt auf diesem Gerät, da sie das Cloud-Kontingent überschreitet. Dateien über dem 1 GB von Koru Free benötigen Plus. Andere Dateien können weiter synchronisiert werden.", fr: "Ce fichier reste sur cet appareil car il dépasse le quota Cloud. Les fichiers dépassant le Go de Koru Free nécessitent Plus. Les autres fichiers peuvent continuer à se synchroniser.", ar: "يبقى هذا الملف على الجهاز لأنه يتجاوز حصة Cloud. الملفات التي تتجاوز حصة Koru Free البالغة 1 غيغابايت تحتاج إلى Plus. يمكن متابعة مزامنة الملفات الأخرى.", zh_hans: "此文件超过 Cloud 配额，将保留在此设备上。超过 Koru Free 1 GB 配额的文件需要 Plus。其他文件仍可同步。", ja: "このファイルは Cloud の容量上限を超えるため、このデバイスに残ります。Koru Free の 1 GB を超えるファイルには Plus が必要です。他のファイルは引き続き同期できます。" },
+    Row { key: Key::CloudUploadUsageUnknown, en: "Cloud storage is still being checked. This upload is waiting; you can keep editing locally.", es: "Se está comprobando el almacenamiento de Cloud. Esta carga está en espera; puedes seguir editando localmente.", pt_br: "O armazenamento do Cloud ainda está sendo verificado. Este upload está aguardando; você pode continuar editando localmente.", de: "Der Cloud-Speicher wird noch geprüft. Dieser Upload wartet; du kannst lokal weiterarbeiten.", fr: "Le stockage Cloud est encore en cours de vérification. Cet envoi attend ; vous pouvez continuer à modifier le contenu localement.", ar: "لا يزال التخزين في Cloud قيد التحقق. هذا الرفع قيد الانتظار؛ يمكنك مواصلة التحرير محليًا.", zh_hans: "仍在检查 Cloud 存储。此上传正在等待；你可以继续在本地编辑。", ja: "Cloud ストレージを確認中です。このアップロードは待機しています。ローカルでの編集は続けられます。" },
+    Row { key: Key::CloudUploadAccountQuota, en: "There is not enough Cloud space for this upload. Free some space or increase your allowance. Smaller files may still sync.", es: "No hay espacio suficiente en Cloud para esta carga. Libera espacio o aumenta tu cuota. Los archivos más pequeños aún pueden sincronizarse.", pt_br: "Não há espaço suficiente no Cloud para este upload. Libere espaço ou aumente sua cota. Arquivos menores ainda podem sincronizar.", de: "Für diesen Upload ist nicht genug Cloud-Speicher frei. Gib Speicher frei oder erhöhe dein Kontingent. Kleinere Dateien können weiterhin synchronisiert werden.", fr: "L’espace Cloud est insuffisant pour cet envoi. Libérez de l’espace ou augmentez votre quota. Des fichiers plus petits peuvent encore se synchroniser.", ar: "لا توجد مساحة كافية في Cloud لهذا الرفع. حرّر مساحة أو زد حصتك. قد تستمر مزامنة الملفات الأصغر.", zh_hans: "Cloud 空间不足以完成此上传。请释放空间或增加配额。较小的文件仍可能同步。", ja: "このアップロードには Cloud の空き容量が足りません。容量を空けるか、上限を増やしてください。小さいファイルは引き続き同期できる場合があります。" },
+    Row { key: Key::CloudUploadDocumentCount, en: "Cloud has reached its document count limit. This upload is waiting.", es: "Cloud ha alcanzado su límite de documentos. Esta carga está en espera.", pt_br: "O Cloud atingiu o limite de documentos. Este upload está aguardando.", de: "Die Cloud hat ihre Dokumentanzahlgrenze erreicht. Dieser Upload wartet.", fr: "Cloud a atteint sa limite de documents. Cet envoi est en attente.", ar: "بلغ Cloud الحد الأقصى لعدد المستندات. هذا الرفع قيد الانتظار.", zh_hans: "Cloud 已达到文档数量上限。此上传正在等待。", ja: "Cloud のドキュメント数が上限に達しました。このアップロードは待機中です。" },
+    Row { key: Key::CloudUploadDocumentBytes, en: "Cloud has reached its stored document size limit. This upload is waiting.", es: "Cloud ha alcanzado su límite de tamaño de documentos almacenados. Esta carga está en espera.", pt_br: "O Cloud atingiu o limite de tamanho dos documentos armazenados. Este upload está aguardando.", de: "Die Cloud hat ihre Speichergrenze für Dokumente erreicht. Dieser Upload wartet.", fr: "Cloud a atteint sa limite de stockage des documents. Cet envoi est en attente.", ar: "بلغ Cloud الحد الأقصى لحجم المستندات المخزنة. هذا الرفع قيد الانتظار.", zh_hans: "Cloud 已达到已存文档容量上限。此上传正在等待。", ja: "Cloud の保存済みドキュメントの容量が上限に達しました。このアップロードは待機中です。" },
+    Row { key: Key::CloudUploadPhysicalBytes, en: "Cloud storage has reached a physical safety limit. This upload is waiting.", es: "El almacenamiento de Cloud ha alcanzado un límite físico de seguridad. Esta carga está en espera.", pt_br: "O armazenamento do Cloud atingiu um limite físico de segurança. Este upload está aguardando.", de: "Der Cloud-Speicher hat eine physische Sicherheitsgrenze erreicht. Dieser Upload wartet.", fr: "Le stockage Cloud a atteint une limite physique de sécurité. Cet envoi est en attente.", ar: "بلغ تخزين Cloud حد الأمان الفعلي. هذا الرفع قيد الانتظار.", zh_hans: "Cloud 存储已达到物理安全上限。此上传正在等待。", ja: "Cloud ストレージが物理的な安全上限に達しました。このアップロードは待機中です。" },
+    Row { key: Key::CloudUploadStagingBytes, en: "Cloud temporary storage is full. This upload is waiting.", es: "El almacenamiento temporal de Cloud está lleno. Esta carga está en espera.", pt_br: "O armazenamento temporário do Cloud está cheio. Este upload está aguardando.", de: "Der temporäre Cloud-Speicher ist voll. Dieser Upload wartet.", fr: "Le stockage temporaire Cloud est plein. Cet envoi est en attente.", ar: "التخزين المؤقت في Cloud ممتلئ. هذا الرفع قيد الانتظار.", zh_hans: "Cloud 临时存储已满。此上传正在等待。", ja: "Cloud の一時ストレージがいっぱいです。このアップロードは待機中です。" },
+    Row { key: Key::CloudUploadRemovalCapacity, en: "Cloud cleanup capacity is temporarily unavailable. This operation is waiting.", es: "La capacidad de limpieza de Cloud no está disponible temporalmente. Esta operación está en espera.", pt_br: "A capacidade de limpeza do Cloud está temporariamente indisponível. Esta operação está aguardando.", de: "Die Cloud-Bereinigungskapazität ist vorübergehend nicht verfügbar. Dieser Vorgang wartet.", fr: "La capacité de nettoyage Cloud est temporairement indisponible. Cette opération est en attente.", ar: "سعة التنظيف في Cloud غير متاحة مؤقتًا. هذه العملية قيد الانتظار.", zh_hans: "Cloud 清理容量暂不可用。此操作正在等待。", ja: "Cloud のクリーンアップ容量を一時的に利用できません。この操作は待機中です。" },
     Row { key: Key::CloudTitle, en: "Koru Cloud", es: "Koru Cloud", pt_br: "Koru Cloud", de: "Koru Cloud", fr: "Koru Cloud", ar: "Koru Cloud", zh_hans: "Koru Cloud", ja: "Koru Cloud" },
     Row { key: Key::CloudSubscribe, en: "Subscribe to Koru Cloud", es: "Suscribirse a Koru Cloud", pt_br: "Assinar o Koru Cloud", de: "Koru Cloud abonnieren", fr: "S’abonner à Koru Cloud", ar: "الاشتراك في Koru Cloud", zh_hans: "订阅 Koru Cloud", ja: "Koru Cloudに登録" },
     Row { key: Key::CloudManage, en: "Manage your subscription", es: "Gestionar tu suscripción", pt_br: "Gerenciar sua assinatura", de: "Abonnement verwalten", fr: "Gérer votre abonnement", ar: "إدارة اشتراكك", zh_hans: "管理订阅", ja: "サブスクリプションを管理" },
@@ -17943,6 +18067,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudSyncTurningOff, en: "Turning off — transfers stop on this device now", es: "Desactivando: las transferencias se detienen ahora en este dispositivo", pt_br: "Desativando — as transferências param agora neste dispositivo", de: "Wird deaktiviert — Übertragungen stoppen jetzt auf diesem Gerät", fr: "Désactivation — les transferts s’arrêtent maintenant sur cet appareil", ar: "جارٍ الإيقاف — تتوقف عمليات النقل الآن على هذا الجهاز", zh_hans: "正在关闭 — 本设备上的传输立即停止", ja: "無効にしています — このデバイスでの転送は今すぐ止まります" },
     Row { key: Key::CloudSyncProgress, en: "Syncing {} of {} workspaces", es: "Sincronizando {} de {} espacios de trabajo", pt_br: "Sincronizando {} de {} espaços de trabalho", de: "{} von {} Arbeitsbereichen werden synchronisiert", fr: "Synchronisation de {} espaces de travail sur {}", ar: "تتمّ مزامنة {} من {} مساحات عمل", zh_hans: "正在同步 {} / {} 个工作区", ja: "{} / {} ワークスペースを同期中" },
     Row { key: Key::CloudSyncError, en: "Cloud sync: {}", es: "Sincronización en la nube: {}", pt_br: "Sincronização na nuvem: {}", de: "Cloud-Sync: {}", fr: "Synchronisation cloud : {}", ar: "مزامنة السحابة: {}", zh_hans: "云同步：{}", ja: "クラウド同期：{}" },
+    Row { key: Key::CloudSyncFreeFull, en: "Koru Free has no open place right now. Your work stays on this device. You can join the waitlist from your account.", es: "Koru Free no tiene plazas disponibles ahora mismo. Tu trabajo permanece en este dispositivo. Puedes apuntarte a la lista de espera desde tu cuenta.", pt_br: "O Koru Free não tem vagas disponíveis no momento. Seu trabalho permanece neste dispositivo. Você pode entrar na lista de espera pela sua conta.", de: "Koru Free hat derzeit keinen freien Platz. Deine Arbeit bleibt auf diesem Gerät. Du kannst dich in deinem Konto in die Warteliste eintragen.", fr: "Koru Free n’a pas de place disponible pour le moment. Votre travail reste sur cet appareil. Vous pouvez rejoindre la liste d’attente depuis votre compte.", ar: "لا توجد أماكن متاحة في Koru Free حاليًا. يبقى عملك على هذا الجهاز. يمكنك الانضمام إلى قائمة الانتظار من حسابك.", zh_hans: "Koru Free 目前没有空位。你的内容仍保留在此设备上。你可以在账户中加入候补名单。", ja: "現在、Koru Free に空きがありません。作業内容はこのデバイスに残ります。アカウントからウェイトリストに登録できます。" },
     Row { key: Key::CloudSyncOn, en: "Syncing via Koru Cloud", es: "Sincronizando con Koru Cloud", pt_br: "Sincronizando pelo Koru Cloud", de: "Synchronisierung über Koru Cloud", fr: "Synchronisation via Koru Cloud", ar: "تتمّ المزامنة عبر Koru Cloud", zh_hans: "通过 Koru Cloud 同步", ja: "Koru Cloudで同期中" },
     Row { key: Key::CloudConnectionConnecting, en: "Connecting to Koru Cloud…", es: "Conectando con Koru Cloud…", pt_br: "Conectando ao Koru Cloud…", de: "Verbindung mit Koru Cloud wird hergestellt…", fr: "Connexion à Koru Cloud…", ar: "جارٍ الاتصال بـ Koru Cloud…", zh_hans: "正在连接 Koru Cloud…", ja: "Koru Cloudに接続中…" },
     Row { key: Key::CloudConnectionRetrying, en: "Koru Cloud unavailable · local content is available", es: "Koru Cloud no disponible · contenido local disponible", pt_br: "Koru Cloud indisponível · conteúdo local disponível", de: "Koru Cloud nicht verfügbar · lokale Inhalte verfügbar", fr: "Koru Cloud indisponible · contenu local disponible", ar: "Koru Cloud غير متاح · المحتوى المحلي متاح", zh_hans: "Koru Cloud 不可用 · 本地内容仍可用", ja: "Koru Cloudを利用できません · ローカルの内容は利用できます" },
@@ -18253,7 +18378,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::EmailCodeIgnore, en: "If you didn't ask for this, you can safely ignore this email.", es: "Si no has solicitado esto, puedes ignorar este correo sin problema.", pt_br: "Se você não solicitou isso, pode ignorar este e-mail com segurança.", de: "Wenn du das nicht angefordert hast, kannst du diese E-Mail ignorieren.", fr: "Si vous n’êtes pas à l’origine de cette demande, vous pouvez ignorer cet e-mail.", ar: "إذا لم تطلب ذلك، فيمكنك تجاهل هذه الرسالة بأمان.", zh_hans: "如果这不是您本人的操作，可以放心忽略此邮件。", ja: "心当たりがない場合は、このメールを無視してください。" },
     Row { key: Key::EmailWelcomeSubject, en: "Welcome to Koru", es: "Te damos la bienvenida a Koru", pt_br: "Boas-vindas ao Koru", de: "Willkommen bei Koru", fr: "Bienvenue sur Koru", ar: "مرحبًا بك في Koru", zh_hans: "欢迎使用 Koru", ja: "Koru へようこそ" },
     Row { key: Key::EmailWelcomeHeading, en: "Your Koru account is ready", es: "Tu cuenta de Koru está lista", pt_br: "Sua conta Koru está pronta", de: "Dein Koru-Konto ist bereit", fr: "Votre compte Koru est prêt", ar: "حساب Koru الخاص بك جاهز", zh_hans: "您的 Koru 账户已就绪", ja: "Koru アカウントの準備ができました" },
-    Row { key: Key::EmailWelcomeBody, en: "You can now sign in with your email address and password, on the web and in the Koru app on your computer and your phone.", es: "Ya puedes iniciar sesión con tu correo y tu contraseña, en la web y en la aplicación de Koru en tu ordenador y tu teléfono.", pt_br: "Agora você pode entrar com seu e-mail e sua senha, na web e no aplicativo Koru no computador e no celular.", de: "Du kannst dich jetzt mit deiner E-Mail-Adresse und deinem Passwort anmelden – im Web und in der Koru-App auf Computer und Telefon.", fr: "Vous pouvez désormais vous connecter avec votre adresse e-mail et votre mot de passe, sur le web et dans l’application Koru sur votre ordinateur et votre téléphone.", ar: "يمكنك الآن تسجيل الدخول باستخدام بريدك الإلكتروني وكلمة المرور، على الويب وفي تطبيق Koru على الكمبيوتر والهاتف.", zh_hans: "现在您可以使用电子邮件地址和密码登录，既可在网页端，也可在电脑和手机上的 Koru 应用中。", ja: "メールアドレスとパスワードで、ウェブでも、パソコンやスマートフォンの Koru アプリでもサインインできます。" },
+    Row { key: Key::EmailWelcomeBody, en: "Your Koru account is ready. Sign in with your email address and password on the web or in the Koru app. Open your account to manage Cloud options or choose to join the Koru Lite waitlist.", es: "Tu cuenta de Koru está lista. Inicia sesión con tu correo y contraseña en la web o en la aplicación Koru. Abre tu cuenta para gestionar las opciones de Cloud o elegir apuntarte a la lista de espera de Koru Lite.", pt_br: "Sua conta Koru está pronta. Entre com seu e-mail e sua senha na web ou no aplicativo Koru. Abra sua conta para gerenciar as opções da Cloud ou escolher entrar na lista de espera do Koru Lite.", de: "Dein Koru-Konto ist bereit. Melde dich mit deiner E-Mail-Adresse und deinem Passwort im Web oder in der Koru-App an. Öffne dein Konto, um Cloud-Optionen zu verwalten oder dich auf Wunsch in die Koru-Lite-Warteliste einzutragen.", fr: "Votre compte Koru est prêt. Connectez-vous avec votre adresse e-mail et votre mot de passe sur le web ou dans l’application Koru. Ouvrez votre compte pour gérer les options Cloud ou choisir de rejoindre la liste d’attente de Koru Lite.", ar: "حساب Koru جاهز. سجّل الدخول ببريدك الإلكتروني وكلمة المرور على الويب أو في تطبيق Koru. افتح حسابك لإدارة خيارات Cloud أو اختيار الانضمام إلى قائمة انتظار Koru Lite.", zh_hans: "你的 Koru 账户已准备就绪。请使用电子邮件地址和密码在网页端或 Koru 应用中登录。打开账户即可管理 Cloud 选项，或选择加入 Koru Lite 候补名单。", ja: "Koru アカウントの準備ができました。メールアドレスとパスワードで、ウェブまたは Koru アプリにサインインしてください。アカウントを開くと、Cloud の選択肢を管理したり、希望に応じて Koru Lite のウェイトリストに登録したりできます。" },
     Row { key: Key::EmailSignature, en: "— The Koru team", es: "— El equipo de Koru", pt_br: "— Equipe Koru", de: "— Das Koru-Team", fr: "— L’équipe Koru", ar: "— فريق Koru", zh_hans: "— Koru 团队", ja: "— Koru チーム" },
     Row { key: Key::EmailWelcomeNote, en: "Hi, I'm Steven, the founder of Koru. Thank you for signing up; it means a lot that you're giving Koru a try. I'd love to hear how you use it and what we could build to make it better for you. If you have 15 minutes, I'd be glad to talk. Pick a time that suits you with the link below.", es: "Hola, soy Steven, el fundador de Koru. Gracias por registrarte; significa mucho que le des una oportunidad a Koru. Me encantaría saber cómo lo usas y qué podríamos crear para que te resulte aún más útil. Si tienes 15 minutos, estaré encantado de hablar contigo. Elige el momento que mejor te venga con el enlace de abajo.", pt_br: "Olá, sou o Steven, fundador do Koru. Obrigado por se cadastrar; significa muito que você esteja dando uma chance ao Koru. Adoraria saber como você o usa e o que poderíamos criar para torná-lo ainda mais útil para você. Se tiver 15 minutos, terei prazer em conversar. Escolha o melhor horário no link abaixo.", de: "Hallo, ich bin Steven, der Gründer von Koru. Danke für deine Anmeldung – es bedeutet mir viel, dass du Koru ausprobierst. Ich würde gern erfahren, wie du Koru nutzt und was wir bauen könnten, damit es für dich noch nützlicher wird. Wenn du 15 Minuten Zeit hast, freue ich mich auf ein Gespräch. Such dir über den Link unten einen passenden Termin aus.", fr: "Bonjour, je suis Steven, le fondateur de Koru. Merci pour votre inscription ; cela compte beaucoup pour moi que vous donniez sa chance à Koru. J’aimerais savoir comment vous l’utilisez et ce que nous pourrions créer pour vous le rendre encore plus utile. Si vous avez 15 minutes, je serais ravi d’en discuter. Choisissez le créneau qui vous convient avec le lien ci-dessous.", ar: "مرحبًا، أنا ستيفن، مؤسس Koru. شكرًا لتسجيلك؛ يعني لي الكثير أنك تجرّب Koru. يسعدني أن أعرف كيف تستخدمه وما الذي يمكننا بناؤه ليكون أكثر فائدة لك. إذا كان لديك 15 دقيقة، فسأكون سعيدًا بالتحدث معك. اختر الوقت المناسب لك عبر الرابط أدناه.", zh_hans: "您好，我是 Steven，Koru 的创始人。感谢您的注册，您愿意试用 Koru 对我意义重大。我很想了解您如何使用 Koru，以及我们还能做些什么让它对您更有帮助。如果您有 15 分钟，我很乐意与您聊聊。请通过下方链接选择方便的时间。", ja: "こんにちは、Koru の創業者の Steven です。ご登録ありがとうございます。Koru を試していただけることを、とてもうれしく思っています。Koru をどのようにお使いか、より役立つものにするために何を作ればよいかを、ぜひお聞かせください。15 分ほどお時間をいただければ、喜んでお話しします。下のリンクからご都合のよい時間をお選びください。" },
     Row { key: Key::EmailWelcomeCall, en: "Book a 15-minute call", es: "Reservar una llamada de 15 minutos", pt_br: "Agendar uma chamada de 15 minutos", de: "15-Minuten-Gespräch buchen", fr: "Réserver un appel de 15 minutes", ar: "احجز مكالمة لمدة 15 دقيقة", zh_hans: "预约 15 分钟通话", ja: "15 分の通話を予約する" },
@@ -18263,7 +18388,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::EmailStarLink, en: "Star Koru on GitHub", es: "Dale una estrella a Koru en GitHub", pt_br: "Dê uma estrela ao Koru no GitHub", de: "Koru auf GitHub einen Stern geben", fr: "Ajouter une étoile à Koru sur GitHub", ar: "امنح Koru نجمة على GitHub", zh_hans: "在 GitHub 上为 Koru 点星", ja: "GitHub で Koru にスターを付ける" },
     Row { key: Key::EmailSubscribedSubject, en: "Thank you for subscribing to Koru Cloud", es: "Gracias por suscribirte a Koru Cloud", pt_br: "Obrigado por assinar o Koru Cloud", de: "Danke für dein Koru-Cloud-Abo", fr: "Merci pour votre abonnement à Koru Cloud", ar: "شكرًا لاشتراكك في Koru Cloud", zh_hans: "感谢您订阅 Koru Cloud", ja: "Koru Cloud へのご登録ありがとうございます" },
     Row { key: Key::EmailSubscribedHeading, en: "Thank you for subscribing!", es: "¡Gracias por suscribirte!", pt_br: "Obrigado por assinar!", de: "Danke für dein Abo!", fr: "Merci pour votre abonnement !", ar: "شكرًا لاشتراكك!", zh_hans: "感谢您的订阅！", ja: "ご登録ありがとうございます！" },
-    Row { key: Key::EmailSubscribedBody, en: "Your Koru Cloud subscription is active. Your card has been charged and Stripe has emailed you a receipt. Open Koru on your computer and you will see it there; there is nothing else for you to do.", es: "Tu suscripción a Koru Cloud está activa. Se ha hecho el cargo en tu tarjeta y Stripe te ha enviado un recibo por correo. Abre Koru en tu ordenador y la verás allí; no tienes que hacer nada más.", pt_br: "Sua assinatura do Koru Cloud está ativa. Seu cartão foi cobrado e a Stripe enviou um recibo por e-mail. Abra o Koru no computador e você a verá lá; não há mais nada a fazer.", de: "Dein Koru-Cloud-Abo ist aktiv. Deine Karte wurde belastet, und Stripe hat dir eine Quittung per E-Mail geschickt. Öffne Koru auf deinem Computer, dort siehst du es; du musst nichts weiter tun.", fr: "Votre abonnement Koru Cloud est actif. Votre carte a été débitée et Stripe vous a envoyé un reçu par e-mail. Ouvrez Koru sur votre ordinateur pour le voir ; vous n’avez rien d’autre à faire.", ar: "اشتراكك في Koru Cloud نشط. تم خصم المبلغ من بطاقتك وأرسلت إليك Stripe إيصالًا بالبريد الإلكتروني. افتح Koru على حاسوبك وستراه هناك؛ ليس عليك فعل أي شيء آخر.", zh_hans: "您的 Koru Cloud 订阅已生效。您的银行卡已扣款，Stripe 已通过电子邮件向您发送收据。在电脑上打开 Koru 即可看到订阅；无需再进行任何操作。", ja: "Koru Cloud のサブスクリプションが有効になりました。カードへの請求が完了し、Stripe から領収書をメールでお送りしました。パソコンで Koru を開くとご確認いただけます。ほかに必要な操作はありません。" },
+    Row { key: Key::EmailSubscribedBody, en: "Your Koru Cloud subscription is active, with 100 GB for files and hosted MCP access. Check your dashboard for trial dates, payments and billing details. Koru Local remains free.", es: "Tu suscripción a Koru Cloud está activa, con 100 GB para archivos y acceso a MCP alojado. Consulta las fechas de prueba, los pagos y los detalles de facturación en tu panel. Koru Local sigue siendo gratis.", pt_br: "Sua assinatura do Koru Cloud está ativa, com 100 GB para arquivos e acesso ao MCP hospedado. Veja no painel as datas do teste, os pagamentos e os detalhes de cobrança. O Koru Local continua gratuito.", de: "Dein Koru-Cloud-Abo ist aktiv, mit 100 GB für Dateien und Zugang zu gehostetem MCP. Im Dashboard findest du Testzeitraum, Zahlungen und Rechnungsdetails. Koru Local bleibt kostenlos.", fr: "Votre abonnement Koru Cloud est actif, avec 100 Go pour les fichiers et l’accès au MCP hébergé. Consultez votre tableau de bord pour les dates d’essai, les paiements et la facturation. Koru Local reste gratuit.", ar: "اشتراكك في Koru Cloud نشط، مع 100 GB للملفات وإمكانية استخدام MCP المستضاف. راجع لوحة التحكم لمعرفة تواريخ التجربة والمدفوعات وتفاصيل الفوترة. يظل Koru Local مجانيًا.", zh_hans: "你的 Koru Cloud 订阅已生效，包含 100 GB 文件空间和托管 MCP 访问。请在控制面板查看试用日期、付款和账单详情。Koru Local 仍然免费。", ja: "Koru Cloud のサブスクリプションが有効になりました。ファイル用 100 GB とホスト型 MCP を利用できます。試用期間、支払い、請求の詳細はダッシュボードで確認できます。Koru Local は引き続き無料です。" },
     Row { key: Key::EmailSubscribedManage, en: "Manage your subscription", es: "Gestiona tu suscripción", pt_br: "Gerenciar sua assinatura", de: "Abo verwalten", fr: "Gérer votre abonnement", ar: "إدارة اشتراكك", zh_hans: "管理您的订阅", ja: "サブスクリプションを管理する" },
     Row { key: Key::EmailSubscribedNote, en: "Hi, I'm Steven, the founder of Koru. Your support is what lets us keep building Koru, and I'm grateful for it. I'm available to meet anytime. If you have a question, an idea, or something that isn't working the way you'd like, pick a time with the link below or simply reply to this email.", es: "Hola, soy Steven, el fundador de Koru. Tu apoyo es lo que nos permite seguir creando Koru, y te lo agradezco de verdad. Estoy disponible para hablar cuando quieras. Si tienes una pregunta, una idea o algo que no funciona como te gustaría, elige un momento con el enlace de abajo o simplemente responde a este correo.", pt_br: "Olá, sou o Steven, fundador do Koru. É o seu apoio que nos permite continuar construindo o Koru, e sou muito grato por isso. Estou disponível para conversar quando você quiser. Se tiver uma dúvida, uma ideia ou algo que não funciona como você gostaria, escolha um horário no link abaixo ou simplesmente responda a este e-mail.", de: "Hallo, ich bin Steven, der Gründer von Koru. Deine Unterstützung macht es möglich, dass wir Koru weiterentwickeln, und dafür bin ich dankbar. Ich nehme mir jederzeit gern Zeit für ein Gespräch. Wenn du eine Frage oder eine Idee hast oder etwas nicht so funktioniert, wie du es dir wünschst, such dir über den Link unten einen Termin aus oder antworte einfach auf diese E-Mail.", fr: "Bonjour, je suis Steven, le fondateur de Koru. C’est votre soutien qui nous permet de continuer à développer Koru, et je vous en suis reconnaissant. Je suis disponible pour échanger à tout moment. Si vous avez une question, une idée ou quelque chose qui ne fonctionne pas comme vous le souhaitez, choisissez un créneau avec le lien ci-dessous ou répondez simplement à cet e-mail.", ar: "مرحبًا، أنا ستيفن، مؤسس Koru. دعمك هو ما يتيح لنا مواصلة بناء Koru، وأنا ممتن لذلك. أنا متاح للقاء في أي وقت. إذا كان لديك سؤال أو فكرة أو شيء لا يعمل كما تريد، فاختر موعدًا عبر الرابط أدناه أو ردّ ببساطة على هذه الرسالة.", zh_hans: "您好，我是 Steven，Koru 的创始人。正是您的支持让我们能够持续打造 Koru，对此我深表感谢。我随时可以与您交流。如果您有问题、想法，或有什么用起来不如意的地方，请通过下方链接选择时间，或直接回复这封邮件。", ja: "こんにちは、Koru の創業者の Steven です。皆さまのご支援のおかげで Koru の開発を続けることができ、心より感謝しています。いつでもお話しできます。ご質問やアイデア、思いどおりに動かない点があれば、下のリンクから時間をお選びいただくか、このメールにそのままご返信ください。" },
     // ---------------- Cloud: the Profile prompt and the files
@@ -18355,6 +18480,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudProgressDocuments, en: "{} of {} documents", es: "{} de {} documentos", pt_br: "{} de {} documentos", de: "{} von {} Dokumenten", fr: "{} documents sur {}", ar: "{} من {} مستندات", zh_hans: "{} / {} 个文档", ja: "{} / {} 件のドキュメント" },
     Row { key: Key::CloudProgressFiles, en: "{} of {} files", es: "{} de {} archivos", pt_br: "{} de {} arquivos", de: "{} von {} Dateien", fr: "{} fichiers sur {}", ar: "{} من {} ملفات", zh_hans: "{} / {} 个文件", ja: "{} / {} 件のファイル" },
     Row { key: Key::CloudProgressHeld, en: "{} held", es: "{} en espera", pt_br: "{} em espera", de: "{} angehalten", fr: "{} en attente", ar: "{} معلّقة", zh_hans: "{} 个已暂缓", ja: "{} 件が保留中" },
+    Row { key: Key::CloudProgressTrashedHere, en: "{} in the Trash on this device", es: "{} en la papelera de este dispositivo", pt_br: "{} na Lixeira deste dispositivo", de: "{} im Papierkorb auf diesem Gerät", fr: "{} dans la corbeille de cet appareil", ar: "{} في المهملات على هذا الجهاز", zh_hans: "{} 个在此设备的回收站中", ja: "{} 件がこのデバイスのゴミ箱にあります" },
     Row { key: Key::CloudProgressMore, en: "and {} more", es: "y {} más", pt_br: "e mais {}", de: "und {} weitere", fr: "et {} de plus", ar: "و{} أخرى", zh_hans: "还有 {} 个", ja: "ほか {} 件" },
     Row { key: Key::CloudProgressWaitingOneFile, en: "1 file", es: "1 archivo", pt_br: "1 arquivo", de: "1 Datei", fr: "1 fichier", ar: "ملف واحد", zh_hans: "1 个文件", ja: "1 件のファイル" },
     Row { key: Key::CloudProgressWaitingFiles, en: "{} files", es: "{} archivos", pt_br: "{} arquivos", de: "{} Dateien", fr: "{} fichiers", ar: "{} ملفات", zh_hans: "{} 个文件", ja: "{} 件のファイル" },
@@ -18694,8 +18820,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsReaderKinds, en: "Pictures (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs, and .txt, .md, .csv and .html files. iPhone photos (HEIC) are not read.", es: "Imágenes (PNG, JPEG, GIF, WebP, BMP, TIFF), PDF y archivos .txt, .md, .csv y .html. Las fotos de iPhone (HEIC) no se leen.", pt_br: "Imagens (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs e arquivos .txt, .md, .csv e .html. Fotos de iPhone (HEIC) não são lidas.", de: "Bilder (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs sowie .txt-, .md-, .csv- und .html-Dateien. iPhone-Fotos (HEIC) werden nicht gelesen.", fr: "Images (PNG, JPEG, GIF, WebP, BMP, TIFF), PDF, et fichiers .txt, .md, .csv et .html. Les photos d’iPhone (HEIC) ne sont pas lues.", ar: "الصور (PNG وJPEG وGIF وWebP وBMP وTIFF) وملفات PDF وملفات ‎.txt و‎.md و‎.csv و‎.html. لا تُقرأ صور iPhone ‏(HEIC).", zh_hans: "图片（PNG、JPEG、GIF、WebP、BMP、TIFF）、PDF，以及 .txt、.md、.csv 和 .html 文件。不读取 iPhone 照片（HEIC）。", ja: "画像（PNG、JPEG、GIF、WebP、BMP、TIFF）、PDF、および .txt、.md、.csv、.html ファイル。iPhone の写真（HEIC）は読み取りません。" },
     Row { key: Key::SettingsReaderArabicNotRead, en: "Arabic script is not read yet.", es: "La escritura árabe todavía no se lee.", pt_br: "A escrita árabe ainda não é lida.", de: "Arabische Schrift wird noch nicht gelesen.", fr: "L’écriture arabe n’est pas encore lue.", ar: "لا تُقرأ الكتابة العربية بعد.", zh_hans: "暂不读取阿拉伯文字。", ja: "アラビア文字はまだ読み取りません。" },
     Row { key: Key::SettingsReaderMore, en: "Not listed here: {}", es: "No se muestran aquí: {}", pt_br: "Não listados aqui: {}", de: "Hier nicht aufgeführt: {}", fr: "Non listés ici : {}", ar: "غير مدرجة هنا: {}", zh_hans: "此处未列出：{}", ja: "ここに表示されていないもの: {}" },
-    Row { key: Key::ReaderOfferHere, en: "Koru reads them on this computer.", es: "Koru los lee en este equipo.", pt_br: "O Koru os lê neste computador.", de: "Koru liest sie auf diesem Computer.", fr: "Koru les lit sur cet ordinateur.", ar: "يقرؤها Koru على هذا الكمبيوتر.", zh_hans: "Koru 在这台电脑上读取它们。", ja: "Koru がこのコンピューター上で読み取ります。" },
-    Row { key: Key::ReaderOfferHereOne, en: "Koru reads it on this computer.", es: "Koru lo lee en este equipo.", pt_br: "O Koru o lê neste computador.", de: "Koru liest es auf diesem Computer.", fr: "Koru le lit sur cet ordinateur.", ar: "يقرؤه Koru على هذا الكمبيوتر.", zh_hans: "Koru 在这台电脑上读取它。", ja: "Koru がこのコンピューター上で読み取ります。" },
+    Row { key: Key::ReaderOfferHere, en: "Koru reads them on this computer, not in the cloud.", es: "Koru los lee en este equipo, no en la nube.", pt_br: "O Koru os lê neste computador, não na nuvem.", de: "Koru liest sie auf diesem Computer, nicht in der Cloud.", fr: "Koru les lit sur cet ordinateur, pas dans le cloud.", ar: "يقرؤها Koru على هذا الكمبيوتر، وليس في السحابة.", zh_hans: "Koru 在这台电脑上读取它们，不经过云端。", ja: "Koru がこのコンピューター上で読み取ります。クラウドには送信しません。" },
+    Row { key: Key::ReaderOfferHereOne, en: "Koru reads it on this computer, not in the cloud.", es: "Koru lo lee en este equipo, no en la nube.", pt_br: "O Koru o lê neste computador, não na nuvem.", de: "Koru liest es auf diesem Computer, nicht in der Cloud.", fr: "Koru le lit sur cet ordinateur, pas dans le cloud.", ar: "يقرؤه Koru على هذا الكمبيوتر، وليس في السحابة.", zh_hans: "Koru 在这台电脑上读取它，不经过云端。", ja: "Koru がこのコンピューター上で読み取ります。クラウドには送信しません。" },
     Row { key: Key::ReaderResultsAppear, en: "Results appear as they are read.", es: "Los resultados aparecen a medida que se leen.", pt_br: "Os resultados aparecem conforme são lidos.", de: "Ergebnisse erscheinen, sobald sie gelesen sind.", fr: "Les résultats apparaissent au fil de la lecture.", ar: "تظهر النتائج فور قراءتها.", zh_hans: "读取后，结果会陆续出现。", ja: "読み取りが進むにつれて結果が表示されます。" },
     Row { key: Key::ReaderNotHere, en: "{} files are not on this computer.", es: "{} archivos no están en este equipo.", pt_br: "{} arquivos não estão neste computador.", de: "{} Dateien sind nicht auf diesem Computer.", fr: "{} fichiers ne sont pas sur cet ordinateur.", ar: "{} من الملفات ليست على هذا الكمبيوتر.", zh_hans: "{} 个文件不在这台电脑上。", ja: "{} 件のファイルはこのコンピューターにありません。" },
     Row { key: Key::ReaderNotHereOne, en: "One file is not on this computer.", es: "Un archivo no está en este equipo.", pt_br: "Um arquivo não está neste computador.", de: "Eine Datei ist nicht auf diesem Computer.", fr: "Un fichier n’est pas sur cet ordinateur.", ar: "ملف واحد ليس على هذا الكمبيوتر.", zh_hans: "1 个文件不在这台电脑上。", ja: "1 件のファイルはこのコンピューターにありません。" },
@@ -20199,6 +20325,7 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::ReadingCopyText, en: "Copy text", es: "Copiar texto", pt_br: "Copiar texto", de: "Text kopieren", fr: "Copier le texte", ar: "نسخ النص", zh_hans: "复制文本", ja: "テキストをコピー" },
     Row { key: Key::ReadingCopyFailed, en: "Could not copy text.", es: "No se pudo copiar el texto.", pt_br: "Não foi possível copiar o texto.", de: "Text konnte nicht kopiert werden.", fr: "Impossible de copier le texte.", ar: "تعذّر نسخ النص.", zh_hans: "无法复制文本。", ja: "テキストをコピーできませんでした。" },
     Row { key: Key::ReadingForceOcr, en: "Re-scan", es: "Volver a escanear", pt_br: "Digitalizar novamente", de: "Erneut scannen", fr: "Numériser à nouveau", ar: "إعادة المسح", zh_hans: "重新扫描", ja: "再スキャン" },
+    Row { key: Key::ReadingPictureText, en: "Text in picture: {}", es: "Texto en la imagen: {}", pt_br: "Texto na imagem: {}", de: "Text im Bild: {}", fr: "Texte dans l'image : {}", ar: "النص في الصورة: {}", zh_hans: "图片中的文字：{}", ja: "画像内のテキスト: {}" },
     // Text in pictures and PDFs: off, and the partly read list (OCR Plan
     // 3.5). EXPERIENCE §4 gives no words for these; written plainly.
     Row { key: Key::SettingsReaderOff, en: "Off. What was already read can still be found.", es: "Desactivado. Lo que ya se leyó se puede seguir encontrando.", pt_br: "Desativado. O que já foi lido ainda pode ser encontrado.", de: "Aus. Was bereits gelesen wurde, ist weiterhin auffindbar.", fr: "Désactivé. Ce qui a déjà été lu reste trouvable.", ar: "متوقف. ما تمت قراءته من قبل لا يزال يمكن العثور عليه.", zh_hans: "已关闭。已读取的内容仍可找到。", ja: "オフ。すでに読み取ったものは引き続き見つけられます。" },
@@ -20222,4 +20349,20 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::ImportContentFailedBody, en: "No empty documents were left behind.", es: "No quedaron documentos vacíos.", pt_br: "Nenhum documento vazio foi deixado para trás.", de: "Es wurden keine leeren Dokumente zurückgelassen.", fr: "Aucun document vide n’a été laissé.", ar: "لم تُترك أي مستندات فارغة.", zh_hans: "没有留下空文档。", ja: "空のドキュメントは残っていません。" },
     Row { key: Key::UiLabOcrTabName, en: "Extracted text tab", es: "Pestaña de texto extraído", pt_br: "Aba de texto extraído", de: "Tab für erkannten Text", fr: "Onglet du texte extrait", ar: "تبويب النص المستخرج", zh_hans: "提取文字标签页", ja: "抽出テキストのタブ" },
     Row { key: Key::UiLabOcrTabPurpose, en: "The text Koru read from a picture or scanned file, in a tab where it can be corrected, saved, reset to the reading, refreshed and exported.", es: "El texto que Koru leyó de una imagen o un archivo escaneado, en una pestaña donde se puede corregir, guardar, restablecer a la lectura, actualizar y exportar.", pt_br: "O texto que o Koru leu de uma imagem ou de um arquivo digitalizado, numa aba onde pode ser corrigido, salvo, restaurado para a leitura, atualizado e exportado.", de: "Der Text, den Koru aus einem Bild oder einer gescannten Datei gelesen hat, in einem Tab, in dem er korrigiert, gespeichert, auf das Leseergebnis zurückgesetzt, aktualisiert und exportiert werden kann.", fr: "Le texte que Koru a lu dans une image ou un fichier numérisé, dans un onglet où il peut être corrigé, enregistré, rétabli à la lecture, actualisé et exporté.", ar: "النص الذي قرأه Koru من صورة أو ملف ممسوح ضوئيًا، في تبويب يمكن فيه تصحيحه وحفظه وإعادته إلى القراءة وتحديثه وتصديره.", zh_hans: "Koru 从图片或扫描文件中读出的文字，显示在一个标签页中，可在其中更正、保存、恢复为识别结果、刷新和导出。", ja: "Koru が画像やスキャンしたファイルから読み取ったテキストをタブに表示し、修正、保存、読み取り結果へのリセット、更新、書き出しができます。" },
+    Row { key: Key::TaskListsHeading, en: "Lists", es: "Listas", pt_br: "Listas", de: "Listen", fr: "Listes", ar: "القوائم", zh_hans: "列表", ja: "リスト" },
+    Row { key: Key::TaskListNew, en: "New list", es: "Nueva lista", pt_br: "Nova lista", de: "Neue Liste", fr: "Nouvelle liste", ar: "قائمة جديدة", zh_hans: "新建列表", ja: "新規リスト" },
+    Row { key: Key::TaskListNameHint, en: "List name", es: "Nombre de la lista", pt_br: "Nome da lista", de: "Listenname", fr: "Nom de la liste", ar: "اسم القائمة", zh_hans: "列表名称", ja: "リスト名" },
+    Row { key: Key::TaskListNameTaken, en: "There is already a list with that name here", es: "Ya hay una lista con ese nombre aquí", pt_br: "Já existe uma lista com esse nome aqui", de: "Hier gibt es bereits eine Liste mit diesem Namen", fr: "Une liste porte déjà ce nom ici", ar: "توجد قائمة بهذا الاسم هنا", zh_hans: "此处已有同名列表", ja: "ここには同じ名前のリストがあります" },
+    Row { key: Key::TaskListNewInside, en: "New list inside", es: "Nueva lista dentro", pt_br: "Nova lista dentro", de: "Neue Liste darin", fr: "Nouvelle liste à l’intérieur", ar: "قائمة جديدة بالداخل", zh_hans: "在其中新建列表", ja: "中に新規リスト" },
+    Row { key: Key::TaskListMoveToTop, en: "Move to top level", es: "Mover al nivel superior", pt_br: "Mover para o nível superior", de: "Auf oberste Ebene verschieben", fr: "Déplacer au premier niveau", ar: "نقل إلى المستوى الأعلى", zh_hans: "移至顶层", ja: "最上位へ移動" },
+    Row { key: Key::TaskListDeleteNestedOne, en: "Delete “{}” and the list inside it?", es: "¿Eliminar “{}” y la lista que contiene?", pt_br: "Excluir “{}” e a lista dentro dela?", de: "„{}“ und die Liste darin löschen?", fr: "Supprimer « {} » et la liste qu’elle contient ?", ar: "حذف “{}” والقائمة التي بداخلها؟", zh_hans: "删除“{}”及其中的列表？", ja: "「{}」とその中のリストを削除しますか？" },
+    Row { key: Key::TaskListDeleteNestedMany, en: "Delete “{}” and the {} lists inside it?", es: "¿Eliminar “{}” y las {} listas que contiene?", pt_br: "Excluir “{}” e as {} listas dentro dela?", de: "„{}“ und die {} Listen darin löschen?", fr: "Supprimer « {} » et les {} listes qu’elle contient ?", ar: "حذف “{}” والقوائم الـ{} التي بداخلها؟", zh_hans: "删除“{}”及其中的 {} 个列表？", ja: "「{}」とその中の {} 件のリストを削除しますか？" },
+    Row { key: Key::TaskListDeleteNestedBody, en: "Their tasks are kept.", es: "Sus tareas se conservan.", pt_br: "As tarefas delas são mantidas.", de: "Ihre Aufgaben bleiben erhalten.", fr: "Leurs tâches sont conservées.", ar: "يتم الاحتفاظ بمهامها.", zh_hans: "其中的任务会保留。", ja: "タスクは残ります。" },
+    Row { key: Key::TaskListDeleteNestedConfirm, en: "Delete lists", es: "Eliminar listas", pt_br: "Excluir listas", de: "Listen löschen", fr: "Supprimer les listes", ar: "حذف القوائم", zh_hans: "删除列表", ja: "リストを削除" },
+    Row { key: Key::TaskListPathSeparator, en: " / ", es: " / ", pt_br: " / ", de: " / ", fr: " / ", ar: " / ", zh_hans: " / ", ja: " / " },
+    Row { key: Key::TaskListGone, en: "That list was deleted", es: "Esa lista se eliminó", pt_br: "Essa lista foi excluída", de: "Diese Liste wurde gelöscht", fr: "Cette liste a été supprimée", ar: "تم حذف تلك القائمة", zh_hans: "该列表已被删除", ja: "そのリストは削除されました" },
+    Row { key: Key::SearchTasksCrumb, en: "Tasks", es: "Tareas", pt_br: "Tarefas", de: "Aufgaben", fr: "Tâches", ar: "المهام", zh_hans: "任务", ja: "タスク" },
+    Row { key: Key::TasksFromSearch, en: "From search", es: "Desde la búsqueda", pt_br: "Da busca", de: "Aus der Suche", fr: "Depuis la recherche", ar: "من البحث", zh_hans: "来自搜索", ja: "検索から" },
+    Row { key: Key::TasksFromSearchDismiss, en: "Dismiss", es: "Descartar", pt_br: "Dispensar", de: "Ausblenden", fr: "Ignorer", ar: "تجاهل", zh_hans: "关闭", ja: "閉じる" },
+    Row { key: Key::SearchOpenInDocument, en: "Open in document", es: "Abrir en el documento", pt_br: "Abrir no documento", de: "Im Dokument öffnen", fr: "Ouvrir dans le document", ar: "فتح في المستند", zh_hans: "在文档中打开", ja: "ドキュメントで開く" },
 ];

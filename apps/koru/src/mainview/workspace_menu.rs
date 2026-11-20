@@ -498,7 +498,62 @@ impl MainView {
         if changed {
             self.refresh_manage_workspaces();
         }
-        changed
+        self.announce_trashed_in_account() | changed
+    }
+
+    /// **Say once that a workspace is in the Trash here while the account
+    /// still has it** (trash-recovery P4): a toast naming it, with *Restore*
+    /// opening the question. Only while the toast's place is free, so the
+    /// controller is not asked for a row this window could not show; the
+    /// controller hands each row over once and tells the Store, which is
+    /// what makes it once per device.
+    fn announce_trashed_in_account(&mut self) -> bool {
+        if self.toast.is_some() {
+            return false;
+        }
+        let Some(row) = self.workspace_controller.borrow_mut().take_trash_notice() else {
+            return false;
+        };
+        let lang = crate::format::lang();
+        tracing::info!(target: "koru::workspaces",
+            "a workspace in the Trash on this device is still in the account");
+        self.toast = Some((
+            koru_ui::Toast::new(
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::WorkspacesTrashedInAccountNotice),
+                    &[&row.name],
+                ),
+                Some(koru_i18n::t(lang, koru_i18n::Key::WorkspacesRestoreDeleted)),
+                Instant::now(),
+            ),
+            super::ToastPayload::RestoreWorkspaceTo {
+                workspace: row.id,
+                profile: row.profile,
+            },
+        ));
+        true
+    }
+
+    /// *Restore to {Profile}*, from the Workspace menu or the notice: the
+    /// controller's own question, drawn by this window like its other
+    /// confirmations, then one Store call whose outcome arrives as its
+    /// notice. Not offered to the controller at all while it would refuse.
+    pub(super) fn ask_restore_workspace_to(
+        &mut self,
+        workspace: koru_store_core::ids::WorkspaceId,
+        profile: koru_store_core::ids::ProfileId,
+    ) -> bool {
+        let action = koru_workspaces_ui::Action::RestoreTo(workspace, profile);
+        let refused = self
+            .workspace_controller
+            .borrow()
+            .reason_for(&action, &koru_workspaces_ui::Row::default())
+            .is_some();
+        if !refused {
+            self.workspace_controller.borrow_mut().perform(action);
+            self.arm_workspaces_poll();
+        }
+        true
     }
 
     fn refresh_manage_workspaces(&mut self) {

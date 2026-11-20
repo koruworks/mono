@@ -223,6 +223,7 @@ fn a_row() -> TaskRow {
         breadcrumb: "Acme / 四半期計画 / Ship it".into(),
         title: "Ship it".into(),
         attributes: Vec::new(),
+        bucket: None,
     }
 }
 

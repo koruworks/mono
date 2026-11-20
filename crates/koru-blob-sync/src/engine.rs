@@ -251,6 +251,10 @@ struct WorkspaceState {
     /// answered without touching the Workspace.
     documents: BTreeMap<DocumentId, BTreeSet<String>>,
     parks: BTreeMap<String, Park>,
+    // Upload-only, candidate-scoped and independent of generic parks. Neither
+    // MappingChanged nor Requested can turn a quota refusal into permission.
+    admission: BTreeMap<String, koru_account_core::cloud_admission::Hold>,
+    admission_observation: Option<koru_account_core::cloud_admission::Observation>,
     backoff: BTreeMap<String, Backoff>,
     /// Blobs somebody asked for out loud. They go first and they are unparked.
     requested: BTreeSet<String>,
@@ -700,6 +704,11 @@ impl BlobEngine {
             .await
             .ok()
             .flatten();
+        let admission = self
+            .state()
+            .get(&workspace)
+            .and_then(|state| state.admission.get(hash.as_str()))
+            .map(|hold| hold.reason.code());
         BlobFileFacts {
             hash,
             local,
@@ -710,7 +719,9 @@ impl BlobEngine {
             // one they can clear.
             hold: match status.paused {
                 true => Some(TransferHold::Paused.as_str()),
-                false => status.pending_reason,
+                false => admission.or(status.pending_reason.filter(|code| {
+                    koru_account_core::cloud_admission::Reason::from_code(code).is_none()
+                })),
             },
         }
     }
@@ -1054,6 +1065,14 @@ impl BlobEngine {
                 return pass;
             }
         };
+        // Removed references no longer need a background owner observation.
+        // Recoverable Trash is already part of this canonical walk.
+        let hashes: BTreeSet<_> = walk.blobs.iter().map(|blob| blob.hash.as_str()).collect();
+        self.state()
+            .entry(workspace)
+            .or_default()
+            .admission
+            .retain(|hash, _| hashes.contains(hash.as_str()));
 
         let object_host = access
             .byte_origins
@@ -1299,13 +1318,60 @@ impl BlobEngine {
         match local {
             // This device holds the bytes: the blob's job is to reach Cloud.
             Some(mut local) => {
+                let code = {
+                    let mut state = self.state();
+                    let entry = state.entry(workspace).or_default();
+                    let observation = entry.admission_observation;
+                    entry
+                        .admission
+                        .get_mut(local.hash.as_str())
+                        .and_then(|hold| {
+                            (!hold.retry(observation, now_millis())).then_some(hold.reason.code())
+                        })
+                };
+                if let Some(code) = code {
+                    pass.parked.push((local.hash.clone(), code));
+                    return Ok(());
+                }
                 if local.mime.trim().is_empty()
                     && let Some(mime) = blob.mime.clone()
                 {
                     local.mime = mime;
                 }
                 self.note(workspace, Direction::Upload, 0, local.size);
-                match upload::run(self, access, workspace, &local).await? {
+                let outcome = match upload::run(self, access, workspace, &local).await {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        if let Some(reason) =
+                            koru_account_core::cloud_admission::Reason::from_code(error.code())
+                        {
+                            use koru_account_core::cloud_admission::Hold;
+                            let mut state = self.state();
+                            let entry = state.entry(workspace).or_default();
+                            let hold = match entry.admission_observation {
+                                Some(observation) => Hold::new(
+                                    reason,
+                                    observation.binding,
+                                    Some(observation),
+                                    Some(local.size),
+                                    now_millis(),
+                                ),
+                                None => Hold::unobserved(reason, Some(local.size), now_millis()),
+                            };
+                            entry.admission.insert(local.hash.as_str().to_owned(), hold);
+                            entry.status.pending_reason = Some(reason.code());
+                            pass.parked.push((local.hash.clone(), reason.code()));
+                            return Ok(());
+                        }
+                        return Err(error);
+                    }
+                };
+                self.state()
+                    .entry(workspace)
+                    .or_default()
+                    .admission
+                    .remove(local.hash.as_str());
+                match outcome {
                     UploadOutcome::AlreadyDurable => {
                         pass.already_durable += 1;
                         self.tally(workspace, |status| {
@@ -1368,6 +1434,50 @@ impl BlobEngine {
             .requested
             .remove(blob.hash.as_str());
         Ok(())
+    }
+
+    /// Background authority refresh installs facts only for its trusted current
+    /// owner/Workspace/incarnation. This performs no I/O and clears no generic
+    /// download, checksum, missing-file or local-disk park.
+    pub fn observe_admission(
+        &self,
+        observation: koru_account_core::cloud_admission::Observation,
+    ) -> bool {
+        if !observation.current(now_millis()) {
+            return false;
+        }
+        let workspace = WorkspaceId::from_uuid(observation.binding.workspace);
+        let mut state = self.state();
+        let entry = state.entry(workspace).or_default();
+        if entry
+            .admission_observation
+            .is_some_and(|old| old.binding != observation.binding)
+        {
+            entry.admission.clear();
+        }
+        entry.admission_observation = Some(observation);
+        entry
+            .admission
+            .values()
+            .any(|hold| hold.clone().retry(Some(observation), now_millis()))
+    }
+
+    pub fn admission_resource_due(&self, workspace: WorkspaceId) -> bool {
+        self.state().get(&workspace).is_some_and(|state| {
+            state
+                .admission
+                .values()
+                .any(|hold| hold.reason.resource() && hold.clone().retry(None, now_millis()))
+        })
+    }
+
+    /// The shared owner observer coalesces these Workspaces; never poll per
+    /// file and never depend on whether Manage happens to be open.
+    pub fn admission_workspaces(&self) -> Vec<WorkspaceId> {
+        self.state()
+            .iter()
+            .filter_map(|(workspace, state)| (!state.admission.is_empty()).then_some(*workspace))
+            .collect()
     }
 
     fn note(&self, workspace: WorkspaceId, direction: Direction, complete: u64, total: u64) {

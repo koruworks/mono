@@ -192,7 +192,7 @@ pub struct BuiltInDocument {
     /// The workspace list table, kept for the same compare in
     /// `set_list_table`. A document reads it for one thing: a task's due
     /// chip wears its list's colour, so the accent has to resolve here.
-    list_table: Vec<koru_core::system::ListEntry>,
+    list_table: Vec<koru_core::system::ListNode>,
     /// The **Remove from Tasks** question, and the node it is about.
     ///
     /// The node is carried rather than re-derived when the answer comes back:
@@ -237,6 +237,11 @@ pub struct BuiltInDocument {
     /// *Read again* chosen on a picture: its blob address. Drained by
     /// `View::take_wants_read_again`; the shell sends the request.
     wants_read_again: Option<String>,
+    /// Every picture whose read words have been asked for, by blob address,
+    /// so each is asked once (`take_wants_picture_texts`).
+    picture_texts_asked: std::collections::HashSet<String>,
+    /// Find just opened: ask again for the pictures with no words yet.
+    picture_texts_reask: bool,
     /// The page menu's *Global settings* was chosen: the host opens its
     /// Settings tab. Drained by `View::take_wants_global_settings`.
     wants_global_settings: bool,
@@ -465,6 +470,8 @@ impl BuiltInDocument {
                     reading_offers: std::collections::HashMap::new(),
                     wants_reading_offers: None,
                     wants_read_again: None,
+                    picture_texts_asked: std::collections::HashSet::new(),
+                    picture_texts_reask: false,
                     wants_global_settings: false,
                     dictation: None,
                     native_ime_owner: next_native_ime_owner(),
@@ -551,6 +558,8 @@ impl BuiltInDocument {
             reading_offers: std::collections::HashMap::new(),
             wants_reading_offers: None,
             wants_read_again: None,
+            picture_texts_asked: std::collections::HashSet::new(),
+            picture_texts_reask: false,
             wants_global_settings: false,
             dictation: None,
             native_ime_owner: next_native_ime_owner(),
@@ -606,6 +615,8 @@ impl BuiltInDocument {
             reading_offers: std::collections::HashMap::new(),
             wants_reading_offers: None,
             wants_read_again: None,
+            picture_texts_asked: std::collections::HashSet::new(),
+            picture_texts_reask: false,
             wants_global_settings: false,
             dictation: None,
             native_ime_owner: next_native_ime_owner(),
@@ -834,7 +845,66 @@ impl BuiltInDocument {
                     true,
                 )
                 .contains(&koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain),
+                copy_text: self.editor.picture_text(&hash).is_some(),
             })
+    }
+
+    /// **The words read out of one picture** (OCR), or `None` when it has no
+    /// reading: what in-page find matches, what *Copy text* copies and what
+    /// accessibility describes the picture with. Pushed by the shell through
+    /// `View::set_picture_text`, answering
+    /// [`take_wants_picture_texts`](Self::take_wants_picture_texts) or a
+    /// picture's menu. Kept only for a picture this document shows. An open
+    /// find bar finds again without moving, and a menu open on the picture
+    /// gains or loses *Copy text*. Returns whether anything changed.
+    pub fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        let shown = self
+            .editor
+            .body
+            .rows
+            .iter()
+            .any(|row| row.image.as_ref().is_some_and(|image| image.hash.0 == hash));
+        if text.is_some() && !shown {
+            return false;
+        }
+        if !self.editor.set_picture_text(hash, text) {
+            return false;
+        }
+        self.search.picture_texts_changed(&mut self.editor);
+        if matches!(self.menu, Some(OpenMenu::Context(_)))
+            && self.focused_picture_hash().as_deref() == Some(hash)
+        {
+            let rows = self.menu_shape();
+            let width = menu::measure_width(&mut self.editor.view.engine, &rows);
+            if let Some(OpenMenu::Context(menu)) = self.menu.as_mut() {
+                menu.width = menu.width.max(width);
+            }
+        }
+        true
+    }
+
+    /// **The pictures whose read words to ask the Store for**, by blob
+    /// address: each picture in the document once, the first time it is seen,
+    /// so a document opened or a picture pasted is described and findable
+    /// without anything per frame. After find opens, also every picture that
+    /// has no words yet, since a reading may have finished since. A walk over
+    /// the rows' image fields, and nothing when there is nothing new.
+    pub fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        let reask = std::mem::take(&mut self.picture_texts_reask);
+        let mut out: Vec<String> = Vec::new();
+        for row in &self.editor.body.rows {
+            let Some(image) = row.image.as_ref() else {
+                continue;
+            };
+            let hash = &image.hash.0;
+            let fresh = !self.picture_texts_asked.contains(hash);
+            if (fresh || (reask && self.editor.picture_text(hash).is_none())) && !out.contains(hash)
+            {
+                out.push(hash.clone());
+            }
+        }
+        self.picture_texts_asked.extend(out.iter().cloned());
+        out
     }
 
     /// **The Store's answer for one picture's reading** (OCR Plan 3.2): kept
@@ -1150,7 +1220,11 @@ impl BuiltInDocument {
             self.editor.view.overlay.is_open(),
             self.blockers(),
         ));
+        let before = ws.version();
         let handled = self.key_inner(ws, key, text, mods);
+        if ws.version() != before {
+            self.editor.body.settle_local(ws);
+        }
         koru_ui::keys::debug::write(format_args!(
             "[Koru][input] document key handled={handled} active={}",
             self.editor.view.active,
@@ -1627,7 +1701,13 @@ impl BuiltInDocument {
                 .then(|| self.editor.body.root.map(|root| (root, self.title.clone())))
                 .flatten(),
         );
+        let search_was_open = self.search.is_open();
         if self.search.key(ws, &mut self.editor, key, text, mods) {
+            // Find just opened: a picture with no words yet may have been
+            // read since it was asked about.
+            if !search_was_open && self.search.is_open() {
+                self.picture_texts_reask = true;
+            }
             self.menu = None;
             self.bubble = None;
             self.bubble_pinned = None;
@@ -2975,6 +3055,29 @@ impl BuiltInDocument {
                         self.wants_save_reading = self.focused_picture_hash();
                         None
                     }
+                    // *Copy text*: the words already held, as plain text on
+                    // the system clipboard only. They did not come out of
+                    // the document, so they must not paste back as though
+                    // they had (`put_system_text`).
+                    // A copy raises the toast every copy in Koru raises.
+                    Some(context_menu::Choice::CopyPictureText) => {
+                        if let Some(text) = self
+                            .focused_picture_hash()
+                            .and_then(|hash| self.editor.picture_text(&hash).map(str::to_owned))
+                        {
+                            self.editor.view.wants_toast =
+                                Some(if koru_editor::clipboard::put_system_text(&text) {
+                                    koru_ui::CopyAffordance::TOAST.to_string()
+                                } else {
+                                    koru_i18n::t(
+                                        koru_i18n::current(),
+                                        koru_i18n::Key::ReadingCopyFailed,
+                                    )
+                                    .to_owned()
+                                });
+                        }
+                        None
+                    }
                     // *Read again* (OCR Plan 3.2): the view names the bytes,
                     // the shell sends the request. Not offered again until
                     // the Store says so.
@@ -3417,9 +3520,13 @@ impl BuiltInDocument {
         if !self.owns_document(ws) {
             return false;
         }
+        let before = ws.version();
         let handled = self.mouse_down_inner(ws, x, y, ctrl);
         self.drain_remove_from_tasks_request(ws);
         self.drain_diagram_requests();
+        if ws.version() != before {
+            self.editor.body.settle_local(ws);
+        }
         self.refresh_title(ws);
         handled
     }

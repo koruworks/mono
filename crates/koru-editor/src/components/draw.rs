@@ -164,7 +164,7 @@ pub fn draw_overlay(
                     .map(|row| match row {
                         crate::components::list_picker::ListRow::Clear => ListFace::Clear,
                         crate::components::list_picker::ListRow::List(t) => ListFace::List {
-                            name: l.table[t].name.clone(),
+                            name: l.table[t].label(),
                             color: l.table[t].color.clone(),
                             checked: l.current == Some(l.table[t].id),
                         },
@@ -1541,7 +1541,8 @@ pub fn draw_emoji_picker_surface(
     }
 }
 
-/// The Ctrl+K prompt: a name field and a URL field, with the active one ringed.
+/// The Ctrl+Shift+L prompt: a name field and a URL field, with the active one
+/// ringed.
 pub fn draw_link_prompt(
     scene: &mut Scene,
     root: Affine,

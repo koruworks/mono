@@ -304,8 +304,9 @@ fn seed(stack: &Stack, provider: &str) -> Result<Seed, String> {
     let mut system =
         koru_core::system::SystemDoc::create().map_err(|_| "create synthetic list registry")?;
     let list = system
-        .create_list(LIST_NAME, None, 0)
+        .create_list_under(None, LIST_NAME, None, 0)
         .map_err(|_| "create synthetic list")?
+        .id()
         .as_uuid();
     client
         .store()

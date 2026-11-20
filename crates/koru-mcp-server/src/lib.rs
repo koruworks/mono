@@ -66,10 +66,12 @@ pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
 use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolRequest};
 use effects::{EffectKind, Ledger, Recovery};
+use revision::{revision, validate_base};
 
 mod image_upload;
 mod local_ids;
 mod published_schema;
+mod revision;
 mod shared_surface;
 pub use shared_surface::{
     documentation_resource_templates, documentation_resources, read_documentation_resource,
@@ -3415,6 +3417,11 @@ impl Backend for LocalBackend {
                         request_seq: 0,
                         tags: a.tags,
                         attributes: attribute_filters(&a.attributes)?,
+                        // An agent's search is what it was: no list results
+                        // and tasks as fragments of their documents. How an
+                        // agent names a list is later work.
+                        include_lists: false,
+                        task_results: false,
                     },
                     include_facets: false,
                     recent_queries: None,
@@ -6660,37 +6667,6 @@ fn run_json(run: &koru_core::TextRun) -> Value {
         "highlight":run.style.highlight,
         "pill_attribute_id":run.pill.map(|value| value.to_storage()),
     })
-}
-fn revision(doc: &WorkspaceDoc) -> String {
-    hex(&doc.version().encode())
-}
-fn validate_base(doc: &WorkspaceDoc, encoded: &str) -> Result<(), ToolError> {
-    let bytes = unhex(encoded)?;
-    let base = loro::VersionVector::decode(&bytes)
-        .map_err(|e| ToolError::invalid(format!("invalid base_revision: {e}")))?;
-    if !doc.version().includes_vv(&base) {
-        return Err(ToolError {
-            code: "revision_conflict".into(),
-            message: "base_revision is not in this document's history".into(),
-            details: None,
-        });
-    }
-    Ok(())
-}
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-fn unhex(s: &str) -> Result<Vec<u8>, ToolError> {
-    if !s.len().is_multiple_of(2) {
-        return Err(ToolError::invalid("revision is not hexadecimal"));
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&s[i..i + 2], 16)
-                .map_err(|_| ToolError::invalid("revision is not hexadecimal"))
-        })
-        .collect()
 }
 fn workspace(s: &str) -> Result<StoreWorkspaceId, ToolError> {
     StoreWorkspaceId::parse(s).ok_or_else(|| ToolError::invalid("workspace_id is not a UUID"))
@@ -12253,6 +12229,7 @@ mod tests {
             breadcrumb: "Спецификации / 会議録".into(),
             title: title.into(),
             attributes,
+            bucket: None,
         };
         TaskQueryResponse {
             rows: vec![
@@ -13496,6 +13473,8 @@ mod tests {
             workspace_last_used_at_ms: None,
             page: None,
             picture_name: None,
+            list: None,
+            task: None,
         }
     }
 
@@ -14238,14 +14217,7 @@ mod tests {
             .unwrap();
         assert_eq!(read["document_id"], made["document_id"]);
         assert_eq!(read["root_node_id"], made["root_node_id"]);
-        // Version-vector encodings may order equal peer counters differently.
-        let decoded_revision = |token: &Value| {
-            loro::VersionVector::decode(&unhex(token.as_str().unwrap()).unwrap()).unwrap()
-        };
-        assert_eq!(
-            decoded_revision(&read["revision"]),
-            decoded_revision(&placed["revision"])
-        );
+        assert_eq!(read["revision"], placed["revision"]);
         let nodes = read["nodes"].as_array().unwrap();
         assert!(
             nodes
@@ -14260,7 +14232,7 @@ mod tests {
         let before = WorkspaceDoc::from_snapshot(&created_snapshot).unwrap();
         let after =
             WorkspaceDoc::from_snapshot(&store.snapshots.lock().unwrap()[&document]).unwrap();
-        assert_eq!(before.doc().oplog_vv(), decoded_revision(&made["revision"]));
+        assert_eq!(revision(&before), made["revision"].as_str().unwrap());
         assert!(
             after.doc().oplog_vv().includes_vv(&before.doc().oplog_vv()),
             "the creation's history is a prefix of the document's, not a new lineage"

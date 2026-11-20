@@ -16,7 +16,7 @@ fn visible_split_task_panels_refresh_without_keyboard_focus() {
     view.size_visible_groups();
     view.panes.set_focus(right.clone());
     let now = Instant::now();
-    view.maintain_task_pages(now);
+    view.maintain_task_pages(now, false);
     for path in [&left, &right] {
         let panel = view
             .panes
@@ -34,7 +34,7 @@ fn visible_split_task_panels_refresh_without_keyboard_focus() {
     // non-task tab focused beside it. No client or Store is used here.
     view.tabs_mut().push(Tab::settings());
     view.tasks_changed();
-    view.maintain_task_pages(now);
+    view.maintain_task_pages(now, false);
     let deadline = view
         .panes
         .group(&left)
@@ -69,7 +69,7 @@ fn visible_split_task_panels_refresh_without_keyboard_focus() {
         panic!()
     };
     app.regions.tasks.w = 0.0;
-    view.maintain_task_pages(now);
+    view.maintain_task_pages(now, false);
     assert_eq!(view.task_pages_deadline(), None);
 }
 
@@ -362,8 +362,11 @@ fn check_scripted_creation(mcp: bool) {
     let profile = koru_ai_core::ProfileId::from_uuid(profile.as_uuid());
     let workspace = koru_ai_core::WorkspaceId::from_uuid(workspace.as_uuid());
     let mut system = koru_core::system::SystemDoc::create().unwrap();
-    let list = system.create_list("Travel", None, 1).unwrap();
-    view.list_table = system.lists();
+    let list = system
+        .create_list_under(None, "Travel", None, 1)
+        .unwrap()
+        .id();
+    view.list_table = system.list_tree().nodes().to_vec();
     assert!(view.open_ai_chat_tab());
     let before = view.tabs().len();
     let chat = ChatId::new();
@@ -507,6 +510,7 @@ fn fixture() -> (MainView, Workspace, DocumentId, NodeId) {
             breadcrumb: "Source".into(),
             title: "Fixture task".into(),
             attributes: vec![],
+            bucket: None,
         };
         app.tasks.seed_for_test(
             vec![crate::tasks_view::query::TaskEntry::of(&row, today, 0).unwrap()],

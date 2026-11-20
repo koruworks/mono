@@ -107,6 +107,26 @@ codes! {
         "The Workspace's transport mode forbids this. Client-side; never on the wire.";
     RelayPathRefused => "relay_path_refused", Unit, None,
         "A peer byte transfer on a non-direct path. Client-side; never on the wire.";
+    CloudPolicyUnavailable => "cloud_policy_unavailable", Unit, Some(422),
+        "Current authoritative owner policy is unavailable.";
+    CloudPlanRequired => "cloud_plan_required", Unit, Some(422),
+        "Current owner policy does not permit ordinary writes.";
+    CloudDocumentCountLimit => "cloud_document_count_limit", Unit, Some(422),
+        "The configured retained document count bound refuses this upload.";
+    CloudStoredDocumentBytesLimit => "cloud_stored_document_bytes_limit", Unit, Some(422),
+        "The configured retained document bytes bound refuses this upload.";
+    CloudPhysicalBytesLimit => "cloud_physical_bytes_limit", Unit, Some(422),
+        "The configured physical bytes bound refuses this upload.";
+    CloudStagingBytesLimit => "cloud_staging_bytes_limit", Unit, Some(422),
+        "The configured staging bytes bound refuses this upload.";
+    CloudRemovalCapacityLimit => "cloud_removal_capacity_limit", Unit, Some(422),
+        "The configured restricted removal reserve is exhausted.";
+    FileExceedsPlanAllowance => "file_exceeds_plan_allowance", Unit, Some(422),
+        "This fresh file is larger than the current whole finite allowance.";
+    UsageUnknown => "usage_unknown", Unit, Some(422),
+        "Complete supported owner usage and holds cannot be proved.";
+    AccountOverQuota => "account_over_quota", Unit, Some(422),
+        "Prospective owner usage plus other live holds exceeds the allowance.";
 }
 
 impl BlobCode {
@@ -131,6 +151,16 @@ impl BlobCode {
             Self::StorageUnavailable => "the object volume cannot serve this request",
             Self::ModeRefusesTransport => "the Workspace transport mode forbids this",
             Self::RelayPathRefused => "a peer byte transfer needs a direct path",
+            Self::CloudPolicyUnavailable
+            | Self::CloudPlanRequired
+            | Self::CloudDocumentCountLimit
+            | Self::CloudStoredDocumentBytesLimit
+            | Self::CloudPhysicalBytesLimit
+            | Self::CloudStagingBytesLimit
+            | Self::CloudRemovalCapacityLimit
+            | Self::FileExceedsPlanAllowance
+            | Self::UsageUnknown
+            | Self::AccountOverQuota => "Cloud admission refused",
         }
     }
 }

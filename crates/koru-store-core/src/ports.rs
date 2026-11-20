@@ -42,8 +42,8 @@ use crate::profile_account::ProfileAccountBinding;
 use crate::profile_units::ProfileUnitRef;
 use crate::root_catalog::{CatalogUnitKind, CatalogUnitRef};
 use crate::transport::{
-    TransportModeCommit, TransportModeGroup, TransportModeRequest, TransportModeState,
-    TransportSubject,
+    TransportMode, TransportModeCommit, TransportModeGroup, TransportModeRequest,
+    TransportModeState, TransportSubject,
 };
 
 // ------------------------------------------------------------------ catalog
@@ -224,6 +224,16 @@ pub enum RootProjection<'a> {
     /// A Profile deletion was restored: the suppression written by
     /// [`Self::ProfileHidden`] is cleared.
     ProfileVisible { profile: ProfileId },
+    /// **A mode nobody chose follows the Profile the Workspace was just
+    /// restored into** (`Store::restore_workspace_to`): the Workspace's
+    /// `local_transport_modes` row takes `mode` and a new revision, but only
+    /// while its `explicit_choice` is still unset when the transaction looks.
+    /// A choice a person made is never written here. Listed after the
+    /// projection that re-keys the row to its new owner.
+    InheritedMode {
+        workspace: WorkspaceId,
+        mode: TransportMode,
+    },
 }
 
 /// Everything one root operation commits, decided by the Store before the
@@ -238,15 +248,23 @@ pub struct RootPublication<'a> {
     pub state: Vec<(String, Option<String>)>,
 }
 
-/// Why a Workspace's content may not be purged yet (TECHNICAL.final §5.3,
-/// §9 "Retained personal units block purge"): a personal unit this purge is
-/// not authorized to retire. The hold is reported, never deleted around.
+/// Why a Workspace's content may not be purged yet. The hold is reported,
+/// never deleted around.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PurgeHold {
-    /// A `workspace_personal_crdts` row under another user scope. This
-    /// device's purge retires only its own scope's unit; a foreign one is
-    /// another user's data and waits for that user's retirement.
+    /// A `workspace_personal_crdts` row under another user scope
+    /// (TECHNICAL.final §5.3, §9 "Retained personal units block purge").
+    /// This device's purge retires only its own scope's unit; a foreign one
+    /// is another user's data and waits for that user's retirement.
     ForeignScope,
+    /// The account still holds the Workspace live under a Profile on this
+    /// device, and this device's deletion cannot reach it (trash-recovery
+    /// PLAN.final P3). Purging would write evidence that can never be
+    /// taken back for a Workspace the person may still want here, so
+    /// nothing is written at all: no purge fact, the unit, the row and the
+    /// content as they were. It ends when the Workspace is restored, when
+    /// the account stops listing it, or when that Profile leaves.
+    AccountLive,
 }
 
 /// One `workspace_personal_crdts` row: a personal v2 unit under

@@ -55,6 +55,16 @@ pub enum Error {
     /// the unit's head did not move. Only a connection's session ever
     /// produces or receives it.
     DocumentClaimed,
+    CloudPolicyUnavailable,
+    CloudPlanRequired,
+    CloudDocumentCountLimit,
+    CloudStoredDocumentBytesLimit,
+    CloudPhysicalBytesLimit,
+    CloudStagingBytesLimit,
+    CloudRemovalCapacityLimit,
+    FileExceedsPlanAllowance,
+    UsageUnknown,
+    AccountOverQuota,
     Authority(Refusal),
 }
 impl Error {
@@ -68,6 +78,16 @@ impl Error {
             Self::Unavailable => "sync_unavailable",
             Self::UnitExists => "sync_unit_exists",
             Self::DocumentClaimed => "sync_document_claimed",
+            Self::CloudPolicyUnavailable => "cloud_policy_unavailable",
+            Self::CloudPlanRequired => "cloud_plan_required",
+            Self::CloudDocumentCountLimit => "cloud_document_count_limit",
+            Self::CloudStoredDocumentBytesLimit => "cloud_stored_document_bytes_limit",
+            Self::CloudPhysicalBytesLimit => "cloud_physical_bytes_limit",
+            Self::CloudStagingBytesLimit => "cloud_staging_bytes_limit",
+            Self::CloudRemovalCapacityLimit => "cloud_removal_capacity_limit",
+            Self::FileExceedsPlanAllowance => "file_exceeds_plan_allowance",
+            Self::UsageUnknown => "usage_unknown",
+            Self::AccountOverQuota => "account_over_quota",
             Self::Authority(e) => e.code(),
         }
     }
@@ -75,6 +95,24 @@ impl Error {
         crate::protocol::PeerFrame::Error {
             code: self.code().into(),
         }
+    }
+
+    /// Upload-only holds carried by the existing Error frame. These are never
+    /// handshake refusals: retained download authority is independent.
+    pub fn from_admission_code(code: &str) -> Option<Self> {
+        Some(match code {
+            "cloud_policy_unavailable" => Self::CloudPolicyUnavailable,
+            "cloud_plan_required" => Self::CloudPlanRequired,
+            "cloud_document_count_limit" => Self::CloudDocumentCountLimit,
+            "cloud_stored_document_bytes_limit" => Self::CloudStoredDocumentBytesLimit,
+            "cloud_physical_bytes_limit" => Self::CloudPhysicalBytesLimit,
+            "cloud_staging_bytes_limit" => Self::CloudStagingBytesLimit,
+            "cloud_removal_capacity_limit" => Self::CloudRemovalCapacityLimit,
+            "file_exceeds_plan_allowance" => Self::FileExceedsPlanAllowance,
+            "usage_unknown" => Self::UsageUnknown,
+            "account_over_quota" => Self::AccountOverQuota,
+            _ => return None,
+        })
     }
 }
 

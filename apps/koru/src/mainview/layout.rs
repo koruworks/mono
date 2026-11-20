@@ -313,6 +313,17 @@ impl MainView {
     /// while it is arriving or leaving.
     pub(super) fn sidebar_rect(&self) -> Rect {
         let r = self.regions.sidebar;
+        // **At rest the column is drawn where it is hit-tested**: in the
+        // settled region. The panel's own width is the one that was *asked
+        // for*, and the two differ whenever the window is too narrow to give
+        // it (`regions::solve` takes the pane's width back to protect the
+        // content). Drawn at the asked-for width there, every control in the
+        // pane sat to one side of where it answered the pointer — the heading
+        // button lit with the pointer some way off it (owner, 2026-11-16).
+        // Only a drag or a slide draws anywhere else, and both end here.
+        if self.sidebar_drag.is_none() && !self.sidebar.animating() && r.w > 0.0 {
+            return r;
+        }
         Rect::new(
             -self.sidebar.slide_offset(),
             r.y,

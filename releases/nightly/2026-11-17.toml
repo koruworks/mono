@@ -1,0 +1,68 @@
+title = "Search the words inside your files, nest task lists, and switch tabs with Ctrl+Tab"
+
+summary = [
+  "Search finds the words inside PDFs and text files, and on Windows inside pictures and scans once you turn on text recognition.",
+  "Task lists can hold other lists, and lists and tasks show up in search.",
+  "Type in the sidebar to filter it, and press Ctrl+Tab for a list of your open tabs.",
+]
+
+body = """
+## The words inside your files
+
+Search now finds a file by the words in it, not only by its name. A PDF with
+real text and a plain text file are read as soon as they are in a workspace,
+and a result inside a long PDF says which page it is on.
+
+On Windows, Koru can also read the words in pictures and scanned pages. Search
+and Settings (Editor, "Text in pictures and PDFs") offer to turn this on: it
+downloads a small model once, and the reading happens on your computer, not in
+the cloud. Settings shows how much has been read, lists anything that could
+not be, and lets you turn reading off without losing the download. On Linux
+this build reads text layers and text files only.
+
+A result found in a picture opens the page with the picture highlighted, or
+the image itself when the picture is a file. Corrections you make to the text
+read from a file are kept, synced, and survive a rescan.
+
+## Task lists inside task lists
+
+A list can now hold other lists. Drag a list onto another to put it inside,
+or between two to reorder; select several with Ctrl+click or Shift+click and
+drag them together. A list that holds lists shows a stacked swatch, and its
+chevron appears when you point at it. Deleting a list that holds others says
+how many go with it, and keeps their tasks. The Lists + now adds the new list at the top,
+where you can see it.
+
+Lists, tasks, and Today, Next, Upcoming and Later are search results, and
+open in Tasks.
+
+## Faster, quieter search
+
+The first letters of a search are answered almost at once: one or two letters
+look at names only, and from three letters everything is searched. Search
+starts in the workspace you are in; Ctrl+Space switches to all your
+workspaces and back. The sort button is an icon, and the search footer no
+longer changes while you type.
+
+## Filter the sidebar, switch tabs
+
+Click in the sidebar and start typing to narrow Documents, Files, Tasks or
+Chats to the names that match, with matches inside closed folders shown under
+their parents. Escape clears it.
+
+Ctrl+Tab opens a list of every open tab, the one you last worked in first.
+Type to filter it, use the arrows, and press Enter to go. It replaces moving
+one tab to the right; "View open tabs" at the bottom of the + menu opens it
+too.
+
+## Also
+
+- The sidebar keeps one width in every workspace.
+- Task titles are drawn at the same weight as document text, and a Tasks
+  page's title is the size of a document's.
+- Page settings no longer shows a Focus mode switch that could not be turned
+  on.
+
+This is a preview build. If something here does not work as described,
+please report it.
+"""

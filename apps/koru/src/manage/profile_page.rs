@@ -1,27 +1,32 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! A Profile's page: its header, what needs the person, its Workspaces
-//! (`workspaces`), *Sign-in and sync* and the footer's removals — laid out
-//! as a Settings page: a title, a lead, then captioned cards.
+//! A Profile's page: its header, what needs the person, *Sign-in and sync*,
+//! its Workspaces (`workspaces`) and the footer's removals — laid out as a
+//! Settings page: a title, a lead, then captioned cards.
 //!
 //! ```text
-//! [tile] Personal                       [Switch to this profile]   the title
-//! Current profile · Local only                                     the lead
+//! [tile] Personal     [Sync off|P2P|Cloud] [Switch to this profile]   the title
+//! Current profile · Cloud      Applies to all workspaces  Koru Cloud settings
 //! Can't reach Koru — see Koru Cloud        (account-wide, a link)
 //! a notice from the last thing done
 //! ┌ attention ────────────────────────────────┐   P19/P20: a deletion that
 //! │ Koru couldn't delete this Profile          │   failed, a cleanup that
 //! │ [Try again] [Remove from this device] [...]│   failed, or one found on
 //! └────────────────────────────────────────────┘   another device
-//! Workspaces · 3                      Import…  [New workspace]  see `workspaces`
-//! ┌ the rows ──────────────────────────────────┐
-//! └────────────────────────────────────────────┘
-//! Show archived (2)   Show trash (1)
 //! Sign-in and sync
 //! ┌ repair, or the rows ───────────────────────┐   see `sign_in`
 //! └────────────────────────────────────────────┘
+//! Workspaces · 3                      Import…  [New workspace]  see `workspaces`
+//! ┌ the rows, each with its own sync choice ───┐   see `sync_modes`
+//! └────────────────────────────────────────────┘
+//! Show archived (2)   Show trash (1)
 //! Delete profile and its workspaces…  Remove from this device…  [Delete from Koru…]
 //! ```
+//!
+//! **The sync choice is the Profile's on the head and the Workspace's in its
+//! row** (maintainer, 2026-11-17). It was a block of *Sign-in and sync*, a
+//! strip per Workspace under the card; the card now holds the account alone
+//! and sits above the Workspaces.
 //!
 //! **The footer is two actions, not one with a sub-menu** (root-catalog
 //! QUESTIONS Q4): the shared, restorable deletion and the device-local
@@ -64,6 +69,9 @@ const SECTION_GAP: f32 = Card::GAP;
 const CARD_PAD: f32 = 16.0;
 /// Between buttons in a row, and between rows of them when they wrap.
 const BUTTON_GAP: f32 = 10.0;
+/// The least a Profile's name is given on its title line before the sync
+/// choice beside it moves under the status line instead.
+const MIN_TITLE_W: f32 = 120.0;
 
 /// Something on the page that can be pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -76,6 +84,9 @@ pub(crate) enum Control {
     Switch,
     /// *Can't reach Koru — see Koru Cloud*: the account-wide state's pointer.
     CloudPointer,
+    /// *Koru Cloud settings*, under the Profile's sync choice: the Koru Cloud
+    /// page.
+    CloudSettings,
     /// One of the page's attention card's answers.
     Attention(Attention),
     /// The `n`th action of the Profile's account repair.
@@ -135,6 +146,11 @@ pub(crate) enum Control {
     RestoreUnassignedProfile(workspaces::Wid),
     /// A deleted Profile's *Restore*: the same batch restore.
     RestoreDeletedProfile(ProfileId),
+    /// A workspace in this device's Trash that the account still holds under
+    /// this Profile (trash-recovery): its row, which does nothing itself.
+    TrashedInAccountRow(workspaces::Wid),
+    /// *Restore to {Profile}*: the question, then the restore.
+    RestoreTrashedTo(workspaces::Wid),
     // ---- the Linked devices page (`devices`) ----
     /// *Link a device…*: the Link dialog.
     LinkDevice,
@@ -298,6 +314,10 @@ pub(crate) struct Header {
     pub text_w: f32,
     pub status: Rect,
     pub status_text: String,
+    /// The Profile's sync choice at the title line's right end, and the line
+    /// under it saying what a choice does.
+    pub sync: Rect,
+    pub sync_hint: (Rect, String),
     pub notice: Option<(Rect, String)>,
 }
 
@@ -313,6 +333,8 @@ impl Default for Header {
             text_w: 0.0,
             status: none,
             status_text: String::new(),
+            sync: none,
+            sync_hint: (none, String::new()),
             notice: None,
         }
     }
@@ -404,23 +426,25 @@ impl ManageView {
                 (None, None, None, None)
             }
             None => {
+                // *Sign-in and sync* first, between the Profile's name and its
+                // Workspaces (maintainer, 2026-11-17): whose account this is
+                // comes before what is in it. It is Koru Cloud's; a build
+                // that hides it has no such section (koru-features).
+                let section = Some({
+                    let section = self.lay_sign_in(profile, column, y, &mut controls);
+                    y = section.rect.y + section.rect.h + SECTION_GAP;
+                    section
+                });
                 let (workspaces, bottom) =
                     self.lay_workspaces_section(profile, column, y, &mut controls, &mut disabled);
                 y = bottom + SECTION_GAP;
                 // Recovery (root-catalog §6.3) on every Profile's page, only
                 // while there is something to recover.
                 let (recovery, bottom) =
-                    self.lay_recovery_sections(column, y, &mut controls, &mut disabled);
+                    self.lay_recovery_sections(profile.id, column, y, &mut controls, &mut disabled);
                 if recovery.is_some() {
                     y = bottom + SECTION_GAP;
                 }
-                // *Sign-in and sync* is Koru Cloud's; a build that hides it
-                // has no such section (koru-features).
-                let section = Some({
-                    let section = self.lay_sign_in(profile, column, y, &mut controls);
-                    y = section.rect.y + section.rect.h + SECTION_GAP;
-                    section
-                });
                 let footer = self.lay_footer(column, y, &mut controls);
                 y = footer.y + footer.h;
                 (Some(workspaces), recovery, section, Some(footer))
@@ -483,7 +507,19 @@ impl ManageView {
             )
         });
         let indent = page::TITLE_TILE + page::TITLE_TILE_GAP;
-        let reserved = switch.map_or(0.0, |rect| rect.w + page::TITLE_TILE_GAP);
+        // The Profile's sync choice ends the title line, left of *Switch to
+        // this profile* when that is there — while the name still has room.
+        // In a column too narrow for both it goes under the status line.
+        let sync_mode = self.c.sync_settings().map(|settings| settings.mode.clone());
+        let sync_w = self.sync_strip_width(sync_mode.as_deref());
+        let beside_switch = switch.map_or(0.0, |rect| rect.w + BUTTON_GAP);
+        let on_title_line =
+            column.w - indent - beside_switch - sync_w - page::TITLE_TILE_GAP >= MIN_TITLE_W;
+        let reserved = if on_title_line {
+            beside_switch + sync_w + page::TITLE_TILE_GAP
+        } else {
+            switch.map_or(0.0, |rect| rect.w + page::TITLE_TILE_GAP)
+        };
         let status_text = self.header_status(profile);
         let head = self.lay_head(column, indent, reserved, &profile.name, &status_text);
         let name_w = self
@@ -498,6 +534,43 @@ impl ManageView {
             label: "Rename profile".into(),
             look: Look::Header,
         });
+        // Under the choice: what it does, and the way to Koru Cloud itself.
+        // They share the status line when the status still has room to read;
+        // the status wraps short of them rather than running underneath.
+        let meta = theme::role::meta();
+        let meta_line = meta.metrics.line_height;
+        let hint_text = self.sync_strip_hint();
+        let hint_w = self.engine.simple_layout(&hint_text, meta).width();
+        let link_w = if koru_features::cloud_sync() {
+            self.engine
+                .simple_layout(sync_modes::CLOUD_SETTINGS, meta)
+                .width()
+        } else {
+            0.0
+        };
+        let link_gap = if link_w > 0.0 { BUTTON_GAP } else { 0.0 };
+        let narrowed = column.w - hint_w - link_gap - link_w - page::TITLE_TILE_GAP;
+        let lead = head.lead;
+        let title_line_y = column.y + (line - ActionButton::H) * 0.5;
+        let (status, sync_y, trail_y) = if on_title_line && narrowed >= column.w * 0.4 {
+            let h = if status_text.is_empty() {
+                0.0
+            } else {
+                KoruTextParagraph::new(&status_text, theme::role::ui(), "", theme::p().text_dim)
+                    .measure(&mut self.engine, narrowed)
+            };
+            (Rect::new(lead.x, lead.y, narrowed, h), title_line_y, lead.y)
+        } else if on_title_line {
+            (lead, title_line_y, lead.y + lead.h + 4.0)
+        } else {
+            let y = lead.y + lead.h + 8.0;
+            (lead, y, y + ActionButton::H + 4.0)
+        };
+        let sync_right = match switch {
+            Some(rect) if on_title_line => rect.x - BUTTON_GAP,
+            _ => column.x + column.w,
+        };
+        let sync = self.lay_sync_strip(sync_right, sync_y, None, sync_mode.as_deref(), controls);
         if let Some(rect) = switch {
             controls.push(Placed {
                 control: Control::Switch,
@@ -506,8 +579,25 @@ impl ManageView {
                 look: Look::Button(ButtonRole::Secondary),
             });
         }
-        let status = head.lead;
-        let mut bottom = status.y + status.h;
+        let link_x = column.x + column.w - link_w;
+        let sync_hint = (
+            Rect::new(
+                (link_x - link_gap - hint_w).max(column.x),
+                trail_y,
+                hint_w,
+                meta_line,
+            ),
+            hint_text,
+        );
+        if link_w > 0.0 {
+            controls.push(Placed {
+                control: Control::CloudSettings,
+                rect: Rect::new(link_x, trail_y, link_w, meta_line),
+                label: sync_modes::CLOUD_SETTINGS.into(),
+                look: Look::Link,
+            });
+        }
+        let mut bottom = (status.y + status.h).max(trail_y + meta_line);
         if koru_features::cloud_sync() && self.account_wide_unreachable(profile) {
             let w = self
                 .engine
@@ -542,6 +632,8 @@ impl ManageView {
             text_w: head.title.w,
             status,
             status_text,
+            sync,
+            sync_hint,
             notice,
         }
     }
@@ -801,7 +893,9 @@ impl ManageView {
             Control::Switch => {
                 self.perform(Intent::SwitchTo(profile));
             }
-            Control::CloudPointer | Control::GetCloud => self.show(Page::Cloud),
+            Control::CloudPointer | Control::GetCloud | Control::CloudSettings => {
+                self.show(Page::Cloud)
+            }
             Control::Attention(answer) => {
                 self.perform(answer.intent());
             }
@@ -855,7 +949,9 @@ impl ManageView {
             Control::UnassignedRow(_)
             | Control::UnassignedMore(_)
             | Control::RestoreUnassignedProfile(_)
-            | Control::RestoreDeletedProfile(_) => return false,
+            | Control::RestoreDeletedProfile(_)
+            | Control::TrashedInAccountRow(_)
+            | Control::RestoreTrashedTo(_) => return false,
             // The New profile page's, answered above.
             Control::CloseCreation => return false,
             // The Linked devices page's, answered above.

@@ -17,12 +17,16 @@
 //! design refuses; recolouring a list is a separate, later gesture on a list
 //! that exists.
 //!
-//! ## The refusal is inline
+//! ## A name that is taken
 //!
 //! Empty cancels — nothing typed is nothing meant, and a complaint about a box
-//! you have not filled in is a scolding. A name another list already has stays
-//! open with a line of red beside it, `WorkspaceRename`'s rule: neither is a
-//! failure of anything, so neither raises a dialog.
+//! you have not filled in is a scolding. **A new list typed with a sibling's
+//! name selects that sibling**: nothing is made and nothing moves, because
+//! what the person asked for already exists and is now in front of them. A
+//! **rename** onto a sibling's name stays open with a line of red beside it,
+//! `WorkspaceRename`'s rule: neither is a failure of anything, so neither
+//! raises a dialog. A name is compared among the lists beside this one, not
+//! across the workspace — two lists under different parents may share one.
 //!
 //! ## Renaming is the same field, one row up
 //!
@@ -62,7 +66,9 @@ pub(super) enum Outcome {
 /// that position while the name was being typed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Target {
-    New,
+    /// A list that does not exist yet, under this parent (`None` is the top
+    /// level).
+    New(Option<ListId>),
     Existing(ListId),
 }
 
@@ -77,10 +83,10 @@ pub(super) struct NewList {
 }
 
 impl NewList {
-    pub(super) fn new(engine: &mut TextEngine, color: &str) -> Self {
+    pub(super) fn new(engine: &mut TextEngine, color: &str, parent: Option<ListId>) -> Self {
         Self {
             input: TextInput::new(engine, theme::role::row()),
-            target: Target::New,
+            target: Target::New(parent),
             color: color.to_owned(),
             hint: None,
         }
@@ -117,8 +123,11 @@ impl NewList {
         self.hint
     }
 
-    /// `taken` is every live list's name, so a duplicate can be refused without
-    /// this module knowing what a workspace is.
+    /// `taken` is the names a **rename** may not take — the list's siblings'
+    /// — so a duplicate can be refused without this module knowing what a
+    /// workspace is. Empty for a new list: typing a sibling's name there
+    /// selects that list instead of complaining (nested-lists §3, D8), which
+    /// is the container's to do with the name this commits.
     pub(super) fn key(
         &mut self,
         engine: &mut TextEngine,
@@ -134,7 +143,10 @@ impl NewList {
                     return Outcome::Cancel;
                 }
                 if Self::clashes(&name, taken) {
-                    self.hint = Some("There is already a list with that name");
+                    self.hint = Some(koru_i18n::t(
+                        crate::format::lang(),
+                        koru_i18n::Key::TaskListNameTaken,
+                    ));
                     return Outcome::Keep;
                 }
                 Outcome::Commit(name)
@@ -202,8 +214,18 @@ impl NewList {
         } else {
             InputStyle::inline()
         };
-        self.input
-            .draw(scene, root, engine, field, style, Some("List name"), true);
+        self.input.draw(
+            scene,
+            root,
+            engine,
+            field,
+            style,
+            Some(koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::TaskListNameHint,
+            )),
+            true,
+        );
         if let Some(hint) = self.hint() {
             let label = engine.simple_layout(hint, theme::role::hint());
             scene::draw_layout_first_line(
