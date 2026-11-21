@@ -264,8 +264,10 @@ impl MainView {
         // a control a client can act on, and is left out.
         for (i, action) in items.iter().enumerate() {
             for (c, control) in action.controls().iter().enumerate() {
-                let &koru_ui::Control::Button { enabled: live, .. } = control else {
-                    continue;
+                let live = match control {
+                    koru_ui::Control::Button { enabled, .. } => *enabled,
+                    koru_ui::Control::Segment { .. } => true,
+                    koru_ui::Control::Readout(_) => continue,
                 };
                 let Some((label, _)) = context_menu::control_tooltip(*action, c) else {
                     continue;
@@ -325,7 +327,10 @@ impl MainView {
             return false;
         };
         let live = action.controls().get(c).is_some_and(|control| {
-            matches!(control, koru_ui::Control::Button { enabled: true, .. })
+            matches!(
+                control,
+                koru_ui::Control::Button { enabled: true, .. } | koru_ui::Control::Segment { .. }
+            )
         });
         if !live {
             return false;

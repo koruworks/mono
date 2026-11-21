@@ -361,7 +361,12 @@ impl<'a> CardRow<'a> {
         let label_h = self.label_h(engine, text_w);
         let label_w = self.label_w(engine, text_w);
         let x = row.x + Self::PAD_X;
-        let y = self.text_top(engine, row, text_w);
+        let y = if self.hint.is_none() && self.link.is_none() {
+            let label = engine.simple_layout_wrapped(self.label, Self::label_style(), label_w);
+            scene::centre_y_in(&label, row)
+        } else {
+            self.text_top(engine, row, text_w)
+        };
         let drawn_h = KoruTextParagraph::new(
             self.label,
             Self::label_style(),

@@ -2,7 +2,7 @@
 
 use crate::page::{Block, Target, Widget};
 use crate::state::{AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus};
-use crate::tests::{GLOBALS, koru, page_lines, press, switch};
+use crate::tests::{GLOBALS, koru, page_lines, press, press_on, switch};
 use crate::{PageGroup, PageId, Request, SettingsSurface};
 use koru_draw::geometry::Rect;
 use koru_i18n::{Key, Lang, t};
@@ -160,7 +160,11 @@ fn a_switch_turns_an_agent_off_and_asks_the_host() {
 fn restore_defaults_turns_every_agent_on() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = on_page(rows());
-    assert!(press(&mut surface, "Restore defaults"));
+    assert!(press_on(
+        &mut surface,
+        PageId::AgentProviders,
+        "Restore defaults"
+    ));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert!(surface.agent_providers().iter().all(|row| row.on));
     surface.show_page(PageId::AgentProviders);
@@ -371,7 +375,11 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
     assert!(surface.take_requests().is_empty());
 
     // Restore defaults puts both back on Manual.
-    assert!(press(&mut surface, "Restore defaults"));
+    assert!(press_on(
+        &mut surface,
+        PageId::AgentProviders,
+        "Restore defaults"
+    ));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert_eq!(*surface.agent_defaults(), AgentDefaults::default());
 }
@@ -461,7 +469,11 @@ fn the_default_agent_chips_offer_auto_and_every_agent_that_is_on() {
             .any(|l| l == "Antigravity is turned off.")
     );
 
-    assert!(press(&mut surface, "Restore defaults"));
+    assert!(press_on(
+        &mut surface,
+        PageId::AgentProviders,
+        "Restore defaults"
+    ));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert_eq!(surface.agent_defaults().agent, None);
 }

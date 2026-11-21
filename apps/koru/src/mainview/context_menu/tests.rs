@@ -1209,7 +1209,15 @@ fn support_sits_where_help_was_with_the_headset_glyph() {
         assert_eq!(items[zoom + 3], MenuAction::HeaderFeedback);
     } else {
         // Hidden for now: Feedback is the only destination after zoom.
-        assert_eq!(&items[zoom + 2..], &[MenuAction::HeaderFeedback]);
+        assert_eq!(items[zoom + 2], MenuAction::HeaderFeedback);
+        let footer = &items[zoom + 3..];
+        if let Some(branch) = crate::build_stamp::caption_branch() {
+            assert_eq!(footer, &[MenuAction::Divider, MenuAction::HeaderBranch]);
+            assert_eq!(MenuAction::HeaderBranch.label(), branch);
+            assert!(!MenuAction::HeaderBranch.selectable());
+        } else {
+            assert!(footer.is_empty());
+        }
     }
     assert_eq!(
         MenuAction::HeaderSupport.icon(),
@@ -1250,6 +1258,9 @@ fn the_window_menu_has_no_destructive_rows() {
                     (true, true) => MenuAction::HeaderStopRecording,
                     (true, false) => MenuAction::HeaderStartRecording,
                     (false, _) if OVERFLOW_HIDDEN_ROWS_SHOWN => MenuAction::HeaderUpdates,
+                    (false, _) if crate::build_stamp::caption_branch().is_some() => {
+                        MenuAction::HeaderBranch
+                    }
                     (false, _) => MenuAction::HeaderFeedback,
                 };
                 assert_eq!(items.last().copied(), Some(want_last));
@@ -1467,7 +1478,7 @@ fn the_controls_dim_at_the_ends_of_the_range_and_at_actual_size() {
             .into_iter()
             .filter_map(|(control, _)| match control {
                 Control::Button { enabled, .. } => Some(enabled),
-                Control::Readout(_) => None,
+                Control::Readout(_) | Control::Segment { .. } => None,
             })
             .collect()
     };

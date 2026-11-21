@@ -1,7 +1,7 @@
 <p align="center">
   <a href="https://koru.do"><img src="assets/logo.png" alt="Koru logo" height="80"></a>
 </p>
-<p align="center"><strong>A free notes app that works with your AI subscription.</strong></p>
+<p align="center"><strong>A free and fast app for your notes, documents, files and tasks that works offline and with the AI you choose.</strong></p>
 <p align="center">
   <a href="https://koru.do"><img src="https://img.shields.io/badge/%E2%9C%A8-Website-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Website"></a>
   <a href="https://koru.do/#download"><img src="https://img.shields.io/badge/%E2%9C%A8-Download-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Download Koru"></a>
@@ -12,16 +12,14 @@
 </p>
 
 <p align="center">
-  <img src=".github/readme/koru-workspace.webp" alt="Koru on Windows: a travel-planning note with a photo and a checklist, next to the AI Chat tab" width="100%">
+  <img src=".github/readme/koru-workspace.png" alt="Koru customer-interview notes in light mode beside an AI conversation in dark mode" width="100%">
 </p>
 
-# Koru is a free notes app that works with your AI subscription
+# Koru
 
-Koru is an open-source, local-first workspace for thinking, writing and working
-with AI. Documents, files and terminal sessions, including your shells and AI
-coding agents, open as tabs in one native window. Your work stays on your own
-devices, works offline, and syncs directly between them, with no cloud server
-holding your data.
+A free and fast app for your notes, documents, files and tasks that works offline
+and with the AI you choose. Built in Rust, no account required. Bring your notes
+from Notion, Evernote and Google Docs.
 
 ## What can you do with Koru?
 
@@ -38,6 +36,10 @@ holding your data.
   never leaves it.
 - **Keep it yours**: free, no account required, and open source under the
   [MPL-2.0](LICENSE).
+
+<p align="center">
+  <img src=".github/readme/koru-ai.png" alt="Claude Code running in a terminal beside Koru's AI chat" width="100%">
+</p>
 
 ## What is Koru an alternative to?
 
@@ -134,6 +136,9 @@ koru.bat run
 ```
 
 `./koru.sh setup` and `./koru.sh run` are the same on macOS.
+
+`koru.bat font-test` opens the [font comparison editor](apps/koru-font-test/README.md)
+with Koru's fonts, live rendering controls and exact pixel zoom.
 
 `setup` installs sccache; sets its cache directory, cache size and the cargo job
 count for this machine (user environment variables on Windows, a marked block in

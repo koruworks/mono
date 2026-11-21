@@ -1183,6 +1183,94 @@ fn a_wide_window_keeps_the_page_beside_the_nav() {
 /// lists do: the lit size shows on every document, the choice does not move
 /// until a click, and Escape puts it back.
 #[test]
+fn text_settings_preview_without_saving_and_restore_on_dismissal() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    use koru_draw::theme::preview::{PreviewSlot, previewed};
+    let original = koru_draw::text_rendering::saved();
+    let original_weight = theme::chosen_heading_weight();
+    for (label, slot, bits) in [
+        (
+            "0.75",
+            PreviewSlot::TextOffset(koru_draw::theme::is_dark()),
+            0.75_f32.to_bits(),
+        ),
+        (
+            "1.25",
+            PreviewSlot::TextGamma(koru_draw::theme::is_dark()),
+            1.25_f32.to_bits(),
+        ),
+        (
+            "30%",
+            PreviewSlot::TextCutoff(koru_draw::theme::is_dark()),
+            0.3_f32.to_bits(),
+        ),
+        (
+            "MSAA8",
+            PreviewSlot::TextAntialiasing(koru_draw::theme::is_dark()),
+            1,
+        ),
+        ("500", PreviewSlot::HeadingWeight, 500),
+    ] {
+        koru_draw::text_rendering::set(koru_settings::TextRendering::default());
+        theme::set_heading_weight(600);
+        let saved = koru_draw::text_rendering::saved();
+        let mut surface = koru();
+        assert!(goto(&mut surface, label));
+        let Some(Found::Option { dropdown, item }) = find(&surface, label) else {
+            panic!("missing {label}")
+        };
+        let field = surface.laid.dropdowns[dropdown].field;
+        assert!(press_rect(&mut surface, field));
+        let at = |surface: &SettingsSurface| {
+            surface
+                .open
+                .as_ref()
+                .unwrap()
+                .menu
+                .item_rect(surface.viewport, item)
+                .centre()
+        };
+        let (x, y) = at(&surface);
+        surface.mouse_move(x, y);
+        assert_eq!(previewed(slot), Some(bits), "{label} shows immediately");
+        assert_eq!(
+            koru_draw::text_rendering::saved(),
+            saved,
+            "hover never changes persisted values"
+        );
+        assert_eq!(theme::chosen_heading_weight(), 600);
+        assert!(surface.key(
+            &WinitKey::Named(NamedKey::Escape),
+            None,
+            ModifiersState::empty()
+        ));
+        assert_eq!(previewed(slot), None);
+        assert_eq!(koru_draw::text_rendering::current(), saved);
+        assert_eq!(theme::heading_weight(), 600);
+
+        assert!(press_rect(&mut surface, field));
+        let (x, y) = at(&surface);
+        surface.mouse_move(x, y);
+        let shown = (
+            koru_draw::text_rendering::current(),
+            theme::heading_weight(),
+        );
+        assert!(surface.mouse_down(x, y));
+        assert_eq!(previewed(slot), None);
+        assert_eq!(
+            (
+                koru_draw::text_rendering::saved(),
+                theme::chosen_heading_weight()
+            ),
+            shown,
+            "click commits {label}"
+        );
+    }
+    koru_draw::text_rendering::set(original);
+    theme::set_heading_weight(original_weight);
+}
+
+#[test]
 fn the_size_row_previews_the_lit_size_and_only_a_choice_keeps_it() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     theme::set_doc_text_size(None);
@@ -1212,7 +1300,7 @@ fn the_size_row_previews_the_lit_size_and_only_a_choice_keeps_it() {
         None,
         ModifiersState::empty()
     ));
-    assert_eq!(theme::doc_text_size(), 16.0);
+    assert_eq!(theme::doc_text_size(), 14.0);
     assert!(press_rect(&mut surface, field));
     let (x, y) = at(&surface);
     surface.mouse_move(x, y);

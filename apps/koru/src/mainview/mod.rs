@@ -1063,15 +1063,6 @@ pub struct MainView {
     /// The workspace's trashed documents, pushed by the shell. Kept so a Trash
     /// tab opened later can be handed the list it needs.
     trashed_documents: Option<Vec<koru_core::explore::ExploreEntry>>,
-    /// How wide the branch pill wants to be, measured with the tab labels.
-    ///
-    /// The name is fixed at compile time, so this only moves when the font or
-    /// the density does — which is exactly when the tab widths are remeasured,
-    /// so it rides along in `remeasure_tab_widths` rather than earning a hook
-    /// of its own. `0.0` means "not measured yet", and the pill is not
-    /// reserved for that frame; every path that consults the strip calls
-    /// `ensure_tab_widths` first, so no frame is ever actually drawn with it.
-    branch_pill_w: f32,
     /// Whether the offline chip's popover is open.
     ///
     /// The chip says *that* something is wrong; the popover says what, and how
@@ -2080,7 +2071,6 @@ impl MainView {
             file_menu_opened: None,
             store_trouble: None,
             trashed_documents: None,
-            branch_pill_w: 0.0,
             offline_open: false,
             save_status: accessibility::persistence::Persistence::default(),
             reminder_news: accessibility::reminders::ReminderNews::default(),
@@ -5004,6 +4994,7 @@ impl MainView {
             // this window's state when the menu opened, and a window can always
             // be minimised, resized and closed.
             MenuSubject::Window => match action {
+                MenuAction::WindowTheme(_) | MenuAction::HeaderTheme => true,
                 // Dim while *another* window holds the process's one
                 // recording — the flag is the enforcement's visible half.
                 MenuAction::HeaderStartRecording => {
@@ -5724,6 +5715,10 @@ impl MainView {
             MenuSubject::Window => match action {
                 MenuAction::WindowAlwaysOnTop | MenuAction::WindowUnpinTop => {
                     self.ask_window(WindowRequest::TogglePin)
+                }
+                MenuAction::WindowTheme(preference) => {
+                    theme::set_theme_preference(preference);
+                    true
                 }
                 // Straight to the shell, which owns the transform, the step
                 // and the bounds — the same line the Ctrl+= / Ctrl+- / Ctrl+0
@@ -10510,6 +10505,12 @@ impl MainView {
             Request::OpenSampleDocument => {
                 self.open_sample_document();
             }
+            Request::ZoomIn => {
+                self.ask_pane(PaneRequest::Zoom(ZoomIntent::In));
+            }
+            Request::ZoomOut => {
+                self.ask_pane(PaneRequest::Zoom(ZoomIntent::Out));
+            }
             Request::SetAgentEnabled { key, on } => {
                 self.set_agent_enabled(&key, on);
             }
@@ -12102,6 +12103,10 @@ impl View for MainView {
         if self.file_preview.is_some() {
             return true;
         }
+        if self.font_picker.is_some() {
+            self.font_picker_mouse_up();
+            return true;
+        }
         if let Some(fab) = self.fab.as_mut() {
             let changed = fab.mouse_up();
             self.gather_support_intents();
@@ -12424,6 +12429,7 @@ impl View for MainView {
         // change the cursor (I-beam, sidebar ColResize).
         if self.font_picker.is_some() {
             self.tooltip.set_hover(None, Instant::now());
+            self.font_picker_mouse_move(y);
             return true;
         }
         if self.move_to.is_some() {

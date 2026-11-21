@@ -1099,7 +1099,6 @@ impl MainView {
                 crate::format::lang(),
             );
         }
-        self.draw_branch_pill(scene, root);
         self.draw_offline_chip(scene, root);
 
         if WINDOW_BUTTONS {
@@ -1361,24 +1360,6 @@ impl MainView {
     /// document draws its own caption and needs the same one. For a while only
     /// this window had it, so the window somebody had put a document into was
     /// the one window that never mentioned the store being away.
-    /// The branch pill, when this window came out of a working tree that is
-    /// not on `dev` or `main`.
-    ///
-    /// Several worktrees of this repo are open at once and their windows are
-    /// otherwise identical; Welcome has said which branch for a while, but
-    /// Welcome is a tab somebody closes and the caption is not.
-    ///
-    /// **No hit-testing and no popover.** The name is the whole of what it
-    /// says, so there is nothing to click — which is also what keeps it out of
-    /// `koru_shell_chrome::regions::hit` and its `Hit` enum.
-    fn draw_branch_pill(&mut self, scene: &mut Scene, root: Affine) {
-        let (Some(pill), Some(name)) = (self.branch_pill(), crate::build_stamp::caption_branch())
-        else {
-            return;
-        };
-        koru_shell_chrome::branch::draw(scene, root, &mut self.engine, pill, name);
-    }
-
     fn draw_offline_chip(&mut self, scene: &mut Scene, root: Affine) {
         let Some(chip) = self.offline_chip() else {
             return;

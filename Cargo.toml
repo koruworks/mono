@@ -391,6 +391,10 @@ debug = false
 # third-party/patches/sherpa-onnx.md. Fetched and patched, not committed:
 # third-party/README.md.
 [patch.crates-io]
+# Glyph-only coverage controls; neutral for scenes that do not opt in.
+vello = { path = "third-party/crates/vello" }
+vello_encoding = { path = "third-party/crates/vello_encoding" }
+vello_shaders = { path = "third-party/crates/vello_shaders" }
 # Same public API; native IME retirement and queued-event guards. See third-party/patches/winit.md.
 winit = { path = "third-party/crates/winit" }
 # ZIP 9 fixes the archive advisories in oar-ocr's language-model loader.

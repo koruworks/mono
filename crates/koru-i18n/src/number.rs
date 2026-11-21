@@ -69,6 +69,25 @@ pub fn bytes(lang: Lang, value: u64) -> String {
     fill(t(lang, UNITS[unit]), &[&number])
 }
 
+/// Format a nonnegative fractional setting with at most two decimal places.
+pub fn fraction(lang: Lang, value: f32) -> String {
+    let ascii = format!("{value:.2}");
+    ascii
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .chars()
+        .map(|ch| {
+            if ch == '.' {
+                decimal_separator(lang)
+            } else if ch.is_ascii_digit() {
+                localize_digit(lang, ch as u8)
+            } else {
+                ch
+            }
+        })
+        .collect()
+}
+
 /// The decimal mark, which is **not** the grouping separator: a language
 /// that groups with `.` marks decimals with `,` and the other way round,
 /// and one function using the other's character would spell *1.234* as a

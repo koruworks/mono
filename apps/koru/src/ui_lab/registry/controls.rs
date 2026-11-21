@@ -266,7 +266,7 @@ const MENU_CONTROL: OptionSet = values(
     "koru_ui::menu::Control",
     "crates/koru-ui/src/menu.rs",
     Declared::Enum,
-    &[literal("Button"), literal("Readout")],
+    &[literal("Button"), literal("Readout"), literal("Segment")],
 );
 
 const PROGRESS_MODE: OptionSet = values(

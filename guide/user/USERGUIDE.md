@@ -3732,16 +3732,46 @@ uses its default style, Tabler, and follows it if a later version changes it.
 Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
 own artwork.
 
-**Scroll speed** is on the same page, under *Interface*: how far one notch
-of the mouse wheel moves a page, **1×** to **4×**. It starts at **2×**, twice
+**Scroll speed** is on the same page, under *Interface*, after the font sections: how far one notch
+of the mouse wheel moves a page: **1×, 2×, 3×, 4×, 8× or 16×**. It starts at **2×**, twice
 the step Koru used before the setting existed. A trackpad that scrolls by
 pixels follows your fingers and is not changed by it.
+
+**Text rendering** is on **Settings → Appearance**, below the theme's base and
+accent colors. Light and dark keep separate choices; **System** uses the set for
+your operating system's current theme. The window's **…** menu also offers
+**System / Light / Dark**. **Caret** comes directly after Text rendering, with
+an independent color for each theme and a shared shape. Its selection tint
+follows that theme's caret color. **App fonts** follows Caret,
+with App font, Zoom, Chat font and Density. **Document fonts** follows it.
+Document links use your chosen accent color.
+**Heading weight** offers **500** or **600 (default)** for document titles and
+all heading levels. A font without the requested weight uses its nearest face.
+Changing this weight refreshes layout; body text and app labels keep their weights.
+
+Windows defaults are **font hinting on**, **MSAA16**, **0 physical pixels of
+offset on both axes**, **gamma 1.75**, and **5% faint-edge cutoff** in light mode.
+Dark mode defaults to **hinting on, MSAA16, offset 0, gamma 0.75 and cutoff 15%**.
+Hovering a dropdown option previews it immediately; clicking saves it and
+dismissing the dropdown restores your saved choice. **Restore defaults** resets
+only the current theme. Existing explicit rendering choices remain light-theme
+overrides. Larger gamma values reduce faint edge coverage; cutoff removes it
+below the chosen threshold, so excessive values can make small text jagged.
+The offset changes where glyphs meet the screen's pixels without changing font
+size, wrapping or line spacing. Antialiasing affects the whole window's sampling.
+The other controls affect glyphs, preserving images and UI backgrounds.
+Other desktop platforms offer the same controls but begin with hinting on,
+Area antialiasing, zero offset, gamma 1 and zero cutoff. Judge changes at normal
+zoom, including accented letters and both light and dark themes.
 
 **Fonts and density** are on the **Appearance** page: a density control
 (Compact / Normal) and five font dropdowns — the **app** font
 (tabs, sidebar, pills, panels), the **chat** font, and three document roles,
 **body**, **headings** and **code**. Each dropdown lists every family set in that
-family's own face, so you see what you are choosing. While a font list is
+family's own face, so you see what you are choosing. On Windows, **Segoe UI**
+appears directly in these lists when installed; it does not require opening
+**More fonts…**. It remains an installed font, so another device without it
+uses the existing missing-font fallback. While a font list is
 open, the family under the pointer, or reached with the arrow keys, is shown
 across the whole app at once: point down the list to compare. Only a click
 or Enter keeps it; Escape, a click elsewhere or scrolling away puts your
@@ -3759,8 +3789,9 @@ heading carries a **Global settings** link that opens this tab on its
 **Editor** page, where the defaults for new documents live. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
-**Base color** is two rows of swatches on the same **Appearance** page, one
-for the light theme and one for the dark. It tints the window's frame — the
+**Base color** and **Accent color** sit directly below Theme on the
+**Appearance** page. Only the active theme's swatches are shown; switching
+themes reveals its saved choices. Base color tints the window's frame — the
 title bar, the rails and the margins around your pages. The first swatch is
 the theme's own color; the others are a few tints chosen for that theme. Each
 theme keeps its own choice, so switching between light and dark shows the
@@ -3778,6 +3809,8 @@ no size of its own; the chat follows the app's text size.
 **Any font installed on your computer** can be chosen for the app, chat, body,
 headings or code: every font list ends with **More fonts…**, which opens a
 searchable list of your installed fonts, each name shown in its own face.
+The list scrolls by wheel or its draggable scrollbar. Search and the
+**Show all fonts** footer remain separate from the scrolling rows.
 Type to filter; the arrow keys preview the lit font across the app, and
 Enter or a click keeps it. For **code** the list starts with monospaced
 fonts — press Tab, or tick *Show all fonts*, to see every font. The first
@@ -3788,8 +3821,9 @@ and the list shows *Name (not installed)*; your choice is kept for the
 computers that have it. The terminal's own **More fonts…**, on a terminal
 tab's font menu, uses the same list.
 
-**Document text size** is the **Size** row at the end of *Document fonts*:
-14 to 22 px, 16 by default. Every document follows it — headings, code
+**Document text size** is the **Size** row in *Document fonts*:
+14 to 22 px, 14 by default to match app text. Explicitly chosen sizes stay as
+chosen. Every document follows it — headings, code
 blocks, checkboxes and the space between blocks grow with the text, so a
 page reads the same at any size — while the app's own text, the chat box and
 the terminal keep theirs. Point down the list to preview a size in this

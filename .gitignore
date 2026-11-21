@@ -98,3 +98,6 @@ skills-lock.json
 # A maintainer's private notes beside AGENTS.md (AGENTS.md, "Maintainers'
 # private notes"). Never part of this repository.
 AGENTS.private.md
+
+# Pinned source for the font comparison app.
+/third-party/parley-reference/

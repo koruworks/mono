@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use vello::kurbo::Affine;
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
-use vello::{AaConfig, Renderer, Scene};
+use vello::{Renderer, Scene};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -289,11 +289,14 @@ fn effective_dark(pref: theme::ThemePreference) -> bool {
 /// The theme has to be set before the first layout is built, since brushes are
 /// baked into parley layouts.
 fn apply_settings(settings: &Settings) {
+    koru_draw::text_rendering::set_preferences(settings.text_rendering);
+    theme::set_heading_weight(settings.heading_weight);
     theme::set_tabs_per_workspace(settings.tabs_per_workspace);
     koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
-    theme::set_caret_color(settings.caret_color);
+    theme::set_caret_color_for(false, settings.caret_color);
+    theme::set_caret_color_for(true, settings.caret_color_dark);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
     theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
@@ -358,10 +361,13 @@ fn apply_accent_colors(light: Option<u32>, dark: Option<u32>) {
 }
 
 fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
+    koru_draw::text_rendering::set_preferences(settings.text_rendering);
+    theme::set_heading_weight(settings.heading_weight);
     koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
-    theme::set_caret_color(settings.caret_color);
+    theme::set_caret_color_for(false, settings.caret_color);
+    theme::set_caret_color_for(true, settings.caret_color_dark);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
     theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
@@ -4578,6 +4584,7 @@ impl<H: Host> OnboardingApp<H> {
         let Some(renderer) = self.renderers.get_mut(&live.surface.dev_id) else {
             return;
         };
+        koru_window::renderer::prepare_window_text(&mut self.scene);
         if renderer
             .render_to_texture(
                 &device.device,
@@ -4588,7 +4595,7 @@ impl<H: Host> OnboardingApp<H> {
                     base_color: theme::p().bg,
                     width,
                     height,
-                    antialiasing_method: AaConfig::Area,
+                    antialiasing_method: koru_window::renderer::window_antialiasing(),
                 },
             )
             .is_err()
@@ -15280,8 +15287,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// Icon identities and slots do not change; repaint without document reflow.
-    fn repaint_icons(&self) {
+    /// Paint preferences do not change layout; redraw without document reflow.
+    fn repaint_everywhere(&self) {
         for pane in self.panes.values() {
             pane.needs_frame.set(true);
             pane.window.request_redraw();
@@ -15296,8 +15303,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         if now.typography_moved(before) {
             self.invalidate_everywhere();
             true
-        } else if now.icon_paint_moved(before) {
-            self.repaint_icons();
+        } else if now.paint_moved(before) {
+            self.repaint_everywhere();
             true
         } else {
             false
@@ -15404,7 +15411,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // The choice, not the pack drawn: following the default stays `None`.
         self.runtime.settings.icon_pack = koru_draw::icons::chosen_pack();
         self.runtime.settings.theme = theme::theme_preference();
-        self.runtime.settings.caret_color = theme::caret_color();
+        self.runtime.settings.caret_color = theme::caret_color_for(false);
+        self.runtime.settings.caret_color_dark = theme::caret_color_for(true);
         self.runtime.settings.caret_width = theme::caret_width();
         self.runtime.settings.caret_height = theme::caret_height();
         // The fonts chosen, not one Settings is previewing.
@@ -15417,6 +15425,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.code_font = theme::font_setting(theme::FontSlot::Code);
         // Following the app font stays following: the setting, not the face.
         self.runtime.settings.chat_font = theme::font_setting(theme::FontSlot::Chat);
+        self.runtime.settings.text_rendering = koru_draw::text_rendering::preferences();
+        self.runtime.settings.heading_weight = theme::chosen_heading_weight();
         // The size chosen, not one Settings is previewing; `None` follows.
         self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
         self.runtime.settings.base_color_light = theme::base_color(false);
@@ -16046,7 +16056,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         if !crate::preferences::adopt(&section, &mut self.runtime.settings) {
             if icons_moved {
                 koru_draw::icons::set_icon_pack_setting(icons);
-                self.repaint_icons();
+                self.repaint_everywhere();
             }
             return;
         }
@@ -17268,6 +17278,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let t = framestats::Phase::start();
         let rendered = {
             let _phase = timing::Watch::start("redraw.render");
+            koru_window::renderer::prepare_window_text(&mut self.scene);
             renderer.render_to_texture(
                 &device.device,
                 &device.queue,
@@ -17277,7 +17288,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     base_color: theme::p().bg,
                     width,
                     height,
-                    antialiasing_method: AaConfig::Area,
+                    antialiasing_method: koru_window::renderer::window_antialiasing(),
                 },
             )
         };
@@ -19071,8 +19082,8 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 let typography_moved = shown.typography_moved(&was_shown);
                 let voice_moved = crate::voice_prefs::snapshot() != was_voice;
                 let choice_moved = shown.choice_moved(&was_shown);
-                if !typography_moved && shown.icon_paint_moved(&was_shown) {
-                    self.repaint_icons();
+                if !typography_moved && shown.paint_moved(&was_shown) {
+                    self.repaint_everywhere();
                 }
                 if typography_moved || voice_moved || choice_moved {
                     // A font, size or density change is baked into every layout,
@@ -19489,8 +19500,8 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // committed — a second later is a second in which the
                         // app can be closed, and a preference that did not
                         // survive that is a preference nobody trusts.
-                        if shown.icon_paint_moved(&was_shown) {
-                            self.repaint_icons();
+                        if shown.paint_moved(&was_shown) {
+                            self.repaint_everywhere();
                         }
                         if theme_pref_moved
                             || typography_moved
@@ -21507,6 +21518,41 @@ mod tests {
     }
 
     #[test]
+    fn appearance_changes_distinguish_layout_from_paint_and_save_both() {
+        let before = AppearanceShown::now();
+        let mut after = before.clone();
+        after.raster.gamma = if before.raster.gamma == 1.25 {
+            1.5
+        } else {
+            1.25
+        };
+        assert!(!after.typography_moved(&before));
+        assert!(after.paint_moved(&before));
+        assert!(!after.choice_moved(&before), "hovering must not save");
+        after.saved_text.0.light = after.raster;
+        assert!(after.choice_moved(&before));
+        let mut after = before.clone();
+        after.heading_weight = if before.heading_weight == 600 {
+            500
+        } else {
+            600
+        };
+        assert!(after.typography_moved(&before));
+        assert!(!after.choice_moved(&before), "hovering must not save");
+        after.saved_text.1 = after.heading_weight;
+        assert!(after.choice_moved(&before));
+        let mut after = before.clone();
+        after.base[0] = if before.base[0].is_none() {
+            Some(0x123456)
+        } else {
+            None
+        };
+        assert!(!after.typography_moved(&before));
+        assert!(after.paint_moved(&before));
+        assert!(after.choice_moved(&before));
+    }
+
+    #[test]
     fn reminder_startup_facts_are_projected_from_the_global_authority() {
         let section = koru_settings::GlobalSettings {
             start_on_login: true,
@@ -22658,6 +22704,9 @@ fn reveal_due(
 /// separate before-and-after copies on every event path.
 #[derive(Clone, PartialEq)]
 struct AppearanceShown {
+    saved_text: (koru_settings::TextRenderingPreferences, u16),
+    raster: koru_settings::TextRendering,
+    heading_weight: u16,
     /// App, body, headings, code and the chat's — the chat's as drawn, so
     /// an App font change moves it too while it follows.
     faces: [theme::FontChoice; 5],
@@ -22681,6 +22730,12 @@ impl AppearanceShown {
     fn now() -> Self {
         use theme::FontSlot;
         Self {
+            raster: koru_draw::text_rendering::current(),
+            saved_text: (
+                koru_draw::text_rendering::preferences(),
+                theme::chosen_heading_weight(),
+            ),
+            heading_weight: theme::heading_weight(),
             faces: [
                 theme::ui_font(),
                 theme::body_font(),
@@ -22710,19 +22765,25 @@ impl AppearanceShown {
     /// Text is set differently now: every window lays out again.
     fn typography_moved(&self, before: &Self) -> bool {
         self.faces != before.faces
+            || self.heading_weight != before.heading_weight
             || self.doc_text_size != before.doc_text_size
             || self.density != before.density
             || self.accent != before.accent
     }
 
-    /// Only the icons' artwork changed: a repaint, never a layout.
-    fn icon_paint_moved(&self, before: &Self) -> bool {
-        self.icon_paint != before.icon_paint || self.base != before.base
+    /// Artwork, backgrounds and text rasterization need paint, never layout.
+    fn paint_moved(&self, before: &Self) -> bool {
+        self.icon_paint != before.icon_paint
+            || self.base != before.base
+            || self.raster != before.raster
     }
 
     /// A saved choice changed, whether or not anything drawn did. The base
     /// color is both: a swatch has no preview, so what is drawn is the choice.
     fn choice_moved(&self, before: &Self) -> bool {
-        self.choices != before.choices || self.base != before.base || self.accent != before.accent
+        self.choices != before.choices
+            || self.saved_text != before.saved_text
+            || self.base != before.base
+            || self.accent != before.accent
     }
 }

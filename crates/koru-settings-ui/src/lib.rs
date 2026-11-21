@@ -229,24 +229,43 @@ impl OpenDropdown {
 }
 
 /// The slot and value a list row previews, when it previews anything.
-fn previewed_by(action: &Action) -> Option<(PreviewSlot, u16)> {
+fn previewed_by(action: &Action) -> Option<(PreviewSlot, u32)> {
     match action {
         Action::Font(role, family) => Some((
             PreviewSlot::Font(role.slot()),
-            theme::font_preview_value(*family),
+            u32::from(theme::font_preview_value(*family)),
         )),
         // *Follow app* on the chat's list shows the face it would follow.
         Action::FontSetting(role, koru_settings::FontSetting::FollowDefault) => Some((
             PreviewSlot::Font(role.slot()),
-            theme::font_preview_value(theme::resolve_font(
+            u32::from(theme::font_preview_value(theme::resolve_font(
                 role.slot(),
                 &koru_settings::FontSetting::FollowDefault,
-            )),
+            ))),
         )),
-        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, u16::from(*px))),
+        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, u32::from(*px))),
+        Action::HeadingWeight(weight) => Some((PreviewSlot::HeadingWeight, u32::from(*weight))),
+        Action::TextAntialiasing(aa) => Some((
+            PreviewSlot::TextAntialiasing(koru_draw::theme::is_dark()),
+            koru_settings::TextAntialiasing::ALL
+                .iter()
+                .position(|choice| choice == aa)? as u32,
+        )),
+        Action::TextOffset(value) => Some((
+            PreviewSlot::TextOffset(koru_draw::theme::is_dark()),
+            value.to_bits(),
+        )),
+        Action::TextGamma(value) => Some((
+            PreviewSlot::TextGamma(koru_draw::theme::is_dark()),
+            value.to_bits(),
+        )),
+        Action::TextCutoff(value) => Some((
+            PreviewSlot::TextCutoff(koru_draw::theme::is_dark()),
+            value.to_bits(),
+        )),
         Action::IconPack(choice) => Some((
             PreviewSlot::IconPack,
-            icons::IconPack::parse(choice.token()) as u16,
+            icons::IconPack::parse(choice.token()) as u32,
         )),
         _ => None,
     }
@@ -1098,16 +1117,9 @@ impl SettingsSurface {
         self.sync_preview() || moved
     }
 
-    /// **A font list previews the lit face on the whole app.** While a list
-    /// of fonts is open, the face its lit row names stands in for the
-    /// role's choice; when the list closes, by a choice or not, the
-    /// stand-in goes and the choice (old or new) shows. Answers whether the
-    /// app's faces changed, so the host can lay every window out again.
-    ///
-    /// The icon-style list previews here too, through the menu's own
-    /// [`IconPreview`](icons::IconPreview), which restores the saved style
-    /// when the menu goes. The host repaints for that one rather than laying
-    /// out, so it is not part of the answer.
+    /// Preview the highlighted choice until the owning menu closes. The host
+    /// compares effective appearance to distinguish typography (layout) from
+    /// icon and raster changes (paint); persistence reads committed values.
     fn sync_preview(&mut self) -> bool {
         let shown = Self::previews_shown();
         if let Some(open) = self.open.as_mut() {
@@ -1117,7 +1129,7 @@ impl SettingsSurface {
     }
 
     /// Every slot a list can preview, as it reads now.
-    fn previews_shown() -> [Option<u16>; 7] {
+    fn previews_shown() -> [Option<u32>; 12] {
         use theme::FontSlot;
         [
             PreviewSlot::Font(FontSlot::Ui),
@@ -1127,6 +1139,11 @@ impl SettingsSurface {
             PreviewSlot::Font(FontSlot::Chat),
             PreviewSlot::DocTextSize,
             PreviewSlot::IconPack,
+            PreviewSlot::HeadingWeight,
+            PreviewSlot::TextAntialiasing(koru_draw::theme::is_dark()),
+            PreviewSlot::TextOffset(koru_draw::theme::is_dark()),
+            PreviewSlot::TextGamma(koru_draw::theme::is_dark()),
+            PreviewSlot::TextCutoff(koru_draw::theme::is_dark()),
         ]
         .map(preview::previewed)
     }
@@ -2265,6 +2282,34 @@ impl SettingsSurface {
             Action::AccentColor(dark, rgb) => theme::set_accent_color(dark, rgb),
             Action::FontSetting(role, setting) => theme::set_font_setting(role.slot(), setting),
             Action::MoreFonts(role) => self.requests.push(Request::MoreFonts(role)),
+            Action::TextRendering(settings) => koru_draw::text_rendering::set(settings),
+            Action::TextAntialiasing(aa) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    antialiasing: aa,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::TextOffset(value) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    offset: value,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::TextGamma(value) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    gamma: value,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::TextCutoff(value) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    cutoff: value,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::HeadingWeight(weight) => theme::set_heading_weight(weight),
+            Action::ZoomIn => self.requests.push(Request::ZoomIn),
+            Action::ZoomOut => self.requests.push(Request::ZoomOut),
             Action::VoiceLanguage(language) => {
                 self.voice_language = language.clone();
                 self.requests.push(Request::SetVoiceLanguage(language));
@@ -2543,6 +2588,14 @@ fn clone_action(action: &Action) -> Action {
         Action::AccentColor(dark, rgb) => Action::AccentColor(*dark, *rgb),
         Action::FontSetting(role, setting) => Action::FontSetting(*role, setting.clone()),
         Action::MoreFonts(role) => Action::MoreFonts(*role),
+        Action::TextRendering(settings) => Action::TextRendering(*settings),
+        Action::TextAntialiasing(value) => Action::TextAntialiasing(*value),
+        Action::TextOffset(value) => Action::TextOffset(*value),
+        Action::TextGamma(value) => Action::TextGamma(*value),
+        Action::TextCutoff(value) => Action::TextCutoff(*value),
+        Action::HeadingWeight(weight) => Action::HeadingWeight(*weight),
+        Action::ZoomIn => Action::ZoomIn,
+        Action::ZoomOut => Action::ZoomOut,
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),
         Action::VoiceInput(v) => Action::VoiceInput(v.clone()),
         Action::VoiceTier(v) => Action::VoiceTier(*v),

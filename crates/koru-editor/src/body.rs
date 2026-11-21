@@ -3111,7 +3111,6 @@ mod tests {
     #[test]
     fn a_click_in_the_title_gap_lands_on_the_first_body_row() {
         use koru_draw::text::TextEngine;
-        use koru_draw::theme;
 
         let mut engine = TextEngine::new();
         let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
@@ -3131,10 +3130,10 @@ mod tests {
         let title_bot = o.rows[0].y + o.rows[0].height;
         let body_top = o.rows[1].y;
         assert!(
-            body_top - title_bot >= theme::TITLE_GAP_BELOW,
+            body_top - title_bot >= o.rows[0].metrics.title_gap,
             "title gap is present: title_bot={title_bot} body_top={body_top}"
         );
-        let in_gap = title_bot + theme::TITLE_GAP_BELOW * 0.5;
+        let in_gap = title_bot + o.rows[0].metrics.title_gap * 0.5;
         assert_eq!(
             o.row_at_y(in_gap),
             Some(1),

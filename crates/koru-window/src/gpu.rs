@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 use vello::kurbo::Affine;
 use vello::util::{RenderContext, RenderSurface};
-use vello::{AaConfig, Renderer, Scene};
+use vello::{Renderer, Scene};
 use winit::dpi::PhysicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
@@ -363,6 +363,7 @@ impl Gpu {
         let Some(renderer) = self.renderers.get_mut(&live.surface.dev_id) else {
             return;
         };
+        crate::renderer::prepare_window_text(&mut frame_scenes.scene);
         if let Err(e) = renderer.render_to_texture(
             &device.device,
             &device.queue,
@@ -372,7 +373,7 @@ impl Gpu {
                 base_color: window_base_color(live.transparent),
                 width,
                 height,
-                antialiasing_method: AaConfig::Area,
+                antialiasing_method: crate::renderer::window_antialiasing(),
             },
         ) {
             eprintln!("vello render failed: {e:?}");

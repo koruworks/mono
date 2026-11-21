@@ -392,14 +392,13 @@ pub fn draw_button_enabled(
     let _inspection = inspect_dialog(root, r, role, hot, focused, enabled);
     let fg = draw_button_surface(scene, root, r, role, hot, focused, enabled);
     let text = engine.simple_layout(label, LABEL);
-    let h = scene::first_line_height(&text);
     crate::typography::line(
         "Button label",
         scene,
         root,
         &text,
         r.x + (r.w - text.width()) * 0.5,
-        r.y + (r.h - h) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,
@@ -451,7 +450,7 @@ pub fn draw_google_button(
         root,
         &text,
         x + MARK + GAP,
-        r.y + (r.h - scene::first_line_height(&text)) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,
@@ -490,7 +489,7 @@ pub fn draw_apple_button(
         root,
         &text,
         x + MARK + GAP,
-        r.y + (r.h - scene::first_line_height(&text)) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,
@@ -532,7 +531,7 @@ pub fn draw_help_button(
         root,
         &text,
         x + MARK + GAP,
-        r.y + (r.h - scene::first_line_height(&text)) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,

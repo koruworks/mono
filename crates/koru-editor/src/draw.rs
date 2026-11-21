@@ -815,7 +815,7 @@ pub(crate) fn reminder_flow_anchor(
 ) -> Option<koru_draw::geometry::Rect> {
     const GAP: f32 = koru_draw::chip::CHIP_GAP;
     const H: f32 = 24.0;
-    if row.height < H {
+    if row.height <= 0.0 {
         return None;
     }
     let (line_top, line_h, offset, advance) =
@@ -837,7 +837,9 @@ pub(crate) fn reminder_flow_anchor(
             chip.rect.x + chip.rect.w + GAP
         })
         .min(rowlayout::text_right(row, layout_w));
-    let y = y + line_top + (line_h - H) * 0.5;
+    // Small document text can be shorter than a pill. Keep its top inside
+    // the row; reserve_reminder_space extends the bottom for paint and hits.
+    let y = y + line_top + ((line_h - H) * 0.5).max(0.0);
     Some(koru_draw::geometry::Rect::new(x, y, 1.0, H))
 }
 

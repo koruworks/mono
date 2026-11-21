@@ -242,7 +242,7 @@ batch's counts.
 | --- | --- |
 | koru-ui public modules | 59 |
 | koru-ui private modules | 1 |
-| koru-draw public modules | 19 |
+| koru-draw public modules | 20 |
 | koru-draw theme public submodules | 5 |
 | domain crates | 21 |
 | domain crate source files | 372 |

@@ -193,21 +193,12 @@ impl Social {
         }
     }
 
-    pub fn url(self) -> &'static str {
-        match self {
-            Social::X => "https://x.com/korudotdo",
-        }
-    }
-
     pub fn glyph(self) -> char {
         match self {
             Social::X => koru_draw::icons::X_LOGO,
         }
     }
 }
-
-/// Where the help popover's *Star us on GitHub* goes: Koru's repository.
-pub const GITHUB_URL: &str = "https://github.com/koruworks/mono";
 
 /// What a menu item does. Resolved by the container, not here.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -631,6 +622,10 @@ pub enum MenuAction {
     /// The zoom row: a label and the three controls [`zoom_controls`] builds.
     /// Never chosen as a whole — see [`MenuAction::selectable`].
     HeaderZoom,
+    HeaderTheme,
+    /// Read-only development branch, at the bottom of the window menu.
+    HeaderBranch,
+    WindowTheme(theme::ThemePreference),
     /// What that row's `−`, `+` and `↺` do. **Not rows**: they are only ever
     /// reached by pressing a control, which is why nothing puts them in an
     /// item list. They are `MenuAction`s all the same, so a press still ends
@@ -1515,6 +1510,9 @@ impl MenuAction {
             MenuAction::HeaderSettings => "Settings",
             MenuAction::HeaderUpdates => "Updates",
             MenuAction::HeaderZoom => "Zoom",
+            MenuAction::HeaderTheme => "",
+            MenuAction::HeaderBranch => crate::build_stamp::caption_branch().unwrap_or(""),
+            MenuAction::WindowTheme(preference) => theme_menu_label(preference),
             // Never drawn — the controls are glyphs — but the registry is
             // still where the words come from, so a row made of one of these
             // later would say what the View menu already says.
@@ -1786,7 +1784,11 @@ impl MenuAction {
     pub fn selectable(self) -> bool {
         !matches!(
             self,
-            MenuAction::Divider | MenuAction::SelectionHeader(_) | MenuAction::HeaderZoom
+            MenuAction::Divider
+                | MenuAction::SelectionHeader(_)
+                | MenuAction::HeaderZoom
+                | MenuAction::HeaderTheme
+                | MenuAction::HeaderBranch
         )
     }
 
@@ -1879,6 +1881,7 @@ impl koru_ui::MenuItem for MenuAction {
             // A touch shorter than a real row so the caption sits as a heading.
             MenuAction::SelectionHeader(_) => theme::ROW_H - 4.0,
             MenuAction::Divider => 8.0,
+            MenuAction::HeaderTheme => koru_ui::Segmented::H + 8.0,
             _ => theme::ROW_H,
         }
     }
@@ -2761,6 +2764,7 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
             MenuAction::WindowAlwaysOnTop
         },
         MenuAction::HeaderSettings,
+        MenuAction::HeaderTheme,
         MenuAction::Divider,
         MenuAction::HeaderZoom,
         MenuAction::Divider,
@@ -2769,6 +2773,10 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
         items.push(MenuAction::HeaderSupport);
     }
     items.push(MenuAction::HeaderFeedback);
+    if crate::build_stamp::caption_branch().is_some() {
+        items.push(MenuAction::Divider);
+        items.push(MenuAction::HeaderBranch);
+    }
     if OVERFLOW_HIDDEN_ROWS_SHOWN {
         items.extend([
             MenuAction::HeaderShortcuts,
@@ -2884,8 +2892,33 @@ pub fn control_tooltip(row: MenuAction, control: usize) -> Option<(String, Optio
 fn row_controls(row: MenuAction) -> Vec<(Control, Option<MenuAction>)> {
     match row {
         MenuAction::HeaderZoom => zoom_controls(theme::zoom()),
+        MenuAction::HeaderTheme => [
+            theme::ThemePreference::System,
+            theme::ThemePreference::Light,
+            theme::ThemePreference::Dark,
+        ]
+        .into_iter()
+        .map(|preference| {
+            (
+                Control::Segment {
+                    label: theme_menu_label(preference).to_owned(),
+                    selected: theme::theme_preference() == preference,
+                },
+                Some(MenuAction::WindowTheme(preference)),
+            )
+        })
+        .collect(),
         _ => Vec::new(),
     }
+}
+
+fn theme_menu_label(preference: theme::ThemePreference) -> &'static str {
+    let key = match preference {
+        theme::ThemePreference::System => koru_i18n::Key::SettingsSystem,
+        theme::ThemePreference::Light => koru_i18n::Key::SettingsLight,
+        theme::ThemePreference::Dark => koru_i18n::Key::SettingsDark,
+    };
+    koru_i18n::t(crate::format::lang(), key)
 }
 
 /// How many controls `items` carry between them — the ids a menu reserves

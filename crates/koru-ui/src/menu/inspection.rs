@@ -267,6 +267,7 @@ pub(super) fn control(
     let name = match control {
         Control::Button { .. } => "Menu control button",
         Control::Readout(_) => "Menu readout",
+        Control::Segment { .. } => "Menu segment",
     };
     Some(inspect::scope(
         name,

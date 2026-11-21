@@ -104,7 +104,7 @@ impl PageId {
     pub(crate) fn keywords(self) -> &'static str {
         match self {
             Self::Appearance => {
-                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix sample preview"
+                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix sample preview rendering hinting antialiasing msaa gamma cutoff offset pixels"
             }
             Self::Editor => {
                 "page width layout background canvas spelling spell check language dictionary voice dictation microphone speech model quality shortcut consent"
@@ -130,7 +130,16 @@ impl PageId {
                 Key::SettingsDensity,
                 Key::SettingsPinnedTabs,
                 Key::SettingsAppFont,
+                Key::SettingsAppFonts,
+                Key::SettingsZoom,
                 Key::SettingsDocumentFonts,
+                Key::SettingsTextRendering,
+                Key::SettingsHeadingWeight,
+                Key::SettingsTextHinting,
+                Key::SettingsTextAntialiasing,
+                Key::SettingsTextOffset,
+                Key::SettingsTextGamma,
+                Key::SettingsTextCutoff,
                 Key::SettingsCaret,
                 Key::TerminalCursorColor,
                 Key::SettingsShape,

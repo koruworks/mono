@@ -238,7 +238,6 @@ impl<'a> Dropdown<'a> {
             );
         }
         let value = self.value_layout(engine);
-        let line_h = scene::first_line_height(&value);
         let chevron_x = rect.x + rect.w - Self::PAD_X - Self::CHEVRON;
         // The value clips short of the chevron rather than running under it.
         let clip = scene::rect(
@@ -254,7 +253,7 @@ impl<'a> Dropdown<'a> {
             root,
             &value,
             rect.x + Self::PAD_X,
-            rect.y + (rect.h - line_h) * 0.5,
+            scene::centre_y_in(&value, rect),
             theme::role::row(),
             "theme::role::row()",
             p.text.multiply_alpha(alpha),

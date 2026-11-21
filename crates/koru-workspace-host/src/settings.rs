@@ -928,6 +928,7 @@ pub struct Settings {
     pub theme: ThemePreference,
     /// Editor caret colour (named swatch). Chrome only — not stored in documents.
     pub caret_color: CaretColor,
+    pub caret_color_dark: CaretColor,
     /// The chosen icon pack, or `None` to follow the build's default.
     pub icon_pack: Option<koru_draw::icons::IconPack>,
     /// Editor caret stroke width (Thin…8×). Chrome only — not stored in documents.
@@ -949,6 +950,8 @@ pub struct Settings {
     /// Following the default means following [`font`](Self::font), the
     /// app font, live.
     pub chat_font: FontSetting,
+    pub text_rendering: koru_settings::TextRenderingPreferences,
+    pub heading_weight: u16,
     /// The document body size the person chose, in px, or `None` while it
     /// follows the default. Documents only; the app's own text has density.
     pub doc_text_size: Option<u8>,
@@ -964,7 +967,7 @@ pub struct Settings {
     /// Display density — Compact, Normal or Comfortable. Shifts the UI and
     /// document-body type roles.
     pub density: Density,
-    /// How many steps one mouse-wheel notch moves a pane, 1 to 4.
+    /// How many steps one mouse-wheel notch moves a pane: 1, 2, 3, 4, 8 or 16.
     pub scroll_speed: u8,
     /// **How the dictation gesture works.** `false` is push-to-talk, which is
     /// the default; `true` is a toggle — press once to start, press again to
@@ -1220,6 +1223,7 @@ pub(crate) struct PreIdentitySettings {
 pub(crate) struct PreIdentityPreferences {
     pub(crate) theme: ThemePreference,
     pub(crate) caret_color: CaretColor,
+    pub(crate) caret_color_dark: CaretColor,
     pub(crate) icon_pack: Option<koru_draw::icons::IconPack>,
     pub(crate) caret_width: CaretWidth,
     pub(crate) caret_height: CaretHeight,
@@ -1228,6 +1232,8 @@ pub(crate) struct PreIdentityPreferences {
     pub(crate) headings_font: FontSetting,
     pub(crate) code_font: FontSetting,
     pub(crate) chat_font: FontSetting,
+    pub(crate) text_rendering: koru_settings::TextRenderingPreferences,
+    pub(crate) heading_weight: u16,
     pub(crate) doc_text_size: Option<u8>,
     pub(crate) base_color_light: Option<u32>,
     pub(crate) base_color_dark: Option<u32>,
@@ -1270,6 +1276,7 @@ impl PreIdentitySettings {
         PreIdentityPreferences {
             theme: self.values.theme,
             caret_color: self.values.caret_color,
+            caret_color_dark: self.values.caret_color_dark,
             icon_pack: self.values.icon_pack,
             caret_width: self.values.caret_width,
             caret_height: self.values.caret_height,
@@ -1278,6 +1285,8 @@ impl PreIdentitySettings {
             headings_font: self.values.headings_font.clone(),
             code_font: self.values.code_font.clone(),
             chat_font: self.values.chat_font.clone(),
+            text_rendering: self.values.text_rendering,
+            heading_weight: self.values.heading_weight,
             doc_text_size: self.values.doc_text_size,
             base_color_light: self.values.base_color_light,
             base_color_dark: self.values.base_color_dark,
@@ -1449,6 +1458,7 @@ impl Default for Settings {
             maximized: false,
             theme: ThemePreference::System,
             caret_color: CaretColor::Default,
+            caret_color_dark: CaretColor::Default,
             icon_pack: None,
             caret_width: CaretWidth::Medium,
             caret_height: CaretHeight::Medium,
@@ -1461,6 +1471,8 @@ impl Default for Settings {
             code_font: FontSetting::FollowDefault,
             // The app font, whatever it is.
             chat_font: FontSetting::FollowDefault,
+            text_rendering: koru_settings::TextRenderingPreferences::default(),
+            heading_weight: koru_settings::text_rendering::DEFAULT_HEADING_WEIGHT,
             doc_text_size: None,
             base_color_light: None,
             base_color_dark: None,

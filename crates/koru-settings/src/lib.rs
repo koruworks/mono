@@ -55,6 +55,8 @@ pub use sections::{
     OpenAiSection, RecordingPrefs, Section, SectionValues, StorageClass, TerminalPatch,
     TerminalSettings,
 };
+pub mod text_rendering;
+pub use text_rendering::{TextAntialiasing, TextRendering, TextRenderingPreferences};
 pub use values::{
     AgentPermission, AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice,
     CaretWidthChoice, CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput,

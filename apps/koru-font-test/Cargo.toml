@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MPL-2.0
+[package]
+name = "koru-font-test"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+vello.workspace = true
+parley.workspace = true
+peniko.workspace = true
+winit.workspace = true
+accesskit.workspace = true
+accesskit_winit.workspace = true
+pollster.workspace = true
+anyhow = "1"
+skrifa = "0.43.2"
+ui-events = "0.3"
+ui-events-winit = "0.3"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+clipboard-rs = "0.3.3"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = "1"

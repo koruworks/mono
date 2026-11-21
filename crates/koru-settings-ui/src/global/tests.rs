@@ -7,6 +7,147 @@
 //! would pass with a control missing.
 
 use crate::action::FontRole;
+
+#[test]
+fn appearance_zoom_follows_app_font_and_fast_wheel_choices_apply() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let speed = theme::wheel_speed();
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
+    surface.relayout();
+    let drawn = page_lines(&surface);
+    let app = drawn.iter().position(|line| line == "App font").unwrap();
+    let zoom = drawn.iter().position(|line| line == "Zoom").unwrap();
+    let chat = drawn.iter().position(|line| line == "Chat font").unwrap();
+    assert!(app < zoom && zoom < chat);
+    let position = |label| drawn.iter().position(|line| line == label).unwrap();
+    assert!(position("Text rendering") < position("Caret"));
+    assert!(position("Caret") < position("App fonts"));
+    assert!(position("App fonts") < app);
+    assert!(chat < position("Density"));
+    assert!(position("Density") < position("Document fonts"));
+    assert!(position("Heading weight") < position("Interface"));
+    for choice in [
+        koru_settings::ScrollSpeedChoice::X8,
+        koru_settings::ScrollSpeedChoice::X16,
+    ] {
+        surface.perform(crate::action::Action::ScrollSpeed(choice));
+        assert_eq!(theme::wheel_speed(), choice.factor());
+    }
+    surface.perform(crate::action::Action::ZoomIn);
+    assert!(surface.take_requests().contains(&Request::ZoomIn));
+    theme::set_wheel_speed(speed);
+}
+
+#[test]
+fn appearance_colors_follow_the_active_theme_without_changing_the_other() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was_dark = theme::is_dark();
+    let was = [theme::caret_color_for(false), theme::caret_color_for(true)];
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
+    for (dark, color, active, hidden) in [
+        (
+            false,
+            koru_settings::CaretColorChoice::Blue,
+            "light",
+            "dark",
+        ),
+        (
+            true,
+            koru_settings::CaretColorChoice::Violet,
+            "dark",
+            "light",
+        ),
+    ] {
+        theme::set_dark(dark);
+        surface.relayout();
+        let lines = page_lines(&surface);
+        let at = |label: &str| lines.iter().position(|line| line == label).unwrap();
+        assert!(at("Theme") < at(&format!("Base color ({active} theme)")));
+        assert!(at(&format!("Accent color ({active} theme)")) < at("Text rendering"));
+        assert!(!lines.contains(&format!("Base color ({hidden} theme)")));
+        assert!(!lines.contains(&format!("Accent color ({hidden} theme)")));
+        surface.perform(crate::action::Action::CaretColor(color));
+    }
+    theme::set_dark(false);
+    assert_eq!(theme::caret_color(), theme::CaretColor::Blue);
+    theme::set_dark(true);
+    assert_eq!(theme::caret_color(), theme::CaretColor::Violet);
+    theme::set_caret_color_for(false, was[0]);
+    theme::set_caret_color_for(true, was[1]);
+    theme::set_dark(was_dark);
+}
+
+#[test]
+fn rendering_choices_and_resets_belong_to_the_resolved_theme() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = koru_draw::text_rendering::preferences();
+    let dark = theme::is_dark();
+    koru_draw::text_rendering::set_preferences(Default::default());
+    let mut surface = koru();
+    for (dark, gamma) in [(false, 2.5), (true, 0.5)] {
+        theme::set_dark(dark);
+        surface.perform(crate::action::Action::TextGamma(gamma));
+        assert_eq!(koru_draw::text_rendering::current().gamma, gamma);
+    }
+    theme::set_dark(false);
+    assert_eq!(koru_draw::text_rendering::current().gamma, 2.5);
+    assert!(crate::tests::press_on(
+        &mut surface,
+        PageId::Appearance,
+        "Restore defaults"
+    ));
+    assert_eq!(
+        koru_draw::text_rendering::saved(),
+        koru_settings::TextRendering::DEFAULT
+    );
+    theme::set_dark(true);
+    assert_eq!(koru_draw::text_rendering::current().gamma, 0.5);
+    assert!(crate::tests::press_on(
+        &mut surface,
+        PageId::Appearance,
+        "Restore defaults"
+    ));
+    assert_eq!(
+        koru_draw::text_rendering::saved(),
+        koru_settings::TextRendering::DARK_DEFAULT
+    );
+    theme::set_dark(dark);
+    koru_draw::text_rendering::set_preferences(was);
+}
+
+#[test]
+fn text_controls_apply_immediately_and_raster_reset_keeps_heading_weight() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was_raster = koru_draw::text_rendering::current();
+    let was_weight = theme::heading_weight();
+    koru_draw::text_rendering::set(koru_settings::TextRendering::default());
+    theme::set_heading_weight(600);
+    let mut surface = koru();
+    let choose = |surface: &mut SettingsSurface, word| {
+        crate::tests::press_on(surface, PageId::Appearance, word)
+    };
+    assert!(choose(&mut surface, "500"));
+    assert_eq!(theme::headings_font().weight_for(Some(1)), 500.0);
+    assert_eq!(theme::headings_font().weight_for(Some(6)), 500.0);
+    assert!(choose(&mut surface, "1.25"));
+    assert_eq!(koru_draw::text_rendering::current().gamma, 1.25);
+    assert!(choose(&mut surface, "MSAA8"));
+    assert_eq!(
+        koru_draw::text_rendering::current().antialiasing,
+        koru_settings::TextAntialiasing::Msaa8
+    );
+    assert_eq!(koru_draw::text_rendering::current().gamma, 1.25);
+    assert!(choose(&mut surface, "Restore defaults"));
+    assert_eq!(
+        koru_draw::text_rendering::current(),
+        koru_settings::TextRendering::defaults(theme::is_dark())
+    );
+    assert_eq!(theme::heading_weight(), 500);
+    koru_draw::text_rendering::set(was_raster);
+    theme::set_heading_weight(was_weight);
+}
 use crate::page::Block;
 use crate::tests::{
     GLOBALS, flip, goto, is_active, koru, labels, lines, page_lines, press, press_rect, rect_of,
@@ -480,13 +621,10 @@ fn every_font_option_is_set_in_its_own_face() {
         .expect("the app font dropdown");
     // The family rows; *More fonts…* opens a picker rather than naming one.
     for (action, option) in &app_font.options {
-        if !matches!(action, crate::action::Action::Font(..)) {
+        let crate::action::Action::Font(_, family) = action else {
             continue;
-        }
-        let family = theme::FontChoice::ALL
-            .iter()
-            .find(|f| f.label() == option.label)
-            .expect("a family");
+        };
+        assert_eq!(option.label, family.label());
         assert_eq!(option.font_stack, Some(family.stack()));
     }
 }
@@ -900,7 +1038,7 @@ fn document_fonts_links_to_the_sample_document() {
             title,
             link: Some((text, _, _)),
             ..
-        } => Some((title.clone(), text.clone())),
+        } if title == "Document fonts" => Some((title.clone(), text.clone())),
         _ => None,
     });
     assert_eq!(

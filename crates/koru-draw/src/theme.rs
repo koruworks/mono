@@ -1005,9 +1005,19 @@ impl CaretColor {
 }
 
 static CARET_COLOR: AtomicU8 = AtomicU8::new(0);
+static CARET_COLOR_DARK: AtomicU8 = AtomicU8::new(0);
 
 pub fn caret_color() -> CaretColor {
-    match CARET_COLOR.load(Ordering::Relaxed) {
+    caret_color_for(is_dark())
+}
+
+pub fn caret_color_for(dark: bool) -> CaretColor {
+    let color = if dark {
+        &CARET_COLOR_DARK
+    } else {
+        &CARET_COLOR
+    };
+    match color.load(Ordering::Relaxed) {
         1 => CaretColor::Blue,
         2 => CaretColor::Amber,
         3 => CaretColor::Violet,
@@ -1016,13 +1026,22 @@ pub fn caret_color() -> CaretColor {
 }
 
 pub fn set_caret_color(c: CaretColor) {
+    set_caret_color_for(is_dark(), c);
+}
+
+pub fn set_caret_color_for(dark: bool, c: CaretColor) {
     let v = match c {
         CaretColor::Default => 0u8,
         CaretColor::Blue => 1,
         CaretColor::Amber => 2,
         CaretColor::Violet => 3,
     };
-    CARET_COLOR.store(v, Ordering::Relaxed);
+    let color = if dark {
+        &CARET_COLOR_DARK
+    } else {
+        &CARET_COLOR
+    };
+    color.store(v, Ordering::Relaxed);
 }
 
 /// Live text-selection fill — tracks [`caret_color`], not a fixed palette blue.
@@ -1295,7 +1314,9 @@ fn font_of_value(value: u16) -> Option<FontChoice> {
 }
 
 fn previewed(slot: FontSlot) -> Option<FontChoice> {
-    preview::previewed(preview::PreviewSlot::Font(slot)).and_then(font_of_value)
+    preview::previewed(preview::PreviewSlot::Font(slot))
+        .and_then(|value| u16::try_from(value).ok())
+        .and_then(font_of_value)
 }
 
 /// What `slot` is set to, without any preview: what Settings saves and
@@ -1716,14 +1737,17 @@ pub fn set_density(d: Density) {
 
 static WHEEL_SPEED: AtomicU8 = AtomicU8::new(2);
 
-/// The wheel speed, 1 to 4.
+/// The wheel speed: 1, 2, 3, 4, 8 or 16.
 pub fn wheel_speed() -> u8 {
-    WHEEL_SPEED.load(Ordering::Relaxed).clamp(1, 4)
+    WHEEL_SPEED.load(Ordering::Relaxed)
 }
 
-/// Out-of-range values are held to 1..=4.
+/// Normalize to an offered speed, using the settings authority's choices.
 pub fn set_wheel_speed(speed: u8) {
-    WHEEL_SPEED.store(speed.clamp(1, 4), Ordering::Relaxed);
+    WHEEL_SPEED.store(
+        koru_settings::ScrollSpeedChoice::from_factor(speed).factor(),
+        Ordering::Relaxed,
+    );
 }
 
 // ------------------------------------------------------ workspace tabs
@@ -2228,21 +2252,12 @@ impl FontChoice {
     /// The weight a block is drawn at: heavier for a heading, and the family's
     /// own default for body text.
     ///
-    /// **Mono families get 700 at every heading level** rather than the ramp,
-    /// and that is the same trap [`weight`](Self::weight) documents, seen from
-    /// the other side. `Mono` resolves to *system* faces that ship 400 and 700
-    /// and nothing between; the bundled variable monos could take the ramp, but
-    /// asking for a weight that is really there is the only way to stay honest
-    /// about `Mono`. The sans/serif/rounded families are variable and take the
-    /// ramp verbatim.
+    /// Headings use the person's weight preference at every level. A static
+    /// family without that weight uses the font system's nearest available face.
     pub fn weight_for(self, heading: Option<u8>) -> f32 {
         match (self, heading) {
             (_, None) => self.weight(),
-            (Self::Mono, Some(_)) => 700.0,
-            // `System` takes the ramp: SF Pro is variable, and DirectWrite's
-            // Segoe UI family carries real Semibold/Bold members for the
-            // 600–700 the ramp asks for.
-            (_, Some(level)) => HEADING_WEIGHTS[(level.clamp(1, 6) - 1) as usize],
+            (_, Some(_)) => heading_weight() as f32,
         }
     }
 }
@@ -2340,9 +2355,26 @@ const HEADINGS: [TypeStep; 6] = [
     },
 ];
 
-/// The `wght` axis position for each heading level, on a family that has the
-/// axis. Body text's weight is the family's own — see [`FontChoice::weight`].
-const HEADING_WEIGHTS: [f32; 6] = [700.0, 700.0, 650.0, 600.0, 600.0, 600.0];
+static HEADING_WEIGHT: AtomicU16 =
+    AtomicU16::new(koru_settings::text_rendering::DEFAULT_HEADING_WEIGHT);
+
+/// Requested weight of document headings and titles; body and UI are independent.
+pub fn heading_weight() -> u16 {
+    preview::previewed(preview::PreviewSlot::HeadingWeight)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or_else(chosen_heading_weight)
+}
+
+pub fn chosen_heading_weight() -> u16 {
+    HEADING_WEIGHT.load(Ordering::Relaxed)
+}
+
+pub fn set_heading_weight(weight: u16) {
+    if matches!(weight, 500 | 600) {
+        HEADING_WEIGHT.store(weight, Ordering::Relaxed);
+        preview::clear(preview::PreviewSlot::HeadingWeight);
+    }
+}
 
 /// The step a document's title row is drawn at.
 ///
@@ -2425,7 +2457,7 @@ pub fn doc_text_size() -> f32 {
     preview::previewed(preview::PreviewSlot::DocTextSize)
         .and_then(|px| u8::try_from(px).ok())
         .or_else(chosen_doc_text_size)
-        .map_or(FONT_SIZE, f32::from)
+        .map_or(koru_settings::DocTextSize::DEFAULT.px() as f32, f32::from)
 }
 
 /// [`doc_text_size`] as a factor of the base ramp.

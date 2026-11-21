@@ -1048,7 +1048,21 @@ fn a_pointer_over_the_column_does_not_wear_the_ibeam() {
     v.adopt(&workspace.ws);
 
     let c = v.content();
-    v.mouse_move(c.x + 70.0, c.y + row_y(0));
+    // Aim at actual text. A fixed x=70 lands past "row 0" at the 14 px default.
+    let TabView::Leaf(leaf) = &v.tabs().active_tab().view else {
+        panic!("leaf")
+    };
+    let row = leaf
+        .body()
+        .rows
+        .iter()
+        .find(|row| !row.is_title && !row.text.is_empty())
+        .unwrap();
+    let point = (
+        c.x + leaf.view().content_x + row.text_x() + 5.0,
+        c.y + row.y - leaf.view().scroll + row.height * 0.5,
+    );
+    v.mouse_move(point.0, point.1);
     assert_eq!(v.cursor_icon(), CursorIcon::Text);
 
     let area = v.explore_area();

@@ -570,6 +570,12 @@ const KORU_DRAW_MODULES: &[(&str, Module)] = &[
     ("scrollbar", Module::Records(&["C-SCROLLBAR"])),
     ("text", Module::Records(&["H-TEXT-ENGINE"])),
     (
+        "text_rendering",
+        Module::Excluded(
+            "validated process preferences for native rendering; no painter or widget",
+        ),
+    ),
+    (
         "theme",
         Module::Records(&[
             "T-PALETTE",

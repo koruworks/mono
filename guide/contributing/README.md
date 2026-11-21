@@ -18,6 +18,10 @@ root alongside it, use `koru.bat root-open .dev-data\root-b`: this uses the buil
 binaries and leaves other roots running. An explicit path may be supplied to
 either command. `koru.bat root-stop <path>` stops only that root's services.
 
+`koru.bat font-test` launches the standalone font comparison editor, using the
+monorepo's fonts and rendering dependencies. Its [controls and implementation](../../apps/koru-font-test/README.md)
+include exact pixel magnification and live rendering experiments.
+
 Setup's `--agent-skills` option installs coding agent skills.
 Windows `--defender-exclusions` enables the documented
 antivirus exclusions for a trusted development checkout. Neither is needed to

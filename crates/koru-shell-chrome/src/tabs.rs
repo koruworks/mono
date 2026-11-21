@@ -690,7 +690,14 @@ fn draw_tab(
         crate::status_mark::draw_badge(scene, root, mark, dot);
     }
     if let Some(label) = &label {
-        scene::draw_layout_first_line(scene, root, label, text_x, y, Some(colour));
+        scene::draw_layout_first_line(
+            scene,
+            root,
+            label,
+            text_x,
+            scene::centre_first_line_y_in(label, pill),
+            Some(colour),
+        );
     }
 
     if tab.closable && hot && !tab.dragging && t.close.w > 0.0 {

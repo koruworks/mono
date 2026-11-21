@@ -121,6 +121,8 @@ pub(super) const RECORDS: &[Entry] = &[
                     ACTION,
                     Declared::Enum,
                     &[
+                        literal("ZoomIn"),
+                        literal("ZoomOut"),
                         literal("MoreFonts"),
                         literal("ApplyLayoutToAllDocuments"),
                         literal("SetPinnedShowTitle"),

@@ -6465,6 +6465,19 @@
               }
             ]
           },
+          "caret_color_dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaretColorChoice"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "caret_height": {
             "anyOf": [
               {
@@ -6729,6 +6742,13 @@
               }
             ]
           },
+          "heading_weight": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "headings_font": {
             "anyOf": [
               {
@@ -6827,6 +6847,70 @@
           "tabs_per_workspace": {
             "nullable": true,
             "type": "boolean"
+          },
+          "text_antialiasing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "text_antialiasing_dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "text_cutoff": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_cutoff_dark": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_gamma": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_gamma_dark": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_hinting": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "text_hinting_dark": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "text_offset": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_offset_dark": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
           },
           "theme": {
             "anyOf": [
@@ -6941,6 +7025,15 @@
           },
           "caret_color": {
             "$ref": "#/components/schemas/CaretColorChoice"
+          },
+          "caret_color_dark": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaretColorChoice"
+              }
+            ],
+            "default": "default",
+            "description": "Independent dark-theme caret color. The original key is the light choice."
           },
           "caret_height": {
             "$ref": "#/components/schemas/CaretHeightChoice"
@@ -7057,6 +7150,14 @@
           "global_shortcut": {
             "$ref": "#/components/schemas/GlobalShortcut"
           },
+          "heading_weight": {
+            "default": 600,
+            "description": "Document headings and titles, independent of body and UI weights.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
           "headings_font": {
             "$ref": "#/components/schemas/FontSetting"
           },
@@ -7114,6 +7215,60 @@
             "default": false,
             "description": "**Workspace tabs**: each workspace keeps its own tabs (`true`, *Per\nworkspace*) or the open tabs stay as you switch (`false`, *Shared*,\nthe default). Absent from an older file, which reads as *Shared*.",
             "type": "boolean"
+          },
+          "text_antialiasing": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              }
+            ],
+            "default": "msaa16"
+          },
+          "text_antialiasing_dark": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              }
+            ],
+            "default": "msaa16"
+          },
+          "text_cutoff": {
+            "default": 0.05000000074505806,
+            "format": "float",
+            "type": "number"
+          },
+          "text_cutoff_dark": {
+            "default": 0.15000000596046448,
+            "format": "float",
+            "type": "number"
+          },
+          "text_gamma": {
+            "default": 1.75,
+            "format": "float",
+            "type": "number"
+          },
+          "text_gamma_dark": {
+            "default": 0.75,
+            "format": "float",
+            "type": "number"
+          },
+          "text_hinting": {
+            "default": true,
+            "type": "boolean"
+          },
+          "text_hinting_dark": {
+            "default": true,
+            "type": "boolean"
+          },
+          "text_offset": {
+            "default": 0.0,
+            "format": "float",
+            "type": "number"
+          },
+          "text_offset_dark": {
+            "default": 0.0,
+            "format": "float",
+            "type": "number"
           },
           "theme": {
             "$ref": "#/components/schemas/ThemeChoice"
@@ -13784,7 +13939,9 @@
           "1x",
           "2x",
           "3x",
-          "4x"
+          "4x",
+          "8x",
+          "16x"
         ],
         "type": "string"
       },
@@ -17359,6 +17516,14 @@
           "controller_lease"
         ],
         "type": "object"
+      },
+      "TextAntialiasing": {
+        "enum": [
+          "area",
+          "msaa8",
+          "msaa16"
+        ],
+        "type": "string"
       },
       "TextRole": {
         "enum": [

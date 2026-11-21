@@ -372,9 +372,13 @@ pub fn centre_in(layout: &Layout<Brush>, r: crate::geometry::Rect) -> (f32, f32)
 /// than a font load. A tile is a handful of glyphs; do not reach for this to
 /// centre a paragraph.
 fn ink_centre(layout: &Layout<Brush>) -> Option<(f32, f32)> {
+    ink_centre_lines(layout, usize::MAX)
+}
+
+fn ink_centre_lines(layout: &Layout<Brush>, count: usize) -> Option<(f32, f32)> {
     use skrifa::MetadataProvider;
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for line in layout.lines() {
+    for line in layout.lines().take(count) {
         for item in line.items() {
             if let PositionedLayoutItem::InlineBox(b) = &item {
                 if crate::icons::unpack_box_id(b.id)
@@ -418,6 +422,18 @@ fn ink_centre(layout: &Layout<Brush>) -> Option<(f32, f32)> {
 /// a column rather than by centring.
 pub fn centre_y_in(layout: &Layout<Brush>, r: crate::geometry::Rect) -> f32 {
     centre_in(layout, r).1
+}
+
+/// Center only the visible first line, even when an elided label has wrapped.
+pub fn centre_first_line_y_in(layout: &Layout<Brush>, r: crate::geometry::Rect) -> f32 {
+    if let Some((_, cy)) = ink_centre_lines(layout, 1) {
+        r.y + r.h * 0.5 - cy
+    } else if let Some(line) = layout.lines().next() {
+        let m = line.metrics();
+        r.y + (r.h + m.ascent - m.descent) * 0.5 - m.baseline
+    } else {
+        r.y
+    }
 }
 
 /// Draw only a layout's first line.
@@ -1144,6 +1160,24 @@ mod centring_tests {
     /// Asserted against the *ink*: whatever `centre_in` returns, the drawn
     /// pixels must straddle the box's middle. Half a pixel of slack, because
     /// the answer lands on a pixel grid anyway.
+    #[test]
+    fn a_wrapped_label_centers_only_the_line_that_is_drawn() {
+        let mut engine = TextEngine::new();
+        let rect = Rect::new(0.0, 10.0, 80.0, 30.0);
+        for family in ["Inter", "Segoe UI", "Myanmar Text"] {
+            let layout = engine.simple_layout_wrapped_in(
+                "Untitled document with more words",
+                crate::theme::role::row(),
+                family,
+                70.0,
+            );
+            assert!(layout.lines().count() > 1);
+            let (_, cy) = super::ink_centre_lines(&layout, 1).unwrap();
+            let y = super::centre_first_line_y_in(&layout, rect);
+            assert!((y + cy - (rect.y + rect.h * 0.5)).abs() < 0.01);
+        }
+    }
+
     #[test]
     fn a_glyph_is_centred_on_its_ink_not_on_its_line_box() {
         let mut e = TextEngine::new();

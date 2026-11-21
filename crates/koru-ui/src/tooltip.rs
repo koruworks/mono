@@ -589,7 +589,7 @@ fn draw_tooltip(
             root,
             &label_layout,
             rect.x + PAD,
-            rect.y + PAD_Y,
+            scene::centre_y_in(&label_layout, rect),
             ink,
         );
     }
@@ -599,7 +599,7 @@ fn draw_tooltip(
             root,
             &layout,
             rect.x + rect.w - layout.width() - 8.0,
-            rect.y + 6.0,
+            scene::centre_y_in(&layout, rect),
             Some(theme::p().bubble_dim.multiply_alpha(alpha)),
         );
     }

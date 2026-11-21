@@ -174,14 +174,13 @@ impl Segmented {
                 scene::fill(canvas, root, p.hover_tint.multiply_alpha(alpha), &shape);
             }
             let layout = engine.simple_layout(label, theme::role::row());
-            let line_h = scene::first_line_height(&layout);
             crate::typography::line(
                 "Segment label",
                 canvas,
                 root,
                 &layout,
                 rect.x + (rect.w - layout.width()) * 0.5,
-                rect.y + (rect.h - line_h) * 0.5,
+                scene::centre_y_in(&layout, *rect),
                 theme::role::row(),
                 "theme::role::row()",
                 if chosen { p.text } else { p.text_dim }.multiply_alpha(alpha),

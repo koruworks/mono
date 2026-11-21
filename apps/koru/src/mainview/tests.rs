@@ -6808,6 +6808,36 @@ fn the_three_zoom_actions_each_ask_the_shell_for_their_own_move() {
     }
 }
 
+#[test]
+fn window_theme_segments_change_the_shared_preference_without_closing() {
+    crate::tests::with_menu(true, || {
+        let original = theme::theme_preference();
+        let (mut v, mut workspace) = container();
+        let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
+        v.mouse_down(&mut workspace.ws, x, y, false);
+        for (index, preference) in [
+            theme::ThemePreference::System,
+            theme::ThemePreference::Light,
+            theme::ThemePreference::Dark,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let menu = v.menu.as_ref().unwrap();
+            let row = menu
+                .items()
+                .iter()
+                .position(|item| *item == MenuAction::HeaderTheme)
+                .unwrap();
+            let (x, y) = menu.control_rect(v.viewport, row, index).unwrap().centre();
+            v.mouse_down(&mut workspace.ws, x, y, false);
+            assert_eq!(theme::theme_preference(), preference);
+            assert!(v.window_menu_open());
+        }
+        theme::set_theme_preference(original);
+    });
+}
+
 /// The readout is not a button, and neither is a control at the end of its
 /// range: pressing either must neither zoom nor dismiss. The press is still
 /// swallowed — falling through would read as a click on the panel and take the
@@ -10362,90 +10392,6 @@ fn recent_document_choices_skip_the_open_document() {
     assert_eq!(choices.len(), 1);
     assert_eq!(choices[0].title, "Elsewhere");
     assert_eq!(choices[0].target.document, elsewhere);
-}
-
-/// **The branch pill takes its room from the tabs, the way the offline chip
-/// does.** Same hazard, same fix: it is drawn over the caption, so the only
-/// thing keeping a tab from being clickable underneath it is the strip being
-/// narrower while it is up.
-///
-/// Driven through `branch_pill_for` rather than `branch_pill`, because the real
-/// one reads a stamp fixed when this binary compiled — on `dev` there is no
-/// pill, and a test that only ran on somebody's feature branch would be a test
-/// that never ran.
-#[test]
-fn the_branch_pill_narrows_the_tab_strip_rather_than_covering_it() {
-    let (v, _workspace) = container();
-    let full = v.branch_pill_for(None, 0.0);
-    assert!(full.is_none(), "no pill on dev, main, or a released build");
-
-    let pill = v
-        .branch_pill_for(Some("import-google-docs"), 120.0)
-        .expect("a pill on a branch worth naming");
-    assert_eq!(pill.w, 120.0);
-    // The strip itself is measured against the *real* stamp, so this asserts
-    // the arithmetic rather than the current branch: the pill is placed inside
-    // the same band `caption_strip` subtracts from.
-    let band = v.caption_strip();
-    assert!(
-        band.x + band.w <= pill.x + pill.w + 0.5,
-        "the pill escaped the caption band"
-    );
-    let bell = v.reminder_bell_rect();
-    assert!(
-        pill.x + pill.w <= bell.x,
-        "the branch pill overlapped the reminder bell"
-    );
-}
-
-/// **An unmeasured pill is not reserved.** `branch_pill_w` is `0.0` until the
-/// tab widths are first measured, and a pill of no width parked at the right of
-/// the strip would take the tabs' room without drawing anything.
-#[test]
-fn a_pill_that_has_not_been_measured_yet_takes_no_room() {
-    let (v, _workspace) = container();
-    assert!(v.branch_pill_for(Some("kimi"), 0.0).is_none());
-    assert!(v.branch_pill_for(Some("kimi"), -1.0).is_none());
-    assert!(v.branch_pill_for(Some("kimi"), 90.0).is_some());
-}
-
-/// **The pill sits left of the offline chip, and the tabs stop before both.**
-///
-/// The chip is the one that says something is wrong, so it keeps the end of the
-/// band; a pill that changed position depending on whether the store happened
-/// to be reachable would be worse than either order.
-#[test]
-fn the_offline_chip_keeps_the_end_of_the_band_and_the_pill_sits_inside_it() {
-    let (mut v, _workspace) = container();
-    let alone = v
-        .branch_pill_for(Some("kimi"), 90.0)
-        .expect("a pill with the store up");
-
-    assert!(View::set_store_trouble(
-        &mut v,
-        Some(koru_workspace::StoreTrouble {
-            message: "the store went away".to_owned(),
-            owed: 1,
-            since: Some(std::time::Instant::now()),
-            fatal: false,
-            unconfirmed: koru_workspace::Unconfirmed::default(),
-        })
-    ));
-    let chip = v.offline_chip().expect("a chip while offline");
-    let beside = v
-        .branch_pill_for(Some("kimi"), 90.0)
-        .expect("a pill while offline too");
-
-    assert!(
-        beside.x + beside.w <= chip.x,
-        "the pill runs under the offline chip"
-    );
-    assert!(
-        beside.x < alone.x,
-        "the pill did not move aside for the chip: {} -> {}",
-        alone.x,
-        beside.x
-    );
 }
 
 // ------------------------------------------------------------ task activity
@@ -15191,7 +15137,6 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
 /// Help navigation uses the shell URI port and retains the Feedback tab.
 #[test]
 fn the_help_rows_open_their_destinations() {
-    use crate::mainview::context_menu::{GITHUB_URL, Social};
     use crate::panes::explore::help::Action;
     use koru_workspace_host::{PaneRequest, View};
     let (mut v, _w) = container();
@@ -15218,8 +15163,6 @@ fn the_help_rows_open_their_destinations() {
         crate::whatsnew::RELEASES_URL,
         "https://github.com/koruworks/mono/releases"
     );
-    assert_eq!(GITHUB_URL, "https://github.com/koruworks/mono");
-    assert_eq!(Social::X.url(), "https://x.com/korudotdo");
     assert!(v.help_action(Action::Feedback));
     assert!(matches!(v.tabs().active_tab().view, TabView::Feedback(_)));
     let tabs = v.tabs().len();

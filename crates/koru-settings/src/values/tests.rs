@@ -3,6 +3,16 @@
 use super::*;
 
 #[test]
+fn faster_wheel_speeds_round_trip_without_being_clamped_to_four() {
+    for speed in [1, 2, 3, 4, 8, 16] {
+        let choice = ScrollSpeedChoice::from_factor(speed);
+        assert_eq!(choice.factor(), speed);
+        assert_eq!(ScrollSpeedChoice::parse(choice.token()), choice);
+    }
+    assert_eq!(ScrollSpeedChoice::default().factor(), 2);
+}
+
+#[test]
 fn every_token_enum_round_trips_its_own_spelling() {
     macro_rules! round_trip {
         ($($name:ident),+ $(,)?) => {

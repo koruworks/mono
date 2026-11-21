@@ -128,6 +128,14 @@ pub(crate) enum Action {
     FontSetting(FontRole, koru_settings::FontSetting),
     /// *More fonts…*: the picker over every installed family, for a role.
     MoreFonts(FontRole),
+    TextRendering(koru_settings::TextRendering),
+    TextAntialiasing(koru_settings::TextAntialiasing),
+    TextOffset(f32),
+    TextGamma(f32),
+    TextCutoff(f32),
+    HeadingWeight(u16),
+    ZoomIn,
+    ZoomOut,
     VoiceLanguage(DictationLanguage),
     VoiceInput(DictationInput),
     VoiceTier(DictationTier),
@@ -206,6 +214,9 @@ pub(crate) enum Action {
 /// and performs them in its own vocabulary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Request {
+    /// Change the whole-window display scale through the host's zoom path.
+    ZoomIn,
+    ZoomOut,
     /// *More fonts…* on a font list: the container opens the installed-font
     /// picker for this role (it owns the window the picker stands over).
     MoreFonts(FontRole),

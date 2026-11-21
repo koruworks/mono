@@ -18,9 +18,7 @@ use super::panes;
 use super::tab::{Tab, TabView};
 use super::tab_rules::KoruTabs;
 
-/// The air between two things parked at the right-hand end of the tab strip —
-/// the branch pill and the offline chip — and between the leftmost of them and
-/// the tabs, so nothing ends up touching.
+/// The air between the offline chip and the title-bar tabs.
 const CHIP_GAP: f32 = 6.0;
 
 /// How wide the pane may be dragged.
@@ -143,10 +141,7 @@ impl MainView {
             super::reminder_bell(),
             self.leading(),
         );
-        let taken = self
-            .branch_pill()
-            .map(|pill| pill.x)
-            .or_else(|| self.offline_chip().map(|chip| chip.x));
+        let taken = self.offline_chip().map(|chip| chip.x);
         match taken {
             Some(x) => Rect::new(full.x, full.y, (x - CHIP_GAP - full.x).max(0.0), full.h),
             None => full,
@@ -1117,57 +1112,11 @@ impl MainView {
             super::reminder_bell(),
             self.leading(),
         );
-        let taken = self
-            .branch_pill()
-            .map(|pill| pill.x)
-            .or_else(|| self.offline_chip().map(|chip| chip.x));
+        let taken = self.offline_chip().map(|chip| chip.x);
         match taken {
             Some(x) => Rect::new(full.x, full.y, (x - CHIP_GAP - full.x).max(0.0), full.h),
             None => full,
         }
-    }
-
-    /// Where the branch pill sits, when this build came off a branch worth
-    /// naming at all.
-    ///
-    /// **Left of the offline chip when both are up.** The chip is the one that
-    /// says something is wrong, so it keeps the end of the band; a pill that
-    /// jumped position depending on whether the store was reachable would be
-    /// worse than either order.
-    ///
-    /// `None` on `dev` and `main`, and in every released build — see
-    /// [`koru_shell_chrome::branch::worth_showing`].
-    pub(super) fn branch_pill(&self) -> Option<Rect> {
-        self.branch_pill_for(crate::build_stamp::caption_branch(), self.branch_pill_w)
-    }
-
-    /// Split from [`branch_pill`](Self::branch_pill) so both arms are reachable
-    /// in a test. This suite runs on whatever branch somebody is on — usually
-    /// `dev`, where there is no pill at all — and the arrangement worth pinning
-    /// is the one with a pill *and* an offline chip up, which no test could
-    /// otherwise reach without a rebuild on another branch.
-    pub(super) fn branch_pill_for(&self, name: Option<&str>, w: f32) -> Option<Rect> {
-        name?;
-        if w <= 0.0 {
-            return None;
-        }
-        let full = koru_shell_chrome::caption::tab_strip_with_leading(
-            self.regions.caption,
-            super::WINDOW_BUTTONS,
-            super::CONTEXT_TOGGLE,
-            super::reminder_bell(),
-            self.leading(),
-        );
-        let band = match self.offline_chip() {
-            Some(chip) => Rect::new(
-                full.x,
-                full.y,
-                (chip.x - CHIP_GAP - full.x).max(0.0),
-                full.h,
-            ),
-            None => full,
-        };
-        (band.w > 0.0).then(|| koru_shell_chrome::branch::pill(band, w))
     }
 
     /// Where the offline chip sits, if there is anything to say.
@@ -1263,10 +1212,6 @@ impl MainView {
             })
             .collect();
         *self.tab_widths_mut() = widths;
-        self.branch_pill_w = match crate::build_stamp::caption_branch() {
-            Some(name) => koru_shell_chrome::branch::width(&mut self.engine, name),
-            None => 0.0,
-        };
         self.set_tab_widths_stale(false);
         self.clamp_tab_scroll();
     }

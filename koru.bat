@@ -10,6 +10,7 @@ rem                     the Koru workspace an explicit profile. Stops this
 rem                     checkout's stack first and, on the shared debug channel
 rem                     (no KORU_ROOT), every other checkout's debug stack too
 rem   koru.bat ui       open the UI Lab: Koru's components over synthetic data
+rem   koru.bat font-test build and launch the font/pixel comparison editor
 rem   koru.bat stop-all stop this worktree's Koru and services
 rem   koru.bat root     the same stack on one isolated root (.env.production too)
 rem   koru.bat build-root-signed  build/register a signed rooted Windows test
@@ -172,6 +173,7 @@ if /i "%SUB%"=="run-all" goto do_run_all
 if /i "%SUB%"=="stop-all" goto do_stop_all
 if /i "%SUB%"=="jank"    goto do_jank
 if /i "%SUB%"=="ui"      goto do_ui
+if /i "%SUB%"=="font-test" goto do_font_test
 if /i "%SUB%"=="root"    goto do_root
 if /i "%SUB%"=="root-open" goto do_root_open
 if /i "%SUB%"=="root-stop" goto do_root_stop
@@ -407,6 +409,14 @@ set "UI_ARGS=!ARGS!"
 if "!UI_ARGS!"==" --" set "UI_ARGS="
 if "!UI_ARGS:~0,4!"==" -- " set "UI_ARGS=!UI_ARGS:~3!"
 cargo run -- --ui!UI_ARGS!
+exit /b %ERRORLEVEL%
+
+:do_font_test
+call :ensure_fonts || exit /b 1
+set "FONT_TEST_ARGS=!ARGS!"
+if "!FONT_TEST_ARGS!"==" --" set "FONT_TEST_ARGS="
+if "!FONT_TEST_ARGS:~0,4!"==" -- " set "FONT_TEST_ARGS=!FONT_TEST_ARGS:~3!"
+cargo run -p koru-font-test --!FONT_TEST_ARGS!
 exit /b %ERRORLEVEL%
 
 :do_jank
@@ -879,6 +889,7 @@ echo   stop-all   stop this worktree's Koru, Agent and services
 echo   jank       ...with the stall watch on, logging to koru-jank.log
 echo   ui         open the UI Lab in its own window: Koru's real components over
 echo              synthetic data, no profile or services; ui [--window-size WxH]
+echo   font-test  open the font comparison editor with pixel zoom and rendering controls
 echo   root       build and start Agent + API Gateway + Koru on one isolated root;
 echo              root [path] [--mcp] also builds the sibling MCP bridge;
 echo              --mcp registers it with agent CLIs as koru_^<branch^>

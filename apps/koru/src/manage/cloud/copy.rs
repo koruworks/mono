@@ -172,6 +172,7 @@ impl Presentation {
             _ => None,
         }
     }
+    #[cfg(test)]
     pub fn confirmation(&mut self) -> Option<&mut Confirm> {
         self.confirmation.as_mut().and_then(|p| p.dialog.as_mut())
     }

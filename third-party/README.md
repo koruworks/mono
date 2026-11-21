@@ -54,6 +54,16 @@ for the crates, but every crate comes from crates.io (`deny.toml`,
 
 ## Changing a patch
 
+The [font test app](../apps/koru-font-test/README.md) fetches three pinned
+Parley v0.11.1 example files as `file` entries. Its build script applies
+`patches/parley-font-test.patch` in Cargo's output directory, leaving the
+fetched originals untouched. New Koru sample and pixel-inspector modules
+are owned by the app. The upstream files and their patch are Apache-2.0 OR MIT.
+
+The three [Vello 0.8 patches](patches/vello.md) add glyph-only coverage controls
+used by Appearance settings. `vello`, `vello_encoding` and `vello_shaders` must
+be updated together; all are fetched crates, not vendored source.
+
 1. Fetch (any `koru.bat` verb does it), then edit the crate in
    `third-party/crates/<name>/`. Build and test against it as usual; the fetch
    leaves an edited crate alone while its pins are unchanged.
