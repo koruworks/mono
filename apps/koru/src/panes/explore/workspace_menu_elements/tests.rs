@@ -54,13 +54,18 @@ fn pending_deletions_are_reachable_offline_by_pointer_keyboard_and_accessibility
         view
     };
     let mut view = configured();
-    assert!(view.popover_rows().contains(&PopoverRow::WorkspaceAction(action)));
-    let (x, y) = view.with_page(area(), VIEWPORT, |frame| {
-        assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
-        let centre = frame.node(action.key()).unwrap().rect.centre();
-        assert_eq!(frame.hit_at(centre.0, centre.1), Some(action.key()));
-        centre
-    }).unwrap();
+    assert!(
+        view.popover_rows()
+            .contains(&PopoverRow::WorkspaceAction(action))
+    );
+    let (x, y) = view
+        .with_page(area(), VIEWPORT, |frame| {
+            assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+            let centre = frame.node(action.key()).unwrap().rect.centre();
+            assert_eq!(frame.hit_at(centre.0, centre.1), Some(action.key()));
+            centre
+        })
+        .unwrap();
     assert_eq!(view.mouse_down(area(), VIEWPORT, x, y, false), outcome);
     assert!(!view.popover_open());
     let mut view = configured();
@@ -79,10 +84,15 @@ fn pending_deletions_are_reachable_offline_by_pointer_keyboard_and_accessibility
     }
     let mut view = configured();
     view.set_pending_document_deletions(0);
-    assert!(!view.popover_rows().contains(&PopoverRow::WorkspaceAction(action)));
+    assert!(
+        !view
+            .popover_rows()
+            .contains(&PopoverRow::WorkspaceAction(action))
+    );
     view.with_page(area(), VIEWPORT, |frame| {
         assert!(frame.node(action.key()).is_none());
-    }).unwrap();
+    })
+    .unwrap();
 }
 
 #[test]

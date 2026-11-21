@@ -204,7 +204,7 @@ fn route_catalog_is_unique_and_schema_complete() {
     // read and decision, and the connections list, edit and revoke. Seven
     // are the v2 Cloud catalog's: binding, catalog read, unit pull and
     // push, the v2 sync token, the v2 descriptor and discovery.
-    assert_eq!(ROUTES.len(), 70);
+    assert_eq!(ROUTES.len(), 71);
     let mut ids = BTreeSet::new();
     let mut method_paths = BTreeSet::new();
     for route in ROUTES {
