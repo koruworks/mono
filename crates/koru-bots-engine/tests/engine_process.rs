@@ -58,20 +58,20 @@ fn main() {
     ));
     assert!(root.join("bots/engine-owned").is_file());
     handle.stop();
-    assert_eq!(koru_bots_engine::inspect(&root).unwrap().schema_version, 2);
+    assert_eq!(koru_bots_engine::inspect(&root).unwrap().schema_version, 3);
     println!("PASS engine starts, authenticates control, answers status and marks root");
 
     prove_interrupted_recovery(&root);
 
     let connection = rusqlite::Connection::open(root.join("bots/engine.db")).unwrap();
-    connection.execute_batch("PRAGMA user_version=3;").unwrap();
+    connection.execute_batch("PRAGMA user_version=4;").unwrap();
     drop(connection);
     let (newer, _) = launch(&root);
     wait(&newer, State::Exhausted);
     assert!(newer.current().is_none());
     newer.stop();
     let report = koru_bots_engine::inspect(&root).unwrap();
-    assert_eq!(report.schema_version, 3);
+    assert_eq!(report.schema_version, 4);
     assert_eq!(
         report.status_error,
         Some(koru_bots_engine::Error::SchemaTooNew)

@@ -37,6 +37,13 @@ fn card() -> wire::Card {
 #[test]
 fn repeated_firings_keep_their_own_reply_order_and_keyboard_thread_link() {
     let (mut view, commands, _) = surface();
+    view.managed
+        .as_mut()
+        .unwrap()
+        .snapshot
+        .conversation
+        .label
+        .purpose = koru_ai_core::bots::BotChatPurpose::Additional;
     let first = card();
     let mut second = first.clone();
     second.id = Uuid::new_v4();
@@ -120,6 +127,24 @@ fn repeated_firings_keep_their_own_reply_order_and_keyboard_thread_link() {
     assert!(
         commands.try_recv().is_err(),
         "opening a result never sends or joins"
+    );
+}
+
+#[test]
+fn main_chat_keeps_result_anchors_without_transcript_rows() {
+    let (mut view, _, _) = surface();
+    let result = card();
+    view.managed.as_mut().unwrap().navigation = State::new(Page {
+        items: vec![result.clone()],
+        ..Default::default()
+    });
+    view.rebuild_managed_navigation(420.0);
+    assert!(!view.navigation().rows.iter().any(|row| row.id == result.id));
+    assert!(
+        view.navigation()
+            .items
+            .iter()
+            .any(|item| item.id == result.id)
     );
 }
 

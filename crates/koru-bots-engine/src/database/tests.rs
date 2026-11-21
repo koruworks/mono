@@ -6,7 +6,7 @@ use super::*;
 fn fresh_database_has_no_work_and_uses_shared_durable_configuration() {
     let db = Database::in_memory().unwrap();
     assert_eq!(db.status().unwrap(), Status::default());
-    assert_eq!(diagnose(&db.connection).unwrap().schema_version, 2);
+    assert_eq!(diagnose(&db.connection).unwrap().schema_version, 3);
     for (pragma, expected) in [("synchronous", 2), ("foreign_keys", 1)] {
         let actual: i64 = db
             .connection
@@ -21,7 +21,7 @@ fn newer_database_is_refused_before_pragmas_but_diagnosis_still_answers() {
     let mut connection = Connection::open_in_memory().unwrap();
     connection
         .execute_batch(
-            "PRAGMA user_version = 3; PRAGMA synchronous = OFF; CREATE TABLE future (value TEXT);",
+            "PRAGMA user_version = 4; PRAGMA synchronous = OFF; CREATE TABLE future (value TEXT);",
         )
         .unwrap();
     assert_eq!(
@@ -35,8 +35,8 @@ fn newer_database_is_refused_before_pragmas_but_diagnosis_still_answers() {
     assert_eq!(
         diagnose(&connection).unwrap(),
         Diagnostic {
-            schema_version: 3,
-            supported_version: 2,
+            schema_version: 4,
+            supported_version: 3,
             status: None,
             status_error: Some(Error::SchemaTooNew),
         }

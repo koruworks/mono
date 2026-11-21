@@ -26,6 +26,7 @@ impl ChatSurface {
     }
 
     pub(crate) fn leave_managed(&mut self) {
+        self.review = Default::default();
         self.close_bot_work();
         self.managed_cards.clear();
         if let Some(mut state) = self.managed.take() {
@@ -182,6 +183,7 @@ impl ChatSurface {
             self.pending_user =
                 pending_user.or_else(|| self.sent_message.as_ref().map(|s| s.markdown.clone()));
         }
+        self.resume_reviews();
         changed
     }
 
@@ -207,6 +209,7 @@ impl ChatSurface {
             self.status = Some(notice);
         }
         if !changed {
+            self.refresh_reviews();
             return false;
         }
         let history_changed = state.history_changed;
@@ -235,6 +238,7 @@ impl ChatSurface {
             self.note_activity();
         }
         self.messages_dirty = true;
+        self.refresh_reviews();
         true
     }
 

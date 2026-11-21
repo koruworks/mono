@@ -8,7 +8,11 @@ use serde_json::{Value, json};
 pub fn handles(name: &str) -> bool {
     matches!(
         name,
-        "create_routine" | "edit_routine" | "list_routines" | "run_routine"
+        "create_routine"
+            | "edit_routine"
+            | "list_routines"
+            | "run_routine"
+            | "set_routine_attention"
     )
 }
 
@@ -18,10 +22,11 @@ pub fn catalog() -> Vec<Value> {
         {"type":"object","properties":{"type":{"const":"zoned"},"cron":{"type":"string"},"zone":{"type":"string"}},"required":["type","cron","zone"],"additionalProperties":false}
     ]});
     vec![
+        json!({"name":"set_routine_attention","description":"Before finishing a Routine result, declare whether the person needs to review or act on it. Use the occurrence from the delivered Routine message. Set needs_person=false for no changes, nothing found or purely informational results; true when the person should review or act. Omission queues the result conservatively. This does not answer the Routine: finish with your result as usual. Reuse id and identical arguments after uncertainty.","inputSchema":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"occurrence":{"type":"string","format":"uuid"},"needs_person":{"type":"boolean"}},"required":["id","occurrence","needs_person"],"additionalProperties":false}}),
         json!({"name":"create_routine","description":"Create an enabled Routine for yourself with default narrow access. Use a five-field cron and either the device's floating time or an explicit IANA zone. Obtain expected_bot_revision from list_routines. Reuse id and identical arguments after uncertainty. Explain the timing and task. The person can review timing, pause it or change access in Routines; do not broaden its access or restart an existing paused Routine.","inputSchema":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"expected_bot_revision":{"type":"integer","minimum":1},"name":{"type":"string"},"objective":{"type":"string"},"recurrence":rule},"required":["id","expected_bot_revision","name","objective","recurrence"],"additionalProperties":false}}),
         json!({"name":"edit_routine","description":"Update your Routine's name, objective and timing using the revision from list_routines. Its on/off setting and separate access grant stay unchanged. Reuse id and identical arguments after uncertainty.","inputSchema":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"routine":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":1},"name":{"type":"string"},"objective":{"type":"string"},"recurrence":rule},"required":["id","routine","revision","name","objective","recurrence"],"additionalProperties":false}}),
         json!({"name":"list_routines","description":"List your Routines, their exact revisions, timing and on/off state. Pass next as after for another page.","inputSchema":{"type":"object","properties":{"after":{"type":["string","null"],"format":"uuid"}},"additionalProperties":false}}),
-        json!({"name":"run_routine","description":"Request one run of your existing Routine using its revision from list_routines, without changing its on/off setting or access. Reuse id and identical arguments after uncertainty. The returned occurrence is the durable queued or skipped receipt, not a completed result. Queued work waits for capacity: briefly acknowledge its actual state and finish this main turn. Do not perform the Routine objective here or poll while holding capacity. Results appear in its existing conversation and occurrence cards.","inputSchema":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"routine":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":1}},"required":["id","routine","revision"],"additionalProperties":false}}),
+        json!({"name":"run_routine","description":"Request one run of your existing Routine using its revision from list_routines, without changing its on/off setting or access. Reuse id and identical arguments after uncertainty. The returned occurrence is the durable queued or skipped receipt, not a completed result. Queued work waits for capacity: briefly acknowledge its actual state and finish this main turn. Do not perform the Routine objective here or poll while holding capacity. Results remain readable in Routine history; results needing the person enter this Bot's review queue.","inputSchema":{"type":"object","properties":{"id":{"type":"string","format":"uuid"},"routine":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":1}},"required":["id","routine","revision"],"additionalProperties":false}}),
     ]
 }
 
@@ -69,6 +74,26 @@ pub fn execute(
         return Err(Error::StaleTurn);
     }
     let (owner, sender, bot_revision) = metadata(&db.connection, identity.bot)?;
+    if call.tool() == "set_routine_attention" {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Arguments {
+            id: Uuid,
+            occurrence: Uuid,
+            needs_person: bool,
+        }
+        let args: Arguments =
+            serde_json::from_value(call.arguments().clone()).map_err(|_| Error::InvalidRequest)?;
+        return review::declare(
+            db,
+            identity.binding.turn,
+            identity.bot,
+            args.id,
+            args.occurrence,
+            args.needs_person,
+            now,
+        );
+    }
     if call.tool() == "list_routines" {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]

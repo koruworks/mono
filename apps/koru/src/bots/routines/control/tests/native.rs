@@ -65,6 +65,7 @@ fn occurrence(schedule: ScheduleId, state: &str) -> wire::Occurrence {
         recorded_at_ms: 120_000,
         updated_at_ms: 120_000,
         preview: None,
+        review: None,
     }
 }
 #[test]

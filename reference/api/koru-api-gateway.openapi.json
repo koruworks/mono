@@ -6672,6 +6672,97 @@
           {
             "additionalProperties": false,
             "properties": {
+              "before": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotRoutineOccurrenceCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "kind": {
+                "enum": [
+                  "reviews"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "kind": {
+                "enum": [
+                  "review"
+                ],
+                "type": "string"
+              },
+              "occurrence": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "offset": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "occurrence",
+              "offset"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "skip_review"
+                ],
+                "type": "string"
+              },
+              "occurrence": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "occurrence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "bot": {
                 "$ref": "#/components/schemas/BotId"
               },
@@ -7455,6 +7546,11 @@
             "nullable": true,
             "type": "string"
           },
+          "review": {
+            "default": null,
+            "nullable": true,
+            "type": "string"
+          },
           "routine": {
             "format": "uuid",
             "type": "string"
@@ -7498,6 +7594,69 @@
       },
       "BotRoutineResponse": {
         "oneOf": [
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "reviews"
+                ],
+                "type": "string"
+              },
+              "page": {
+                "$ref": "#/components/schemas/BotRoutineReviewPage"
+              }
+            },
+            "required": [
+              "kind",
+              "page"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "detail": {
+                "$ref": "#/components/schemas/BotRoutineReviewDetail"
+              },
+              "kind": {
+                "enum": [
+                  "review"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "detail"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "item": {
+                "$ref": "#/components/schemas/BotRoutineReviewItem"
+              },
+              "kind": {
+                "enum": [
+                  "skipped_review"
+                ],
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "item",
+              "replayed"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "first_enabled": {
@@ -7602,6 +7761,124 @@
             "type": "object"
           }
         ]
+      },
+      "BotRoutineReviewDetail": {
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "item": {
+            "$ref": "#/components/schemas/BotRoutineReviewItem"
+          },
+          "next": {
+            "format": "uint",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "offset": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot",
+          "item",
+          "text",
+          "offset"
+        ],
+        "type": "object"
+      },
+      "BotRoutineReviewItem": {
+        "properties": {
+          "card": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "occurrence": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "preview": {
+            "type": "string"
+          },
+          "published_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reply": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "review": {
+            "nullable": true,
+            "type": "string"
+          },
+          "routine": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "occurrence",
+          "routine",
+          "name",
+          "card",
+          "reply",
+          "published_at_ms",
+          "preview",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "BotRoutineReviewPage": {
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "count": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BotRoutineReviewItem"
+            },
+            "type": "array"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineOccurrenceCursor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "bot",
+          "count",
+          "items"
+        ],
+        "type": "object"
       },
       "BotRoutineSnapshot": {
         "properties": {
@@ -11305,6 +11582,36 @@
               },
               "kind": {
                 "enum": [
+                  "skip_routine_review"
+                ],
+                "type": "string"
+              },
+              "occurrence": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "occurrence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
                   "claim_routine_startup"
                 ],
                 "type": "string"
@@ -12153,6 +12460,23 @@
         "type": "string"
       },
       "Cursor": {
+        "properties": {
+          "at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at_ms",
+          "id"
+        ],
+        "type": "object"
+      },
+      "Cursor2": {
         "properties": {
           "at_ms": {
             "format": "int64",
@@ -18555,6 +18879,70 @@
           {
             "additionalProperties": false,
             "properties": {
+              "before": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Cursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "routine_reviews"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "routine_review"
+                ],
+                "type": "string"
+              },
+              "occurrence": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "offset": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "occurrence",
+              "offset"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "bot": {
                 "format": "uuid",
                 "type": "string"
@@ -18639,7 +19027,7 @@
               "before": {
                 "anyOf": [
                   {
-                    "$ref": "#/components/schemas/Cursor"
+                    "$ref": "#/components/schemas/Cursor2"
                   },
                   {
                     "enum": [

@@ -3,6 +3,7 @@
 //! definitions, grants and occurrence facts in the same database as messages.
 pub(crate) mod clock;
 mod control;
+pub mod review;
 pub(crate) mod schedule;
 mod startup;
 pub(crate) mod tools;
@@ -119,6 +120,8 @@ pub struct Occurrence {
     pub recorded_at_ms: i64,
     pub updated_at_ms: i64,
     pub preview: Option<koru_ai_core::bots::BotReplyPreview>,
+    #[serde(default)]
+    pub review: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -211,6 +214,11 @@ fn occurrence(c: &Connection, key: Uuid) -> Result<Occurrence, Error> {
         recorded_at_ms: row.9,
         updated_at_ms: row.10,
         preview,
+        review: c.query_row(
+            "SELECT review FROM routine_occurrences WHERE id=?1",
+            [key.to_string()],
+            |r| r.get(0),
+        )?,
     })
 }
 impl Database {

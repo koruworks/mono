@@ -76,6 +76,7 @@ pub(crate) enum Action {
     RefreshDetail,
     Details(ScheduleId),
     Open(ChatId),
+    Review(uuid::Uuid),
     /// The row's switch.
     Toggle(ScheduleId),
     Test(ScheduleId),
@@ -701,6 +702,10 @@ impl BotView {
                     return false;
                 };
                 self.routine_timing_request = Some(seed);
+                true
+            }
+            Action::Review(occurrence) => {
+                self.show_routine_result(occurrence);
                 true
             }
             Action::Open(chat) | Action::Decide(chat) => {

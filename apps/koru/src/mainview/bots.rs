@@ -762,6 +762,13 @@ impl MainView {
         let Some(request) = view.take_open_request() else {
             return false;
         };
+        if let Some(occurrence) = request.result {
+            let opened = self.open_routine_conversation(request.bot, request.chat);
+            if let TabView::Bot(view) = self.active_view() {
+                view.show_routine_result(occurrence);
+            }
+            return opened;
+        }
         if !crate::bots::shown() {
             return false;
         }

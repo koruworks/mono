@@ -6851,8 +6851,12 @@ Ask a Bot to create a routine, then choose **Routines** in the context pane to r
 timing, time zone and separate access. New routines start on; existing paused
 routines stay paused. **Run now** requests one occurrence without changing that setting. History
 shows what actually happened, including missed or busy occurrences, and keeps
-each occurrence's own reply. **Open conversation** opens the routine's full
-conversation. Results also appear in the Bot's main conversation.
+each occurrence's own reply. Select a completed result to review that exact
+result above the Bot's main composer. The composer count lists results waiting
+for your attention across this Bot's routines. Reading or closing a result
+leaves it pending; **Skip** removes it from the queue while keeping it in history.
+Long results have **More** to continue reading. Routine result cards do not
+appear between main-chat messages.
 
 You can also ask the Bot to run an existing routine. It
 requests the run and briefly confirms whether it was queued or skipped; the

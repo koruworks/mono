@@ -96,6 +96,12 @@ fn page<T: Serialize>(
 pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, Error> {
     let c = &db.connection;
     match query {
+        Query::RoutineReviews { bot, before } => value(db.routine_reviews(who, bot, before)?),
+        Query::RoutineReview {
+            bot,
+            occurrence,
+            offset,
+        } => value(db.routine_review(who, bot, occurrence, offset)?),
         Query::RoutineCreation { bot, request } => value(db.routine_creation(who, bot, request)?),
         Query::RoutineReceipt { id, action } => value(db.routine_receipt(who, id, &action)?),
         Query::Routines { bot, after, limit } => value(db.routines(who, bot, after, limit)?),

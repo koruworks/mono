@@ -43,6 +43,11 @@ impl std::fmt::Debug for Reply {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Command {
+    SkipRoutineReview {
+        id: Uuid,
+        bot: Uuid,
+        occurrence: Uuid,
+    },
     ClaimRoutineStartup {
         id: Uuid,
         bot: Uuid,
@@ -90,6 +95,15 @@ impl Command {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Query {
+    RoutineReviews {
+        bot: Uuid,
+        before: Option<crate::routines::review::Cursor>,
+    },
+    RoutineReview {
+        bot: Uuid,
+        occurrence: Uuid,
+        offset: usize,
+    },
     RoutineCreation {
         bot: Uuid,
         request: Uuid,
@@ -497,6 +511,11 @@ pub fn handle(
         sender: request.sender,
     };
     let result = match request.command {
+        Command::SkipRoutineReview {
+            id,
+            bot,
+            occurrence,
+        } => value(db.skip_routine_review(&who, id, bot, occurrence, now)?),
         Command::ClaimRoutineStartup { id, bot } => {
             value(crate::routines::claim_startup(db, &who, id, bot, now)?)
         }

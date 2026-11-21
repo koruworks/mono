@@ -190,6 +190,8 @@ pub(crate) fn published(
         };
         c.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'thread_reference',?5,'published',?6)",params![card.to_string(),main,messages::next_sequence(c,id(main.clone())?)?,bot,encode(&content)?,now])?;
         c.execute("UPDATE routine_occurrences SET state='answered',reply=?2,card=?3,updated_at_ms=?4 WHERE id=?1",params![key,reply.to_string(),card.to_string(),now])?;
+        super::review::published(c, turn, &key)?;
+        super::review::invalidate(c, id(bot.clone())?, now)?;
     }
     Ok(())
 }

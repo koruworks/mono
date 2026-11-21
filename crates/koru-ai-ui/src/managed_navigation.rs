@@ -439,12 +439,11 @@ impl ChatSurface {
             }
         }
         drop(push);
-        for card in state
-            .navigation
-            .items
-            .iter()
-            .filter(|card| card.routine.is_some())
-        {
+        for card in state.navigation.items.iter().filter(|card| {
+            card.routine.is_some()
+                && state.snapshot.conversation.label.purpose
+                    != koru_ai_core::bots::BotChatPurpose::Main
+        }) {
             let before = state
                 .messages
                 .values()

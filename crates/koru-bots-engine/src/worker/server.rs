@@ -158,7 +158,7 @@ pub(super) fn serve(
             };
             let changes = matches!(&request.command,
                 crate::carrier::Command::OwnTool { tool, .. }
-                    if matches!(tool.as_str(), "message_bot" | "create_routine" | "edit_routine" | "run_routine"))
+                    if matches!(tool.as_str(), "message_bot" | "create_routine" | "edit_routine" | "run_routine" | "set_routine_attention"))
                 || !matches!(
                     request.command,
                     crate::carrier::Command::Poll

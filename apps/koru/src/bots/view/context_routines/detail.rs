@@ -108,11 +108,14 @@ pub(super) fn action(all: &Data, key: Key) -> Option<Action> {
         _ => {}
     }
     if let Some(snapshot) = &data.snapshot {
-        if snapshot
+        if let Some(occurrence) = snapshot
             .occurrences
             .iter()
-            .any(|o| o.message.is_some() && occurrence_key(o.id) == key)
+            .find(|o| o.message.is_some() && occurrence_key(o.id) == key)
         {
+            if occurrence.reply.is_some() && occurrence.card.is_some() {
+                return Some(Action::Review(occurrence.id));
+            }
             return Some(Action::Open(snapshot.thread));
         }
     }
@@ -305,6 +308,8 @@ pub(super) fn content(all: &Data, surface: &Surface, engine: &mut TextEngine, la
                                 "queued" => Words::RunStatusCreated,
                                 "running" => Words::RunStatusRunning,
                                 "needs_you" => Words::ChatsStatusNeedsYou,
+                                "answered" if item.review.as_deref() == Some("pending") =>
+                                    Words::ChatsStatusNeedsYou,
                                 "answered" => Words::RunStatusCompleted,
                                 "cancelled" => Words::RunStatusCancelled,
                                 _ => Words::RunStatusFailed,

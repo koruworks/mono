@@ -134,6 +134,7 @@ mod managed;
 mod managed_attention;
 mod managed_navigation;
 mod managed_questions;
+mod managed_review;
 mod managed_surface;
 mod managed_tools;
 mod microphone;
@@ -323,6 +324,7 @@ impl Drop for OpenAiCredentialRequest {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Focus {
+    RoutineReview,
     None,
     Composer,
     /// The send half of an agent chat's split button.
@@ -547,6 +549,7 @@ pub struct ChatSurface {
     pending_assistant_message_id: Option<MessageId>,
     managed: Option<managed::State>,
     host_navigation: managed_navigation::State,
+    review: managed_review::State,
     /// Uncertain submissions stay with their conversation when this surface
     /// is rebound. Reopening reconciles the same receipt, never a new send.
     managed_outbox: HashMap<ChatId, (koru_ai_wire::bot_threads::Command, Option<SentMessage>)>,
@@ -1103,6 +1106,7 @@ impl ChatSurface {
             pending_assistant_message_id: None,
             managed: None,
             host_navigation: managed_navigation::State::default(),
+            review: managed_review::State::default(),
             managed_outbox: HashMap::new(),
             managed_cards: HashMap::new(),
             refused_pictures: HashSet::new(),
@@ -1384,6 +1388,7 @@ impl ChatSurface {
     ///   next send or lookup asks again; the documents that lookup named are
     ///   no longer marked as asked, so their titles are asked again too.
     fn settle_unanswerable(&mut self) {
+        self.suspend_reviews();
         self.suspend_managed_requests();
         // A send staged until the Store is durable has not reached the
         // client: it is given back with the message, never sent later.
@@ -2143,6 +2148,9 @@ impl ChatSurface {
         if self.observing_bot_thread() {
             return self.observer_key(key, mods);
         }
+        if let Some(handled) = self.review_key(key, mods) {
+            return handled;
+        }
         if let Focus::ManagedQuestion(id) = self.focus
             && let Some(handled) = self.managed_question_key(id, key, text, mods)
         {
@@ -2748,6 +2756,14 @@ impl ChatSurface {
         // Escape does, and then does whatever it does.
         if !self.composer.contains(x, y) {
             self.composer.close_picker();
+        }
+        if !self.chat_model_open
+            && !self.tool_mode_open
+            && !self.tool_access_open
+            && self.destination_open.is_none()
+            && let Some(handled) = self.review_press(x, y)
+        {
+            return handled;
         }
         if self
             .stored_open_rect()
@@ -3394,6 +3410,9 @@ impl ChatSurface {
         if self.bot_work_open() {
             return self.bot_work_scroll(delta);
         }
+        if let Some(handled) = self.review_scroll(delta) {
+            return handled;
+        }
         if let Some(changed) = self.viewer_scroll(delta) {
             return changed;
         }
@@ -3862,6 +3881,11 @@ impl ChatSurface {
             }
             Update::EngineOpened(opened) => return self.managed_opened(*opened),
             Update::EngineRefreshed(update) => return self.managed_refreshed(*update),
+            Update::RoutineReview {
+                thread,
+                request,
+                result,
+            } => return self.review_response(thread, request, result),
             Update::EngineReply { thread, reply } => return self.managed_reply(thread, reply),
             Update::EngineFailed {
                 thread,
@@ -6485,7 +6509,19 @@ impl ChatSurface {
             .then(|| self.approval_presentation())
             .flatten()
             .map(|(row, _)| row.title);
+        let review_label = self.review_label();
+        let review_name = review_label.as_ref().map(|label| {
+            format!(
+                "{}: {label}",
+                koru_i18n::t(self.lang, koru_i18n::Key::ChatsStatusNeedsYou)
+            )
+        });
+        let review_width = review_label.as_ref().map_or(0.0, |label| {
+            ActionButton::new(label, ActionStyle::Primary, Some(icons::CARET_DOWN))
+                .width(&mut self.engine)
+        });
         let compact_width = available
+            - review_width
             - composer_shell::controls_width(
                 mode_name.is_some(),
                 self.dictation.offered,
@@ -6530,7 +6566,7 @@ impl ChatSurface {
         };
         let rect = Rect::new(content.x, y, width, height);
         self.composer_hit_rect = rect;
-        self.composer_shell = Some(composer_shell::layout(
+        self.composer_shell = Some(composer_shell::layout_with_review(
             rect,
             self.strip_band(),
             text_h,
@@ -6545,6 +6581,9 @@ impl ChatSurface {
                 .microphone
                 .offered
                 .then(|| koru_i18n::t(self.lang, koru_i18n::Key::AiMicrophoneChoose)),
+            review_name
+                .as_ref()
+                .map(|label| (label.as_str(), review_width)),
         ));
         if below > 0.0 {
             // The folder control is as wide as what it shows.
@@ -7903,6 +7942,7 @@ impl ChatSurface {
                     "ComposerAddContext" if !recording => {
                         self.paint_composer_plus(canvas, root, node.rect);
                     }
+                    "ComposerReview" => self.draw_review_control(canvas, root, node.rect),
                     "ComposerSplitButton" if !recording => {
                         self.paint_composer_split(canvas, root, node.rect);
                     }
@@ -7913,6 +7953,7 @@ impl ChatSurface {
                 }
             });
         self.composer_shell = Some(shell);
+        self.draw_review(canvas, root);
         // A link's card (D95): over the transcript and the composer, under
         // the pickers and panes that float over both.
         self.link_card.draw(

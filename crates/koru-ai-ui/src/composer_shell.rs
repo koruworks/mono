@@ -34,6 +34,7 @@ pub(crate) fn controls_width(mode: bool, mic: bool, choice: bool) -> f32 {
 }
 
 pub(crate) const PLUS: Key = Key::surface("KoruComposer", "add-context");
+pub(crate) const REVIEW: Key = Key::surface("KoruComposer", "routine-review");
 pub(crate) const SEND: Key = Key::surface("KoruComposer", "send");
 pub(crate) const MODE: Key = Key::surface("KoruComposer", "mode");
 pub(crate) const MICROPHONE: Key = Key::surface("KoruComposer", "microphone");
@@ -45,6 +46,9 @@ pub(crate) struct Shell {
 }
 
 impl Shell {
+    pub(crate) fn review(&self) -> Option<Rect> {
+        self.frame.rect_of("ComposerReview").filter(|r| r.w > 0.0)
+    }
     pub(crate) fn model(&self) -> Rect {
         let slot = self.frame.rect_of("ComposerModelSlot").expect("model slot");
         Rect::new(
@@ -92,7 +96,7 @@ thread_local! {
     static LAYOUT: RefCell<Option<(TextEngine, TextCache)>> = const { RefCell::new(None) };
 }
 
-pub(crate) fn layout(
+pub(crate) fn layout_with_review(
     rect: Rect,
     band_height: f32,
     text_height: f32,
@@ -102,6 +106,7 @@ pub(crate) fn layout(
     mode_name: Option<&str>,
     microphone_name: Option<&str>,
     microphone_choice_name: Option<&str>,
+    review: Option<(&str, f32)>,
 ) -> Shell {
     let text_region = COMPOSER_PAD_TOP + text_height + COMPOSER_TEXT_GAP;
     let mut toolbar = row("ComposerToolbar")
@@ -126,6 +131,19 @@ pub(crate) fn layout(
                 .semantics(Role::Button)
                 .name_text(plus_name),
         )
+        .child(if let Some((name, width)) = review {
+            boxed("ComposerReview")
+                .w(Length::Runtime(width, "measured review count"))
+                .h(Length::Runtime(BUTTON_H, "composer control height"))
+                .id(REVIEW)
+                .hit()
+                .focusable()
+                .action(Action::Click)
+                .semantics(Role::Button)
+                .name_text(name)
+        } else {
+            boxed("ComposerReview").w(Length::Runtime(0.0, "no review count"))
+        })
         .child(if inline {
             boxed("ComposerText")
                 .fill()
@@ -226,8 +244,60 @@ pub(crate) fn layout(
 }
 
 #[cfg(test)]
+pub(crate) fn layout(
+    rect: Rect,
+    band_height: f32,
+    text_height: f32,
+    inline: bool,
+    plus_name: &str,
+    send_name: &str,
+    mode_name: Option<&str>,
+    microphone_name: Option<&str>,
+    microphone_choice_name: Option<&str>,
+) -> Shell {
+    layout_with_review(
+        rect,
+        band_height,
+        text_height,
+        inline,
+        plus_name,
+        send_name,
+        mode_name,
+        microphone_name,
+        microphone_choice_name,
+        None,
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_count_shares_measured_hit_geometry_with_composer_controls() {
+        for width in [320.0, 800.0] {
+            let shell = layout_with_review(
+                Rect::new(0.0, 0.0, width, 100.0),
+                0.0,
+                24.0,
+                false,
+                "Add",
+                "Send",
+                None,
+                None,
+                None,
+                Some(("Needs you: 8", 58.0)),
+            );
+            let review = shell.review().unwrap();
+            assert!(shell.plus().x + shell.plus().w <= review.x);
+            assert!(review.x + review.w <= shell.model().x);
+            assert_eq!(
+                shell.frame.hit_at(review.x + 1.0, review.y + 1.0),
+                Some(REVIEW)
+            );
+            assert!(shell.frame.diagnostics.is_empty());
+        }
+    }
 
     #[test]
     fn inline_text_and_controls_share_a_row_without_overlapping() {

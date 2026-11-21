@@ -12,6 +12,20 @@ use uuid::Uuid;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "BotRoutineCommand")]
 pub enum Command {
+    Reviews {
+        bot: BotId,
+        before: Option<Cursor>,
+    },
+    Review {
+        bot: BotId,
+        occurrence: Uuid,
+        offset: usize,
+    },
+    SkipReview {
+        id: Uuid,
+        bot: BotId,
+        occurrence: Uuid,
+    },
     ClaimStartup {
         id: Uuid,
         bot: BotId,
@@ -58,6 +72,8 @@ pub struct Occurrence {
     pub updated_at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preview: Option<koru_ai_core::bots::BotReplyPreview>,
+    #[serde(default)]
+    pub review: Option<String>,
 }
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(rename = "BotRoutineSnapshot")]
@@ -77,6 +93,17 @@ impl std::fmt::Debug for Snapshot {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[schemars(rename = "BotRoutineResponse")]
 pub enum Response {
+    Reviews {
+        page: ReviewPage,
+    },
+    Review {
+        detail: ReviewDetail,
+    },
+    SkippedReview {
+        request: Uuid,
+        item: ReviewItem,
+        replayed: bool,
+    },
     Startup {
         request: Uuid,
         first_enabled: bool,
@@ -101,4 +128,37 @@ impl std::fmt::Debug for Response {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RoutineResponse(<redacted>)")
     }
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotRoutineReviewItem")]
+pub struct ReviewItem {
+    pub occurrence: Uuid,
+    pub routine: Uuid,
+    pub name: String,
+    pub card: Uuid,
+    pub reply: Uuid,
+    pub published_at_ms: i64,
+    pub review: Option<String>,
+    pub preview: String,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotRoutineReviewPage")]
+pub struct ReviewPage {
+    pub bot: Uuid,
+    pub count: u64,
+    pub items: Vec<ReviewItem>,
+    pub next: Option<Cursor>,
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotRoutineReviewDetail")]
+pub struct ReviewDetail {
+    pub bot: Uuid,
+    pub item: ReviewItem,
+    pub text: String,
+    pub offset: usize,
+    pub next: Option<usize>,
 }

@@ -104,6 +104,18 @@ pub(super) fn handle(
     command: &Command,
 ) -> bool {
     match command {
+        Command::RoutineReview {
+            thread,
+            request,
+            command,
+        } => {
+            let _ = updates.send(Update::RoutineReview {
+                thread: *thread,
+                request: *request,
+                result: client.ai().bot_routine(command),
+            });
+            true
+        }
         Command::Boot(Some(thread), _) | Command::Read(thread) => {
             let snapshot = match read(client, *thread) {
                 Ok(snapshot) => snapshot,

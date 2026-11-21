@@ -11,7 +11,7 @@ use crate::Error;
 pub const DATABASE_NAME: &str = "engine.db";
 const SCHEMA: Schema = Schema {
     database: DATABASE_NAME,
-    understood: 2,
+    understood: 3,
     migrations: &[
         Migration {
             to: 1,
@@ -23,6 +23,12 @@ const SCHEMA: Schema = Schema {
             to: 2,
             name: "002_routines.sql",
             sql: include_str!("../migrations/002_routines.sql"),
+            columns: &[],
+        },
+        Migration {
+            to: 3,
+            name: "003_routine_review.sql",
+            sql: include_str!("../migrations/003_routine_review.sql"),
             columns: &[],
         },
     ],

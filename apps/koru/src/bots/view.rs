@@ -109,6 +109,7 @@ pub(crate) mod new_bot;
 pub(crate) mod onboard;
 mod picker;
 pub(crate) mod region;
+mod review;
 pub(crate) use region::{Control, ControlRole};
 
 /// The surface every key below belongs to.
@@ -292,6 +293,7 @@ pub(crate) struct BotView {
     /// The message block a link or a search hit named, shown once the
     /// conversation is bound.
     pending_block: Option<koru_ai_ui::MessageBlockId>,
+    pending_routine_result: Option<uuid::Uuid>,
     /// The conversation this tab shows: what it is found by.
     chat: ChatId,
     facts: Option<BotFacts>,
@@ -468,6 +470,7 @@ pub(crate) struct ConversationTarget {
     pub bot: BotId,
     pub name: String,
     pub chat: ChatId,
+    pub result: Option<uuid::Uuid>,
 }
 
 impl BotView {
@@ -488,6 +491,7 @@ impl BotView {
             label_name: None,
             listed_face: None,
             pending_block: None,
+            pending_routine_result: None,
             chat,
             facts: None,
             home_name: None,
@@ -1168,10 +1172,18 @@ impl BotView {
     }
 
     pub(crate) fn take_open_request(&mut self) -> Option<ConversationTarget> {
+        if let Some(request) = self.routine_result_target() {
+            return Some(request);
+        }
         self.conversation
             .as_mut()?
             .take_open_bot_conversation()
-            .map(|(bot, name, chat)| ConversationTarget { bot, name, chat })
+            .map(|(bot, name, chat)| ConversationTarget {
+                bot,
+                name,
+                chat,
+                result: None,
+            })
     }
 
     /// **The faces the window's roster lists**, for the request cards'

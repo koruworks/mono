@@ -230,6 +230,7 @@ pub(super) fn detail_answer(
                         recorded_at_ms: item.occurrence_ms,
                         updated_at_ms: item.occurrence_ms,
                         preview: None,
+                        review: None,
                     })
                     .collect(),
                 _ => vec![],

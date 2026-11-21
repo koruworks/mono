@@ -222,7 +222,7 @@ fn block(spec: &BlockSpec) -> El {
     block
 }
 
-fn button(name: &'static str, spec: &ButtonSpec) -> El {
+pub(crate) fn button(name: &'static str, spec: &ButtonSpec) -> El {
     leaf(
         name,
         ButtonLeaf {

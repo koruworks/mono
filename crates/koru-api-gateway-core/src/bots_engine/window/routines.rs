@@ -125,6 +125,59 @@ impl Gateway {
         }
         let owner = self.authority.owner().map_err(authority_error)?;
         match command {
+            wire::Command::Reviews { bot, before } => {
+                let page: native::review::Page = self.routine_read(
+                    owner,
+                    Query::RoutineReviews {
+                        bot: bot.as_uuid(),
+                        before: before.map(|v| native::review::Cursor {
+                            at_ms: v.at_ms,
+                            id: v.id,
+                        }),
+                    },
+                )?;
+                Ok(wire::Response::Reviews {
+                    page: convert(page)?,
+                })
+            }
+            wire::Command::Review {
+                bot,
+                occurrence,
+                offset,
+            } => {
+                let detail: native::review::Detail = self.routine_read(
+                    owner,
+                    Query::RoutineReview {
+                        bot: bot.as_uuid(),
+                        occurrence,
+                        offset,
+                    },
+                )?;
+                Ok(wire::Response::Review {
+                    detail: convert(detail)?,
+                })
+            }
+            wire::Command::SkipReview {
+                id,
+                bot,
+                occurrence,
+            } => {
+                let result: Receipt<native::review::Item> =
+                    serde_json::from_value(self.execute_owner(
+                        owner,
+                        Command::SkipRoutineReview {
+                            id,
+                            bot: bot.as_uuid(),
+                            occurrence,
+                        },
+                    )?)
+                    .map_err(|_| Error::EngineUnavailable)?;
+                Ok(wire::Response::SkippedReview {
+                    request: id,
+                    item: convert(result.answer)?,
+                    replayed: result.replayed,
+                })
+            }
             wire::Command::ClaimStartup { id, bot } => {
                 let result: Receipt<bool> = serde_json::from_value(self.execute_owner(
                     owner,

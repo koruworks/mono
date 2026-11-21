@@ -6,6 +6,7 @@ use crate::{
 };
 use koru_time_zone::SystemZone;
 mod conversation;
+mod review;
 mod startup;
 mod tools;
 
@@ -208,7 +209,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let mut db = Database::in_memory().unwrap();
+        Self::with_db(Database::in_memory().unwrap())
+    }
+    fn with_db(mut db: Database) -> Self {
         let who = Person {
             owner: "owner".into(),
             sender: "person".into(),

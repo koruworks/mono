@@ -80,6 +80,11 @@ impl Scopes {
 }
 
 pub(crate) enum Command {
+    RoutineReview {
+        thread: ChatId,
+        request: uuid::Uuid,
+        command: koru_ai_wire::bot_routines::Command,
+    },
     Engine {
         thread: ChatId,
         command: koru_ai_wire::bot_threads::Command,
@@ -164,6 +169,7 @@ pub(crate) enum Command {
 impl Command {
     pub(crate) fn name(&self) -> &'static str {
         match self {
+            Self::RoutineReview { .. } => "routine_review",
             Self::Engine { .. } => "engine_command",
             Self::EnginePoll(_) => "engine_observe",
             Self::Boot(..) => "boot",
@@ -223,6 +229,11 @@ pub(crate) struct DestinationOption {
 
 #[derive(Debug)]
 pub(crate) enum Update {
+    RoutineReview {
+        thread: ChatId,
+        request: uuid::Uuid,
+        result: Result<koru_ai_wire::bot_routines::Response, koru_ai_wire::Failure>,
+    },
     EngineOpened(Box<crate::managed::Opened>),
     EngineRefreshed(Box<crate::managed::Refreshed>),
     EngineReply {
@@ -513,6 +524,13 @@ fn run(
                     Err(message) => {
                         let failure = unreachable_failure(message.clone());
                         let update = match &command {
+                            Command::RoutineReview {
+                                thread, request, ..
+                            } => Update::RoutineReview {
+                                thread: *thread,
+                                request: *request,
+                                result: Err(failure),
+                            },
                             Command::Engine { thread, command } => Update::EngineFailed {
                                 thread: *thread,
                                 command: command.clone(),
@@ -552,6 +570,17 @@ fn run(
         }
         match command {
             Command::StopObserving(..) => unreachable!("handled without a connection"),
+            Command::RoutineReview {
+                thread, request, ..
+            } => {
+                let _ = updates.send(Update::RoutineReview {
+                    thread,
+                    request,
+                    result: Err(unreachable_failure(
+                        "The conversation owner is unavailable.".into(),
+                    )),
+                });
+            }
             Command::ObserveAttempt(chat, attempt, generation) => {
                 observation.start(client, &updates, chat, attempt, generation);
             }

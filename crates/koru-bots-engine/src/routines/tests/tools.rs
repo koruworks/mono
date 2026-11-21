@@ -74,6 +74,92 @@ fn create() -> Value {
 }
 
 #[test]
+fn attention_tool_uses_the_bound_routine_turn_and_never_prose() {
+    let mut f = Fixture::new();
+    let routine = f.create();
+    let occurrence = f
+        .change(
+            Change::RunNow {
+                bot: f.bot,
+                routine: routine.id,
+                revision: routine.revision,
+            },
+            1,
+        )
+        .occurrence
+        .unwrap();
+    let worker = Worker {
+        bot: f.bot,
+        incarnation: Uuid::new_v4(),
+    };
+    f.db.connection
+        .execute(
+            "INSERT INTO workers VALUES (?1,?2,0,0)",
+            params![f.bot.to_string(), worker.incarnation.to_string()],
+        )
+        .unwrap();
+    let issued =
+        f.db.mint_session(
+            worker,
+            Mint {
+                command: Uuid::new_v4(),
+                thread: routine.thread,
+                predecessor: None,
+            },
+            2,
+        )
+        .unwrap();
+    let delivery =
+        f.db.claim_session_messages(
+            worker,
+            issued.session,
+            messages::Resume::Rebuilt,
+            128 * 1024,
+            3,
+        )
+        .unwrap()
+        .unwrap();
+    f.db.delivery_accepted(delivery.turn, delivery.id).unwrap();
+    let secret = issued.secret.unwrap();
+    let arguments = json!({"id":Uuid::new_v4(),"occurrence":occurrence.id,"needs_person":false});
+    assert_eq!(
+        call(
+            &mut f,
+            worker,
+            &secret,
+            "set_routine_attention",
+            arguments.clone()
+        )
+        .unwrap()["needs_person"],
+        false
+    );
+    let mut forged = arguments.clone();
+    forged["bot"] = json!(Uuid::new_v4());
+    assert!(call(&mut f, worker, &secret, "set_routine_attention", forged).is_err());
+    assert!(
+        call(
+            &mut f,
+            worker,
+            &secret,
+            "set_routine_attention",
+            json!({"id":Uuid::new_v4(),"occurrence":occurrence.id,"needs_person":"false"})
+        )
+        .is_err()
+    );
+    f.db.publish_reply(
+        &messages::Publish {
+            command: Uuid::new_v4(),
+            turn: delivery.turn,
+            body: "Attention required according to these arbitrary words".into(),
+            outputs: vec![],
+        },
+        6,
+    )
+    .unwrap();
+    assert_eq!(f.db.routine_reviews(&f.who, f.bot, None).unwrap().count, 0);
+}
+
+#[test]
 fn bound_bot_creation_is_enabled_atomic_and_replayable_and_edit_keeps_human_controls() {
     let mut f = Fixture::new();
     let (worker, secret, turn) = session(&mut f);
