@@ -60,6 +60,7 @@ const TOOLTIP_BASE: u64 = 0x5155_0000;
 
 /// One message set aside whole, as the composer held it.
 pub(crate) struct Queued {
+    pub(crate) routine_context: Option<crate::managed_review::Attachment>,
     /// The composer's document, quote chips (D88) and all.
     pub(crate) composer: composer::Draft,
     pub(crate) attachments: Vec<attachments::Draft>,
@@ -75,7 +76,7 @@ impl Queued {
     /// Whether a native steer can carry it: text only. Attachments and
     /// chips ride a send, never a steer.
     pub(crate) fn text_only(&self) -> bool {
-        self.attachments.is_empty() && !self.documents
+        self.attachments.is_empty() && !self.documents && self.routine_context.is_none()
     }
 }
 
@@ -297,6 +298,7 @@ impl ChatSurface {
             }
         }
         let item = Queued {
+            routine_context: self.take_review_context(),
             composer: self.composer.stash(),
             attachments,
             markdown: message.markdown.trim().to_owned(),
@@ -342,6 +344,8 @@ impl ChatSurface {
     /// send the item that was waiting on it.
     pub(crate) fn send_queued_item(&mut self, chat: ChatId, item: Queued) -> bool {
         let typing = self.composer.stash();
+        let typing_context = self.take_review_context();
+        self.restore_review_context(item.routine_context);
         let walk = (self.history_cursor.take(), self.history_draft.take());
         self.composer.unstash(item.composer);
         let strip = self.strips.take(chat);
@@ -353,6 +357,7 @@ impl ChatSurface {
         self.sending_queued = false;
         if self.composer_has_content() {
             let item = Queued {
+                routine_context: self.take_review_context(),
                 composer: self.composer.stash(),
                 attachments: self.strips.take(chat),
                 markdown: item.markdown,
@@ -374,6 +379,7 @@ impl ChatSurface {
             }
         }
         self.composer.unstash(typing);
+        self.restore_review_context(typing_context);
         for draft in strip {
             self.strips.push(chat, draft);
         }
@@ -468,6 +474,7 @@ impl ChatSurface {
         if self.composer_has_content() {
             let message = self.composer.message();
             let displaced = Queued {
+                routine_context: self.take_review_context(),
                 markdown: message.markdown.trim().to_owned(),
                 documents: !message.documents.is_empty() || !message.skills.is_empty(),
                 composer: self.composer.stash(),
@@ -480,6 +487,7 @@ impl ChatSurface {
                 self.queues.push(chat, displaced);
             }
         }
+        self.restore_review_context(item.routine_context);
         self.composer.unstash(item.composer);
         for draft in item.attachments {
             self.strips.push(chat, draft);

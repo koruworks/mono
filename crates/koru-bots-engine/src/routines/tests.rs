@@ -201,14 +201,14 @@ fn expired_queue_outside_settlement_page_does_not_skip_a_current_firing() {
     }
 }
 
-struct Fixture {
-    db: Database,
-    who: Person,
-    bot: Uuid,
-    main: Uuid,
+pub(crate) struct Fixture {
+    pub(crate) db: Database,
+    pub(crate) who: Person,
+    pub(crate) bot: Uuid,
+    pub(crate) main: Uuid,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_db(Database::in_memory().unwrap())
     }
     fn with_db(mut db: Database) -> Self {
@@ -260,7 +260,7 @@ impl Fixture {
             main: created.answer.main_thread,
         }
     }
-    fn create(&mut self) -> Routine {
+    pub(crate) fn create(&mut self) -> Routine {
         // Most cases begin before their first due minute, not exactly on a
         // boundary. Creation is now enabled, so an inclusive boundary matters.
         self.create_at(1)
@@ -279,7 +279,7 @@ impl Fixture {
         )
         .routine
     }
-    fn change(&mut self, action: Change, now: i64) -> Changed {
+    pub(crate) fn change(&mut self, action: Change, now: i64) -> Changed {
         change(&mut self.db, &self.who, Uuid::new_v4(), &action, now)
             .unwrap()
             .answer
@@ -307,7 +307,7 @@ impl Fixture {
             .unwrap()
             .occurrences
     }
-    fn claim(&mut self, row: &Routine, now: i64) -> messages::Delivery {
+    pub(crate) fn claim(&mut self, row: &Routine, now: i64) -> messages::Delivery {
         let delivery = self
             .db
             .claim_messages(

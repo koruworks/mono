@@ -84,7 +84,12 @@ impl ChatSurface {
                     bot,
                     thread,
                     body: request.markdown,
-                    in_reply_to: None,
+                    in_reply_to: self
+                        .sent_message
+                        .as_ref()
+                        .filter(|sent| sent.chat == thread)
+                        .and_then(|sent| sent.routine_context.as_ref())
+                        .map(|context| context.detail.item.card),
                     attachments: request
                         .attachment_ids
                         .into_iter()
@@ -252,6 +257,7 @@ impl ChatSurface {
             return false;
         }
         let accepted = matches!(reply, R::Accepted { .. });
+        let mut accepted_context = None;
         let receipt = match &reply {
             R::Changed { request, .. }
             | R::Branched { request, .. }
@@ -314,7 +320,10 @@ impl ChatSurface {
                 {
                     sent.message_id = Some(MessageId::from_uuid(message));
                 }
-                self.sent_message = None;
+                accepted_context = self
+                    .sent_message
+                    .take()
+                    .and_then(|sent| sent.routine_context);
                 self.pending_user = None;
                 self.pending_user_tiles.clear();
                 self.pulse = None;
@@ -349,6 +358,9 @@ impl ChatSurface {
         self.status = None;
         self.messages_dirty = true;
         if accepted {
+            if let Some(context) = accepted_context {
+                self.accepted_review_context(&context);
+            }
             self.note_activity();
             if !self.reply_busy() && !self.queues.is_paused(thread) {
                 self.send_queue_head();

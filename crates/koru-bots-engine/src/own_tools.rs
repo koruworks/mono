@@ -13,6 +13,11 @@ use uuid::Uuid;
 pub fn catalog() -> Vec<Value> {
     let mut tools = vec![
         json!({
+            "name":"read_routine_result",
+            "description":"Read the exact retained Routine result attached to a person's message in this Bot's main conversation. Use routine_context.occurrence and pass next as offset until complete. The excerpt can be partial; this tool reads the full result without granting access to linked documents or other Bots.",
+            "inputSchema":{"type":"object","properties":{"occurrence":{"type":"string","format":"uuid"},"offset":{"type":"integer","minimum":0}},"required":["occurrence"],"additionalProperties":false}
+        }),
+        json!({
             "name": "read_older_messages",
             "description": "Read an ordered page of messages in this conversation. Use the last sequence as after to read the next page.",
             "inputSchema": {"type":"object", "properties":{"after":{"type":"integer","minimum":0}}, "additionalProperties":false}
@@ -44,6 +49,33 @@ pub(crate) fn execute(
         return crate::routines::tools::execute(db, &identity, call, now);
     }
     match call.tool() {
+        "read_routine_result" => {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Arguments {
+                occurrence: Uuid,
+                #[serde(default)]
+                offset: usize,
+            }
+            let args: Arguments = serde_json::from_value(call.arguments().clone())
+                .map_err(|_| Error::InvalidRequest)?;
+            let detail = crate::messages::routine_context::read(
+                &db.connection,
+                identity.bot,
+                identity.thread,
+                args.occurrence,
+                args.offset,
+            )?;
+            let response = json!({"occurrence":args.occurrence,"reply":detail.item.reply,"text":detail.text,"offset":detail.offset,"next":detail.next});
+            if serde_json::to_vec(&response)
+                .map_err(|_| Error::InvalidRequest)?
+                .len()
+                > crate::limits::MAX_PAYLOAD_BYTES
+            {
+                return Err(Error::InputTooSmall);
+            }
+            Ok(response)
+        }
         "message_bot" => {
             let request = serde_json::from_value(call.arguments().clone())
                 .map_err(|_| Error::InvalidRequest)?;

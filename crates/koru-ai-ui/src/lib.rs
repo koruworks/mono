@@ -465,6 +465,7 @@ struct ResponseTextHit {
 /// its text with its chips, quotes and undo, and its attachments.
 struct SentMessage {
     chat: ChatId,
+    routine_context: Option<managed_review::Attachment>,
     composer: composer::Draft,
     attachments: Vec<attachments::Draft>,
     /// What it said: a queued message refused by the service goes back to
@@ -5612,6 +5613,9 @@ impl ChatSurface {
         if self.observing_bot_thread() {
             return false;
         }
+        if !self.review_send_ready() {
+            return true;
+        }
         // **A reply is running: the message is queued** ([`queue`]), and
         // sent when the reply completes.
         if self.reply_busy() {
@@ -5790,6 +5794,7 @@ impl ChatSurface {
             .and_then(|_| self.history_attachment_draft.take());
         self.sent_message = Some(SentMessage {
             chat: chat_id,
+            routine_context: self.attached_review(),
             composer: self.composer.stash(),
             attachments: sent_attachments,
             markdown: markdown.clone(),
@@ -5904,10 +5909,15 @@ impl ChatSurface {
                 self.recall_restages.insert(draft.id, sent.chat);
             }
         }
-        if sent.from_queue {
+        if sent.from_queue
+            || self.shown_chat_id() != Some(sent.chat)
+            || (sent.recalled_from.is_none() && !self.composer.is_blank())
+            || self.review_context_changed(sent.routine_context.as_ref())
+        {
             self.requeue_refused(
                 sent.chat,
                 queue::Queued {
+                    routine_context: sent.routine_context,
                     composer: sent.composer,
                     attachments: sent.attachments,
                     markdown: sent.markdown,
@@ -5920,6 +5930,9 @@ impl ChatSurface {
         if self.shown_chat_id() == Some(sent.chat) {
             if self.composer.is_blank() {
                 self.composer.unstash(sent.composer);
+            }
+            if sent.routine_context.is_some() {
+                self.restore_review_context(sent.routine_context);
             }
         }
         self.restore_drafts(sent.chat, sent.attachments, failure);

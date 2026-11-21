@@ -16,6 +16,212 @@ fn item() -> wire::ReviewItem {
     }
 }
 
+fn attach(view: &mut ChatSurface) -> wire::ReviewItem {
+    let (bot, _, _) = view.review_subject().unwrap();
+    let result = item();
+    view.review.pending = None;
+    view.restore_review_context(Some(Attachment {
+        detail: wire::ReviewDetail {
+            bot: bot.as_uuid(),
+            item: result.clone(),
+            text: result.preview.clone(),
+            offset: 0,
+            next: None,
+        },
+        token: Uuid::new_v4(),
+    }));
+    result
+}
+
+fn idle(view: &mut ChatSurface) {
+    view.managed.as_mut().unwrap().snapshot.turns.clear();
+    view.attempt = None;
+    view.waiting = false;
+}
+
+#[test]
+fn context_send_keeps_exact_anchor_through_retry_and_refusal() {
+    use koru_ai_wire::bot_threads::Command as C;
+    let (mut view, commands, _) = surface();
+    idle(&mut view);
+    let result = attach(&mut view);
+    view.composer.set_text("Send this quote");
+    assert!(view.send_composer());
+    let (thread, command) = commands
+        .try_iter()
+        .find_map(|c| match c {
+            Command::Engine {
+                thread,
+                command: c @ C::Send { .. },
+            } => Some((thread, c)),
+            _ => None,
+        })
+        .expect("native contextual send");
+    assert!(
+        matches!(&command, C::Send { in_reply_to: Some(card), body, .. }
+        if *card == result.card && body == "Send this quote")
+    );
+    let failure = |retryable| koru_ai_wire::Failure {
+        code: "test_refusal".into(),
+        message: "Refused".into(),
+        retryable,
+        details: Default::default(),
+    };
+    assert!(view.managed_failed(thread, command.clone(), failure(true)));
+    assert_eq!(
+        serde_json::to_value(
+            view.managed
+                .as_ref()
+                .unwrap()
+                .pending_send
+                .as_ref()
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::to_value(&command).unwrap()
+    );
+    assert_eq!(
+        view.attached_review().unwrap().detail.item.card,
+        result.card
+    );
+    assert!(view.managed_failed(thread, command, failure(false)));
+    assert_eq!(view.composer.text(), "Send this quote");
+    assert_eq!(
+        view.attached_review().unwrap().detail.item.card,
+        result.card
+    );
+}
+
+#[test]
+fn accepted_reply_clears_only_its_selection_and_never_a_newer_draft_or_card() {
+    use koru_ai_wire::bot_threads::{Command as C, Response as R};
+    let (mut view, commands, _) = surface();
+    idle(&mut view);
+    let result = attach(&mut view);
+    view.composer.set_text("Reply");
+    view.send_composer();
+    let (thread, id) = commands
+        .try_iter()
+        .find_map(|c| match c {
+            Command::Engine {
+                thread,
+                command: C::Send { id, .. },
+            } => Some((thread, id)),
+            _ => None,
+        })
+        .unwrap();
+    let original = view.attached_review().unwrap();
+    // Even explicitly reopening the same result creates a new attachment.
+    view.restore_review_context(Some(original.clone()));
+    view.composer.set_text("Another action");
+    assert!(view.managed_reply(
+        thread,
+        R::Accepted {
+            request: id,
+            message: Uuid::new_v4(),
+            thread: thread.as_uuid(),
+            sequence: 1,
+            replayed: false
+        }
+    ));
+    assert_eq!(view.composer.text(), "Another action");
+    assert_eq!(
+        view.attached_review().unwrap().detail.item.card,
+        result.card
+    );
+    let latest = view.attached_review().unwrap();
+    view.accepted_review_context(&latest);
+    assert!(view.attached_review().is_none());
+    assert_eq!(view.composer.text(), "Another action");
+}
+
+#[test]
+fn queued_context_does_not_inherit_later_selection_and_failed_send_keeps_both_drafts() {
+    use koru_ai_wire::bot_threads::Command as C;
+    let (mut view, commands, _) = surface();
+    let first = attach(&mut view);
+    view.composer.set_text("First action");
+    assert!(view.queue_composer());
+    assert!(view.attached_review().is_none());
+    assert!(!view.shown_queue().unwrap().items[0].text_only());
+    let second = attach(&mut view);
+    view.composer.set_text("Second action");
+    idle(&mut view);
+    assert!(view.send_queue_head());
+    let (thread, command) = commands
+        .try_iter()
+        .find_map(|c| match c {
+            Command::Engine {
+                thread,
+                command: c @ C::Send { .. },
+            } => Some((thread, c)),
+            _ => None,
+        })
+        .unwrap();
+    assert!(matches!(&command, C::Send { in_reply_to: Some(card), .. } if *card == first.card));
+    view.managed_failed(
+        thread,
+        command,
+        koru_ai_wire::Failure {
+            code: "refused".into(),
+            message: "Refused".into(),
+            retryable: false,
+            details: Default::default(),
+        },
+    );
+    assert_eq!(view.composer.text(), "Second action");
+    assert_eq!(
+        view.attached_review().unwrap().detail.item.card,
+        second.card
+    );
+    let queued = &view.shown_queue().unwrap().items[0];
+    assert_eq!(queued.markdown, "First action");
+    assert_eq!(
+        queued.routine_context.as_ref().unwrap().detail.item.card,
+        first.card
+    );
+}
+
+#[test]
+fn loading_context_blocks_send_and_late_chunk_cannot_replace_another_attachment() {
+    let (mut view, commands, _) = surface();
+    idle(&mut view);
+    let (bot, thread, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    view.open_routine_result(bot, Uuid::new_v4());
+    let Command::RoutineReview {
+        request,
+        command: wire::Command::Review { occurrence, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!()
+    };
+    view.composer.set_text("Keep this");
+    view.send_composer();
+    assert_eq!(view.composer.text(), "Keep this");
+    assert!(commands.try_recv().is_err());
+    let pending = view.review.pending.clone();
+    let next = attach(&mut view);
+    view.review.pending = pending;
+    let mut old = item();
+    old.occurrence = occurrence;
+    view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::Review {
+            detail: wire::ReviewDetail {
+                bot: bot.as_uuid(),
+                item: old,
+                text: "old".into(),
+                offset: 0,
+                next: None,
+            },
+        }),
+    );
+    assert_eq!(view.attached_review().unwrap().detail.item.card, next.card);
+}
+
 #[test]
 fn hiding_preserves_uncertain_skip_and_reopening_uses_its_same_identity() {
     let (mut view, commands, _) = surface();

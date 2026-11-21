@@ -10,6 +10,8 @@ mod history;
 mod publish;
 pub(crate) mod receipts;
 mod refusal;
+pub(crate) mod routine_context;
+pub use routine_context::Context as RoutineContext;
 mod skills;
 pub(crate) use skills::work_skills;
 mod steering;
@@ -114,6 +116,9 @@ pub struct InputMessage {
     /// an input too small for them is refused without accepting a delivery.
     pub content: Content,
     pub truncated: bool,
+    /// Resolved by the engine from the retained reply link, never client prose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routine_context: Option<RoutineContext>,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]

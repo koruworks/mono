@@ -203,6 +203,7 @@ impl Database {
         for message in history.into_iter().take(HISTORY_LIMIT).rev() {
             delivery.context.push(history::input(message));
         }
+        routine_context::enrich(&tx, bot, thread, &mut delivery)?;
         if let Err(error) = history::bound(&mut delivery, budget) {
             if error == Error::InputTooSmall && limit == 1 && fresh.len() == 1 {
                 let obligation = fresh.remove(0);

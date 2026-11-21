@@ -63,7 +63,7 @@ fn result(c: &Connection, bot: Uuid, key: Uuid) -> Result<(Item, String), Error>
             "SELECT r.id,r.name,o.card,o.reply,m.accepted_at_ms,o.review,m.payload
          FROM routine_occurrences o JOIN routines r ON r.id=o.routine
          JOIN messages m ON m.id=o.reply AND m.thread=r.thread AND m.sender=r.bot
-         JOIN messages card ON card.id=o.card
+         JOIN messages card ON card.id=o.card AND card.kind='thread_reference' AND card.state='published' AND card.sender=r.bot
          JOIN threads main ON main.id=card.thread AND main.bot=r.bot AND main.kind='main'
          WHERE o.id=?1 AND r.bot=?2 AND m.kind='words' AND m.state='published'",
             params![key.to_string(), bot.to_string()],

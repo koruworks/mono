@@ -68,6 +68,7 @@ impl Database {
         };
         // A structured input too large to steer waits for normal admission,
         // where the ordinary terminal-refusal rule handles it.
+        routine_context::enrich(&tx, bot, thread, &mut delivery)?;
         if let Err(error) = history::bound(&mut delivery, budget) {
             if error == Error::InputTooSmall {
                 return Ok(None);

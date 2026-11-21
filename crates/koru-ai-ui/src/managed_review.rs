@@ -13,14 +13,23 @@ mod controls;
 #[cfg(test)]
 mod tests;
 
+/// A composer attachment keeps its identity while a send is awaiting a receipt.
+#[derive(Clone)]
+pub(crate) struct Attachment {
+    pub detail: wire::ReviewDetail,
+    token: Uuid,
+}
+
 #[derive(Default)]
 pub(crate) struct State {
     pub selected: Option<wire::ReviewDetail>,
+    token: Uuid,
     items: Vec<wire::ReviewItem>,
     count: u64,
     next: Option<wire::Cursor>,
     stamp: Option<Timestamp>,
     pending: Option<(Uuid, wire::Command)>,
+    requested_token: Uuid,
     failed: bool,
     open: bool,
     cursor: usize,
@@ -32,6 +41,45 @@ pub(crate) struct State {
 }
 
 impl ChatSurface {
+    pub(crate) fn attached_review(&self) -> Option<Attachment> {
+        if !self.review.open {
+            return None;
+        }
+        Some(Attachment {
+            detail: self.review.selected.clone()?,
+            token: self.review.token,
+        })
+    }
+    pub(crate) fn take_review_context(&mut self) -> Option<Attachment> {
+        let attachment = self.attached_review();
+        self.review.open = false;
+        self.review.selected = None;
+        attachment
+    }
+    pub(crate) fn restore_review_context(&mut self, attachment: Option<Attachment>) {
+        self.review.selected = attachment
+            .filter(|a| {
+                self.review_subject()
+                    .is_some_and(|s| s.0.as_uuid() == a.detail.bot)
+            })
+            .map(|a| a.detail);
+        self.review.open = self.review.selected.is_some();
+        self.review.token = Uuid::new_v4();
+        self.review.scroll = 0.0;
+    }
+    pub(crate) fn review_send_ready(&self) -> bool {
+        !self.review.open || self.review.selected.is_some()
+    }
+    pub(crate) fn review_context_changed(&self, old: Option<&Attachment>) -> bool {
+        self.review.open && old.is_none_or(|a| a.token != self.review.token)
+    }
+    pub(crate) fn accepted_review_context(&mut self, attachment: &Attachment) {
+        if self.review.token == attachment.token {
+            self.take_review_context();
+        }
+        self.review.stamp = None;
+        self.refresh_reviews();
+    }
     pub(crate) fn suspend_reviews(&mut self) {
         self.review.stamp = None;
         self.review.failed = self.review.pending.is_some();
@@ -71,6 +119,7 @@ impl ChatSurface {
             return false;
         }
         let request = Uuid::new_v4();
+        self.review.requested_token = self.review.token;
         self.review.failed = false;
         self.review.pending = Some((request, command.clone()));
         if !self.send_command(Command::RoutineReview {
@@ -90,6 +139,7 @@ impl ChatSurface {
             return false;
         }
         self.review.open = true;
+        self.review.token = Uuid::new_v4();
         self.review.scroll = 0.0;
         self.review.selected = None;
         self.request_review(wire::Command::Review {
@@ -154,7 +204,8 @@ impl ChatSurface {
                 wire::Response::Review { detail },
             ) if detail.bot == bot.as_uuid()
                 && detail.item.occurrence == occurrence
-                && detail.offset == offset =>
+                && detail.offset == offset
+                && self.review.requested_token == self.review.token =>
             {
                 self.review.selected = Some(detail);
                 self.review.scroll = 0.0;
@@ -163,8 +214,9 @@ impl ChatSurface {
                 wire::Command::SkipReview { id, occurrence, .. },
                 wire::Response::SkippedReview { request, item, .. },
             ) if id == request && item.occurrence == occurrence => {
-                self.review.open = false;
-                self.review.selected = None;
+                if self.review.requested_token == self.review.token {
+                    self.take_review_context();
+                }
                 self.review.stamp = None;
                 self.refresh_reviews();
                 self.note_activity();

@@ -345,4 +345,4 @@ pub(crate) fn grant(c: &Connection, bot: Uuid, thread: Uuid) -> Result<Vec<u8>, 
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

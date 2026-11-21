@@ -9,6 +9,7 @@ use uuid::Uuid;
 mod chip;
 mod exchange;
 mod reply;
+mod reply_context;
 mod routine;
 mod turn;
 
@@ -46,6 +47,7 @@ pub(crate) struct State {
 enum Action {
     Thread(koru_ai_core::bots::BotId, String, ChatId),
     Document(DocumentId),
+    Review(koru_ai_core::bots::BotId, Uuid),
     Join,
 }
 struct Row {
@@ -88,7 +90,10 @@ impl Row {
     }
 
     fn compact(&self) -> bool {
-        matches!(self.action, Some(Action::Thread(..)) | None)
+        matches!(
+            self.action,
+            Some(Action::Thread(..) | Action::Review(..)) | None
+        )
     }
     fn compact_tree(
         &self,
@@ -96,6 +101,9 @@ impl Row {
         faces: &HashMap<Uuid, u8>,
         width: f32,
     ) -> koru_draw::el::El {
+        if matches!(self.action, Some(Action::Review(..))) {
+            return reply_context::tree(self, engine, width);
+        }
         if self.routine {
             return routine::tree(self, engine, faces, width);
         }
@@ -439,6 +447,7 @@ impl ChatSurface {
             }
         }
         drop(push);
+        rows.extend(reply_context::rows(state, lang));
         for card in state.navigation.items.iter().filter(|card| {
             card.routine.is_some()
                 && state.snapshot.conversation.label.purpose
@@ -505,7 +514,7 @@ impl ChatSurface {
                     .unwrap_or(usize::MAX),
                 match row.action {
                     Some(Action::Join) => 0,
-                    Some(Action::Thread(..) | Action::Document(..)) => 1,
+                    Some(Action::Thread(..) | Action::Document(..) | Action::Review(..)) => 1,
                     _ => 2,
                 },
                 sequences.get(&row.id).copied().unwrap_or(0),
@@ -830,6 +839,7 @@ impl ChatSurface {
         };
         let thread = state.thread();
         let command = match action {
+            Action::Review(bot, occurrence) => return self.open_routine_result(bot, occurrence),
             Action::Thread(bot, name, chat) => {
                 state.navigation.open = Some((bot, name, chat));
                 return true;

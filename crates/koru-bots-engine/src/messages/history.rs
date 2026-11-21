@@ -63,6 +63,7 @@ pub(super) fn input(message: Message) -> InputMessage {
         sender: message.sender,
         content: message.content,
         truncated: false,
+        routine_context: None,
     }
 }
 
@@ -103,6 +104,10 @@ pub(super) fn bound(delivery: &mut Delivery, budget: usize) -> Result<(), Error>
     for message in &mut metadata.work {
         message.content.body.clear();
         message.truncated = true;
+        if let Some(context) = &mut message.routine_context {
+            context.excerpt.clear();
+            context.partial = true;
+        }
     }
     let size = |delivery: &Delivery| -> Result<usize, Error> {
         Ok(encode(delivery)?.len() + crate::workspace::input::budget(delivery)?)
@@ -119,16 +124,35 @@ pub(super) fn bound(delivery: &mut Delivery, budget: usize) -> Result<(), Error>
         let Some(message) = delivery
             .work
             .iter_mut()
-            .filter(|m| !m.content.body.is_empty())
-            .max_by_key(|m| m.content.body.len())
+            .filter(|m| text_bytes(m) > 0)
+            .max_by_key(|m| text_bytes(m))
         else {
             return Err(Error::InputTooSmall);
         };
-        cut(message, message.content.body.len() / 2);
+        cut(message, text_bytes(message) / 2);
     }
     Ok(())
 }
+fn text_bytes(message: &InputMessage) -> usize {
+    message.content.body.len()
+        + message
+            .routine_context
+            .as_ref()
+            .map_or(0, |c| c.excerpt.len())
+}
 fn cut(message: &mut InputMessage, mut bytes: usize) {
+    if let Some(context) = &mut message.routine_context {
+        let keep = crate::routines::review::prefix(
+            &context.excerpt,
+            bytes.saturating_sub(message.content.body.len()),
+        )
+        .len();
+        if keep < context.excerpt.len() {
+            context.excerpt.truncate(keep);
+            context.partial = true;
+        }
+        bytes = bytes.saturating_sub(context.excerpt.len());
+    }
     if message.content.body.len() <= bytes {
         return;
     }

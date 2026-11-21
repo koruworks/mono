@@ -76,6 +76,11 @@ impl Database {
                 return Err(Error::InvalidRequest);
             }
         }
+        let context = envelope
+            .in_reply_to
+            .map(|card| routine_context::resolve(&tx, envelope.to, thread, card))
+            .transpose()?
+            .flatten();
         let answer = Accepted {
             message: Uuid::new_v4(),
             thread,
@@ -92,6 +97,11 @@ impl Database {
                 |r| r.get(0),
             )?;
             recipients.push(id(starter)?);
+        }
+        // Result authority is scoped to this Bot. Do not accept a contextual
+        // instruction whose mentions redirect its work to a different Bot.
+        if context.is_some() && recipients.iter().any(|recipient| *recipient != envelope.to) {
+            return Err(Error::NotAllowed);
         }
         for recipient in &recipients {
             if *recipient != envelope.to {
@@ -120,6 +130,9 @@ impl Database {
         }
         tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'accepted',?6)",rusqlite::params![answer.message.to_string(),thread.to_string(),answer.sequence,person.sender,payload,now])?;
         crate::attachments::bind(&tx, thread, answer.message, &envelope.attachments)?;
+        if let Some(context) = &context {
+            routine_context::handled(&tx, envelope.to, context, answer.message, now)?;
+        }
         let expired = envelope.deadline_ms.is_some_and(|deadline| now > deadline);
         // Reading a side thread never joins it. Sending is the person's
         // explicit intervention and records membership with the message.

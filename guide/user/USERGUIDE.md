@@ -6858,6 +6858,12 @@ leaves it pending; **Skip** removes it from the queue while keeping it in histor
 Long results have **More** to continue reading. Routine result cards do not
 appear between main-chat messages.
 
+While a result is open, type in the main composer to ask the Bot to act on it.
+The result is attached to that message and leaves the queue once the message
+is accepted. A failed send keeps your message and context. The short reply line
+above your sent message opens the original result again, so you can act on it
+again later. Opening a handled or skipped result does not add it back to the queue.
+
 You can also ask the Bot to run an existing routine. It
 requests the run and briefly confirms whether it was queued or skipped; the
 routine does the work in its own conversation. Later runs keep that same
