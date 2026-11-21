@@ -125,6 +125,33 @@ impl Gateway {
         }
         let owner = self.authority.owner().map_err(authority_error)?;
         match command {
+            wire::Command::Create {
+                id,
+                bot,
+                expected_bot_revision,
+                name,
+                objective,
+                recurrence,
+            } => {
+                let result = self.routine_change(
+                    owner,
+                    id,
+                    native::Change::Create {
+                        bot: bot.as_uuid(),
+                        expected_bot_revision,
+                        name,
+                        objective,
+                        recurrence,
+                        documents: vec![],
+                    },
+                )?;
+                Ok(wire::Response::Created {
+                    request: id,
+                    item: list_item(result.answer.routine, owner)?,
+                    first_enabled: result.answer.first_enabled,
+                    replayed: result.replayed,
+                })
+            }
             wire::Command::Reviews { bot, before } => {
                 let page: native::review::Page = self.routine_read(
                     owner,

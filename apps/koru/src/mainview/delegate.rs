@@ -37,9 +37,11 @@
 //!   the worker that reads the Run document to find out.
 
 pub(super) mod job;
-pub(super) mod modal;
-mod paint;
+pub(crate) mod modal;
+pub(crate) mod paint;
 pub(super) mod pills;
+mod routine_accessibility;
+mod routine_create;
 pub(super) mod world;
 
 #[cfg(test)]
@@ -423,7 +425,7 @@ impl MainView {
         if self.delegation.is_some() {
             return false;
         }
-        let Some((_, profile, _, Some(workspace))) = self.pane_context.clone() else {
+        let Some(world) = self.routine_world() else {
             return false;
         };
         let lang = crate::format::lang();
@@ -432,24 +434,6 @@ impl MainView {
         if let Some(view) = self.asking_bot_tab_mut(tab, bot) {
             let _ = view.routines.take_timing_answer();
         }
-        let world = world::World {
-            workspace: koru_delegate_core::WorkspaceId::from_uuid(workspace.as_uuid()),
-            workspace_name: String::new(),
-            profile: koru_store_core::ProfileId::from_uuid(profile.as_uuid()),
-            agents: Vec::new(),
-            scopes: Vec::new(),
-            context: Vec::new(),
-            attachable: None,
-            objective: String::new(),
-            pill_anchor: None,
-            temporary_base: String::new(),
-            base_problem: None,
-            dropped_context: false,
-            chosen_model: None,
-            chosen_agent: None,
-            chosen_scope: None,
-            grant: false,
-        };
         let timing = modal::RoutineTiming {
             bot,
             tab,
@@ -483,6 +467,13 @@ impl MainView {
     /// comes back with what was typed and the sentence. Polled from
     /// `maintain`, never from a draw.
     pub(crate) fn maintain_routine_timing(&mut self) -> bool {
+        if self
+            .delegation
+            .as_ref()
+            .is_some_and(|modal| modal.routine_creation.is_some())
+        {
+            return self.maintain_routine_creation();
+        }
         use crate::bots::routines::control::TimingAnswer;
         let Some(routine) = self
             .delegation
@@ -934,7 +925,8 @@ impl MainView {
             .find(|(hit, rect)| {
                 matches!(
                     hit,
-                    Hit::ScheduleTime
+                    Hit::ScheduleName
+                        | Hit::ScheduleTime
                         | Hit::ScheduleDay
                         | Hit::ScheduleAdvanced
                         | Hit::ScheduleZone
@@ -987,7 +979,8 @@ impl MainView {
         }
         if modal.dragging
             && let Some(
-                hit @ (Hit::ScheduleTime
+                hit @ (Hit::ScheduleName
+                | Hit::ScheduleTime
                 | Hit::ScheduleDay
                 | Hit::ScheduleAdvanced
                 | Hit::ScheduleZone),
@@ -1063,6 +1056,11 @@ impl MainView {
             // **One Save is one command**, sent by the Bot's own tab over its
             // link. The surface stays up, saying *Saving…*, until that tab
             // answers (`maintain_routine_timing`).
+            Outcome::CreateRoutine {
+                name,
+                objective,
+                recurrence,
+            } => self.submit_routine_creation(name, objective, recurrence),
             Outcome::SaveRoutineTiming {
                 schedule,
                 name,

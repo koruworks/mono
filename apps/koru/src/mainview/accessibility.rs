@@ -508,6 +508,7 @@ impl MainView {
         }
         rev.u64(self.profile_wait.revision);
         self.revise_first_bot(rev);
+        self.revise_routine_creation(rev);
         rev.bool(self.sidebar.is_open());
         rev.bool(self.ai_visible()).bool(self.ai_focused);
         if self.sidebar.is_open() {
@@ -622,6 +623,9 @@ impl MainView {
         let blocking = self.blockers().is_blocking();
         if blocking && !menus::is_blocker_target(self, target) {
             return false;
+        }
+        if self.routine_creation_action(target, action, data) {
+            return true;
         }
         if !blocking && self.bot_context_accessible_action(target, action) {
             return true;

@@ -62,6 +62,7 @@ impl Fixture {
                 }
                 Command::ListChats { .. } | Command::ReadLibrary { .. } => continue,
                 Command::List { .. }
+                | Command::CreateRoutine { .. }
                 | Command::RoutineStartup { .. }
                 | Command::NativeRoutineControl { .. }
                 | Command::RoutineControl { .. }

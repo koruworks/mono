@@ -24,6 +24,7 @@ pub(crate) const RELOAD: Key = Key::surface(SURFACE, "reload");
 pub(crate) const MANAGE: Key = Key::surface(SURFACE, "manage");
 pub(crate) const LIBRARY_SECTION: Key = Key::surface(SURFACE, "section-library");
 pub(crate) const ROUTINES_SECTION: Key = Key::surface(SURFACE, "section-routines");
+const SECTIONS: Key = Key::surface(SURFACE, "sections");
 static NEXT_OCCURRENCE: AtomicU64 = AtomicU64::new(1);
 pub(super) fn mint_instance() -> u64 {
     NEXT_OCCURRENCE.fetch_add(1, Ordering::Relaxed)
@@ -242,7 +243,7 @@ impl Surface {
         let Some(data) = &self.data else {
             return Vec::new();
         };
-        let mut keys = vec![LIBRARY_SECTION, ROUTINES_SECTION];
+        let mut keys = vec![ROUTINES_SECTION, LIBRARY_SECTION];
         if let Some(routines) = &data.routines {
             keys.extend(routines.keys());
             return keys;
@@ -383,26 +384,26 @@ impl Surface {
         } else {
             self.library_content(engine, data)
         };
-        let selector = row("Bot context sections")
-            .gap(Space::S1)
-            .child(
-                self.button(
-                    engine,
-                    LIBRARY_SECTION,
-                    t(data.lang, Words::BotsLibrary).into(),
-                    false,
-                )
-                .selected(data.section == Section::Library),
-            )
-            .child(
-                self.button(
-                    engine,
-                    ROUTINES_SECTION,
-                    t(data.lang, Words::BotsRoutines).into(),
-                    false,
-                )
-                .selected(data.section == Section::Routines),
-            );
+        let labels = [
+            t(data.lang, Words::BotsRoutines).to_owned(),
+            t(data.lang, Words::BotsLibrary).to_owned(),
+        ];
+        let section_keys = [ROUTINES_SECTION, LIBRARY_SECTION];
+        let selected = usize::from(data.section == Section::Library);
+        let selector = leaf(
+            "Bot context sections",
+            super::controls::ChoiceLeaf::new(
+                engine,
+                labels.clone(),
+                selected,
+                section_keys
+                    .iter()
+                    .position(|key| Some(*key) == self.hot.or(self.focus)),
+                false,
+            ),
+        )
+        .semantic()
+        .id(SECTIONS);
         let tree = scroll_y("Bot context")
             .id(BODY)
             .offset(self.scroll)
@@ -414,7 +415,7 @@ impl Surface {
                 Words::BotsLibrary
             })
             .child(col("Bot context content").child(selector).child(content));
-        let frame = tree.layout(
+        let mut frame = tree.layout(
             engine,
             &mut self.cache.borrow_mut(),
             self.area,
@@ -424,6 +425,40 @@ impl Surface {
                 focused: self.focus,
             }),
         );
+        // The shared Segmented owns its segment rectangles. Publish those
+        // internal controls to the host's pointer/keyboard/accessibility frame;
+        // the leaf itself paints and inspects the same two segments.
+        if let Some(parent) = frame
+            .nodes
+            .iter()
+            .position(|node| node.key == Some(SECTIONS))
+        {
+            let at = frame.nodes[parent].rect;
+            let clip = frame.nodes[parent].clip;
+            for (index, rect) in super::controls::segments(engine, &labels, at)
+                .into_iter()
+                .enumerate()
+            {
+                let element = col("Context section segment")
+                    .h(koru_draw::el::Length::Runtime(
+                        rect.h,
+                        "shared segment height",
+                    ))
+                    .id(section_keys[index])
+                    .hit()
+                    .focusable()
+                    .semantics(Role::Button)
+                    .name_text(labels[index].clone())
+                    .selected(index == selected);
+                let mut segment = element
+                    .layout(engine, &mut self.cache.borrow_mut(), rect, frame.cx)
+                    .nodes
+                    .remove(0);
+                segment.parent = Some(parent);
+                segment.clip = clip;
+                frame.nodes.push(segment);
+            }
+        }
         Some((tree, frame))
     }
     pub(crate) fn with_frame<R>(&self, f: impl FnOnce(&Frame) -> R) -> Option<R> {

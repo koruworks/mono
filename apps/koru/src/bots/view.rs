@@ -110,6 +110,7 @@ pub(crate) mod onboard;
 mod picker;
 pub(crate) mod region;
 mod review;
+pub(crate) mod routine_modal;
 pub(crate) use region::{Control, ControlRole};
 
 /// The surface every key below belongs to.
@@ -328,6 +329,8 @@ pub(crate) struct BotView {
     pub(crate) routines: Box<super::routines::Routines>,
     /// The Routine whose timing dialog was asked for: the window opens it.
     routine_timing_request: Option<super::routines::control::TimingSeed>,
+    pub(crate) routine_creation: routine_modal::Creation,
+    routine_create_request: bool,
     settings_open: bool,
     context_library_visible: bool,
     context_instance: u64,
@@ -513,6 +516,8 @@ impl BotView {
             library: Box::default(),
             routines: Box::default(),
             routine_timing_request: None,
+            routine_creation: Default::default(),
+            routine_create_request: false,
             settings_open: false,
             context_library_visible: false,
             context_instance: context_library::mint_instance(),
@@ -1277,6 +1282,13 @@ impl BotView {
                     changed |= self
                         .routines
                         .native_detail_answer(seq, bot, schedule, result);
+                }
+                Answer::CreatedRoutine {
+                    bot,
+                    request,
+                    result,
+                } => {
+                    changed |= self.routine_created(bot, request, result);
                 }
                 Answer::NativeRoutineControl {
                     seq,

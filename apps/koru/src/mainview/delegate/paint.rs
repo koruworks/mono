@@ -20,6 +20,11 @@ use vello::Scene;
 use vello::kurbo::Affine;
 
 use super::modal::{Delegation, Hit, Phase, readiness};
+use crate::bots::view::routine_modal::form as creation;
+
+fn creating(modal: &Delegation) -> bool {
+    modal.routine_creation.is_some() && matches!(modal.phase, Phase::Editing { .. })
+}
 
 const WIDTH: f32 = 480.0;
 const PAD: f32 = 16.0;
@@ -30,7 +35,7 @@ const DETAIL_H: f32 = 16.0;
 const OBJECTIVE_H: f32 = 72.0;
 const RADIUS: f32 = 10.0;
 /// One drawn thing: a control the ring knows about, or a piece of furniture.
-enum Piece {
+pub(crate) enum Piece {
     Label(I18nKey),
     Sentence(String),
     Dim(String),
@@ -122,6 +127,9 @@ pub(crate) fn visible_agents(modal: &Delegation) -> std::ops::Range<usize> {
 /// editing form keeps its own arithmetic below. The prompt's WIDTH/PAD are the
 /// same constants this file has always used, so neither panel moves.
 pub(crate) fn panel(engine: &mut TextEngine, modal: &Delegation, viewport: (f32, f32)) -> Rect {
+    if creating(modal) {
+        return creation::panel(engine, modal, viewport);
+    }
     if !matches!(modal.phase, Phase::Editing { .. }) {
         return finished_prompt(modal, crate::format::lang(), &modal.phase).panel(engine, viewport);
     }
@@ -162,6 +170,9 @@ pub(crate) fn scroll_by(
     viewport: (f32, f32),
     delta: f32,
 ) {
+    if creating(modal) {
+        return creation::scroll_by(engine, modal, viewport, delta);
+    }
     let panel = panel(engine, modal, viewport);
     let max = (content_height(engine, modal, panel.w) - panel.h).max(0.0);
     modal.scroll = (modal.scroll + delta).clamp(0.0, max);
@@ -172,6 +183,9 @@ pub(crate) fn scrollbar(
     modal: &Delegation,
     viewport: (f32, f32),
 ) -> Option<koru_ui::scrollbar::ScrollbarGeom> {
+    if creating(modal) {
+        return creation::scrollbar(engine, modal, viewport);
+    }
     let panel = panel(engine, modal, viewport);
     koru_ui::scrollbar::ScrollbarGeom::for_content(
         panel,
@@ -191,6 +205,9 @@ fn scrolled_panel(engine: &mut TextEngine, modal: &Delegation, panel: Rect) -> R
 }
 
 pub(crate) fn reveal_focus(engine: &mut TextEngine, modal: &mut Delegation, viewport: (f32, f32)) {
+    if creating(modal) {
+        return creation::reveal_focus(engine, modal, viewport);
+    }
     let panel = panel(engine, modal, viewport);
     let contents = pieces(engine, modal, panel);
     let Some(focused) = modal.focused() else {
@@ -246,6 +263,9 @@ pub(crate) fn layout(
     modal: &Delegation,
     viewport: (f32, f32),
 ) -> Vec<(Hit, Rect)> {
+    if creating(modal) {
+        return creation::layout(engine, modal, viewport);
+    }
     let panel = panel(engine, modal, viewport);
     let content_panel = scrolled_panel(engine, modal, panel);
     pieces(engine, modal, content_panel)
@@ -755,7 +775,7 @@ pub(crate) fn sentences(
         .collect()
 }
 
-fn schedule_pieces(
+pub(crate) fn schedule_pieces(
     engine: &mut TextEngine,
     modal: &Delegation,
     lang: koru_i18n::Lang,
@@ -1019,6 +1039,9 @@ pub(crate) fn finished_sentences(lang: koru_i18n::Lang, phase: &Phase) -> Vec<St
 }
 
 fn finished_sentences_for(modal: &Delegation, lang: koru_i18n::Lang, phase: &Phase) -> Vec<String> {
+    if modal.routine_creation.is_some() {
+        return vec![t(lang, I18nKey::BotsRoutineSaving).to_owned()];
+    }
     // A Routine's timing has one phase besides the form: its Save is out.
     if modal.routine.is_some() {
         return vec![t(lang, I18nKey::BotsRoutineSaving).to_owned()];
@@ -1059,7 +1082,10 @@ fn finished_prompt(modal: &Delegation, lang: koru_i18n::Lang, phase: &Phase) -> 
         },
     );
     KoruPrompt::new(
-        title.to_owned(),
+        modal.routine_creation.as_ref().map_or_else(
+            || title.to_owned(),
+            |host| fill(t(lang, I18nKey::BotsRoutineCreateTitle), &[&host.name]),
+        ),
         finished_sentences_for(modal, lang, phase),
         finished_actions(modal, lang, phase),
     )
@@ -1073,6 +1099,13 @@ fn finished_actions(
     lang: koru_i18n::Lang,
     phase: &Phase,
 ) -> Vec<KoruPromptAction<Hit>> {
+    if modal.routine_creation.is_some() {
+        return vec![KoruPromptAction {
+            action: Hit::Cancel,
+            label: t(lang, I18nKey::DelegateClose).into(),
+            style: ActionStyle::Secondary,
+        }];
+    }
     let retryable = matches!(phase, Phase::Refused { .. })
         && modal.retry_request.as_ref().is_some_and(|request| {
             request.correlation().mode == super::modal::repeat::Kind::Repeat
@@ -1187,7 +1220,9 @@ pub(crate) fn draw(
     // The scrim and the inspector's KoruModal root come from the shared
     // component; what floats on the scrim stays this file's business.
     koru_ui::modal::draw(canvas, root, viewport, |canvas| {
-        if matches!(modal.phase, Phase::Editing { .. }) {
+        if creating(modal) {
+            creation::draw(modal, canvas, root, engine, viewport);
+        } else if matches!(modal.phase, Phase::Editing { .. }) {
             draw_editing(modal, canvas, root, engine, viewport);
         } else {
             let prompt = finished_prompt(modal, crate::format::lang(), &modal.phase);

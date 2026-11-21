@@ -40,6 +40,7 @@ impl MainView {
                     }
                     data.routines = Some(
                         crate::bots::view::context_routines::Data::from_state(&view.routines)
+                            .with_creation(view.can_create_routine())
                             .knowing(activity, view.home_name()),
                     );
                     Some(data)
@@ -305,6 +306,19 @@ impl MainView {
         if let Some((seed, bot)) = timing {
             self.begin_routine_timing(bot, tab, seed);
         }
+        let create = match self.active_view() {
+            TabView::Bot(view) => {
+                if view.take_routine_create_request() {
+                    view.bot()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(bot) = create {
+            self.begin_routine_creation(bot, tab);
+        }
         if changed {
             self.sync_bot_context();
         }
@@ -469,10 +483,14 @@ impl MainView {
         let children = self
             .bot_context
             .with_frame(|frame| {
-                frame
-                    .nodes
-                    .iter()
-                    .filter(|node| node.focusable)
+                let mut nodes: Vec<_> = frame.nodes.iter().filter(|node| node.focusable).collect();
+                nodes.sort_by_key(|node| match node.key {
+                    Some(crate::bots::view::context_library::ROUTINES_SECTION) => 0,
+                    Some(crate::bots::view::context_library::LIBRARY_SECTION) => 1,
+                    _ => 2,
+                });
+                nodes
+                    .into_iter()
                     .filter_map(|node| {
                         let key = node.key?;
                         let label = match node.label.as_ref()? {

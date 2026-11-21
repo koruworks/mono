@@ -88,6 +88,11 @@ fn answer_part(outcome: koru_ui::confirm::Outcome) -> Option<ControlPart> {
 impl MainView {
     /// The blocking surface, alone.
     pub(super) fn blocker_semantics(&self, cx: &Shell, blockers: Blockers) -> SemanticNode {
+        if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::Delegate)
+            && let Some(node) = self.routine_creation_semantics(cx)
+        {
+            return node;
+        }
         if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
             && let Some(offer) = &self.file_paste
         {
@@ -202,6 +207,11 @@ impl MainView {
     /// The menu's own highlight — the thing its arrows move and its rows are
     /// drawn from — rather than a second idea of focus.
     pub(super) fn blocker_focus(&self, cx: &Shell, blockers: Blockers) -> Occurrence {
+        if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::Delegate)
+            && let Some(node) = self.routine_creation_focus(cx)
+        {
+            return node;
+        }
         // Innermost first: the flyout has the keys while it is up.
         for (_, menu) in self.live_menus().into_iter().rev() {
             let Some(menu) = menu else { continue };
@@ -512,6 +522,9 @@ fn prompt_keyword(kind: koru_workspace_host::routing::PromptKind) -> &'static st
 /// id from before the menu opened, and performing it would be the shell acting
 /// on a control the keyboard cannot currently reach.
 pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
+    if view.routine_creation_is_target(target) {
+        return true;
+    }
     if confirm_answer_of(view, target).is_some() {
         return true;
     }

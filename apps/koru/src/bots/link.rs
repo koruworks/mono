@@ -38,6 +38,11 @@ const ANSWER_CAPACITY: usize = 8;
 pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 
 pub(crate) enum Command {
+    CreateRoutine {
+        bot: BotId,
+        request: uuid::Uuid,
+        command: Box<koru_api_client::bot_routines::Command>,
+    },
     RoutineStartup {
         bot: BotId,
         request: uuid::Uuid,
@@ -151,6 +156,11 @@ pub(crate) enum Command {
 
 #[derive(Debug)]
 pub(crate) enum Answer {
+    CreatedRoutine {
+        bot: BotId,
+        request: uuid::Uuid,
+        result: Result<koru_api_client::bot_routines::Response, super::routines::control::Refusal>,
+    },
     RoutineStartup {
         bot: BotId,
         request: uuid::Uuid,
@@ -564,6 +574,41 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 }
                 if answers
                     .send(Answer::RoutineStartup {
+                        bot,
+                        request,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Command::CreateRoutine {
+                bot,
+                request,
+                command,
+            } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => connected.ai().bot_routine(&command).map_err(|failure| {
+                        super::routines::control::Refusal {
+                            reasons: refusal_reasons(&failure.details),
+                            failure: Failure::of(said(failure.code, failure.retryable)),
+                        }
+                    }),
+                    None => Err(super::routines::control::Refusal::unanswered()),
+                };
+                if result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.failure == Failure::Unanswered)
+                {
+                    client = None;
+                }
+                if answers
+                    .send(Answer::CreatedRoutine {
                         bot,
                         request,
                         result,

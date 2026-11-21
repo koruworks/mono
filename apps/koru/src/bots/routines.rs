@@ -10,6 +10,8 @@ use std::rc::Rc;
 pub(crate) mod control;
 pub(crate) mod detail;
 mod startup;
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReadFailure {
@@ -171,6 +173,18 @@ impl Routines {
         self.opened = None;
         self.changed();
         true
+    }
+    /// A creation can finish while the preceding list read is still in flight
+    /// or the modal has hidden the pane. Retire that read and owe confirmed data.
+    pub(crate) fn creation_accepted(&mut self) {
+        self.asking = None;
+        self.owed = false;
+        self.startup.reopen();
+        if !self.refresh(false) {
+            self.owed = true;
+            self.after = None;
+            self.changed();
+        }
     }
     pub fn answer(
         &mut self,

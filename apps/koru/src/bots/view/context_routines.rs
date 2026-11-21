@@ -26,6 +26,8 @@ pub(crate) mod detail;
 const SURFACE: &str = "bot-context-routines";
 pub(crate) const REFRESH: Key = Key::surface(SURFACE, "refresh");
 pub(crate) const NEXT: Key = Key::surface(SURFACE, "next");
+pub(crate) const ADD: Key = Key::surface(SURFACE, "add");
+pub(crate) const BACK: Key = Key::surface(SURFACE, "back");
 pub(crate) const RETRY_CONTROL: Key = Key::surface(SURFACE, "retry-control");
 pub(crate) fn details_key(schedule: ScheduleId) -> Key {
     Key::model(schedule.as_uuid().as_u128(), "routine-details")
@@ -67,9 +69,12 @@ pub(crate) struct Data {
     /// Whether the selected Routine's timing may be edited now.
     timing: bool,
     access_changeable: bool,
+    creatable: bool,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Action {
+    Add,
+    All,
     RetryControl,
     Refresh,
     Next,
@@ -155,20 +160,29 @@ impl Data {
     fn item_keys(&self, item: &BotRoutineListItem, enabled_only: bool) -> Vec<Key> {
         let mut keys = Vec::new();
         let id = item.schedule_id;
+        if self.expanded.is_some_and(|selected| selected != id) {
+            return keys;
+        }
         if switchable(item).is_some() && (!enabled_only || self.controllable()) {
             keys.push(toggle_key(id));
         }
-        if ({ switchable(item).is_some() }) && (!enabled_only || self.test_enabled(item)) {
+        if self.expanded == Some(id)
+            && switchable(item).is_some()
+            && (!enabled_only || self.test_enabled(item))
+        {
             keys.push(test_key(id));
         }
         if self.deciding(item).is_some() && (!enabled_only || (!self.loading && !self.stale)) {
             keys.push(decide_key(id));
         }
-        keys.push(details_key(id));
+        if self.expanded.is_none() {
+            keys.push(details_key(id));
+        }
         keys
     }
     pub(super) fn all_keys(&self) -> Vec<Key> {
         let mut keys = vec![REFRESH];
+        keys.push(if self.expanded.is_some() { BACK } else { ADD });
         if self.controls.native_retry {
             keys.push(RETRY_CONTROL);
         }
@@ -205,6 +219,7 @@ impl Data {
             home: None,
             timing: state.timing_seed().is_some() && !state.control_busy(),
             access_changeable: state.access_changeable(),
+            creatable: false,
         }
     }
     /// With what the window knows of the Bot's conversations at work, and
@@ -214,8 +229,17 @@ impl Data {
         self.home = home;
         self
     }
+    pub fn with_creation(mut self, allowed: bool) -> Self {
+        self.creatable = allowed;
+        self
+    }
     pub fn keys(&self) -> Vec<Key> {
         let mut keys = Vec::new();
+        if self.expanded.is_some() {
+            keys.push(BACK);
+        } else if self.creatable {
+            keys.push(ADD);
+        }
         if self.controls.native_retry {
             keys.push(RETRY_CONTROL);
         }
@@ -243,6 +267,12 @@ impl Data {
         }
         if !self.keys().contains(&key) {
             return None;
+        }
+        if key == ADD {
+            return Some(Action::Add);
+        }
+        if key == BACK {
+            return Some(Action::All);
         }
         if key == REFRESH {
             return Some(Action::Refresh);
@@ -291,6 +321,24 @@ impl Data {
     }
     pub fn content(&self, surface: &Surface, engine: &mut TextEngine, lang: Lang) -> El {
         let mut content = col("Routine overview").gap(Space::S2).pad(Space::S3);
+        content = content.child(if self.expanded.is_some() {
+            row("All routines").child(surface.button(
+                engine,
+                BACK,
+                t(lang, Words::BotsRoutineAll).into(),
+                false,
+            ))
+        } else {
+            row("Routine list heading")
+                .items_center()
+                .child(text(t(lang, Words::BotsRoutines)).role(roles::UI).fill())
+                .child(surface.button(
+                    engine,
+                    ADD,
+                    t(lang, Words::BotsRoutineAdd).into(),
+                    !self.creatable,
+                ))
+        });
         if self.controls.native_retry {
             content = content.child(
                 row("Unconfirmed Routine command")
@@ -327,16 +375,6 @@ impl Data {
             if page.items.iter().any(|item| self.deciding(item).is_some()) {
                 content = content.child(line(t(lang, Words::BotsRoutinesNeedYou)));
             }
-            content = content.child(line(match &page.effective_model {
-                BotRoutineModelObservation::Configured {
-                    provider,
-                    requested_model,
-                } => fill(
-                    t(lang, Words::BotsRoutineModel),
-                    &[provider.as_str(), requested_model],
-                ),
-                _ => t(lang, Words::BotsRoutineModelUnavailable).into(),
-            }));
             if page.items.is_empty() {
                 content = content.child(line(t(lang, Words::BotsRoutinesEmpty)));
                 {
@@ -344,7 +382,9 @@ impl Data {
                 }
             }
             for item in &page.items {
-                content = content.child(self.group(item, surface, engine, lang));
+                if self.expanded.is_none_or(|id| id == item.schedule_id) {
+                    content = content.child(self.group(item, surface, engine, lang));
+                }
             }
         }
         content = content.child(row("Refresh routines").child(surface.button(
@@ -420,7 +460,14 @@ impl Data {
                 .named("Routine name")
                 .role(roles::ROW)
                 .fill()
-                .wrap(),
+                .wrap()
+                .min_h(koru_draw::theme::metrics::BUTTON_MIN)
+                .id(details_key(id))
+                .hit()
+                .focusable()
+                .disabled(open)
+                .semantics(Role::Button)
+                .name_text(name.clone()),
         );
         if let Some(on) = switchable(item) {
             let pending = self.controls.doing(id).is_some() || self.controls.checking == Some(id);
@@ -462,8 +509,14 @@ impl Data {
             .semantics(Role::Group)
             .name_text(name.clone())
             .gap(Space::S1)
-            .child(head)
-            .child(line(t(lang, self.state_words(item))));
+            .child(head);
+        if open
+            || switchable(item) != Some(true)
+            || self.controls.doing(id).is_some()
+            || self.controls.checking == Some(id)
+        {
+            group = group.child(line(t(lang, self.state_words(item))));
+        }
         if let Some(live) = live(item)
             && matches!(live.state, ScheduleState::Active { .. })
         {
@@ -516,20 +569,23 @@ impl Data {
         for note in self.controls.notes(id) {
             group = group.child(line(t(lang, *note)));
         }
-        group = group
-            .child(line(t(
+        if item.creation.state != BotRoutineCreationState::Bound {
+            group = group.child(line(t(
                 lang,
                 match item.creation.state {
                     BotRoutineCreationState::Prepared => Words::BotsMemoryPrepared,
                     BotRoutineCreationState::Unconfirmed => Words::BotsMemoryUnconfirmed,
-                    BotRoutineCreationState::Bound => Words::BotsRoutineBound,
                     BotRoutineCreationState::Conflict => Words::BotsRoutineConflict,
+                    BotRoutineCreationState::Bound => unreachable!(),
                 },
-            )))
-            .child(line(fill(
+            )));
+        }
+        if open {
+            group = group.child(line(fill(
                 t(lang, Words::BotsRoutineUpdated),
                 &[&date(lang, item.creation.updated_at_ms)],
             )));
+        }
         if let Some(refusal) = item.creation.refusal {
             group = group.child(line(t(
                 lang,
@@ -544,9 +600,11 @@ impl Data {
             )));
         }
         // The access the Routine runs under now.
-        group = group.child(line(access_now(lang, &item.grant)));
+        if open {
+            group = group.child(line(access_now(lang, &item.grant)));
+        }
         let mut actions = row("Routine actions").gap(Space::S1);
-        if switchable(item).is_some() {
+        if open && switchable(item).is_some() {
             let label = match self.controls.doing(id) {
                 Some(control::Doing::Testing) => t(lang, Words::BotsRoutineTestStarting).into(),
                 _ => t(lang, Words::BotsRoutineRunNow).to_owned(),
@@ -562,18 +620,9 @@ impl Data {
                     .name_text(format!("{label}: {name}")),
             );
         }
-        actions = actions.child(
-            surface
-                .button(
-                    engine,
-                    details_key(id),
-                    t(lang, Words::BotsRoutineDetails).into(),
-                    false,
-                )
-                .selected(open)
-                .name_text(format!("{}: {}", t(lang, Words::BotsRoutineDetails), name)),
-        );
-        group = group.child(actions);
+        if open {
+            group = group.child(actions);
+        }
         if open {
             group = group.child(detail::content(self, surface, engine, lang));
         }
@@ -667,6 +716,17 @@ impl BotView {
     }
     pub(crate) fn perform_context_routine(&mut self, action: Action) -> bool {
         match action {
+            Action::Add => {
+                if !self.can_create_routine() {
+                    return false;
+                }
+                self.routine_create_request = true;
+                true
+            }
+            Action::All => self
+                .routines
+                .expanded
+                .is_some_and(|id| self.routines.toggle(id)),
             Action::RetryControl => {
                 if let Some(command) = self.routines.startup_retry() {
                     if !self.link.as_ref().is_some_and(|link| link.send(command)) {

@@ -12,6 +12,14 @@ use uuid::Uuid;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "BotRoutineCommand")]
 pub enum Command {
+    Create {
+        id: Uuid,
+        bot: BotId,
+        expected_bot_revision: u64,
+        name: String,
+        objective: String,
+        recurrence: koru_ai_core::bots::RoutineRecurrenceRule,
+    },
     Reviews {
         bot: BotId,
         before: Option<Cursor>,
@@ -93,6 +101,12 @@ impl std::fmt::Debug for Snapshot {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[schemars(rename = "BotRoutineResponse")]
 pub enum Response {
+    Created {
+        request: Uuid,
+        item: koru_ai_core::bots::BotRoutineListItem,
+        first_enabled: bool,
+        replayed: bool,
+    },
     Reviews {
         page: ReviewPage,
     },

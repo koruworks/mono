@@ -4265,8 +4265,15 @@ routine’s access.
 #### A Bot’s routines
 
 Open a Bot, open the context pane and choose **Routines**. Each routine shows
-its name, a switch, its state in words (**On** or **Paused**) and, while it is
-on, its next time.
+its name, a switch and, while it is on, its next time. Paused routines say
+**Paused**. Choose the name to open its details and runs; **All routines**
+returns to the list. The segmented control also keeps **Library** available.
+
+Choose **Add routine**, enter a name and what the Bot should do, then choose
+its timing and **Create routine**. It starts on, with default access; you can
+also ask the Bot to create a routine in the conversation. Cancel closes the
+form. A refused request keeps your entries for correction. If the answer is
+uncertain, Retry checks the same request without creating another routine.
 
 The sidebar shows one row per Bot, with its latest main-chat reply beneath the
 name. An accent dot means an unread main-chat reply, a pending routine result,
@@ -4281,7 +4288,7 @@ reuse the same routine conversation.
   a run that has already started.
 - **Run now.** Requests one occurrence without changing the routine's on/off
   setting. Its actual progress and answer appear in the routine's history.
-- **Details** shows the timing, the time zone, the access and the history.
+- **The routine name** opens the timing, the time zone, the access and the history.
   *Time zone* is this computer’s zone when this computer owns the routine, and
   *Owner local* otherwise.
 - **Edit timing** changes the name and the time in one save. It works while

@@ -117,6 +117,11 @@ pub(crate) enum Phase {
 /// What the container should do about a gesture.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Outcome {
+    CreateRoutine {
+        name: String,
+        objective: String,
+        recurrence: koru_recurrence::RecurrenceRule,
+    },
     /// Nothing the container needs to know about; the surface changed.
     Keep,
     /// Redraw is not needed either.
@@ -303,6 +308,7 @@ pub(crate) struct Delegation {
     pub(crate) edit: Option<EditSeed>,
     /// Set when the surface edits one Bot Routine's timing and name.
     pub(crate) routine: Option<RoutineTiming>,
+    pub(crate) routine_creation: Option<crate::bots::view::routine_modal::form::Host>,
     other_grants: std::collections::BTreeSet<WorkspaceId>,
     pub(crate) repeat: repeat::RepeatEditor,
     pub(crate) focus: usize,
@@ -387,6 +393,7 @@ impl Delegation {
             kind: repeat::Kind::RunOnce,
             edit: None,
             routine: None,
+            routine_creation: None,
             other_grants: std::collections::BTreeSet::new(),
             repeat,
             schedule_name,
@@ -473,7 +480,7 @@ impl Delegation {
     /// comes back with what the person typed and the sentence for why. A
     /// Save that was applied closes the surface instead (the window does).
     pub(crate) fn routine_answered(&mut self, problem: I18nKey) {
-        if self.routine.is_none() {
+        if self.routine.is_none() && self.routine_creation.is_none() {
             return;
         }
         self.phase = Phase::Editing {
@@ -634,6 +641,11 @@ impl Delegation {
     /// empty only when this machine has none, and the modal says so in its own
     /// sentence rather than by dimming a button with no explanation.
     pub(crate) fn ready(&self) -> bool {
+        if self.routine_creation.is_some() {
+            return !self.objective.value().trim().is_empty()
+                && self.repeat.rule().is_some()
+                && koru_delegate_schedule::ScheduleName::new(self.schedule_name.value()).is_ok();
+        }
         // A Routine's timing needs a valid name and a valid time, and
         // nothing of a run's.
         if self.routine.is_some() {
@@ -654,6 +666,18 @@ impl Delegation {
     /// shape onboarding uses, and for the same reason.
     pub(crate) fn controls(&self) -> Vec<Hit> {
         match self.phase {
+            Phase::Editing { .. } if self.routine_creation.is_some() => {
+                let mut controls = Vec::new();
+                if !self.routine_creation.as_ref().unwrap().uncertain {
+                    controls.extend([Hit::ScheduleName, Hit::Objective]);
+                    self.schedule_controls(&mut controls);
+                }
+                if self.ready() {
+                    controls.push(Hit::Submit);
+                }
+                controls.push(Hit::Cancel);
+                controls
+            }
             Phase::Editing { .. } if self.routine.is_some() => {
                 let mut controls = vec![Hit::ScheduleName];
                 self.schedule_controls(&mut controls);
@@ -739,6 +763,7 @@ impl Delegation {
 
     pub(crate) fn recurrence_field_mut(&mut self, hit: Hit) -> Option<&mut koru_ui::TextField> {
         match hit {
+            Hit::ScheduleName => Some(&mut self.schedule_name),
             Hit::ScheduleTime => Some(&mut self.repeat.time),
             Hit::ScheduleDay => Some(&mut self.repeat.day),
             Hit::ScheduleAdvanced => Some(&mut self.repeat.advanced),
@@ -1102,6 +1127,18 @@ impl Delegation {
     fn submit(&mut self) -> Outcome {
         if !matches!(self.phase, Phase::Editing { .. }) {
             return Outcome::Ignored;
+        }
+        if self.routine_creation.is_some() {
+            if !self.ready() {
+                return Outcome::Keep;
+            }
+            self.phase = Phase::Scheduling;
+            self.focus = 0;
+            return Outcome::CreateRoutine {
+                name: self.schedule_name.value().trim().to_owned(),
+                objective: self.objective.value().trim().to_owned(),
+                recurrence: self.repeat.rule().expect("validated creation rule"),
+            };
         }
         // **A Routine's timing: one Save is one command**, with the name
         // and the time together. Nothing of a run is read or sent.

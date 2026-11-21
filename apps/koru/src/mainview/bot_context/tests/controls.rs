@@ -182,7 +182,7 @@ fn routine_control_list_shows_each_routines_next_time_and_true_state() {
         assert!(says(&v, name), "{name}");
     }
     // The state in words, and the next time from the list read.
-    assert!(says(&v, "On") && says(&v, "Paused"));
+    assert!(says(&v, "Paused"));
     assert!(says(&v, &next_line(at)), "{shown}");
     assert!(says(&v, "Next: Owner local"));
     // A paused Routine says no next time.
@@ -218,10 +218,84 @@ fn routine_control_list_shows_each_routines_next_time_and_true_state() {
     let at = |key| keys.iter().position(|found| *found == key).unwrap();
     assert!(at(toggle_key(on_id)) < at(details_key(on_id)));
     assert!(at(details_key(on_id)) < at(toggle_key(off_id)));
-    assert!(at(toggle_key(off_id)) < at(test_key(off_id)));
-    // Run now is offered for both on and manually paused Routines.
+    assert!(!keys.contains(&test_key(off_id)));
+    assert!(!keys.contains(&test_key(on_id)));
+    // Run now remains available inside each selected routine.
+    assert!(v.bot_context_action(details_key(off_id)));
     assert_eq!(disabled(&v, test_key(off_id)), Some(false));
+    assert!(v.bot_context_action(crate::bots::view::context_routines::BACK));
+    assert!(v.bot_context_action(details_key(on_id)));
     assert_eq!(disabled(&v, test_key(on_id)), Some(false));
+}
+
+#[test]
+fn add_routine_modal_publishes_fields_and_rejects_closed_form_actions() {
+    use crate::bots::view::context_routines::ADD;
+    use koru_workspace_host::accessibility::{ControlPart, ViewSlot, WindowSlot};
+    let (mut v, mut w) = on_document();
+    let bot = bot();
+    let (commands, _tx) = setup(&mut v, &bot, listing(&bot, vec![]));
+    assert!(v.bot_context_action(ADD));
+    assert!(v.delegation.is_some());
+    let cx = crate::mainview::accessibility::Shell {
+        window: WindowSlot::from_raw(9),
+        view: ViewSlot::from_raw(3),
+        viewport: v.viewport,
+        lang: koru_i18n::Lang::En,
+    };
+    v.seat_accessibility(cx.window);
+    let instance = v
+        .delegation
+        .as_ref()
+        .unwrap()
+        .routine_creation
+        .as_ref()
+        .unwrap()
+        .instance;
+    let field = cx.instance("bot-routine-create", instance + 1, ControlPart::ROOT);
+    let task = cx.instance("bot-routine-create", instance + 2, ControlPart::ROOT);
+    let node = v.routine_creation_semantics(&cx).unwrap();
+    assert!(
+        node.children
+            .iter()
+            .any(|node| node.occurrence == field && node.role == accesskit::Role::TextInput)
+    );
+    assert!(v.accessibility_action(
+        &mut w.ws,
+        field,
+        accesskit::Action::SetValue,
+        Some(&accesskit::ActionData::Value("Price watch".into()))
+    ));
+    assert!(v.accessibility_action(
+        &mut w.ws,
+        task,
+        accesskit::Action::SetValue,
+        Some(&accesskit::ActionData::Value("Report changes".into()))
+    ));
+    assert!(v.delegation.as_ref().unwrap().ready());
+    let cancel = cx.instance("bot-routine-create", instance + 13, ControlPart::ROOT);
+    assert!(v.accessibility_action(&mut w.ws, cancel, accesskit::Action::Click, None));
+    assert!(v.delegation.is_none());
+    assert!(v.bot_context_action(ADD));
+    assert!(!v.accessibility_action(
+        &mut w.ws,
+        field,
+        accesskit::Action::SetValue,
+        Some(&accesskit::ActionData::Value("stale".into()))
+    ));
+    assert!(
+        v.delegation
+            .as_ref()
+            .unwrap()
+            .schedule_name
+            .value()
+            .is_empty()
+    );
+    assert!(
+        !commands
+            .try_iter()
+            .any(|command| matches!(command, Command::CreateRoutine { .. }))
+    );
 }
 
 #[test]
@@ -306,6 +380,7 @@ fn routine_control_access_edit_is_unavailable_while_on_and_says_why() {
     assert!(lines(&v).contains("Access at setup"));
 
     // Paused: the choices open on what the Routine has.
+    assert!(v.bot_context_action(crate::bots::view::context_routines::BACK));
     assert!(v.bot_context_action(details_key(id)));
     let (seq, ..) = detail_request(&mut v, &commands);
     detail_answer(

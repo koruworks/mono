@@ -6750,6 +6750,48 @@
           {
             "additionalProperties": false,
             "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "expected_bot_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "create"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "objective": {
+                "type": "string"
+              },
+              "recurrence": {
+                "$ref": "#/components/schemas/RecurrenceRule"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "expected_bot_revision",
+              "name",
+              "objective",
+              "recurrence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "before": {
                 "anyOf": [
                   {
@@ -7672,6 +7714,37 @@
       },
       "BotRoutineResponse": {
         "oneOf": [
+          {
+            "properties": {
+              "first_enabled": {
+                "type": "boolean"
+              },
+              "item": {
+                "$ref": "#/components/schemas/BotRoutineListItem"
+              },
+              "kind": {
+                "enum": [
+                  "created"
+                ],
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "item",
+              "first_enabled",
+              "replayed"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "kind": {

@@ -450,10 +450,11 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
         v.bot_context
             .with_frame(|frame| {
                 for id in &ids {
-                    assert!(
+                    assert_eq!(
                         frame
                             .node(Key::model(id.as_uuid().as_u128(), "routine-group"))
-                            .is_some()
+                            .is_some(),
+                        *id == ids[0]
                     );
                 }
                 for reference in &history {
@@ -465,8 +466,9 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
                 for node in frame.nodes.iter().filter(|node| node.focusable) {
                     assert!(
                         node.rect.w > 0.0 && node.rect.h > 0.0,
-                        "{} {:?}",
+                        "{} {:?} {:?}",
                         lang.tag(),
+                        node.key,
                         node.rect
                     );
                     assert!(
@@ -670,7 +672,7 @@ fn routine_context_open_requires_expected_bot_including_existing_tab() {
             .unwrap();
         // A disclosure change supersedes the pending label while retaining the
         // same page. Even a refusal must not change its newer notice/content.
-        v.bot_context_action(details_key(id));
+        v.bot_context_action(crate::bots::view::context_routines::BACK);
         tx.send(Answer::RoutineLabel {
             seq,
             bot: bot.id,
@@ -779,8 +781,10 @@ fn routine_detail_selection_hidden_aba_retire() {
     let (commands, tx) = setup(&mut v, &bot, p.clone());
     v.bot_context_action(details_key(a));
     let (old, _, _) = detail_request(&mut v, &commands);
+    v.bot_context_action(crate::bots::view::context_routines::BACK);
     v.bot_context_action(details_key(b));
     let (other, _, _) = detail_request(&mut v, &commands);
+    v.bot_context_action(crate::bots::view::context_routines::BACK);
     v.bot_context_action(details_key(a));
     let (current, _, _) = detail_request(&mut v, &commands);
     assert!(old < other && other < current);

@@ -4159,6 +4159,12 @@ pub enum Key {
     /// Runs one native Routine occurrence without changing its on/off setting.
     BotsRoutineRunNow,
     /// Creation entry point in the native Routine pane.
+    BotsRoutineAdd,
+    BotsRoutineCreateTitle,
+    BotsRoutineCreateTask,
+    BotsRoutineCreate,
+    BotsRoutineCreateHelp,
+    BotsRoutineAll,
     BotsRoutineCreateHint,
     /// The Test button while the Test waits for its owner. Non-English columns machine-written, awaiting a native read.
     BotsRoutineTestStarting,
@@ -4633,7 +4639,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3089] = [
+    pub const ALL: [Key; 3095] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7475,6 +7481,12 @@ impl Key {
         Key::BotsRoutineRunWillFinish,
         Key::BotsRoutineTest,
         Key::BotsRoutineRunNow,
+        Key::BotsRoutineAdd,
+        Key::BotsRoutineCreateTitle,
+        Key::BotsRoutineCreateTask,
+        Key::BotsRoutineCreate,
+        Key::BotsRoutineCreateHelp,
+        Key::BotsRoutineAll,
         Key::BotsRoutineCreateHint,
         Key::BotsRoutineTestStarting,
         Key::BotsRoutineTestAvailableAt,
@@ -22488,7 +22500,14 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsRoutineRunWillFinish, en: "A run in progress will finish.", es: "La ejecución en curso terminará.", pt_br: "A execução em andamento será concluída.", de: "Ein laufender Durchlauf wird beendet.", fr: "L'exécution en cours se terminera.", ar: "سيكتمل التشغيل الجاري.", zh_hans: "正在进行的运行会完成。", ja: "実行中の処理は最後まで行われます。" },
     Row { key: Key::BotsRoutineTest, en: "Test", es: "Probar", pt_br: "Testar", de: "Testen", fr: "Tester", ar: "اختبار", zh_hans: "测试", ja: "テスト" },
     Row { key: Key::BotsRoutineRunNow, en: "Run now", es: "Ejecutar ahora", pt_br: "Executar agora", de: "Jetzt ausführen", fr: "Exécuter maintenant", ar: "تشغيل الآن", zh_hans: "立即运行", ja: "今すぐ実行" },
-    Row { key: Key::BotsRoutineCreateHint, en: "Ask this bot to create a routine. New routines start on. Review timing and access or pause them here.", es: "Pide a este bot que cree una rutina. Las nuevas rutinas están activadas. Revisa aquí el horario y el acceso o páusalas.", pt_br: "Peça a este bot para criar uma rotina. Novas rotinas começam ativas. Revise o horário e o acesso ou pause-as aqui.", de: "Bitte diesen Bot, eine Routine zu erstellen. Neue Routinen sind eingeschaltet. Prüfe hier Zeitplan und Zugriff oder pausiere sie.", fr: "Demandez à ce bot de créer une routine. Les nouvelles routines sont activées. Vérifiez ici les horaires et les accès ou mettez-les en pause.", ar: "اطلب من هذا البوت إنشاء مهمة دورية. تبدأ المهام الجديدة مفعّلة. راجع توقيتها وصلاحياتها أو أوقفها مؤقتًا هنا.", zh_hans: "请让此机器人创建例行任务。新任务默认开启。可在这里检查时间和访问权限，或暂停任务。", ja: "この Bot にルーティンの作成を依頼してください。新しいルーティンは有効です。ここで時刻やアクセス権を確認したり、一時停止したりできます。" },
+    // Machine-written translations; awaiting native review.
+    Row { key: Key::BotsRoutineAdd, en: "Add routine", es: "Añadir rutina", pt_br: "Adicionar rotina", de: "Routine hinzufügen", fr: "Ajouter une routine", ar: "إضافة مهمة دورية", zh_hans: "添加例行任务", ja: "ルーティンを追加" },
+    Row { key: Key::BotsRoutineCreateTitle, en: "New routine for {}", es: "Nueva rutina para {}", pt_br: "Nova rotina para {}", de: "Neue Routine für {}", fr: "Nouvelle routine pour {}", ar: "مهمة دورية جديدة لـ {}", zh_hans: "为 {} 创建例行任务", ja: "{} の新しいルーティン" },
+    Row { key: Key::BotsRoutineCreateTask, en: "What should {} do?", es: "¿Qué debería hacer {}?", pt_br: "O que {} deve fazer?", de: "Was soll {} tun?", fr: "Que doit faire {} ?", ar: "ماذا ينبغي أن يفعل {}؟", zh_hans: "{} 应该做什么？", ja: "{} は何をしますか？" },
+    Row { key: Key::BotsRoutineCreate, en: "Create routine", es: "Crear rutina", pt_br: "Criar rotina", de: "Routine erstellen", fr: "Créer la routine", ar: "إنشاء مهمة دورية", zh_hans: "创建例行任务", ja: "ルーティンを作成" },
+    Row { key: Key::BotsRoutineCreateHelp, en: "Something your Bot does on a schedule. Anything that needs you goes to its queue.", es: "Algo que tu bot hace según un horario. Lo que necesite tu atención irá a su cola.", pt_br: "Algo que seu bot faz em horários definidos. O que precisar de você vai para a fila dele.", de: "Etwas, das dein Bot nach Zeitplan erledigt. Was dich braucht, kommt in seine Warteschlange.", fr: "Une tâche planifiée pour votre bot. Ce qui nécessite votre attention rejoint sa file.", ar: "شيء يفعله البوت وفق جدول. ما يحتاج إلى انتباهك ينتقل إلى قائمة مراجعته.", zh_hans: "机器人按计划执行的任务。需要你关注的内容会进入它的队列。", ja: "Bot がスケジュールに従って行う作業です。あなたの対応が必要なものはキューに入ります。" },
+    Row { key: Key::BotsRoutineAll, en: "All routines", es: "Todas las rutinas", pt_br: "Todas as rotinas", de: "Alle Routinen", fr: "Toutes les routines", ar: "كل المهام الدورية", zh_hans: "所有例行任务", ja: "すべてのルーティン" },
+    Row { key: Key::BotsRoutineCreateHint, en: "Add a routine here, or ask your Bot in the conversation.", es: "Añade una rutina aquí o pídeselo a tu bot en la conversación.", pt_br: "Adicione uma rotina aqui ou peça ao seu bot na conversa.", de: "Füge hier eine Routine hinzu oder bitte deinen Bot im Gespräch darum.", fr: "Ajoutez une routine ici ou demandez à votre bot dans la conversation.", ar: "أضف مهمة دورية هنا، أو اطلب من البوت في المحادثة.", zh_hans: "在这里添加例行任务，或在对话中请机器人创建。", ja: "ここでルーティンを追加するか、会話で Bot に依頼してください。" },
     Row { key: Key::BotsRoutineTestStarting, en: "Starting test…", es: "Iniciando prueba…", pt_br: "Iniciando teste…", de: "Test wird gestartet…", fr: "Démarrage du test…", ar: "جارٍ بدء الاختبار…", zh_hans: "正在开始测试…", ja: "テストを開始しています…" },
     Row { key: Key::BotsRoutineTestAvailableAt, en: "Test available at {}", es: "Prueba disponible a las {}", pt_br: "Teste disponível às {}", de: "Test verfügbar um {}", fr: "Test disponible à {}", ar: "الاختبار متاح عند \u{2068}{}\u{2069}", zh_hans: "{} 可测试", ja: "{} にテストできます" },
     Row { key: Key::BotsRoutineTestNotStarted, en: "The test didn't start. Try again.", es: "La prueba no se inició. Inténtalo de nuevo.", pt_br: "O teste não começou. Tente novamente.", de: "Der Test wurde nicht gestartet. Versuche es erneut.", fr: "Le test n'a pas démarré. Réessayez.", ar: "لم يبدأ الاختبار. حاول مجددًا.", zh_hans: "测试未开始。请重试。", ja: "テストを開始できませんでした。もう一度お試しください。" },

@@ -81,7 +81,7 @@ mod chrome_focus;
 mod closed_tabs;
 pub(crate) mod cloud_sync;
 pub(crate) mod context_menu;
-mod delegate;
+pub(crate) mod delegate;
 pub(crate) mod dictation;
 mod document_appearance;
 pub(crate) mod draw;

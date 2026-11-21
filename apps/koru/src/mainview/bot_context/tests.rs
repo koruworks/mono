@@ -440,9 +440,9 @@ fn context_library_bound_memory_and_geometry_are_host_fed() {
         "two selectors, three links, refresh and manage"
     );
     for (index, key, selected) in [
-        (0, crate::bots::view::context_library::LIBRARY_SECTION, true),
+        (1, crate::bots::view::context_library::LIBRARY_SECTION, true),
         (
-            1,
+            0,
             crate::bots::view::context_library::ROUTINES_SECTION,
             false,
         ),

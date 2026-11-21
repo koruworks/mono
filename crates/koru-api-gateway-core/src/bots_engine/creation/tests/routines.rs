@@ -4,6 +4,117 @@ use koru_ai_core::bots::*;
 use koru_bots_engine::routines as native;
 
 #[test]
+fn modal_creation_is_owner_scoped_narrow_and_retries_one_enabled_routine() {
+    use koru_ai_wire::bot_routines::{Command as C, Response as R};
+    let f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let principal = crate::GatewayPrincipal {
+        label: "synthetic".into(),
+        scopes: vec![koru_ai_api::AiScope::ManageBots.as_str().into()],
+    };
+    let command = C::Create {
+        id: Uuid::new_v4(),
+        bot: bot.id,
+        expected_bot_revision: bot.revision,
+        name: "Watch changes".into(),
+        objective: "Report meaningful changes".into(),
+        recurrence: RoutineRecurrenceRule::zoned("0 9 * * *".parse().unwrap(), "UTC").unwrap(),
+    };
+    let denied = crate::GatewayPrincipal {
+        label: "synthetic".into(),
+        scopes: vec![],
+    };
+    assert!(matches!(
+        f.gateway.routine_command(&denied, command.clone()),
+        Err(Error::NotAllowed)
+    ));
+    let mut stale = command.clone();
+    if let C::Create {
+        expected_bot_revision,
+        ..
+    } = &mut stale
+    {
+        *expected_bot_revision += 1;
+    }
+    assert!(f.gateway.routine_command(&principal, stale).is_err());
+    let R::Created { item, replayed, .. } = f
+        .gateway
+        .routine_command(&principal, command.clone())
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(!replayed);
+    assert_eq!(item.grant.access, BotAccess::Default);
+    assert_eq!(item.grant.selected_page_count, 0);
+    assert!(matches!(
+        item.live,
+        BotRoutineLiveObservation::Current {
+            state: RoutineScheduleState::Active { .. },
+            ..
+        }
+    ));
+    let R::Created {
+        item: again,
+        replayed,
+        ..
+    } = f.gateway.routine_command(&principal, command).unwrap()
+    else {
+        panic!()
+    };
+    assert!(replayed);
+    assert_eq!(item.schedule_id, again.schedule_id);
+    let R::Startup { first_enabled, .. } = f
+        .gateway
+        .routine_command(
+            &principal,
+            C::ClaimStartup {
+                id: Uuid::new_v4(),
+                bot: bot.id,
+            },
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(first_enabled);
+    let R::Started { occurrence, .. } = f
+        .gateway
+        .routine_command(
+            &principal,
+            C::RunNow {
+                id: Uuid::new_v4(),
+                bot: bot.id,
+                routine: item.schedule_id.as_uuid(),
+                revision: 1,
+            },
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(occurrence.state, "queued");
+    let R::History { snapshot } = f
+        .gateway
+        .routine_command(
+            &principal,
+            C::History {
+                bot: bot.id,
+                routine: item.schedule_id.as_uuid(),
+                before: None,
+            },
+        )
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(snapshot.occurrences.len(), 1);
+    assert_eq!(snapshot.occurrences[0].id, occurrence.id);
+}
+
+#[test]
 fn native_carrier_preserves_enable_marker_and_manual_occurrence_identity() {
     use koru_ai_wire::bot_routines::{Command as C, Response as R};
     let f = Fixture::new();

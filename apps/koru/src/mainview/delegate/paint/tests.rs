@@ -5,6 +5,67 @@ use super::*;
 use koru_session_protocol::ExecutableAvailability;
 
 #[test]
+fn bot_creation_uses_one_scrollable_frame_and_needs_no_delegation_agent() {
+    use super::super::modal::Outcome;
+    use crate::bots::view::routine_modal::form::Host;
+    use koru_ai_core::bots::BotId;
+    let mut engine = TextEngine::new();
+    let mut modal = Delegation::open(&mut engine, world(vec![]));
+    modal.routine_creation = Some(Host::new(
+        BotId::from_uuid(uuid::Uuid::new_v4()),
+        1,
+        "Scout".into(),
+        false,
+    ));
+    modal.kind = super::super::modal::repeat::Kind::Repeat;
+    modal.schedule_name.set_text(&mut engine, "Morning reading");
+    assert!(modal.ready());
+    for viewport in [(330.0, 420.0), (900.0, 1800.0)] {
+        for hit in modal.controls() {
+            modal.focus = modal
+                .controls()
+                .iter()
+                .position(|candidate| *candidate == hit)
+                .unwrap();
+            reveal_focus(&mut engine, &mut modal, viewport);
+            let panel = panel(&mut engine, &modal, viewport);
+            let rect = layout(&mut engine, &modal, viewport)
+                .into_iter()
+                .find(|(candidate, _)| *candidate == hit)
+                .unwrap()
+                .1;
+            assert!(
+                rect.x >= panel.x && rect.x + rect.w <= panel.x + panel.w + 0.1,
+                "{hit:?}: {rect:?}, {panel:?}"
+            );
+            assert!(
+                rect.y >= panel.y - 0.1 && rect.y + rect.h <= panel.y + panel.h + 0.1,
+                "{hit:?}: {rect:?}, {panel:?}"
+            );
+            assert_eq!(
+                hit_at(
+                    &mut engine,
+                    &modal,
+                    viewport,
+                    rect.x + rect.w / 2.0,
+                    rect.y + rect.h / 2.0
+                ),
+                Some(hit)
+            );
+        }
+    }
+    assert!(matches!(
+        modal.activate(Hit::Submit),
+        Outcome::CreateRoutine { .. }
+    ));
+    assert_eq!(modal.phase, Phase::Scheduling);
+    modal.routine_creation.as_mut().unwrap().uncertain = true;
+    modal.routine_answered(I18nKey::BotsRoutineChecking);
+    assert_eq!(modal.controls(), vec![Hit::Submit, Hit::Cancel]);
+    assert_eq!(modal.schedule_name.value(), "Morning reading");
+}
+
+#[test]
 fn six_brand_rows_and_recovery_guidance_fit_all_eight_languages_without_column_overlap() {
     let mut engine = TextEngine::new();
     let mut agents: Vec<_> = ["Codex", "Claude", "Gemini", "OpenCode", "Kimi", "Grok"]
