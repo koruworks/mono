@@ -261,13 +261,70 @@ impl ManageView {
         self.w.borrow_mut().adopt_profiles(&rows)
     }
 
-    /// Bring the Workspaces section to the top of the page — the switcher's
-    /// *Manage workspaces…*.
-    pub fn reveal_workspaces(&mut self) {
-        if let Some(section) = &self.laid.workspaces {
-            self.page_scroll = (section.rect.y - 16.0).max(0.0);
-            self.clamp_scroll();
+    /// Settings' Workspaces destination follows the profile being inspected.
+    pub(crate) fn workspaces_page(&self) -> Page {
+        self.c
+            .selected()
+            .or_else(|| self.c.current())
+            .or_else(|| self.c.profiles().first().map(|p| p.id))
+            .map_or(Page::NewProfile, Page::Workspaces)
+    }
+
+    pub(super) fn lay_workspaces_page(&mut self, profile: &ProfileSummary) -> profile_page::Laid {
+        let column = self.column();
+        let head = self.lay_head(column, 0.0, 0.0, TITLE, &profile.name);
+        let mut controls = Vec::new();
+        let mut disabled = Vec::new();
+        let attention = self.lay_attention(profile, column, head.bottom(), &mut controls);
+        let (workspaces, recovery, bottom) = if let Some(card) = &attention {
+            (None, None, card.rect.y + card.rect.h)
+        } else {
+            let (section, bottom) = self.lay_workspaces_section(
+                profile,
+                column,
+                head.bottom(),
+                &mut controls,
+                &mut disabled,
+            );
+            let (recovery, bottom) = self.lay_recovery_sections(
+                profile.id,
+                column,
+                bottom + koru_ui::PageShell::LEAD_GAP,
+                &mut controls,
+                &mut disabled,
+            );
+            (Some(section), recovery, bottom)
+        };
+        for placed in &controls {
+            if let Control::SyncMode(workspace, mode) = placed.control
+                && !self.c.sync_mode_enabled(workspace, mode)
+            {
+                disabled.push(placed.control);
+            }
         }
+        profile_page::Laid {
+            profile: Some(profile.id),
+            head: Some(head),
+            attention,
+            workspaces,
+            recovery,
+            controls,
+            disabled,
+            height: bottom - column.y,
+            ..Default::default()
+        }
+    }
+
+    pub(super) fn paint_workspaces_page(&mut self, canvas: &mut Scene, root: Affine) {
+        let laid = self.laid.clone();
+        if let Some(head) = &laid.head {
+            self.paint_head(canvas, root, head);
+        }
+        if let Some(words) = &laid.attention {
+            self.paint_words(canvas, root, words, &laid);
+        }
+        self.paint_workspaces_section(canvas, root);
+        self.paint_recovery_sections(canvas, root);
     }
 
     /// The workspace `F2` renames: the row selected on this page.

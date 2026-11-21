@@ -106,6 +106,7 @@ pub(super) const RECORDS: &[Entry] = &[
                     Declared::Enum,
                     &[
                         literal("Profile"),
+                        literal("Workspaces"),
                         literal("NewProfile"),
                         literal("Devices"),
                         literal("Cloud"),

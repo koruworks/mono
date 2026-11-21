@@ -566,6 +566,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/manage/profile_page.rs"),
     ),
     (
+        "apps/koru/src/manage/profile_tabs.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profile_tabs.rs"),
+    ),
+    (
         "apps/koru/src/manage/profile_page/paint.rs",
         include_str!("../../../../../../../apps/koru/src/manage/profile_page/paint.rs"),
     ),
@@ -2311,6 +2315,7 @@ pub(super) const ROOTS: &[Root] = &[
             ("new_profile", Module::Records(&["C-MANAGE"])),
             ("page", Module::Records(&["C-MANAGE"])),
             ("profile_page", Module::Records(&["C-MANAGE"])),
+            ("profile_tabs", Module::Records(&["C-MANAGE"])),
             (
                 "profiles",
                 Module::Excluded(
@@ -2421,6 +2426,7 @@ pub(super) const ROOTS: &[Root] = &[
                 ),
             ),
             ("reminders", Module::Records(&["C-REMINDER-SETTINGS"])),
+            ("sync_pages", Module::Records(&["H-APP-TAB-HOSTS"])),
         ],
     },
     Root {

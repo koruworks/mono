@@ -246,13 +246,13 @@ batch's counts.
 | koru-draw theme public submodules | 5 |
 | domain crates | 21 |
 | domain crate source files | 372 |
-| domain crate lib.rs modules | 258 |
+| domain crate lib.rs modules | 260 |
 | domain crate lib.rs public modules | 125 |
 | domain crate modules excluded | 78 |
 | app crates baselined | 5 |
-| app source files | 368 |
+| app source files | 369 |
 | app files baselined | 23 |
-| app modules classified | 278 |
+| app modules classified | 280 |
 | app modules excluded | 144 |
 | records: app crates | 65 |
 | native files: Android | 24 |

@@ -173,13 +173,6 @@ impl ExploreView {
         )
     }
 
-    pub(crate) fn sync_channel_icons(&self) -> El {
-        row("Sync channels").child(
-            icon(koru_draw::icons::CLOUD, IconSize::L)
-                .decorative()
-                .ink(Ink::Secondary),
-        )
-    }
     pub(crate) fn workspace_import_anchor(
         &self,
         area: koru_draw::geometry::Rect,

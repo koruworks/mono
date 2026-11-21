@@ -183,7 +183,6 @@ impl MainView {
                 TabView::Leaf(_) => "document",
                 TabView::Welcome(_) => "welcome",
                 TabView::Home(_) => "home",
-                TabView::Manage(_) => "manage",
                 TabView::Trash(_) => "trash",
                 TabView::Tasks(_) => "tasks",
                 TabView::Settings(_) => "settings",
@@ -302,7 +301,6 @@ impl MainView {
                 .unwrap_or(EditableTarget::None),
             TabView::Welcome(_)
             | TabView::Home(_)
-            | TabView::Manage(_)
             | TabView::Settings(_)
             | TabView::Trash(_)
             | TabView::Reminders(_)

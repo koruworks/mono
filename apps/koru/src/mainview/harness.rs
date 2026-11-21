@@ -86,6 +86,10 @@ pub(super) fn on_document() -> (MainView, Workspace) {
     // already existed and recorded nothing. A test that asserts on recents
     // should start from an empty list.
     v.recents.clear();
+    // This fixture begins on the document; its setup trip from Welcome is not
+    // part of the navigation exercised by its callers.
+    v.history.clear();
+    v.history_at = 0;
     (v, w)
 }
 

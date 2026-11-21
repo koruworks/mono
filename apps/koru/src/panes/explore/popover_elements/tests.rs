@@ -906,8 +906,8 @@ fn the_profiles_page_puts_each_gear_beside_its_profile_and_lists_fixed_actions()
     assert_eq!(menu.label.as_deref(), Some("Switch profile"));
     assert_eq!(
         menu.size_of_set,
-        Some(8),
-        "Manage profiles, three Profiles, three gears, Sync"
+        Some(7),
+        "Manage profiles, three Profiles, three gears"
     );
     assert_eq!(menu.children[0].role, AkRole::Heading);
     assert_eq!(menu.children[0].label.as_deref(), Some("Profiles"));
@@ -927,11 +927,7 @@ fn the_profiles_page_puts_each_gear_beside_its_profile_and_lists_fixed_actions()
         .iter()
         .map(|node| (node.occurrence.part.name(), node.label.as_deref()))
         .collect();
-    assert_eq!(actions, vec![("global-sync", Some("Sync"))]);
-    assert_eq!(
-        menu.children[8].description.as_deref(),
-        Some(v.sync_control_name().as_str())
-    );
+    assert!(actions.is_empty());
     for node in &menu.children[8..] {
         assert_eq!(node.role, AkRole::MenuItem);
         assert_eq!(node.actions, [AkAction::Click, AkAction::Focus]);
@@ -981,57 +977,18 @@ fn focus_lights_a_profiles_gear_and_click_opens_manage_on_it() {
 
 /// Every fixed action agrees across geometry, pointer, accessibility and keyboard.
 #[test]
-fn each_profile_action_uses_its_own_row_and_destination() {
-    use profiles::MenuAction;
-    use winit::keyboard::{Key as WKey, NamedKey};
+fn profile_menu_has_no_sync_footer_or_keyboard_target() {
     let a = area(dtheme::SIDEBAR_MIN_W);
-    for (action, outcome) in [(MenuAction::Sync, Outcome::OpenSyncSettings)] {
-        let mut v = opened_profiles(3);
-        let (_, r) = v
-            .popover_rects(a, VIEW)
-            .into_iter()
-            .find(|(row, _)| *row == PopoverRow::ProfileAction(action))
-            .expect("the fixed action row");
-        assert_eq!(r.h, dtheme::metrics::ROW_MIN.value + 4.0);
-        v.with_page(a, VIEW, |frame| {
-            assert!(near(frame.node(action.key()).unwrap().rect, r));
-            for (x, y) in [(r.x + 0.5, r.y + 0.5), (r.x + r.w - 0.5, r.y + r.h - 0.5)] {
-                assert_eq!(frame.hit_at(x, y), Some(action.key()));
-            }
-        })
-        .unwrap();
-        let (x, y) = r.centre();
-        assert_eq!(
-            v.popover_part_at(a, VIEW, x, y)
-                .map(|(_, row, part)| (row, part)),
-            Some((PopoverRow::ProfileAction(action), PopoverPart::Row)),
-            "{action:?}"
-        );
-        assert_eq!(v.mouse_down(a, VIEW, x, y, false), outcome, "{action:?}");
-        assert!(!v.popover_open());
-        let occurrence = Occurrence::surface(
-            WindowSlot::from_raw(1),
-            ViewSlot::from_raw(1),
-            SURFACE,
-            ControlPart::new(action.key().part),
-        );
-        let mut v = opened_profiles(3);
-        assert_eq!(
-            v.accessibility_action(a, occurrence, AkAction::Click, VIEW),
-            Some(outcome.clone())
-        );
-        assert!(!v.popover_open());
-        for key in [NamedKey::Enter, NamedKey::Space] {
-            let mut v = opened_profiles(3);
-            assert_eq!(
-                v.accessibility_action(a, occurrence, AkAction::Focus, VIEW),
-                Some(Outcome::Consumed)
-            );
-            assert_eq!(v.popover_interaction().hot, Some(action.key()));
-            assert_eq!(v.popover_key(&WKey::Named(key)), Some(outcome.clone()));
-            assert!(!v.popover_open());
-        }
-    }
+    let v = opened_profiles(3);
+    assert!(
+        v.popover_rects(a, VIEW)
+            .iter()
+            .all(|(row, _)| !matches!(row, PopoverRow::ProfileAction(_)))
+    );
+    v.with_page(a, VIEW, |frame| {
+        assert!(frame.node(profiles::MenuAction::Sync.key()).is_none())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -1078,29 +1035,15 @@ fn manage_profiles_has_its_own_heading_target_and_opens_the_current_profile() {
 }
 
 #[test]
-fn sync_stays_fixed_below_the_profile_list_with_one_divider() {
-    use profiles::MenuAction;
+fn scrolling_profiles_does_not_add_a_sync_footer() {
     let a = area(dtheme::SIDEBAR_MIN_W);
     let mut v = opened_profiles(40);
-    let actions = |v: &ExploreView| {
-        v.popover_rects(a, VIEW)
-            .into_iter()
-            .filter(|(row, _)| matches!(row, PopoverRow::ProfileAction(_)))
-            .collect::<Vec<_>>()
-    };
-    let before = actions(&v);
     assert!(v.scroll_popover(a, VIEW, -400.0));
-    assert_eq!(actions(&v), before);
-    assert_eq!(
-        before.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
-        [PopoverRow::ProfileAction(MenuAction::Sync)]
+    assert!(
+        v.popover_rects(a, VIEW)
+            .iter()
+            .all(|(row, _)| !matches!(row, PopoverRow::ProfileAction(_)))
     );
-    let [(_, sync)] = before.as_slice() else {
-        panic!("one fixed action");
-    };
-    let band = v.popover_list_band(a, VIEW).unwrap();
-    let divider = dtheme::Space::S1.px(dtheme::Profile::Desktop) * 2.0 + dtheme::BORDER_W as f32;
-    assert_eq!(sync.y - (band.y + band.h), divider);
 }
 
 /// **A Profile row's record names its tokens**: its minimum, the plate's

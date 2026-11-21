@@ -39,6 +39,42 @@ fn doc() -> WorkspaceDoc {
     WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t").expect("create")
 }
 
+#[test]
+fn embedded_profile_buttons_select_details_and_plus_opens_creation() {
+    let (mut view, personal, work) = manage();
+    let area = Rect::new(220.0, 20.0, 740.0, 650.0);
+    view.embed((1000.0, 700.0), area, area);
+    view.show(Page::Profile(personal.id));
+    assert_eq!(view.profile_tabs.len(), 3);
+    let last = view.profile_tabs.last().unwrap().2;
+    assert!(view.column().y > last.y + last.h);
+    assert!(click(&mut view, nav::Entry::Profile(work.id)));
+    assert_eq!(view.page, Some(Page::Profile(work.id)));
+    assert_eq!(view.c.current(), Some(personal.id));
+    assert_eq!(view.c.selected(), Some(work.id));
+    assert!(click(&mut view, nav::Entry::NewProfile));
+    assert_eq!(view.page, Some(Page::NewProfile));
+    assert!(view.c.creating());
+    view.show(Page::Devices);
+    assert!(view.profile_tabs.is_empty());
+    assert_eq!(view.column(), area);
+}
+
+#[test]
+fn embedded_profile_buttons_wrap_and_receive_keyboard_focus() {
+    let (mut view, personal, work) = manage();
+    let area = Rect::new(20.0, 20.0, 120.0, 650.0);
+    view.embed((160.0, 700.0), area, area);
+    view.show(Page::Profile(personal.id));
+    assert!(view.profile_tabs.last().unwrap().2.y > view.profile_tabs[0].2.y);
+    assert!(key(&mut view, NamedKey::Tab));
+    assert_eq!(view.focus, Some(nav::Entry::Profile(personal.id)));
+    assert!(key(&mut view, NamedKey::Tab));
+    assert_eq!(view.focus, Some(nav::Entry::Profile(work.id)));
+    assert!(key(&mut view, NamedKey::Enter));
+    assert_eq!(view.page, Some(Page::Profile(work.id)));
+}
+
 fn click(view: &mut ManageView, entry: nav::Entry) -> bool {
     let rect = row_of(view, entry);
     press(view, rect)

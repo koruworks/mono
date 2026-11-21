@@ -93,7 +93,6 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
     text_rendering::rows(b, lang);
     caret_rows(b, lang);
     app_font_rows(b, lang);
-    document_font_rows(b, rows);
     b.card(Some(koru_i18n::t(lang, Key::SettingsInterface)));
     b.row_dropdown(
         koru_i18n::t(lang, Key::SettingsIconStyle),
@@ -224,9 +223,10 @@ fn app_font_rows(b: &mut Builder<'_>, lang: Lang) {
         Some(koru_i18n::t(lang, Key::SettingsMenusSidebarAndControls)),
     );
     let zoom = theme::zoom();
+    let zoom_hint = crate::shortcuts::zoom_hint(lang);
     b.row_stepper(
         koru_i18n::t(lang, Key::SettingsZoom),
-        None,
+        Some(&zoom_hint),
         format!("{}%", koru_i18n::number::fraction(lang, zoom * 100.0)),
         "200%",
         (zoom > theme::ZOOM_MIN).then_some(Action::ZoomOut),
@@ -257,6 +257,11 @@ fn app_font_rows(b: &mut Builder<'_>, lang: Lang) {
                 )
             })
             .collect(),
+    );
+    b.row_link(
+        koru_i18n::t(lang, Key::SettingsEditor),
+        Action::ShowPage(crate::PageId::Editor),
+        koru_i18n::t(lang, Key::SettingsSeeEditorSettings),
     );
 }
 
@@ -461,6 +466,7 @@ fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>)
 
 pub(crate) fn editor(b: &mut Builder<'_>, rows: &Rows<'_>) {
     let lang = rows.lang;
+    document_font_rows(b, rows);
     documents(b, lang, rows.layout_applied);
     spelling(b, rows);
     voice(b, rows);
@@ -512,15 +518,17 @@ fn documents(b: &mut Builder<'_>, lang: Lang, applied: bool) {
     if mode == theme::ViewMode::Page {
         b.row_swatches(
             koru_i18n::t(lang, Key::SettingsPageBackground),
-            Some(koru_i18n::t(
-                lang,
-                Key::SettingsPressToStepThroughThePageColors,
-            )),
-            vec![(
-                Action::CanvasBackground,
-                Some(crate::canvas_swatch_color(theme::default_canvas_bg())),
-                false,
-            )],
+            None,
+            std::iter::once(None)
+                .chain(theme::canvas_presets().iter().copied().map(Some))
+                .map(|color| {
+                    (
+                        Action::CanvasBackground(color),
+                        Some(crate::canvas_swatch_color(color)),
+                        color == theme::default_canvas_bg(),
+                    )
+                })
+                .collect(),
         );
     }
 }

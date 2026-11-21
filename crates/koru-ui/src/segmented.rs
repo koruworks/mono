@@ -121,6 +121,43 @@ impl Segmented {
         focused: bool,
         alpha: f32,
     ) {
+        self.draw_tinted(
+            canvas, root, engine, labels, selected, hovered, focused, alpha, None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_tinted(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        labels: &[&str],
+        selected: Option<usize>,
+        hovered: Option<usize>,
+        focused: bool,
+        alpha: f32,
+        dangerous: Option<usize>,
+    ) {
+        self.draw_highlighted(
+            canvas, root, engine, labels, selected, hovered, focused, alpha, dangerous, "",
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_highlighted(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        labels: &[&str],
+        selected: Option<usize>,
+        hovered: Option<usize>,
+        focused: bool,
+        alpha: f32,
+        dangerous: Option<usize>,
+        query: &str,
+    ) {
         let b = self.bounds;
         let _component = inspect::scope(
             "KoruSegmented",
@@ -173,17 +210,42 @@ impl Segmented {
             } else if hovered == Some(index) {
                 scene::fill(canvas, root, p.hover_tint.multiply_alpha(alpha), &shape);
             }
+            if dangerous == Some(index) {
+                scene::fill(
+                    canvas,
+                    root,
+                    p.close_hover
+                        .multiply_alpha(if chosen { 0.18 } else { 0.08 } * alpha),
+                    &shape,
+                );
+            }
             let layout = engine.simple_layout(label, theme::role::row());
+            crate::text_paragraph::highlight_layout(
+                canvas,
+                root,
+                &layout,
+                label,
+                query,
+                rect.x + (rect.w - layout.width()) * 0.5,
+                crate::typography::control_label_y(engine, *rect),
+            );
             crate::typography::line(
                 "Segment label",
                 canvas,
                 root,
                 &layout,
                 rect.x + (rect.w - layout.width()) * 0.5,
-                scene::centre_y_in(&layout, *rect),
+                crate::typography::control_label_y(engine, *rect),
                 theme::role::row(),
                 "theme::role::row()",
-                if chosen { p.text } else { p.text_dim }.multiply_alpha(alpha),
+                if dangerous == Some(index) {
+                    p.close_hover
+                } else if chosen {
+                    p.text
+                } else {
+                    p.text_dim
+                }
+                .multiply_alpha(alpha),
             );
         }
     }

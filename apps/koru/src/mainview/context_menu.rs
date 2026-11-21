@@ -1700,7 +1700,7 @@ impl MenuAction {
             // A list row wears its colour square, never a glyph — the rail's
             // rule, so the square here and the square in the rail are one list.
             MenuAction::TaskListRow(..) => None,
-            MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
+            MenuAction::HeaderFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
             // Destinations shared with the help popover.
             MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),

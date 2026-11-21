@@ -42,6 +42,7 @@ use winit::window::CursorIcon;
 
 pub(crate) mod reader_link;
 mod reminders;
+mod sync_pages;
 #[cfg(test)]
 mod tests;
 
@@ -81,6 +82,8 @@ impl VoiceOff {
 }
 
 pub struct SettingsView {
+    pub(crate) manage: Box<crate::manage::ManageView>,
+    manage_shown: Option<crate::manage::Page>,
     surface: SettingsSurface,
     /// The shared settings crate owns its typography engine; this second one
     /// belongs only to Koru's host section. It keeps reminder input and layout
@@ -172,6 +175,8 @@ impl SettingsView {
         let mut reminder_engine = TextEngine::new();
         let reminders = reminders::ReminderSurface::new(&mut reminder_engine);
         let mut view = Self {
+            manage: Box::new(crate::manage::ManageView::new()),
+            manage_shown: None,
             surface,
             reminder_engine,
             reminders,
@@ -298,10 +303,12 @@ impl SettingsView {
 
     /// Opened from the first-minutes guide's mic link.
     pub fn scroll_to_voice(&mut self) -> bool {
+        self.surface.clear_search();
         self.surface.scroll_to_voice()
     }
 
     pub fn scroll_to_reader(&mut self) -> bool {
+        self.surface.clear_search();
         self.reader_scroll_pending = true;
         self.ask_reader(reader_link::Command::Refresh);
         self.surface.scroll_to_reader()
@@ -325,7 +332,6 @@ impl SettingsView {
     }
 
     /// The page showing.
-    #[cfg(test)]
     pub fn page(&self) -> koru_settings_ui::PageId {
         self.surface.page()
     }
@@ -338,8 +344,18 @@ impl SettingsView {
 
     /// Show one page from its top — a document's *Global settings* link
     /// lands on Editor.
+    pub(crate) fn navigation_scroll(&self) -> f32 {
+        self.surface.content_y(0.0)
+    }
+    pub(crate) fn restore_scroll(&mut self, scroll: f32) {
+        self.surface.restore_scroll(scroll);
+    }
+
     pub fn show_page(&mut self, page: koru_settings_ui::PageId) -> bool {
-        self.surface.show_page(page)
+        self.surface.clear_search();
+        let changed = self.surface.show_page(page);
+        self.layout_manage();
+        changed
     }
 
     /// The keyboard into the search box, its query selected — where `Ctrl+,`
@@ -644,6 +660,17 @@ impl View for SettingsView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        if self.manage_visible() && self.manage.modal_open() {
+            return self.manage.key(_ws, key, text, mods);
+        }
+        if *key == Key::Named(winit::keyboard::NamedKey::Escape)
+            && self.surface.key(key, text, mods)
+        {
+            return true;
+        }
+        if self.manage_visible() && !self.surface.search_focused() {
+            return self.manage.key(_ws, key, text, mods);
+        }
         (self.reminders_live()
             && self
                 .reminders
@@ -652,28 +679,42 @@ impl View for SettingsView {
     }
 
     fn mouse_down(&mut self, _ws: &mut WorkspaceDoc, x: f32, y: f32, _ctrl: bool) -> bool {
+        self.layout_manage();
+        if self.manage_point(x, y) {
+            self.surface.blur_search();
+            return self.manage.mouse_down(_ws, x, y, _ctrl);
+        }
         let content_y = self.surface.content_y(y);
         (self.reminders_live()
             && self
                 .reminders
                 .press(&mut self.reminder_engine, x, content_y))
-            || self.surface.mouse_down(x, y)
+            || {
+                let changed = self.surface.mouse_down(x, y);
+                self.layout_manage();
+                changed
+            }
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
+        let manage_moved = self.manage_visible() && self.manage.mouse_move(x, y);
         let content_y = self.surface.content_y(y);
         let reminder_moved = self.reminders_live()
             && self
                 .reminders
                 .move_pointer(&mut self.reminder_engine, x, content_y);
-        self.surface.mouse_move(x, y) || reminder_moved
+        self.surface.mouse_move(x, y) || reminder_moved || manage_moved
     }
 
     fn mouse_up(&mut self, _ws: &mut WorkspaceDoc) -> bool {
-        self.reminders.release() || self.surface.mouse_up()
+        let released = self.manage_visible() && self.manage.mouse_up(_ws);
+        self.reminders.release() || self.surface.mouse_up() || released
     }
 
     fn mouse_double_click(&mut self, _ws: &WorkspaceDoc, x: f32, y: f32) -> bool {
+        if self.manage_point(x, y) {
+            return self.manage.mouse_double_click(_ws, x, y);
+        }
         let content_y = self.surface.content_y(y);
         self.reminders_live()
             && self
@@ -682,14 +723,28 @@ impl View for SettingsView {
     }
 
     fn scroll_by(&mut self, delta: MouseScrollDelta) {
-        self.surface.scroll_by(delta);
+        if self.manage_point(
+            self.surface.pointer_position().0,
+            self.surface.pointer_position().1,
+        ) {
+            self.manage.scroll_by(delta);
+        } else {
+            self.surface.scroll_by(delta);
+        }
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
         self.surface.set_viewport(w, h);
+        self.layout_manage();
     }
 
     fn cursor_icon(&self) -> CursorIcon {
+        if self.manage_point(
+            self.surface.pointer_position().0,
+            self.surface.pointer_position().1,
+        ) {
+            return self.manage.cursor_icon();
+        }
         if self.reminders_live() && self.reminders.hot() {
             koru_ui::cursor::PRESS
         } else {
@@ -706,6 +761,7 @@ impl View for SettingsView {
 
     fn invalidate(&mut self) {
         self.surface.invalidate();
+        self.manage.invalidate();
         self.reminder_engine.clear_pill_cache();
     }
 
@@ -718,8 +774,16 @@ impl View for SettingsView {
         _caret_on: bool,
         _pointer: (f32, f32),
     ) {
+        self.manage.set_client(_workspace.store_client());
+        self.sync_navigation();
         self.layout_reminders();
+        self.layout_manage();
         self.surface.draw(scene, root);
+        if self.manage_visible() {
+            self.manage
+                .draw(scene, _workspace, _images, root, _caret_on, _pointer);
+            return;
+        }
         let reminders = &mut self.reminders;
         let engine = &mut self.reminder_engine;
         self.surface
@@ -729,6 +793,7 @@ impl View for SettingsView {
     }
 
     fn restore(&mut self, _ws: &Workspace, settings: &Settings) {
+        self.manage.restore(_ws, settings);
         self.adopt_preferences(settings);
         theme::set_caret_color_for(false, settings.caret_color);
         theme::set_caret_color_for(true, settings.caret_color_dark);
@@ -752,6 +817,7 @@ impl View for SettingsView {
     }
 
     fn capture(&self, settings: &mut Settings) {
+        self.manage.capture(settings);
         settings.view_mode = self.surface.view_mode();
         settings.pinned_show_title = self.surface.pinned_show_title();
         settings.canvas_bg = self.surface.canvas_background();
@@ -765,6 +831,7 @@ impl View for SettingsView {
     fn maintenance_deadline(&self) -> Option<std::time::Instant> {
         [
             self.surface.maintenance_deadline(),
+            self.manage.maintenance_deadline(),
             self.reader_deadline(),
             self.app_menu_read
                 .as_ref()
@@ -776,6 +843,8 @@ impl View for SettingsView {
     }
 
     fn maintain(&mut self, _ws: &mut WorkspaceDoc, _now: std::time::Instant) -> bool {
+        let manage_changed = self.manage.maintain(_ws, _now);
+        self.sync_navigation();
         // A dictionary download moved (progress, finished, failed): re-read
         // the spelling row. An atomic compare when nothing moved.
         // …or the personal dictionary changed (a word taught, or cleared), so
@@ -811,7 +880,7 @@ impl View for SettingsView {
         // What this page shows is what open terminals should draw — a press
         // here reaches them now, not after the authority's round trip.
         crate::terminal_prefs::adopt(self.surface.terminal());
-        polled || downloaded || app_menu_changed || reader_moved
+        polled || downloaded || app_menu_changed || reader_moved || manage_changed
     }
 
     fn dictation_refused(&mut self, refusal: koru_dictation::Refusal) -> bool {

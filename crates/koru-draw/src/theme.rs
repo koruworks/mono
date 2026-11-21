@@ -3138,7 +3138,7 @@ pub const ROW_H: f32 = text_metrics::SM.line_height + ROW_PAD_V; // 18 + 8 = 26
 /// A literal, **not** derived from a text tier: it is sized by the window
 /// buttons, the drag area, and the tab shape, not by the label inside it. Do
 /// not rewrite it as label-metrics + pad — the exemption is on purpose.
-pub const CAPTION_H: f32 = 36.0;
+pub const CAPTION_H: f32 = 42.0;
 /// A window button (minimise, maximise, close). Square, and full caption height
 /// so the pointer can slam into the top-right corner and still hit close.
 pub const CAPTION_BTN: f32 = 44.0;
@@ -3164,9 +3164,8 @@ pub const SIDEBAR_MAX_W: f32 = 600.0;
 /// The rail at the sidebar's left edge — the apps, and at its foot Settings,
 /// Help and the profile (the review's artboard 11). The pane and its widths
 /// above are what sits after it; the sidebar as a whole is the two together.
-/// 48, not 56: four pixels off each side (the review's note); a 36 px square
-/// keeps six pixels of air either side.
-pub const RAIL_W: f32 = 48.0;
+/// A 36 px square keeps three pixels of air either side.
+pub const RAIL_W: f32 = 42.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.

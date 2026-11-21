@@ -459,7 +459,6 @@ fn tab_kind(v: &MainView) -> &'static str {
     match &v.tabs().active_tab().view {
         TabView::Welcome(_) => "welcome",
         TabView::Home(_) => "home",
-        TabView::Manage(_) => "manage",
         TabView::Trash(_) => "trash",
         TabView::Settings(_) => "settings",
         TabView::Tasks(_) => "tasks",

@@ -55,6 +55,34 @@ fn manage(rows: &[Catalog]) -> (ManageView, ProfileSummary, ProfileSummary) {
     (view, personal, work)
 }
 
+#[test]
+fn the_workspaces_page_reuses_the_catalog_without_profile_account_controls() {
+    let (mut view, personal, work, rows) = manage_with(|personal, work| {
+        vec![
+            row("Personal notes", personal, 0),
+            row("Work notes", work, 0),
+        ]
+    });
+    view.show(Page::Workspaces(work.id));
+    assert_eq!(view.page_title(), "Workspaces");
+    assert_eq!(view.laid.head.as_ref().unwrap().lead_text, work.name);
+    assert!(
+        view.workspace_name_rect(app_workspace(rows[1].id))
+            .is_some()
+    );
+    assert!(
+        view.workspace_name_rect(app_workspace(rows[0].id))
+            .is_none()
+    );
+    assert!(view.laid.sign_in.is_none());
+    assert!(view.laid.footer.is_none());
+    assert_eq!(view.c.current(), Some(personal.id));
+    assert!(view.laid.placed(Control::NewWorkspace).is_some());
+    assert!(view.laid.placed(Control::ImportWorkspaces).is_none());
+    view.show(Page::Workspaces(personal.id));
+    assert!(view.laid.placed(Control::ImportWorkspaces).is_some());
+}
+
 /// The fixtures need the Profiles before the rows; this is `manage` for rows
 /// that name its Profiles.
 fn manage_with(

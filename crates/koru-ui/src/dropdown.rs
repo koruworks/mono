@@ -33,6 +33,7 @@ pub struct DropdownOption {
     /// The font stack the label is set in — a font picker's rows each show
     /// their own family. `None` is the interface face.
     pub font_stack: Option<&'static str>,
+    pub dangerous: bool,
 }
 
 impl DropdownOption {
@@ -41,6 +42,7 @@ impl DropdownOption {
             label: label.into(),
             selected,
             font_stack: None,
+            dangerous: false,
         }
     }
 
@@ -51,6 +53,9 @@ impl DropdownOption {
 }
 
 impl MenuItem for DropdownOption {
+    fn destructive(&self) -> bool {
+        self.dangerous
+    }
     fn label(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.label)
     }
@@ -67,8 +72,10 @@ impl MenuItem for DropdownOption {
 pub struct Dropdown<'a> {
     /// The value in force, as the field shows it.
     pub label: &'a str,
+    pub highlight: &'a str,
     /// The face the value is set in, for a font picker.
     pub font_stack: Option<&'static str>,
+    pub dangerous: bool,
     pub open: bool,
     pub enabled: bool,
 }
@@ -85,7 +92,9 @@ impl<'a> Dropdown<'a> {
     pub const fn new(label: &'a str) -> Self {
         Self {
             label,
+            highlight: "",
             font_stack: None,
+            dangerous: false,
             open: false,
             enabled: true,
         }
@@ -96,8 +105,18 @@ impl<'a> Dropdown<'a> {
         self
     }
 
+    pub const fn highlight(mut self, query: &'a str) -> Self {
+        self.highlight = query;
+        self
+    }
+
     pub const fn open(mut self, open: bool) -> Self {
         self.open = open;
+        self
+    }
+
+    pub const fn dangerous(mut self, dangerous: bool) -> Self {
+        self.dangerous = dangerous;
         self
     }
 
@@ -127,9 +146,11 @@ impl<'a> Dropdown<'a> {
             .map(|option| {
                 Dropdown {
                     label: &option.label,
+                    highlight: "",
                     font_stack: option.font_stack,
                     open: false,
                     enabled: true,
+                    dangerous: option.dangerous,
                 }
                 .width(engine)
             })
@@ -218,6 +239,14 @@ impl<'a> Dropdown<'a> {
         let alpha = if self.enabled { alpha } else { alpha * 0.45 };
         let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, Self::RADIUS);
         scene::fill(canvas, root, p.panel_bg.multiply_alpha(alpha), &shape);
+        if self.dangerous {
+            scene::fill(
+                canvas,
+                root,
+                p.close_hover.multiply_alpha(0.14 * alpha),
+                &shape,
+            );
+        }
         if (hovered || self.open) && self.enabled {
             scene::fill(canvas, root, p.hover_tint.multiply_alpha(alpha), &shape);
         }
@@ -238,6 +267,11 @@ impl<'a> Dropdown<'a> {
             );
         }
         let value = self.value_layout(engine);
+        let reference = Dropdown {
+            label: "Hgj",
+            ..self
+        }
+        .value_layout(engine);
         let chevron_x = rect.x + rect.w - Self::PAD_X - Self::CHEVRON;
         // The value clips short of the chevron rather than running under it.
         let clip = scene::rect(
@@ -247,16 +281,30 @@ impl<'a> Dropdown<'a> {
             rect.h,
         );
         canvas.push_clip_layer(vello::peniko::Fill::NonZero, root, &clip);
+        crate::text_paragraph::highlight_layout(
+            canvas,
+            root,
+            &value,
+            self.label,
+            self.highlight,
+            rect.x + Self::PAD_X,
+            scene::centre_y_in(&reference, rect),
+        );
         crate::typography::line(
             "Dropdown value",
             canvas,
             root,
             &value,
             rect.x + Self::PAD_X,
-            scene::centre_y_in(&value, rect),
+            scene::centre_y_in(&reference, rect),
             theme::role::row(),
             "theme::role::row()",
-            p.text.multiply_alpha(alpha),
+            if self.dangerous {
+                p.close_hover
+            } else {
+                p.text
+            }
+            .multiply_alpha(alpha),
         );
         canvas.pop_layer();
         let chevron = engine.icon_layout(icons::CARET_DOWN, Self::CHEVRON);

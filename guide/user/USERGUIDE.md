@@ -1554,10 +1554,10 @@ model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
 waits in the composer. The model picker shows your local agents down its
 left side, one icon each — Claude, OpenCode, Kimi, Grok, Codex,
-Antigravity and Devin, in the order set on Agent providers and less any you have
+Antigravity and Devin, in the order set on Agent runtimes and less any you have
 turned off — on the same colour as the window's own left rail, and a **+** at
 the foot of that
-column, which opens **Settings → Coding → Agent providers**; the selected
+column, which opens **Settings → Coding → Agent runtimes**; the selected
 agent's models sit beside them under
 their own names, one line each, and a **Search models…** box above the
 list. Typing searches the models of every agent in the left column, not only
@@ -1636,7 +1636,7 @@ Favorites** entry heads the picker's left column: it lists your favorites
 from every agent, each beside its agent's icon, and choosing one switches the
 chat to that agent and model. With favorites, the picker opens on this
 list; with none, it opens on your chat's agent. Favorites follow you to your other computers,
-like your theme. An agent you turn off on Agent providers keeps its
+like your theme. An agent you turn off on Agent runtimes keeps its
 favorites, hidden until you turn it back on.
 
 Picking a model only sets it: the chip
@@ -1747,7 +1747,7 @@ approval mode: its color and icon identify the mode, and its chevron appears
 on hover or keyboard focus. The chevron opens a list above the composer with
 each mode's name, explanation and a check on the current one. The menu footer
 says the choice applies to this chat; **Change default** opens **Settings →
-Coding → Agent providers**. The chevron remains available when Send is
+Coding → Agent runtimes**. The chevron remains available when Send is
 disabled. While Stop shows, the chevron is hidden. Claude Code offers **Ask
 first** (its default: it asks before every change), **Accept edits** (it edits
 files without asking, and still asks before commands), **Plan** (it reads and
@@ -1760,7 +1760,7 @@ more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
 composer steps to the next mode, which the send button then shows; it never steps
 to Full access, which you choose only from the list. The mode is the chat's: a
 change inside a chat applies to that chat only, and a new chat starts from the
-**default permission** you set on **Settings → Coding → Agent providers** —
+**default permission** you set on **Settings → Coding → Agent runtimes** —
 Manual (the agent's asking mode) until you choose otherwise. A mode chosen while a reply is running
 applies to your next message, and the note beside the send button says so. When the
 agent leaves a mode by itself — Claude after you approve its plan — the send button
@@ -3652,7 +3652,7 @@ seconds while you are typing without one. Closing the window writes it too.
 
 ## Appearance
 
-Light and dark are a **welcome page** preference under Preferences:
+Choose the theme under **Settings → Appearance**:
 
 | | |
 | --- | --- |
@@ -3661,7 +3661,7 @@ Light and dark are a **welcome page** preference under Preferences:
 
 The status bar does not show the theme. There is no keyboard shortcut for it.
 
-**Caret colour** is four swatches on the same Preferences section (default
+**Caret color** is four swatches below Text rendering on the same page (default
 neutral, blue, amber, violet). Each is tuned for light and dark, and the text
 **selection** tint follows that colour. **Caret width** is the row under them:
 Thin, Med, Thick, 4×, 8×. **Caret height** is the next row: Short, Med, Tall
@@ -3712,8 +3712,8 @@ Nothing is lost by closing a window: your work is written continuously, and the
 window comes back with its tabs.
 
 **The Settings tab** (`Ctrl+,`) is a list of pages down its left —
-**Appearance**, **Editor**, **Reminders**, **Terminal** and **System**, then
-**Agent providers** under a **Coding** heading, the
+**Account** (Cloud, Devices, Profiles and Workspaces), **Preferences** (Appearance, Editor,
+Reminders, Terminal, System and Shortcuts), then **Agent runtimes** under **Coding**, the
 current one marked by an accent rule — with a search box above them that
 narrows the list by what a page holds (type *microphone* and only Editor is
 left; Enter opens it). In a narrow window or split pane the list becomes a row
@@ -3722,6 +3722,23 @@ of rows: the setting's name on the left, one control on the right. A choice
 among a few short words is a segmented control; a longer list — fonts,
 languages, microphones, tones, the renderer — is a dropdown showing the value
 in force, opened with a click or Enter and stepped with the arrow keys.
+
+Welcome’s **turn on text recognition** and **Customize your terminal** links
+open the relevant Settings section. Back returns to Welcome at its previous
+scroll position; Forward returns to Settings. This also works when the
+Settings tab was already open.
+
+**Settings → Shortcuts** lists the shortcut registry by context: Window,
+Tabs and columns, Document, Editing, Terminal and AI chat. Chords use this
+platform’s modifier labels; internal-only bindings are marked. Search a
+command or chord to narrow the list. The Zoom row in App fonts also teaches
+zoom in, zoom out, reset, and holding the primary modifier while scrolling.
+
+Welcome’s **Access your Koru workspace via MCP** section retains each local
+client’s registration command. Below it, the Cloud option explains that a
+subscription includes Cloud MCP and 100 GB of cloud storage, shows the remote
+endpoint `https://mcp.koru.do/mcp`, and links **Subscribe** to
+[Koru pricing](https://koru.do/pricing).
 
 **Icon style** is under **Settings → Appearance → Interface**. Choose
 **Phosphor**, **Tabler**, **Lucide**, or **Remix** to change the app's icons immediately.
@@ -3737,13 +3754,26 @@ of the mouse wheel moves a page: **1×, 2×, 3×, 4×, 8× or 16×**. It starts 
 the step Koru used before the setting existed. A trackpad that scrolls by
 pixels follows your fingers and is not changed by it.
 
+The Settings search filters the navigation and keeps only matching preference
+sections on the right. Matches in labels, explanations and choice values are
+highlighted in yellow. **Escape** clears the query and restores the page even
+after focus has left the search field. An open dropdown closes first.
+
+In **Editor → Documents**, **Page background** shows all available color
+swatches together, including the default. Choose a swatch directly. It is
+available for Page width; Narrow and Full do not have a page background.
+Agent permission choices mark **Yolo (not recommended)** in red; selecting it
+retains the same full-access behavior as before.
+
 **Text rendering** is on **Settings → Appearance**, below the theme's base and
-accent colors. Light and dark keep separate choices; **System** uses the set for
+accent colors. These rows say **Base color** and **Accent color**; they show
+the active theme's choices. Light and dark keep separate choices; **System** uses the set for
 your operating system's current theme. The window's **…** menu also offers
 **System / Light / Dark**. **Caret** comes directly after Text rendering, with
 an independent color for each theme and a shared shape. Its selection tint
 follows that theme's caret color. **App fonts** follows Caret,
-with App font, Zoom, Chat font and Density. **Document fonts** follows it.
+with App font, Zoom, Chat font and Density. Its **Editor → See editor settings**
+link opens **Settings → Editor**, where **Document fonts** comes first.
 Document links use your chosen accent color.
 **Heading weight** offers **500** or **600 (default)** for document titles and
 all heading levels. A font without the requested weight uses its nearest face.
@@ -3776,11 +3806,13 @@ open, the family under the pointer, or reached with the arrow keys, is shown
 across the whole app at once: point down the list to compare. Only a click
 or Enter keeps it; Escape, a click elsewhere or scrolling away puts your
 chosen font back. **Preview in sample document**, at the right of the
-*Document fonts* title, opens a short read-only sample page — headings, a
-paragraph with bold, italic, code and a link, three kinds of list, a quote
-and a code block — beside Settings, so you choose fonts on the left and see
+*Document fonts* title, opens an editable sample page — headings, a
+paragraph with bold, italic, code and a link, three kinds of list, a quote,
+code block, callout, table and bundled Koru logo — beside Settings, so you
+choose fonts on the left and see
 them on the right as you go; the sample also follows the size and the theme.
-It is not saved anywhere and is not in your library, and pressing the link
+Try typing and formatting in the sample. Its callout explains that edits reset
+when you close it: it is not saved and is not in your library. Pressing the link
 again brings the open sample forward. The theme is chosen from
 three preview tiles at the top of the same page. A document's page menu
 also has a **Typography** group whose Body / Headings / Code rows cycle a
@@ -4087,7 +4119,7 @@ you can switch to; below it are the same new-profile rows as before
 (System, PowerShell, Bash; Claude, OpenCode, Codex, Grok, Kimi). The session
 opens as its own tab and starts running. **Agents** lists only the agents
 that are turned on and installed on this computer, then **Manage…**, which
-opens **Settings → Coding → Agent providers** to turn the others on or
+opens **Settings → Coding → Agent runtimes** to turn the others on or
 install them; with none installed it is **Manage…** alone. A shell that is
 not installed is shown greyed out with *Not installed*.
 
@@ -4707,7 +4739,7 @@ for you.
   output node, and connect them in that order. An agent node asks for its
   instruction when you add it, and starts with the agent you last delegated
   to; its header opens a menu of the agents ready on this computer, in the
-  order set on **Settings → Coding → Agent providers** and without any you
+  order set on **Settings → Coding → Agent runtimes** and without any you
   have turned off there (a node already set to one still runs it). An output
   node asks for the title of the page it will write. Press **Run** on the start
   node to run the chain; each node shows where it is, and **Stop** stops it.
@@ -6093,17 +6125,25 @@ the menu and opens its usable workspace, or its waiting/recovery screen.
 
 Each profile's **Manage** control works as a workspace's does: point at the
 row to show it, or press `→` on the lit profile to move onto it and `←` to
-come back; `Enter` or `Space` opens the **Manage** tab on that Profile. A
+come back; `Enter` or `Space` opens **Settings** on that Profile. A
 screen reader announces it as *Manage profile*. The config icon at the right
-of the Profiles heading opens Manage on the current Profile. The matching
+of the Profiles heading opens Settings on the current Profile. The matching
 icon in the Workspaces heading opens Manage workspaces.
 
-The fixed row below the Profiles is **Sync**, with one cloud icon. The icon
-and label form one selectable row that opens **Linked devices** in Manage.
-Hovering it shows no tooltip; its status remains available to screen readers.
-It is one keyboard stop and closes the menu when activated. Profile creation
-remains available in Manage. The heading's config button highlights only when
-the pointer reaches the button itself or the keyboard selects it.
+Sync and Profile management live in **Settings**. Its navigation starts with
+**Account**: Cloud where available, Devices, Profiles and Workspaces, followed by
+**Preferences** and **Coding**. The Profiles page has profile buttons and a
+**+** button at the top. Choose a profile to see its sync and workspace details
+below; **+** opens the new-profile form. Profile gears open that profile in this
+same Settings tab. Selecting a profile button inspects it without switching
+your open workspace.
+**Workspaces**, directly below Profiles, opens the workspace catalog for the
+profile being inspected. The Workspaces menu's settings button and
+`Ctrl+Shift+O` open it for your current profile. It includes New workspace,
+Import, the workspace menus, archived workspaces and trash.
+The compact Profile menu contains profile choices and their management gears.
+The heading's config button highlights only when the pointer reaches the
+button itself or the keyboard selects it.
 
 The rail's **Help (`?`)** opens directly onto the release timeline. The
 nightly row shows the date of its latest completed release-file upload, in

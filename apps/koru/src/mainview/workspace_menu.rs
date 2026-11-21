@@ -118,7 +118,9 @@ impl MainView {
             .iter_groups()
             .flat_map(|(_, group)| group.tabs().iter())
             .find_map(|tab| match &tab.view {
-                TabView::Manage(view) => Some(view),
+                TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                    Some(view.as_ref())
+                }
                 _ => None,
             })
     }
@@ -449,18 +451,13 @@ impl MainView {
         }
     }
 
-    /// *Manage workspaces…* and `Ctrl+Shift+O`: the Manage tab on `profile`'s
-    /// page — the open Profile's when none is named — scrolled to its
-    /// Workspaces.
+    /// *Manage workspaces…* and `Ctrl+Shift+O`: Settings → Workspaces for
+    /// the named Profile, or the open Profile when none is named.
     pub(super) fn open_manage_workspaces(&mut self, profile: Option<ProfileId>) -> bool {
         let Some(profile) = profile.or(self.current_profile_id()) else {
             return false;
         };
-        self.open_manage(crate::manage::Page::Profile(profile));
-        if let TabView::Manage(view) = &mut self.tabs_mut().active_mut().view {
-            view.reveal_workspaces();
-        }
-        true
+        self.open_manage(crate::manage::Page::Workspaces(profile))
     }
 
     /// A bounded fallback while a command is awaiting its keyed answer.
@@ -565,7 +562,9 @@ impl MainView {
             .notice()
             .map(|notice| notice.text().to_owned());
         self.explore.set_workspace_notice(notice);
-        if let TabView::Manage(view) = &mut self.tabs_mut().active_mut().view {
+        if let TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) =
+            &mut self.tabs_mut().active_mut().view
+        {
             view.refresh_workspaces();
         }
     }

@@ -214,7 +214,7 @@ pub(crate) fn words(surface: &SettingsSurface) -> Vec<(String, Found, bool)> {
                     ));
                 }
             }
-            Widget::Button { label, hit, .. } => {
+            Widget::Button { label, hit, .. } | Widget::Link { label, hit, .. } => {
                 out.push((label.clone(), Found::Hit(*hit), false));
             }
             Widget::Stepper { value, .. } => {
@@ -436,6 +436,7 @@ fn koru_lists_every_page_in_sidebar_order() {
             PageId::Reminders,
             PageId::Terminal,
             PageId::System,
+            PageId::Shortcuts,
             PageId::AgentProviders,
         ]
     );
@@ -450,11 +451,71 @@ fn koru_lists_every_page_in_sidebar_order() {
 }
 
 #[test]
+fn shortcuts_reference_covers_the_registry_and_filters_individual_rows() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.show_page(PageId::Shortcuts);
+    surface.relayout();
+    let rows = |surface: &SettingsSurface| {
+        surface
+            .laid
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Card(card) => Some(
+                    card.rows
+                        .iter()
+                        .map(|row| (row.label.clone(), row.chip.clone()))
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+    };
+    let all = rows(&surface);
+    assert_eq!(all.len(), koru_keys::REGISTRY.len());
+    let internal: Vec<_> = koru_keys::REGISTRY
+        .iter()
+        .filter(|entry| entry.internal_only)
+        .map(|entry| entry.label)
+        .collect();
+    assert_eq!(
+        all[all.len() - internal.len()..]
+            .iter()
+            .map(|(label, _)| label.as_str())
+            .collect::<Vec<_>>(),
+        internal,
+        "internal shortcuts follow every ordinary shortcut"
+    );
+    for entry in koru_keys::REGISTRY {
+        assert!(all.contains(&(
+            entry.label.to_owned(),
+            koru_keys::show_hint(entry.id, koru_keys::Section::Reference)
+        )));
+    }
+    surface.focus_search();
+    surface.key(
+        &WinitKey::Character("zoom".into()),
+        Some("zoom"),
+        ModifiersState::empty(),
+    );
+    let filtered = rows(&surface);
+    assert!(!filtered.is_empty());
+    assert!(filtered.len() < all.len());
+    assert!(
+        filtered
+            .iter()
+            .all(|(label, _)| label.to_lowercase().contains("zoom"))
+    );
+}
+
+#[test]
 fn the_sidebar_switches_pages_and_starts_each_from_the_top() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     assert_eq!(surface.page(), PageId::Appearance);
-    let nav = surface.nav_rect();
+    let nav = surface.nav_runs(&surface.listed())[0].area;
     let system = NavList::row_rect(nav, 4);
     let (x, y) = system.centre();
     surface.scroll = 30.0;
@@ -596,13 +657,89 @@ fn focusing_the_search_box_selects_its_query_for_the_next_one() {
     );
 }
 
+#[test]
+fn quick_search_filters_cards_and_escape_restores_them_after_focus_moves() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.set_spelling(
+        true,
+        LanguageChoice::default(),
+        vec![(LanguageChoice::default(), "Automatic".to_owned())],
+        None,
+    );
+    surface.show_page(PageId::Editor);
+    surface.relayout();
+    let original = page_lines(&surface);
+    surface.focus_search();
+    assert!(surface.key(
+        &WinitKey::Character("lang".into()),
+        Some("lang"),
+        ModifiersState::empty()
+    ));
+    surface.relayout();
+    let lines = page_lines(&surface);
+    assert!(lines.iter().any(|line| line == "Spelling"));
+    assert!(lines.iter().any(|line| line == "Voice input"));
+    assert!(!lines.iter().any(|line| line == "Documents"));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line == "Page width for new documents")
+    );
+    assert!(surface.key(
+        &WinitKey::Named(NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(!surface.search_focused());
+    assert!(surface.key(
+        &WinitKey::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(surface.search.is_empty());
+    assert_eq!(surface.listed(), surface.sections.pages());
+    assert_eq!(page_lines(&surface), original);
+    assert!(!surface.key(
+        &WinitKey::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+}
+
+#[test]
+fn unmatched_search_hides_host_pages_until_escape() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.set_host_pages(vec![HostPage::new(7, "Linked devices", "Sync options")]);
+    surface.show_page(PageId::Host(7));
+    surface.focus_search();
+    surface.key(
+        &WinitKey::Character("zzzzz".into()),
+        Some("zzzzz"),
+        ModifiersState::empty(),
+    );
+    assert_eq!(surface.visible_page(), None);
+    assert!(
+        page_lines(&surface)
+            .iter()
+            .any(|line| line == koru_i18n::t(Lang::En, Key::SettingsSearchEmpty))
+    );
+    surface.key(
+        &WinitKey::Named(NamedKey::Escape),
+        None,
+        ModifiersState::empty(),
+    );
+    assert_eq!(surface.visible_page(), Some(PageId::Host(7)));
+}
+
 /// Blank space is blank space: the margins beside the page column belong to
 /// nobody.
 #[test]
 fn blank_space_beside_the_column_mutates_nothing() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
-    // Below the sidebar's last row (Coding's *Agent providers* now sits
+    // Below the sidebar's last row (Coding's *Agent runtimes* now sits
     // where 300 used to be blank).
     assert!(!surface.mouse_down(NAV_W + 4.0, 600.0));
     assert!(!surface.mouse_down(996.0, 300.0));

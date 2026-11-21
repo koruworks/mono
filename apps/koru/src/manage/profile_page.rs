@@ -385,7 +385,7 @@ const CLOUD_POINTER: &str = "Can't reach Koru — see Koru Cloud";
 impl ManageView {
     /// The Profile this page is about, when the page is a Profile's.
     pub(super) fn page_profile(&self) -> Option<ProfileSummary> {
-        let Some(Page::Profile(id)) = self.page else {
+        let Some(Page::Profile(id) | Page::Workspaces(id)) = self.page else {
             return None;
         };
         self.c.profiles().iter().find(|row| row.id == id).cloned()
@@ -394,9 +394,11 @@ impl ManageView {
     /// Lay the page out again from the controller's state. Cheap: it measures
     /// a handful of lines, and it runs after each change rather than on a clock.
     pub(super) fn relayout(&mut self) {
+        self.layout_profile_tabs();
         // The compact band first: the page starts under it.
         self.relayout_nav();
         self.laid = match (self.page, self.page_profile()) {
+            (Some(Page::Workspaces(_)), Some(profile)) => self.lay_workspaces_page(&profile),
             (_, Some(profile)) => self.lay_profile_page(&profile),
             (Some(Page::Devices), None) => self.lay_devices_page(),
             (Some(Page::Cloud), None) => self.lay_cloud_page(),
@@ -667,7 +669,7 @@ impl ManageView {
     /// The page's attention card: a deletion of this Profile that failed,
     /// whose cleanup here failed, that is still running, or that another
     /// device made.
-    fn lay_attention(
+    pub(super) fn lay_attention(
         &mut self,
         profile: &ProfileSummary,
         column: Rect,

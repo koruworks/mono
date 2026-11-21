@@ -185,11 +185,6 @@ impl ExploreView {
                         },
                     )),
             )
-            .child(
-                col("Profile menu actions")
-                    .child(super::super::workspace_menu_elements::rule())
-                    .child(self.profile_menu_action(MenuAction::Sync)),
-            )
     }
 
     pub(crate) fn profile_row(
@@ -272,41 +267,5 @@ impl ExploreView {
                             .name(Words::ManageProfile),
                     ),
             )
-    }
-
-    fn profile_menu_action(&self, action: MenuAction) -> El {
-        let item = row("Profile menu action")
-            .id(action.key())
-            .min_h(metrics::ROW_MIN)
-            .pad_x(Space::S1)
-            .pad_y(Space::S0_5)
-            .hit()
-            .focusable()
-            .action(Action::Click)
-            .action(Action::Focus)
-            .semantics(Role::MenuItem)
-            .name(action.words())
-            .radius(Radius::M)
-            .states(&WORKSPACE_ROW_STATES);
-        let glyphs = if action == MenuAction::Sync {
-            self.sync_channel_icons()
-        } else {
-            icon(icons::PLUS, IconSize::L)
-                .decorative()
-                .ink(Ink::Secondary)
-        };
-        let contents = row("Profile action contents")
-            .fill()
-            .min_h(metrics::ROW_MIN)
-            .gap(Space::S2)
-            .child(glyphs)
-            .child(
-                text(t(crate::format::lang(), action.words()))
-                    .role(roles::ROW)
-                    .fill(),
-            );
-        row("Profile action inset")
-            .pad_x(alias::ROW_PLATE_INSET)
-            .child(item.fill().child(contents))
     }
 }

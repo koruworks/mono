@@ -33,7 +33,6 @@ use koru_workspace_host::accessibility::{SemanticNode, ViewSlot, WindowSlot};
 use vello::kurbo::Affine;
 
 use super::accessibility::Context;
-use super::popover_elements::profiles::MenuAction;
 use super::*;
 
 /// Logical units. A difference smaller than this is the arithmetic's, not
@@ -208,8 +207,6 @@ enum State {
     Keyboard,
     /// The list scrolled to its end.
     ScrolledToEnd,
-    /// The pointer on one of the three fixed Profile menu rows.
-    ProfileAction(MenuAction),
     /// The open Profile syncing to Koru Cloud, two other devices holding it.
     Synced,
 }
@@ -222,9 +219,6 @@ impl State {
             Self::HoverGear => "hover-gear".into(),
             Self::Keyboard => "keyboard".into(),
             Self::ScrolledToEnd => "scrolled-to-end".into(),
-            Self::ProfileAction(action) => {
-                format!("profile-action-{}", format!("{action:?}").to_lowercase())
-            }
             Self::Synced => "synced".into(),
         }
     }
@@ -290,7 +284,7 @@ fn cases(page: Page) -> Vec<Case> {
     };
     let mut states = vec![State::HoverRow, State::HoverGear, State::Keyboard];
     if page == Page::Profiles {
-        states.extend([State::ProfileAction(MenuAction::Sync), State::Synced]);
+        states.push(State::Synced);
     }
     out.extend(states.into_iter().map(|state| Case { state, ..base }));
     for state in [State::Rest, State::ScrolledToEnd] {
@@ -354,13 +348,6 @@ fn arrange(case: &Case) -> ExploreView {
             }
         }
         State::ScrolledToEnd => while v.scroll_popover(area, VIEW, -40.0) {},
-        State::ProfileAction(action) => {
-            let (_, b) = rects
-                .iter()
-                .find(|(row, _)| *row == PopoverRow::ProfileAction(action))
-                .expect("the fixed Profile action");
-            v.mouse_move(area, VIEW, b.x + b.w * 0.5, b.y + b.h * 0.5);
-        }
         State::Synced => {
             let open = v.current_profile.expect("an open Profile");
             v.set_account_state(&koru_agent_wire::AccountState {
@@ -1030,7 +1017,9 @@ fn the_lit_row_is_one_index_shared_by_pointer_and_arrows() {
                 .expect("the popover's tree")
                 .children
                 .into_iter()
-                .find(|node| node.bounds.is_some_and(inside))
+                .find(|node| {
+                    node.role != accesskit::Role::Heading && node.bounds.is_some_and(inside)
+                })
                 .map(|node| node.occurrence)
         };
         let lit = v.popover_hover().expect("the pointer lit a row");
@@ -1043,7 +1032,7 @@ fn the_lit_row_is_one_index_shared_by_pointer_and_arrows() {
         let next = v.popover_hover().expect("the arrow moved the lit row");
         assert_eq!(
             next,
-            lit + 1,
+            (lit + 1) % v.popover_rows().len(),
             "{page:?}: Down moves on from the pointer's row"
         );
         assert_eq!(

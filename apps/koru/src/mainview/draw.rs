@@ -221,19 +221,16 @@ impl MainView {
                 }
 
                 let group = self.panes.group_mut(&path).unwrap();
+                let images = if group.active_tab().is_sample_document() {
+                    super::tab::Tab::sample_images()
+                } else {
+                    images
+                };
                 // A draft draws from its own workspace, which is the whole reason it is
                 // a real editor rather than a picture of one.
                 let (view, ws) = group.active_mut().workspace(workspace);
                 match view {
                     TabView::Welcome(w) => w.draw(scene, ws, images, leaf_root, caret_on, local),
-                    TabView::Manage(w) => {
-                        // The already-discovered client, cloned rather than
-                        // opened: the Profile prompt's answer is a local Store
-                        // write, and this is the seam every other panel uses. No
-                        // request happens on the frame thread.
-                        w.set_client(workspace.store_client());
-                        View::draw(w, scene, workspace, images, leaf_root, caret_on, local)
-                    }
                     TabView::Trash(t) => {
                         View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
                     }

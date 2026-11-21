@@ -1190,7 +1190,7 @@ fn the_overflow_keeps_the_pin_glyph_and_uses_text_for_destinations() {
     assert_eq!(MenuAction::HeaderUpdates.icon(), None);
     assert_eq!(
         MenuAction::HeaderFeedback.icon(),
-        Some(koru_draw::icons::USER_SOUND)
+        MenuAction::HelpSendFeedback.icon()
     );
 }
 

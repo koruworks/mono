@@ -814,14 +814,26 @@ impl MainView {
 
     /// The Manage tab under the content region, when that is the active tab.
     fn manage_semantics(&self, cx: &Shell) -> Option<SemanticNode> {
-        let TabView::Manage(page) = &self.tabs().active_tab().view else {
+        if !matches!(&self.tabs().active_tab().view, TabView::Settings(view) if view.manage_visible())
+        {
+            return None;
+        }
+        let TabView::Settings(crate::settings_view::SettingsView { manage: page, .. }) =
+            &self.tabs().active_tab().view
+        else {
             return None;
         };
         Some(page.semantics(&self.manage_context(cx)))
     }
 
     fn manage_focus(&self, cx: &Shell) -> Option<Occurrence> {
-        let TabView::Manage(page) = &self.tabs().active_tab().view else {
+        if !matches!(&self.tabs().active_tab().view, TabView::Settings(view) if view.manage_visible())
+        {
+            return None;
+        }
+        let TabView::Settings(crate::settings_view::SettingsView { manage: page, .. }) =
+            &self.tabs().active_tab().view
+        else {
             return None;
         };
         Some(page.accessible_focus(&self.manage_context(cx)))
@@ -831,7 +843,7 @@ impl MainView {
     /// front.
     fn revise_manage(&self, rev: &mut Revision) {
         match &self.tabs().active_tab().view {
-            TabView::Manage(page) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: page, .. }) => {
                 rev.byte(1);
                 page.revise(rev);
             }
@@ -856,12 +868,17 @@ impl MainView {
         action: Action,
         data: Option<&ActionData>,
     ) -> bool {
+        if !matches!(&self.tabs().active_tab().view, TabView::Settings(view) if view.manage_visible())
+        {
+            return false;
+        }
         // The request names the view it was published in; the tab's frame of
         // reference is the same one its tree was built against.
         let shell = self.shell(target.view);
         let cx = self.manage_context(&shell);
         let index = self.tabs().active();
-        let Some(TabView::Manage(page)) = self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
+        let Some(TabView::Settings(crate::settings_view::SettingsView { manage: page, .. })) =
+            self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
         else {
             return false;
         };

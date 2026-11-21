@@ -44,7 +44,6 @@ fn every_terminal_row_is_drawn() {
         t(Lang::En, Key::TerminalCursorColor),
         t(Lang::En, Key::TerminalCursorBlink),
         "Shape",
-        t(Lang::En, Key::SettingsSeparateInputArea),
     ] {
         assert!(
             drawn.iter().any(|line| line == label),
@@ -273,17 +272,15 @@ fn every_cursor_property_patches_its_own_field() {
 }
 
 #[test]
-fn the_input_area_switch_patches_only_the_default() {
+fn the_removed_input_area_switch_cannot_change_the_default() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = terminal();
-    // The default is on, so pressing turns it off.
-    assert!(flip(
-        &mut surface,
-        t(Lang::En, Key::SettingsSeparateInputArea)
-    ));
-    let patch = surface.links.take_outstanding_terminal().unwrap();
-    assert_eq!(patch.composer_default, Some(false));
-    assert_eq!(patch.cursor_blink, None, "and not the cursor");
+    assert!(
+        !page_lines(&surface)
+            .iter()
+            .any(|line| line == t(Lang::En, Key::SettingsSeparateInputArea))
+    );
+    assert!(surface.links.take_outstanding_terminal().is_none());
 }
 
 /// The page draws what the authority says. A change another window committed

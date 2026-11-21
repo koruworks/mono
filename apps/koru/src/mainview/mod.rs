@@ -2827,8 +2827,9 @@ impl MainView {
         // A Profile page first when it is the tab showing: `F2` there means
         // the workspace row you have selected, which is the only thing it
         // could mean.
-        if let TabView::Manage(manage) = &self.tabs().active_tab().view
-            && let Some(id) = manage.selected_workspace()
+        if let TabView::Settings(view) = &self.tabs().active_tab().view
+            && view.manage_visible()
+            && let Some(id) = view.manage.selected_workspace()
         {
             return self.start_workspace_rename(id);
         }
@@ -4240,7 +4241,9 @@ impl MainView {
         if !matches!(self.tabs().active_tab().view, TabView::Settings(_)) {
             self.dismiss_settings_menus();
         }
-        if let TabView::Manage(view) = &mut self.tabs_mut().active_mut().view {
+        if let TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) =
+            &mut self.tabs_mut().active_mut().view
+        {
             view.refresh_cloud();
         }
         self.arm_workspaces_poll();
@@ -6952,7 +6955,7 @@ impl MainView {
             .is_some();
         let on_a_manage_row = matches!(
             &self.tabs().active_tab().view,
-            TabView::Manage(manage) if manage.workspace_name_rect(id).is_some()
+            TabView::Settings(view) if view.manage_visible() && view.manage.workspace_name_rect(id).is_some()
         );
         if !on_the_page && !on_a_manage_row {
             self.open_manage_workspaces(facts.owner);
@@ -7003,7 +7006,9 @@ impl MainView {
                 }
                 // The Manage tab's Profile header, out of the view's
                 // coordinates into the window's.
-                let TabView::Manage(manage) = &self.tabs().active_tab().view else {
+                let TabView::Settings(crate::settings_view::SettingsView { manage, .. }) =
+                    &self.tabs().active_tab().view
+                else {
                     return None;
                 };
                 let local = manage.profile_name_rect(id)?;
@@ -7052,7 +7057,9 @@ impl MainView {
         };
         // A Profile page's row, out of the view's coordinates into the
         // window's.
-        let TabView::Manage(manage) = &self.tabs().active_tab().view else {
+        let TabView::Settings(crate::settings_view::SettingsView { manage, .. }) =
+            &self.tabs().active_tab().view
+        else {
             return None;
         };
         let local = manage.workspace_name_rect(id)?;
@@ -7331,22 +7338,10 @@ impl MainView {
     /// so only one `ProfilesController` is ever live — two would each answer
     /// the same account results and each drain their own Agent commands.
     pub(crate) fn open_manage(&mut self, page: crate::manage::Page) -> bool {
-        let existing = self
-            .tabs()
-            .iter()
-            .position(|tab| matches!(tab.view, TabView::Manage(_)));
-        if let Some(index) = existing {
-            self.select(index);
-        } else {
-            let controller = self.workspace_controller.clone();
-            self.tabs_mut()
-                .push(Tab::manage_with_controller(controller));
-            self.slides_mut().clear();
-            self.relayout();
-        }
+        self.open_settings_tab();
         self.push_manage_profiles_context();
-        if let TabView::Manage(view) = &mut self.tabs_mut().active_mut().view {
-            view.show(page);
+        if let TabView::Settings(view) = &mut self.tabs_mut().active_mut().view {
+            view.show_manage(page);
         }
         self.drain_manage_profiles_request();
         // A Profile's page lists its workspaces from the controller's link.
@@ -7375,7 +7370,7 @@ impl MainView {
                 | c.set_workspace_counts(counts.clone())
         };
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.set_linked_devices(&linked_devices)
                     | view.set_current_workspace(open_workspace)
                     | view.set_workspace_profiles(&profiles)
@@ -7393,7 +7388,10 @@ impl MainView {
         let mut changed = self.explore.set_linked_count(devices.devices().len());
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
-                if let TabView::Manage(view) = &mut tab.view {
+                if let TabView::Settings(crate::settings_view::SettingsView {
+                    manage: view, ..
+                }) = &mut tab.view
+                {
                     changed |= view.set_linked_devices(devices);
                 }
             }
@@ -7410,7 +7408,7 @@ impl MainView {
             .iter_groups_mut()
             .flat_map(|(_, group)| group.tabs_mut().iter_mut())
             .filter_map(|tab| match &mut tab.view {
-                TabView::Manage(view) => {
+                TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                     Some(std::iter::from_fn(|| view.take_request()).collect::<Vec<_>>())
                 }
                 _ => None,
@@ -7446,8 +7444,12 @@ impl MainView {
             let active = group.tabs().active();
             for (index, tab) in group.tabs_mut().iter_mut().enumerate() {
                 // Manage reads Cloud only for a page that shows it.
-                if let TabView::Manage(view) = &mut tab.view {
-                    view.set_in_front(index == active);
+                match &mut tab.view {
+                    TabView::Settings(view) => {
+                        let visible = view.manage_visible();
+                        view.manage.set_in_front(index == active && visible);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -7456,7 +7458,9 @@ impl MainView {
             .iter_groups_mut()
             .flat_map(|(_, group)| group.tabs_mut().iter_mut())
             .find_map(|tab| match &mut tab.view {
-                TabView::Manage(view) => view.take_effect(),
+                TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                    view.take_effect()
+                }
                 _ => None,
             });
         let Some(effect) = effect else {
@@ -7616,7 +7620,7 @@ impl MainView {
         self.refresh_device_names();
         if let Some((device_id, events, next_before)) = self.agent.take_device_history() {
             self.each_tab_mut(|tab| match &mut tab.view {
-                TabView::Manage(view) => {
+                TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                     view.set_device_history(&device_id, events.clone(), next_before)
                 }
                 _ => false,
@@ -7796,8 +7800,13 @@ impl MainView {
         // The manager is a utility used during creation. Once creation lands,
         // the Welcome page is the only onboarding destination it may leave
         // behind.
-        self.tabs_mut()
-            .retain_main(|tab| !matches!(tab.view, TabView::Manage(_)));
+        self.tabs_mut().retain_main(|tab| {
+            !matches!(
+                &tab.view,
+                TabView::Settings(view) if view.manage_visible()
+                    && view.manage.current_page() == Some(crate::manage::Page::NewProfile)
+            )
+        });
         self.welcome_owner =
             (!owner.trim().is_empty()).then(|| (profile.to_owned(), owner.trim().to_owned()));
         self.welcome_workspace_hint = Some(workspace.to_owned());
@@ -7890,7 +7899,7 @@ impl MainView {
             return self.select(i);
         }
         self.record_jump();
-        let mut tab = Tab::settings();
+        let mut tab = Tab::manage_with_controller(self.workspace_controller.clone());
         // **Seed the values the page keeps a field of.** Most of what it draws
         // reads a process global, but these do not — and a Settings tab opened
         // an hour into a session would otherwise show the defaults rather than
@@ -7899,6 +7908,8 @@ impl MainView {
             View::adopt_preferences(view, &self.preferences);
         }
         self.tabs_mut().push(tab);
+        self.push_manage_profiles_context();
+        self.arm_workspaces_poll();
         self.slides_mut().clear();
         self.mark_tab_widths_stale();
         self.size_visible_groups();
@@ -10141,6 +10152,15 @@ impl MainView {
                 WelcomeWant::VoiceSettings => {
                     self.open_voice_settings_tab();
                 }
+                WelcomeWant::TerminalSettings => {
+                    self.open_settings_tab();
+                    if let TabView::Settings(view) = &mut self.tabs_mut().active_mut().view {
+                        view.show_page(koru_settings_ui::PageId::Terminal);
+                    }
+                }
+                WelcomeWant::SubscribeCloud => {
+                    self.ask_pane(PaneRequest::OpenUri(crate::welcome::cloud_pricing_url()));
+                }
                 WelcomeWant::ReaderSettings => {
                     self.open_reader_settings();
                 }
@@ -10380,11 +10400,10 @@ impl MainView {
             Request::MoreFonts(role) => {
                 self.open_role_font_picker(role);
             }
-            Request::CycleCanvasBackground => {
-                let cycled = koru_document::docview::cycle_canvas_bg(theme::default_canvas_bg());
-                theme::set_default_canvas_bg(cycled);
+            Request::SetCanvasBackground(color) => {
+                theme::set_default_canvas_bg(color);
                 if let TabView::Settings(s) = &mut self.tabs_mut().active_mut().view {
-                    s.set_canvas_background(cycled);
+                    s.set_canvas_background(color);
                 }
             }
             // It cannot be written here: the shell holds the live
@@ -11355,7 +11374,6 @@ impl MainView {
         let (view, doc) = self.tabs_mut().active_mut().doc(ws);
         let handled = match view {
             TabView::Welcome(w) => w.mouse_down(doc, lx, ly, ctrl),
-            TabView::Manage(w) => View::mouse_down(w, doc, lx, ly, ctrl),
             TabView::Trash(t) => View::mouse_down(t, doc, lx, ly, ctrl),
             TabView::Tasks(t) => {
                 View::set_mods(t, mods);
@@ -11617,7 +11635,6 @@ impl MainView {
         let (view, doc) = self.tabs_mut().active_mut().doc(ws);
         let handled = match view {
             TabView::Welcome(w) => w.mouse_up(doc),
-            TabView::Manage(w) => View::mouse_up(w, doc),
             TabView::Trash(t) => View::mouse_up(t, doc),
             TabView::Tasks(t) => View::mouse_up(t, doc),
             TabView::MiniApp(app) => View::mouse_up(app.as_mut(), doc),
@@ -12279,7 +12296,9 @@ impl View for MainView {
                 let manager_target = match &mut self.tabs_mut().active_mut().view {
                     // A Profile page's workspace row; anywhere else on the
                     // page falls through to the tab.
-                    TabView::Manage(manage) => manage.workspace_menu_target_at(lx, ly).map(Some),
+                    TabView::Settings(view) if view.manage_visible() => {
+                        view.manage.workspace_menu_target_at(lx, ly).map(Some)
+                    }
                     _ => None,
                 };
                 if let Some(target) = manager_target {
@@ -12288,7 +12307,6 @@ impl View for MainView {
                 let (view, doc) = self.tabs_mut().active_mut().doc(ws);
                 let handled = match view {
                     TabView::Welcome(_) => false,
-                    TabView::Manage(w) => View::context_menu(w, doc, lx, ly),
                     // Settings opens no context menu: every row is one press.
                     TabView::Settings(_) | TabView::Feedback(_) | TabView::Home(_) => false,
                     TabView::Diff(_) => false,
@@ -12578,7 +12596,6 @@ impl View for MainView {
         let (view, doc) = self.tabs_mut().active_mut().doc_ref(ws);
         let handled = match view {
             TabView::Welcome(w) => w.mouse_double_click(doc, lx, ly),
-            TabView::Manage(w) => View::mouse_double_click(w, doc, lx, ly),
             TabView::Trash(t) => View::mouse_double_click(t, doc, lx, ly),
             TabView::Tasks(t) => View::mouse_double_click(t, doc, lx, ly),
             TabView::MiniApp(app) => View::mouse_double_click(app.as_mut(), doc, lx, ly),
@@ -12806,7 +12823,6 @@ impl View for MainView {
         };
         match group.active_view() {
             TabView::Welcome(w) => w.scroll_by(delta),
-            TabView::Manage(w) => View::scroll_by(w, delta),
             TabView::Trash(t) => View::scroll_by(t, delta),
             TabView::Tasks(t) => View::scroll_by(t, delta),
             TabView::MiniApp(app) => View::scroll_by(app.as_mut(), delta),
@@ -13104,7 +13120,6 @@ impl View for MainView {
         match self.hover {
             Some(Hit::Content) | None => match &self.tabs().active_tab().view {
                 TabView::Welcome(w) => w.cursor_icon(),
-                TabView::Manage(w) => View::cursor_icon(w),
                 TabView::Trash(t) => View::cursor_icon(t),
                 TabView::Tasks(t) => View::cursor_icon(t),
                 TabView::MiniApp(app) => View::cursor_icon(app.as_ref()),
@@ -13365,7 +13380,6 @@ impl View for MainView {
                 }
                 match &mut t.view {
                     TabView::Welcome(w) => w.invalidate(),
-                    TabView::Manage(w) => View::invalidate(w),
                     TabView::Trash(t) => View::invalidate(t),
                     TabView::Tasks(t) => View::invalidate(t),
                     TabView::MiniApp(app) => View::invalidate(app.as_mut()),
@@ -13670,7 +13684,9 @@ impl View for MainView {
         }
         if focused {
             match &mut self.tabs_mut().active_mut().view {
-                TabView::Manage(view) => view.refresh_cloud(),
+                TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                    view.refresh_cloud()
+                }
                 _ => {}
             }
             self.drain_manage_profiles_request();
@@ -14791,7 +14807,9 @@ impl View for MainView {
     ) -> bool {
         self.profile_workspace_counts = counts.clone();
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.set_workspace_counts(counts.clone())),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.set_workspace_counts(counts.clone()))
+            }
             _ => false,
         })
     }
@@ -14863,7 +14881,7 @@ impl View for MainView {
             && deleted_local
                 .is_some_and(|profile| self.open_manage(crate::manage::Page::Profile(profile)));
         let changed = self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.complete_scoped(owner_scope, generation, result.clone()))
             }
             _ => false,
@@ -14879,7 +14897,9 @@ impl View for MainView {
         failure: koru_workspace_host::account_ui::CommandFailure,
     ) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.account_command_failed(failure)),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.account_command_failed(failure))
+            }
             _ => false,
         })
     }
@@ -14889,7 +14909,9 @@ impl View for MainView {
         admission: koru_workspace_host::account_ui::CommandAdmission,
     ) -> bool {
         let changed = self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.account_command_admitted(admission)),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.account_command_admitted(admission))
+            }
             _ => false,
         });
         changed | self.drain_manage_profiles_request()
@@ -14902,7 +14924,7 @@ impl View for MainView {
         retry: koru_agent_wire::AccountCommand,
     ) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.connection_paused(owner_scope, profile, retry.clone()))
             }
             _ => false,
@@ -14911,7 +14933,9 @@ impl View for MainView {
 
     fn connected_profile_ready(&mut self, owner_scope: u64, profile: ProfileId) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.connection_ready(owner_scope, profile)),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.connection_ready(owner_scope, profile))
+            }
             _ => false,
         })
     }
@@ -14942,7 +14966,9 @@ impl View for MainView {
             self.profile_lifecycle_reconciled_generation = Some(state.generation);
         }
         let changed = self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.set_account(state.clone())),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.set_account(state.clone()))
+            }
             _ => false,
         });
         // Account state can enqueue a targeted session inspection. Promote it
@@ -14965,7 +14991,9 @@ impl View for MainView {
     }
     fn local_profile_account_bound(&mut self, profile: ProfileId) -> bool {
         let changed = self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.local_profile_account_bound(profile)),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.local_profile_account_bound(profile))
+            }
             _ => false,
         });
         changed | self.drain_manage_profiles_request()
@@ -14973,7 +15001,7 @@ impl View for MainView {
 
     fn connected_profile_creation_failed(&mut self, message: &str) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.connected_profile_creation_failed(message))
             }
             _ => false,
@@ -14982,7 +15010,9 @@ impl View for MainView {
 
     fn connected_profile_creation_conflict(&mut self) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.connected_profile_creation_conflict()),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.connected_profile_creation_conflict())
+            }
             _ => false,
         })
     }
@@ -15077,21 +15107,25 @@ impl View for MainView {
 
     fn local_profile_restored(&mut self, profile: ProfileId) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.local_profile_restored(profile)),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.local_profile_restored(profile))
+            }
             _ => false,
         })
     }
 
     fn local_profile_restore_failed(&mut self, message: &str) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.local_profile_restore_failed(message)),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.local_profile_restore_failed(message))
+            }
             _ => false,
         })
     }
 
     fn local_profile_account_bind_failed(&mut self, profile: ProfileId, code: &str) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.local_profile_account_bind_failed(profile, code))
             }
             _ => false,
@@ -15100,14 +15134,16 @@ impl View for MainView {
 
     fn local_profile_removed(&mut self, profile: ProfileId) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => view.delegate(|c| c.local_profile_removed(profile)),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                view.delegate(|c| c.local_profile_removed(profile))
+            }
             _ => false,
         })
     }
 
     fn local_profile_remove_failed(&mut self, profile: ProfileId, code: &str) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.local_profile_remove_failed_for(profile, code))
             }
             _ => false,
@@ -15116,7 +15152,7 @@ impl View for MainView {
 
     fn deleted_profile_continued_offline(&mut self, profile: ProfileId) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.deleted_profile_continued_offline(profile))
             }
             _ => false,
@@ -15125,7 +15161,7 @@ impl View for MainView {
 
     fn deleted_profile_continue_offline_failed(&mut self, profile: ProfileId) -> bool {
         self.each_tab_mut(|tab| match &mut tab.view {
-            TabView::Manage(view) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.deleted_profile_continue_offline_failed(profile))
             }
             _ => false,
@@ -17015,8 +17051,10 @@ impl View for MainView {
         }
         // The Manage tab's *Linked devices* page re-asks for presence on its
         // deadline; the ask leaves as a request for Agent.
-        let manage_asked = matches!(self.tabs().active_tab().view, TabView::Manage(_))
-            && self.drain_manage_requests();
+        let manage_asked = matches!(
+            self.tabs().active_tab().view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        ) && self.drain_manage_requests();
         files_reader_changed
             || view_changed
             || manage_asked
@@ -17588,7 +17626,6 @@ impl MainView {
         let (view, doc) = self.tabs_mut().active_mut().doc(ws);
         let handled = match view {
             TabView::Welcome(w) => w.key(doc, key, text, mods),
-            TabView::Manage(w) => View::key(w, doc, key, text, mods),
             TabView::Trash(t) => View::key(t, doc, key, text, mods),
             TabView::Tasks(t) => View::key(t, doc, key, text, mods),
             TabView::MiniApp(app) => View::key(app.as_mut(), doc, key, text, mods),
@@ -20078,7 +20115,6 @@ impl MainView {
         let (lx, ly) = self.to_leaf(x, y);
         let moved = match self.active_view() {
             TabView::Welcome(w) => w.mouse_move(lx, ly),
-            TabView::Manage(w) => View::mouse_move(w, lx, ly),
             TabView::Trash(t) => View::mouse_move(t, lx, ly),
             TabView::Tasks(t) => View::mouse_move(t, lx, ly),
             TabView::MiniApp(app) => View::mouse_move(app.as_mut(), lx, ly),

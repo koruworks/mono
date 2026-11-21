@@ -1825,6 +1825,8 @@ pub(super) const CRATES: &[Crate] = &[
                 "dependency",
                 Module::Excluded("test-only: the dependency fence, compiled only under cfg(test)"),
             ),
+            ("host_pages", Module::Records(&["C-SETTINGS-SURFACE"])),
+            ("shortcuts", Module::Records(&["C-SETTINGS-SURFACE"])),
         ],
     },
     Crate {

@@ -54,7 +54,6 @@ pub enum TabView {
     /// The Manage tab: Profiles, New profile, linked devices and Koru Cloud
     /// behind one nav. It replaced Manage Profiles, the Workspaces tab and the
     /// Link dialog's Linked devices tab (ADR-449-onemanagetab).
-    Manage(crate::manage::ManageView),
     /// Send feedback — a form, never a document.
     Feedback(crate::feedback::FeedbackView),
     /// The Settings tab — the shared `koru-settings-ui` surface, hosted.
@@ -160,7 +159,6 @@ impl TabView {
             // Nothing on the welcome screen is draggable, which is exactly the
             // sort of thing a typed seam should be able to say without a panic.
             Self::Welcome(_)
-            | Self::Settings(_)
             | Self::Home(_)
             | Self::Reminders(_)
             | Self::Trash(_)
@@ -177,7 +175,7 @@ impl TabView {
             // it can be dropped on a list in the sidebar.
             Self::Tasks(t) => t.holding_rows(),
             Self::Socials(view) => view.is_dragging(),
-            Self::Manage(view) => view.is_dragging(),
+            Self::Settings(view) => view.manage_visible() && view.manage.is_dragging(),
             Self::Diff(d) => d.is_dragging(),
             // A pan, a card move, a resize, an arrow being drawn, or a text
             // drag in the name prompt or the dialog.
@@ -235,7 +233,6 @@ impl TabView {
         match self {
             Self::MiniApp(app) => app.adopt_cheap(ws),
             Self::Welcome(w) => w.adopt(ws),
-            Self::Manage(_) => {}
             Self::Trash(t) => koru_workspace_host::View::adopt(t, ws),
             Self::Tasks(t) => koru_workspace_host::View::adopt(t, ws),
             // The page's rows are fed presentation data, not a document:
@@ -299,7 +296,6 @@ impl TabView {
         match self {
             Self::MiniApp(app) => app.catch_up(ws),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Diff(_)
@@ -343,7 +339,6 @@ impl TabView {
         match self {
             Self::MiniApp(app) => View::reseat(app.as_mut(), ws),
             Self::Welcome(w) => koru_workspace_host::View::reseat(w, ws),
-            Self::Manage(w) => koru_workspace_host::View::reseat(w, ws),
             Self::Trash(t) => koru_workspace_host::View::reseat(t, ws),
             Self::Tasks(t) => koru_workspace_host::View::reseat(t, ws),
             Self::Reminders(r) => koru_workspace_host::View::reseat(r, ws),
@@ -437,7 +432,6 @@ impl TabView {
         match self {
             Self::MiniApp(_) => None,
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -467,7 +461,6 @@ impl TabView {
             // Nothing on the welcome screen is a node, so there is nothing to
             // reveal — the typed seam answering for itself again.
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -492,7 +485,6 @@ impl TabView {
         match self {
             Self::MiniApp(app) => app.leaf_mut().is_some_and(|leaf| leaf.reveal_centered(id)),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -518,7 +510,6 @@ impl TabView {
                 .leaf_mut()
                 .is_some_and(|leaf| leaf.reveal_search_match(id, match_text)),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -545,7 +536,6 @@ impl TabView {
                 .leaf_mut()
                 .is_some_and(|leaf| leaf.start_image_rename(ws, id)),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -570,7 +560,6 @@ impl TabView {
         match self {
             Self::MiniApp(_) => false,
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -603,7 +592,6 @@ impl TabView {
         match self {
             Self::MiniApp(app) => app.leaf().is_some_and(|leaf| leaf.view().overlay.is_open()),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -641,7 +629,6 @@ impl TabView {
                 })
             }),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -674,7 +661,6 @@ impl TabView {
                 .filter(|leaf| leaf.editing_title())
                 .and_then(View::document_root),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -705,7 +691,6 @@ impl TabView {
                     .is_some_and(|trigger| matches!(trigger.anchor, Anchor::PageIcon(_)))
             }),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -742,8 +727,7 @@ impl TabView {
             Self::Welcome(_) => None,
             // Neither Manage nor the Trash opens a node through this
             // channel: their asks go out as their own `Request` types.
-            Self::Manage(_)
-            | Self::Settings(_)
+            Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
             | Self::Diff(_)
@@ -764,11 +748,10 @@ impl TabView {
     /// Where this tab is scrolled to, so a session can put it back.
     pub fn scroll(&self) -> f32 {
         match self {
+            Self::Welcome(view) => view.scroll_offset(),
+            Self::Settings(view) => view.navigation_scroll(),
             Self::MiniApp(_) => 0.0,
-            Self::Welcome(_)
-            | Self::Manage(_)
-            | Self::Settings(_)
-            | Self::Home(_)
+            Self::Home(_)
             | Self::Trash(_)
             | Self::Tasks(_)
             | Self::Reminders(_)
@@ -786,8 +769,11 @@ impl TabView {
     }
 
     pub fn set_scroll(&mut self, scroll: f32) {
-        if let Self::Leaf(l) = self {
-            l.view_mut().scroll = scroll;
+        match self {
+            Self::Leaf(l) => l.view_mut().scroll = scroll,
+            Self::Welcome(view) => view.restore_scroll(scroll),
+            Self::Settings(view) => view.restore_scroll(scroll),
+            _ => {}
         }
     }
 
@@ -813,7 +799,6 @@ impl TabView {
             Self::MiniApp(app) => app.leaf().is_some_and(View::animating),
             Self::Ocr(o) => View::animating(o),
             Self::Welcome(_)
-            | Self::Manage(_)
             | Self::Settings(_)
             | Self::Home(_)
             | Self::Trash(_)
@@ -851,7 +836,6 @@ impl TabView {
             Self::Tasks(t) => t.task_touch_deadline(),
             // Only while it has background work out: a deletion preview, or
             // the Cloud progress it is showing.
-            Self::Manage(m) => View::maintenance_deadline(m),
             // The snooze chooser's minute tick, asked only of the tab in
             // front — the deadline list reads the active tab alone.
             Self::Reminders(r) => View::maintenance_deadline(r),
@@ -882,7 +866,6 @@ impl TabView {
             Self::Tasks(t) => t.flush_task_touch(now),
             // The other half of the deadline above: without this the answer
             // is put on the wire and its reply never collected.
-            Self::Manage(m) => View::maintain(m, ws, now),
             // The page's geometry rebuild — it runs here, on the active tab's
             // ordinary maintain, after the container's feeding block.
             Self::Reminders(r) => View::maintain(r, ws, now),
@@ -979,7 +962,7 @@ pub enum PrivatePage {
     /// The sample *Preview in sample document* opens beside Settings: one of
     /// each thing the document fonts draw, so a font, size or theme change is
     /// seen on a page as it is made. Never saved into the session — it is a
-    /// view of Settings, and Settings itself comes back as a Welcome tab.
+    /// temporary playground. Its callout explains that closing it resets edits.
     SampleDocument,
 }
 
@@ -1107,6 +1090,7 @@ impl Tab {
         tab
     }
 
+    #[cfg(test)]
     pub fn settings() -> Self {
         let mut tab = Self::welcome();
         tab.view = TabView::Settings(crate::settings_view::SettingsView::new());
@@ -1237,11 +1221,11 @@ impl Tab {
     pub fn manage_with_controller(controller: crate::manage::SharedWorkspaces) -> Self {
         Self {
             id: mint_tab_id(),
-            view: TabView::Manage(crate::manage::ManageView::with_workspace_controller(
-                controller,
-            )),
+            view: TabView::Settings(
+                crate::settings_view::SettingsView::with_workspace_controller(controller),
+            ),
             document: None,
-            label: "Manage".to_string(),
+            label: "Settings".to_string(),
             icon: None,
             sized: None,
             draft: None,
@@ -1521,7 +1505,7 @@ impl Tab {
         let markdown = koru_i18n::t(lang, koru_i18n::Key::SampleDocumentBody);
         let snapshot =
             koru_import_markdown::document_snapshot(WorkspaceId::new(), title, markdown).ok()?;
-        let doc = WorkspaceDoc::from_snapshot(&snapshot).ok()?;
+        let mut doc = WorkspaceDoc::from_snapshot(&snapshot).ok()?;
         let root = doc
             .children(koru_core::schema::Parent::Root)
             .ok()?
@@ -1530,8 +1514,18 @@ impl Tab {
                 doc.read(id)
                     .is_ok_and(|node| node.kind == koru_core::Kind::Document)
             })?;
-        let mut leaf = Leaf::document(&doc, root);
-        leaf.set_read_only(true);
+        let logo = koru_draw::brand::logo_brush();
+        let mut picture = koru_core::Node::image(
+            koru_core::node::BlobHash(Self::sample_logo_hash().to_owned()),
+            "image/png",
+            Some(logo.image.width),
+            Some(logo.image.height),
+        )
+        .ok()?;
+        picture.meta.image_size = Some((192, 192));
+        doc.insert(koru_core::schema::Parent::Node(root), picture)
+            .ok()?;
+        let leaf = Leaf::document(&doc, root);
         Some(Self {
             id: mint_tab_id(),
             view: TabView::Leaf(leaf),
@@ -1557,6 +1551,30 @@ impl Tab {
         self.whats_new
             .as_ref()
             .is_some_and(|page| page.page == PrivatePage::SampleDocument)
+    }
+
+    fn sample_logo_hash() -> &'static str {
+        static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        HASH.get_or_init(|| {
+            format!(
+                "b3:{}",
+                blake3::hash(include_bytes!("../../../../assets/logo.png"))
+            )
+        })
+    }
+
+    /// Bundled pixels for the temporary sample, isolated from Store-scoped caches.
+    pub(super) fn sample_images() -> &'static koru_draw::ImageCache {
+        static IMAGES: std::sync::OnceLock<koru_draw::ImageCache> = std::sync::OnceLock::new();
+        IMAGES.get_or_init(|| {
+            let mut images = koru_draw::ImageCache::new();
+            images.insert(
+                koru_draw::ImageCache::UNSCOPED,
+                Self::sample_logo_hash(),
+                koru_draw::brand::logo_brush().clone(),
+            );
+            images
+        })
     }
 
     /// A read-only page over a workspace of its own, titled and filled.
@@ -1802,7 +1820,6 @@ impl Tab {
         self.sized = Some((w, h));
         match &mut self.view {
             TabView::Welcome(v) => v.set_viewport(w, h),
-            TabView::Manage(v) => View::set_viewport(v, w, h),
             TabView::Trash(v) => v.set_viewport(w, h),
             TabView::Tasks(v) => v.set_viewport(w, h),
             TabView::MiniApp(app) => View::set_viewport(app.as_mut(), w, h),

@@ -3872,10 +3872,9 @@ impl ExploreView {
             // its tick, as the chip's page lists workspaces — and the foot
             // (the review's note, E78).
             PopoverKind::Profiles => {
-                use popover_elements::profiles::MenuAction;
                 let mut out = vec![PopoverRow::ProfilesHeading];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
-                out.push(PopoverRow::ProfileAction(MenuAction::Sync));
+
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)

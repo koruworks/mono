@@ -165,7 +165,9 @@ fn manager_wrapper_focus_refreshes_only_the_visible_cloud_card() {
     let mut main = MainView::new();
     main.open_manage(crate::manage::Page::Cloud);
     while View::take_pane_request(&mut main).is_some() {}
-    let TabView::Manage(card) = &mut main.tabs_mut().active_mut().view else {
+    let TabView::Settings(crate::settings_view::SettingsView { manage: card, .. }) =
+        &mut main.tabs_mut().active_mut().view
+    else {
         panic!("manager");
     };
     card.delegate(|c| {
@@ -7390,7 +7392,10 @@ fn rename_from_a_right_click_has_a_row_to_draw_on() {
         "over the page's row, with nothing else showing the workspace"
     );
     assert!(
-        !matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        !matches!(
+            v.tabs().active_tab().view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        ),
         "no Manage tab was needed"
     );
 
@@ -7405,7 +7410,10 @@ fn rename_from_a_right_click_has_a_row_to_draw_on() {
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Rename);
     assert!(
-        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        matches!(
+            v.tabs().active_tab().view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        ),
         "the Manage tab opens on the workspace's Profile"
     );
     assert!(v.workspace_rename.is_some(), "and the field is open");
@@ -7480,7 +7488,9 @@ fn the_sync_settings_tab_opens_once_and_the_rail_opens_settings() {
     let tabs = v.tabs().len();
     assert!(v.open_sync_settings_tab());
     assert_eq!(v.tabs().len(), tabs + 1, "one tab opened");
-    let TabView::Manage(manage) = &v.tabs().active_tab().view else {
+    let TabView::Settings(crate::settings_view::SettingsView { manage, .. }) =
+        &v.tabs().active_tab().view
+    else {
         panic!("Global sync opens Manage");
     };
     assert_eq!(manage.page(), Some(crate::manage::Page::Devices));
@@ -7549,7 +7559,10 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         v.sidebar_drag.is_none(),
         "the underlying grip did not start"
     );
-    assert!(!matches!(v.tabs().active_tab().view, TabView::Manage(_)));
+    assert!(!matches!(
+        v.tabs().active_tab().view,
+        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+    ));
     let _ = workspace_id;
 }
 
@@ -8168,9 +8181,8 @@ fn opening_something_new_after_a_back_truncates_the_forward_branch() {
 /// somewhere arbitrary.
 #[test]
 fn back_from_the_first_place_does_nothing() {
-    let (mut v, mut w) = container();
-    let a = a_document(&mut w.ws, "A");
-    v.open_node(&w.ws, a);
+    let (mut v, w) = on_document();
+    let a = v.document_root().expect("first document");
 
     assert!(!v.navigate_history(&w.ws, -1));
     assert!(!v.navigate_history(&w.ws, 1));
@@ -10433,7 +10445,7 @@ fn finishing_onboarding_selects_welcome_over_manage() {
     assert!(view.open_manage(crate::manage::Page::NewProfile));
     assert!(matches!(
         view.tabs().get(view.tabs().active()).expect("active").view,
-        TabView::Manage(_)
+        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
     ));
 
     assert!(view.show_first_minutes("Ana", "Personal", "Research"));
@@ -10441,9 +10453,10 @@ fn finishing_onboarding_selects_welcome_over_manage() {
     assert!(matches!(active.view, TabView::Welcome(_)));
     assert_eq!(active.label, "Welcome");
     assert!(
-        view.tabs()
-            .iter()
-            .all(|tab| !matches!(tab.view, TabView::Manage(_))),
+        view.tabs().iter().all(|tab| !matches!(
+            tab.view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        )),
         "the creation-only utility tab remained open"
     );
 }
@@ -10507,7 +10520,7 @@ fn a_deleted_local_profile_opens_the_blocking_lifecycle_decision() {
     ));
     // The Manage tab, on that Profile's page, where the choice is.
     match &view.tabs().active_tab().view {
-        TabView::Manage(manage) => {
+        TabView::Settings(crate::settings_view::SettingsView { manage, .. }) => {
             assert_eq!(manage.page(), Some(crate::manage::Page::Profile(profile)));
             assert_eq!(
                 manage.controller().discovered_deletion().map(|(id, _)| id),
@@ -13421,7 +13434,7 @@ fn a_settings_tab_opened_later_starts_from_what_is_stored() {
 }
 
 /// **Preview in sample document** puts the sample beside Settings: a split,
-/// the sample on the right, read-only and over a workspace of its own, titled
+/// the sample on the right, editable and over a workspace of its own, titled
 /// in the person's language. Asking again brings that one forward rather than
 /// opening a second, and a session never saves it.
 #[test]
@@ -13443,7 +13456,7 @@ fn the_sample_document_opens_beside_settings_once() {
         koru_i18n::t(crate::format::lang(), koru_i18n::Key::SampleDocumentTitle)
     );
     assert_eq!(sample.document, None, "not a document in the workspace");
-    assert!(matches!(&sample.view, TabView::Leaf(l) if l.view().read_only));
+    assert!(matches!(&sample.view, TabView::Leaf(l) if !l.view().read_only));
     let settings_still_there = view
         .panes
         .group(&settings_pane.child(0))
@@ -13495,7 +13508,60 @@ fn the_sample_document_has_one_of_each_thing_in_every_language() {
         );
         assert!(has(&|n| n.kind == Kind::Quote), "{tag}: quote");
         assert!(has(&|n| n.kind == Kind::Code), "{tag}: code block");
+        assert!(has(&|n| n.kind == Kind::Callout), "{tag}: callout");
+        assert!(has(&|n| n.kind == Kind::Table), "{tag}: table");
+        assert!(has(&|n| n.kind == Kind::Image), "{tag}: logo image");
+        let logo = nodes.iter().find(|node| node.kind == Kind::Image).unwrap();
+        let koru_core::Content::Blob { hash, .. } = &logo.content else {
+            panic!("the logo is an image blob")
+        };
+        assert!(
+            Tab::sample_images().contains(&hash.0),
+            "{tag}: bundled logo pixels"
+        );
     }
+}
+
+#[test]
+fn typing_in_the_sample_changes_only_its_temporary_document() {
+    let (mut view, mut workspace) = on_document();
+    let before = workspace.ws.export_snapshot().unwrap();
+    view.open_sample_document();
+    let tab = view.tabs_mut().active_mut();
+    let (tab_view, doc) = tab.doc(&mut workspace.ws);
+    let paragraph = doc
+        .walk_all()
+        .unwrap()
+        .into_iter()
+        .find_map(|(id, _)| {
+            doc.read(id)
+                .is_ok_and(|node| node.kind == koru_core::Kind::Paragraph)
+                .then_some(id)
+        })
+        .expect("sample paragraph");
+    let TabView::Leaf(leaf) = tab_view else {
+        panic!("sample leaf")
+    };
+    leaf.reveal(paragraph);
+    assert!(view.key(&mut workspace.ws, &ch("Testing"), Some("Testing"), NONE));
+    let sample = &view
+        .tabs()
+        .active_tab()
+        .whats_new
+        .as_ref()
+        .unwrap()
+        .workspace
+        .ws;
+    assert!(
+        sample
+            .read(paragraph)
+            .unwrap()
+            .content
+            .as_text()
+            .unwrap()
+            .contains("Testing")
+    );
+    assert_eq!(workspace.ws.export_snapshot().unwrap(), before);
 }
 
 /// `Ctrl+,` is a keyboard's way into Settings, so it lands the keyboard in
