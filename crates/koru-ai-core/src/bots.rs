@@ -2,7 +2,7 @@
 
 //! Engine-owned Bot configuration. No execution, HTTP or database owner lives here.
 
-use crate::{Chat, ChatId, DocumentId, ModelSelection, ProfileId, WorkspaceId};
+use crate::{Chat, ChatId, DocumentId, MessageId, ModelSelection, ProfileId, WorkspaceId};
 use koru_delegate_core::Objective;
 pub use koru_delegate_core::{BotId, BotRequestId, DeviceId, RunId};
 use koru_delegate_schedule::{RecurrenceRule, ScheduleName};
@@ -75,6 +75,9 @@ impl std::fmt::Debug for BotConfig {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Bot {
+    /// Ephemeral owner-list projection; absent from stored configuration and receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<BotSummary>,
     pub id: BotId,
     pub home_workspace: WorkspaceId,
     pub user_scope: UserScopeId,
@@ -422,6 +425,8 @@ pub enum BotCommand {
     /// need the person, at most 200, read from durable AI state.
     ListActivity {
         workspace: WorkspaceId,
+        #[serde(default)]
+        cursor: Option<BotActivityCursor>,
     },
     /// Create a Bot together with its Role page and working folder (P1.8).
     /// Answered with the creation's progress; the same request and input
@@ -656,6 +661,40 @@ pub struct BotActivity {
 pub struct BotActivityPage {
     pub entries: Vec<BotActivity>,
     pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<BotActivityCursor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotActivityCursor {
+    pub bot: uuid::Uuid,
+    pub thread: uuid::Uuid,
+}
+
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotSummary {
+    pub latest: Option<BotMainPreview>,
+    pub pending_results: u64,
+    pub open_requests: u64,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct BotMainPreview {
+    pub message: MessageId,
+    pub at_ms: i64,
+    pub text: String,
+}
+
+impl std::fmt::Debug for BotSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BotSummary")
+            .field("pending_results", &self.pending_results)
+            .field("open_requests", &self.open_requests)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The most conversations one [`BotCommand::ListBotChats`] page returns.

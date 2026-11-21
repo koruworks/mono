@@ -45,10 +45,10 @@ use koru_workspace_host::accessibility::{
 use super::Context;
 use crate::bots::BotsRoster;
 use crate::bots::roster::{
-    ABANDONED_LINES, ACTIVITY_PART, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART,
+    ABANDONED_LINES, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART,
     ARCHIVED_TOGGLE, CREATE, CREATION_ABANDON_PART, CREATION_PART, CREATION_RETRY_PART, EMPTY,
     LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, TEAM_CONTROL, TEAM_LINE, UNARCHIVE_PART,
-    UNFINISHED_HEADING, UNFINISHED_MORE, UNFINISHED_NOTICE, activity_key, archived_key,
+    UNFINISHED_HEADING, UNFINISHED_MORE, UNFINISHED_NOTICE, archived_key,
     creation_abandon_key, creation_key, creation_retry_key, creation_state_key, row_key,
     unarchive_key,
 };
@@ -62,7 +62,6 @@ const MORE_WORK_PART: ControlPart = ControlPart::new("more-work");
 /// *Pause all Bots* / *Resume all Bots* and the line under it (M8).
 const TEAM_PART: ControlPart = ControlPart::new("team-pause");
 const TEAM_LINE_PART: ControlPart = ControlPart::new("team-pause-line");
-const ACTIVITY: ControlPart = ControlPart::new(ACTIVITY_PART);
 /// The Archived filter (S14).
 const ARCHIVED_TOGGLE_PART: ControlPart = ControlPart::new("archived-toggle");
 const ARCHIVED_NOTICE_PART: ControlPart = ControlPart::new("archived-notice");
@@ -196,23 +195,7 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 .enumerate()
                 .filter_map(|(index, bot)| {
                     let rect = rect_of(row_key(bot.id))?;
-                    let mut work: Vec<SemanticNode> = roster
-                        .conversation_ids(bot.id)
-                        .into_iter()
-                        .filter_map(|chat| {
-                            let rect = rect_of(activity_key(chat))?;
-                            Some(
-                                SemanticNode::new(
-                                    Occurrence::model(cx.window, cx.view, chat.as_uuid(), ACTIVITY),
-                                    Role::ListItem,
-                                )
-                                .with_label(roster.conversation_name(bot, chat))
-                                .with_selected(roster.current_conversation() == Some(chat))
-                                .with_bounds(rect)
-                                .with_actions([Action::Click]),
-                            )
-                        })
-                        .collect();
+                    let mut work = Vec::new();
                     if let Some(bounds) = rect_of(crate::bots::roster::more_key(bot.id)) {
                         work.push(
                             SemanticNode::new(
@@ -517,7 +500,6 @@ pub(super) fn focus_occurrence(roster: &BotsRoster, cx: &Context) -> Option<Occu
         _ if key == TEAM_CONTROL => Some(Occurrence::surface(cx.window, cx.view, BOTS, TEAM_PART)),
         crate::bots::roster::ROW_PART => model(ControlPart::ROOT),
         "bot-more" => model(ControlPart::new("bot-more")),
-        ACTIVITY_PART => model(ACTIVITY),
         CREATION_RETRY_PART => model(CREATION_RETRY),
         CREATION_ABANDON_PART => model(CREATION_ABANDON),
         ARCHIVED_PART => model(ARCHIVED),
@@ -565,11 +547,7 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     rev.bool(roster.activity_truncated())
         .u64(roster.activity().len() as u64);
     for bot in roster.bots() {
-        for chat in roster.conversation_ids(bot.id) {
-            rev.uuid(chat.as_uuid())
-                .str(roster.known_title(chat).unwrap_or_default())
-                .bool(roster.current_conversation() == Some(chat));
-        }
+        rev.str(&roster.accessible_name(bot));
     }
     for entry in roster.activity() {
         rev.uuid(entry.chat_id.as_uuid())
@@ -683,18 +661,6 @@ pub(super) fn action(
             archived_key(bot)
         };
         roster.press_archived(key);
-        return Some(Outcome::Consumed);
-    }
-    // A running or Needs-you sub-row: open that conversation.
-    if target.part == ACTIVITY {
-        if action != Action::Click {
-            return None;
-        }
-        let chat = roster
-            .conversation_ids_all()
-            .into_iter()
-            .find(|chat| chat.as_uuid() == id)?;
-        roster.ask_open_chat(chat);
         return Some(Outcome::Consumed);
     }
     // A Bot of this computer's, or one another computer runs (M8): its row.

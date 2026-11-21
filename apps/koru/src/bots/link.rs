@@ -1016,12 +1016,14 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     client = connect(root.as_deref());
                 }
                 let result = match &client {
-                    Some(connected) => activity(
-                        connected
-                            .ai()
-                            .bots(&BotCommand::ListActivity { workspace })
-                            .map_err(|failure| said(failure.code, failure.retryable)),
-                    ),
+                    Some(connected) => activity_pages(|cursor| {
+                        activity(
+                            connected
+                                .ai()
+                                .bots(&BotCommand::ListActivity { workspace, cursor })
+                                .map_err(|failure| said(failure.code, failure.retryable)),
+                        )
+                    }),
                     None => Err(Failure::Unanswered),
                 };
                 if let Err(failure) = &result {
@@ -1282,6 +1284,38 @@ pub(crate) fn activity(reply: Result<BotResponse, Said>) -> Result<BotActivityPa
         Ok(BotResponse::Activity { activity }) => Ok(activity),
         Ok(_) => Err(Failure::Unanswered),
         Err(said) => Err(Failure::of(said)),
+    }
+}
+
+/// Fetch bounded transport pages on the reader. The tab must not silently lose
+/// a request because it sorts after the first 200 activity targets.
+fn activity_pages(
+    mut ask: impl FnMut(
+        Option<koru_ai_core::bots::BotActivityCursor>,
+    ) -> Result<BotActivityPage, Failure>,
+) -> Result<BotActivityPage, Failure> {
+    let mut cursor = None;
+    let mut entries = Vec::new();
+    loop {
+        let page = ask(cursor)?;
+        entries.extend(page.entries);
+        match page.next_cursor {
+            Some(next) => {
+                if cursor.is_some_and(|old: koru_ai_core::bots::BotActivityCursor| {
+                    (next.bot, next.thread) <= (old.bot, old.thread)
+                }) {
+                    return Err(Failure::Unanswered);
+                }
+                cursor = Some(next);
+            }
+            None => {
+                return Ok(BotActivityPage {
+                    entries,
+                    truncated: page.truncated,
+                    next_cursor: None,
+                });
+            }
+        }
     }
 }
 

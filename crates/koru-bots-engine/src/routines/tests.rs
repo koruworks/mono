@@ -326,7 +326,7 @@ impl Fixture {
             .unwrap();
         delivery
     }
-    fn publish(&mut self, delivery: &messages::Delivery, now: i64) -> messages::Publish {
+    pub(crate) fn publish(&mut self, delivery: &messages::Delivery, now: i64) -> messages::Publish {
         let request = messages::Publish {
             command: Uuid::new_v4(),
             turn: delivery.turn,

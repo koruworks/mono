@@ -116,7 +116,10 @@ fn a_conversation_page_request_is_closed_and_its_reply_is_additive() {
 #[test]
 fn the_activity_read_names_only_a_workspace_and_two_states() {
     let workspace = WorkspaceId::new();
-    let request = BotCommand::ListActivity { workspace };
+    let request = BotCommand::ListActivity {
+        workspace,
+        cursor: None,
+    };
     let mut json = serde_json::to_value(&request).unwrap();
     assert_eq!(json["command"], "list_activity");
     assert_eq!(
@@ -198,6 +201,7 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
     let workspace = WorkspaceId::new();
     let bot = Bot {
         may_ask: true,
+        summary: None,
         id: BotId::mint(),
         home_workspace: workspace,
         user_scope: UserScopeId::new(),

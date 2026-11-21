@@ -1,5 +1,27 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+
+#[test]
+fn single_bot_main_omits_identity_rows_but_side_and_shared_threads_keep_them() {
+    let (mut view, _, _) = crate::managed_surface::tests::surface();
+    let state = view.managed.as_mut().unwrap();
+    let bot = state.snapshot.conversation.label.bot_id.as_uuid();
+    state.snapshot.participants = vec![wire::Participant { bot, name: "Scout".into() }];
+    let mut message = crate::managed::tests::message(1, Uuid::new_v4());
+    message.sender = bot.to_string();
+    let id = message.id;
+    state.ingest(message);
+    view.rebuild_managed_navigation(420.0);
+    assert!(!view.navigation().rows.iter().any(|r| r.id == id));
+    view.managed.as_mut().unwrap().snapshot.conversation.label.purpose = koru_ai_core::bots::BotChatPurpose::Additional;
+    view.rebuild_managed_navigation(420.0);
+    assert!(view.navigation().rows.iter().any(|r| r.id == id && !r.targets.is_empty()));
+    let state = view.managed.as_mut().unwrap();
+    state.snapshot.conversation.label.purpose = koru_ai_core::bots::BotChatPurpose::Main;
+    state.snapshot.participants.push(wire::Participant { bot: Uuid::new_v4(), name: "Guest".into() });
+    view.rebuild_managed_navigation(420.0);
+    assert!(view.navigation().rows.iter().any(|r| r.id == id && !r.targets.is_empty()));
+}
 use crate::managed_surface::tests::surface;
 
 #[test]

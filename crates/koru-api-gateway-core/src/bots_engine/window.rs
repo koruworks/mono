@@ -171,6 +171,7 @@ impl Gateway {
             pending_change: None,
             connections: d.access.connections,
             may_ask: bot.may_ask,
+            summary: bot.summary,
         })
     }
     fn creation_view(&self, owner: BotOwner, record: Record) -> Result<BotCreation, Error> {

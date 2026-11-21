@@ -11,6 +11,7 @@ use koru_store_core::ids::WorkspaceId;
 pub(crate) fn bot(id: BotId, home: WorkspaceId, name: &str, paused: bool) -> Bot {
     Bot {
         may_ask: true,
+        summary: None,
         id,
         home_workspace: home,
         user_scope: UserScopeId::new(),

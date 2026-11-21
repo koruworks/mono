@@ -2847,11 +2847,6 @@ impl MainView {
         {
             return self.start_schedule_rename(schedule);
         }
-        if let Some((bot, chat)) = self.bot_navigator_conversation()
-            && let Some(tab) = self.bot_navigator_tab(bot)
-        {
-            return self.start_bot_chat_rename(bot, tab, chat);
-        }
         // **A Bot tab's conversation list**: the row under the pointer, else
         // the one the keyboard is on while the list holds it — as the Chats
         // view chooses, below.
@@ -6445,10 +6440,6 @@ impl MainView {
                     .learn_bot(entry.chat_id, entry.bot_id, &bot.name);
             }
         }
-        let opened_chat = match self.explore.bots_mut().take_wants_open_chat() {
-            Some((bot, chat)) => self.open_bot_conversation(bot, chat),
-            None => false,
-        };
         // **Creating one** (S8): the empty state's *Create a bot*; an
         // Unfinished row's Abandon, asked first; a page an abandoned
         // creation left, opened as an ordinary page.
@@ -6473,7 +6464,7 @@ impl MainView {
             ),
             None => false,
         };
-        changed || opened || opened_chat || created || asked || page || navigation_changed
+        changed || opened || created || asked || page || navigation_changed
     }
 
     /// **The Chats view's own pass** (AGENTUX I5).
@@ -6986,13 +6977,6 @@ impl MainView {
                 };
                 if view.bot() != Some(bot) {
                     return None;
-                }
-                if self.sidebar.is_open()
-                    && let Some(row) = self
-                        .explore
-                        .bot_conversation_label_rect(self.explore_area(), chat)
-                {
-                    return Some(row);
                 }
                 let local = view.rename_rect(chat)?;
                 let at = self.focused_view_rect();
@@ -12084,11 +12068,6 @@ impl View for MainView {
             // the cursor rather than under a button.
             Hit::Sidebar => {
                 self.refresh_explore(ws, true);
-                if let Some((bot, chat)) =
-                    self.explore.bot_conversation_at(self.explore_area(), x, y)
-                {
-                    return self.bot_navigator_menu(bot, chat, (x, y));
-                }
                 let out = self.explore.context_menu(self.explore_area(), x, y);
                 self.apply(ws, out)
             }
@@ -17280,20 +17259,6 @@ impl MainView {
             if self.explore.take_quick_filter_stale() {
                 self.explore_stale = true;
             }
-            return true;
-        }
-        // Delete belongs only to the focused conversation row, never to the
-        // container or the composer beside it. Keep the existing confirmation.
-        if self.sidebar.is_open()
-            && self.explore.showing_bots()
-            && self.explore.has_focus()
-            && mods.is_empty()
-            && *key == Key::Named(winit::keyboard::NamedKey::Delete)
-            && !self.tabs().active_tab().view.is_prompting()
-            && let Some((bot, chat)) = self.explore.bots().focused_conversation()
-            && let Some(tab) = self.bot_navigator_tab(bot)
-        {
-            self.ask_trash_bot_conversation(bot, tab, chat);
             return true;
         }
         // **The tree, while it holds the keyboard.** Only the navigation keys —

@@ -370,7 +370,7 @@ impl Gateway {
             Command::Read {
                 query:
                     Query::Bots { workspace, .. }
-                    | Query::Activity { workspace }
+                    | Query::Activity { workspace, .. }
                     | Query::TrashedConversations { workspace, .. },
             } => workspaces.push(koru_ai_core::WorkspaceId::from_uuid(*workspace)),
             Command::Read {

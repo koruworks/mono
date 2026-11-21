@@ -385,7 +385,16 @@ impl ChatSurface {
             );
         }
         // Names are display data, never provider identities or copied prose.
-        for message in state.messages.values().filter(|m| m.kind == "words") {
+        let single_main = state.snapshot.conversation.label.purpose
+            == koru_ai_core::bots::BotChatPurpose::Main
+            && state.snapshot.participants.len() == 1
+            && state.snapshot.participants[0].bot
+                == state.snapshot.conversation.label.bot_id.as_uuid();
+        for message in state
+            .messages
+            .values()
+            .filter(|m| m.kind == "words" && !single_main)
+        {
             if let Some(bot) = state
                 .snapshot
                 .participants

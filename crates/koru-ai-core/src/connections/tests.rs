@@ -23,6 +23,7 @@ fn bot() -> Bot {
     let workspace = WorkspaceId::from_uuid(id(1));
     Bot {
         may_ask: true,
+        summary: None,
         id: BotId::from_uuid(id(2)),
         home_workspace: workspace,
         user_scope: UserScopeId::from_uuid(id(3)),

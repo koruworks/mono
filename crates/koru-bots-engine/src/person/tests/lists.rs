@@ -95,6 +95,32 @@ fn conversations_keep_main_first_then_recency_and_cursors_skip_no_ties() {
 }
 
 #[test]
+fn tab_list_keeps_between_bot_requests_reachable_without_person_membership() {
+    let mut f = Fixture::new();
+    let side = conversation(&mut f, 10);
+    f.db.connection
+        .execute(
+            "DELETE FROM participants WHERE thread=?1 AND kind='person'",
+            [side.id.to_string()],
+        )
+        .unwrap();
+    let page = lists::conversations(&f.db.connection, &f.who, f.bot.id, None, 1).unwrap();
+    assert!(page["next"].is_null());
+    f.db.connection
+        .execute(
+            "UPDATE threads SET kind='between_bots' WHERE id=?1",
+            [side.id.to_string()],
+        )
+        .unwrap();
+    let first = lists::conversations(&f.db.connection, &f.who, f.bot.id, None, 1).unwrap();
+    let after = serde_json::from_value(first["next"].clone()).unwrap();
+    let second = lists::conversations(&f.db.connection, &f.who, f.bot.id, after, 1).unwrap();
+    assert_eq!(second["items"][0]["id"], side.id.to_string());
+    assert!(second["next"].is_null());
+    assert!(read::thread(&f.db.connection, &f.who, side.id).is_ok());
+}
+
+#[test]
 fn activity_is_owner_scoped_includes_paused_queue_and_ignores_old_attention() {
     let mut f = Fixture::new();
     let home = f.bot.definition.access.workspace.as_uuid();

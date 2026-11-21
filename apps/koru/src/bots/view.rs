@@ -1710,6 +1710,16 @@ impl BotView {
                     .wrap(),
             );
         }
+        if self.create.is_none() && self.facts.as_ref().is_some_and(|f| !f.trashed) {
+            header = header.child(self.button(
+                engine,
+                "Bot conversations button",
+                list::CONVERSATIONS_BUTTON,
+                t(self.lang, Words::BotsConversations).into(),
+                koru_ui::button::ActionStyle::Secondary,
+                false,
+            ));
+        }
         header.child(
             boxed("Bot header end")
                 .pad_top(Space::S2)
@@ -1732,6 +1742,8 @@ impl BotView {
         let conversation = boxed("Bot conversation").id(CONVERSATION).fill();
         if self.settings_open {
             tab.child(self.region(engine))
+        } else if self.list_covers() {
+            tab.child(self.conversation_column(engine))
         } else {
             tab.child(conversation)
         }

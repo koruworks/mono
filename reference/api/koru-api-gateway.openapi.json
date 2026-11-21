@@ -3544,6 +3544,20 @@
             },
             "type": "array"
           },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotSummary"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Ephemeral owner-list projection; absent from stored configuration and receipts."
+          },
           "updated_at_ms": {
             "format": "int64",
             "type": "integer"
@@ -3603,6 +3617,23 @@
         ],
         "type": "object"
       },
+      "BotActivityCursor": {
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "thread": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot",
+          "thread"
+        ],
+        "type": "object"
+      },
       "BotActivityPage": {
         "description": "A workspace's Bot activity, ordered by Bot and then conversation.\n`truncated` says more conversations had activity than were returned.",
         "properties": {
@@ -3611,6 +3642,19 @@
               "$ref": "#/components/schemas/BotActivity"
             },
             "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotActivityCursor"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
           },
           "truncated": {
             "type": "boolean"
@@ -4783,6 +4827,20 @@
                 ],
                 "type": "string"
               },
+              "cursor": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotActivityCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ],
+                "default": null
+              },
               "workspace": {
                 "$ref": "#/components/schemas/WorkspaceId"
               }
@@ -5952,6 +6010,26 @@
             "type": "object"
           }
         ]
+      },
+      "BotMainPreview": {
+        "properties": {
+          "at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "message": {
+            "$ref": "#/components/schemas/MessageId"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "at_ms",
+          "text"
+        ],
+        "type": "object"
       },
       "BotOpenLifecycle": {
         "additionalProperties": false,
@@ -7919,6 +7997,38 @@
           "thread",
           "selected_pages",
           "occurrences"
+        ],
+        "type": "object"
+      },
+      "BotSummary": {
+        "properties": {
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotMainPreview"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "open_requests": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pending_results": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending_results",
+          "open_requests"
         ],
         "type": "object"
       },
@@ -19377,6 +19487,20 @@
           {
             "additionalProperties": false,
             "properties": {
+              "after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotActivityCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ],
+                "default": null
+              },
               "kind": {
                 "enum": [
                   "activity"

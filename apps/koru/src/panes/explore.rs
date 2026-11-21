@@ -1202,30 +1202,7 @@ impl ExploreView {
         self.mode == NavigatorMode::Bots
     }
 
-    pub(crate) fn bot_conversation_at(
-        &self,
-        area: Rect,
-        x: f32,
-        y: f32,
-    ) -> Option<(koru_ai_core::bots::BotId, koru_ai_core::ChatId)> {
-        if !self.showing_bots() || !area.contains(x, y) {
-            return None;
-        }
-        self.bots
-            .conversation_at(self.above_footer(area), self.rows_top(area), x, y)
-    }
 
-    pub(crate) fn bot_conversation_label_rect(
-        &self,
-        area: Rect,
-        chat: koru_ai_core::ChatId,
-    ) -> Option<Rect> {
-        if !self.showing_bots() {
-            return None;
-        }
-        self.bots
-            .conversation_label_rect(self.above_footer(area), self.rows_top(area), chat)
-    }
 
     /// Give the Bots roster its link to the Bot service, once — the first
     /// time it is shown, by the container, which knows this window's `--root`.

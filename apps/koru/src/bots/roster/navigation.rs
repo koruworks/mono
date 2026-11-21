@@ -4,11 +4,8 @@
 //! Read markers remain in the Chats navigator's shared SeenBook.
 
 use super::*;
-use koru_ai_core::{
-    ChatId,
-    bots::{BotChatCursor, BotChatPage},
-};
-use std::collections::{HashMap, HashSet, VecDeque};
+use koru_ai_core::ChatId;
+use std::collections::HashSet;
 
 #[derive(Default)]
 pub(super) struct Navigation {
@@ -17,14 +14,6 @@ pub(super) struct Navigation {
     order: Vec<BotId>,
     pub unread: HashSet<BotId>,
     pub current: Option<ChatId>,
-    chats: HashMap<BotId, Vec<(ChatId, i64)>>,
-    queue: VecDeque<BotId>,
-    reading: Option<(u64, BotId, Option<BotChatCursor>)>,
-    received: Vec<(ChatId, i64)>,
-    nonempty: HashSet<ChatId>,
-    arrivals: Vec<(ChatId, i64)>,
-    seq: u64,
-    refresh: bool,
 }
 
 pub(super) struct Drag {
@@ -40,67 +29,6 @@ pub(crate) fn more_key(bot: BotId) -> Key {
 }
 
 impl BotsRoster {
-    pub(crate) fn conversation_subject(&self, chat: ChatId) -> Option<(BotId, ChatId)> {
-        self.bots
-            .iter()
-            .find(|bot| self.conversation_ids(bot.id).contains(&chat))
-            .map(|bot| (bot.id, chat))
-    }
-
-    pub(crate) fn focused_conversation(&self) -> Option<(BotId, ChatId)> {
-        self.conversation_ids_all()
-            .into_iter()
-            .find(|chat| Some(activity_key(*chat)) == self.focus)
-            .and_then(|chat| self.conversation_subject(chat))
-    }
-
-    pub(crate) fn focus_conversation(&mut self, chat: ChatId) -> bool {
-        if self.conversation_subject(chat).is_none() {
-            return false;
-        }
-        self.focus = Some(activity_key(chat));
-        self.reveal_owed = true;
-        true
-    }
-
-    pub(crate) fn conversation_at(
-        &self,
-        area: Rect,
-        top: f32,
-        x: f32,
-        y: f32,
-    ) -> Option<(BotId, ChatId)> {
-        self.activity_at(area, top, x, y)
-            .and_then(|chat| self.conversation_subject(chat))
-    }
-
-    pub(crate) fn conversation_label_rect(
-        &self,
-        area: Rect,
-        top: f32,
-        chat: ChatId,
-    ) -> Option<Rect> {
-        self.with_input_frame(area, top, |_, frame| {
-            let parent = frame
-                .nodes
-                .iter()
-                .position(|node| node.key == Some(activity_key(chat)))?;
-            frame
-                .nodes
-                .iter()
-                .find(|node| {
-                    node.parent == Some(parent) && node.name == "Bot activity conversation"
-                })
-                .map(|node| node.rect)
-        })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn conversations_for_test(&mut self, bot: BotId, page: BotChatPage) {
-        self.navigation.reading = Some((1, bot, None));
-        assert!(self.take_conversation_page(1, bot, Ok(page)));
-    }
-
     pub(crate) fn set_current_conversation(&mut self, current: Option<(BotId, ChatId)>) -> bool {
         let chat = current.map(|(_, chat)| chat);
         let bot = current.map(|(bot, _)| bot);
@@ -108,55 +36,6 @@ impl BotsRoster {
         self.navigation.current = chat;
         self.selected = bot;
         changed
-    }
-
-    pub(crate) fn current_conversation(&self) -> Option<ChatId> {
-        self.navigation.current
-    }
-    /// Main first, then the owner's paginated conversations, including idle ones.
-    pub(crate) fn conversation_ids(&self, bot: BotId) -> Vec<ChatId> {
-        let mut ids = Vec::new();
-        let mut seen = HashSet::new();
-        if let Some(row) = self.row(bot) {
-            ids.push(row.main_chat);
-            seen.insert(row.main_chat);
-        }
-        for chat in self
-            .navigation
-            .chats
-            .get(&bot)
-            .into_iter()
-            .flatten()
-            .map(|(id, _)| *id)
-            .chain(
-                self.activity
-                    .iter()
-                    .filter(|entry| entry.bot_id == bot)
-                    .map(|entry| entry.chat_id),
-            )
-        {
-            if seen.insert(chat) {
-                ids.push(chat);
-            }
-        }
-        ids
-    }
-
-    pub(crate) fn conversation_ids_all(&self) -> Vec<ChatId> {
-        self.bots
-            .iter()
-            .flat_map(|bot| self.conversation_ids(bot.id))
-            .collect()
-    }
-
-    pub(crate) fn conversation_name(&self, bot: &RosterBot, chat: ChatId) -> String {
-        self.activity
-            .iter()
-            .find(|entry| entry.chat_id == chat)
-            .map_or_else(
-                || self.conversation_words(bot, chat),
-                |entry| self.activity_name(bot, entry),
-            )
     }
 
     pub(crate) fn menu_row(&self, bot: BotId) -> Option<RosterBot> {
@@ -315,26 +194,9 @@ impl BotsRoster {
         });
     }
 
-    pub(crate) fn conversation_metadata(&self) -> impl Iterator<Item = (BotId, ChatId, i64)> + '_ {
-        self.navigation
-            .chats
-            .iter()
-            .flat_map(|(bot, chats)| chats.iter().map(|(chat, at)| (*bot, *chat, *at)))
-    }
-
-    pub(crate) fn take_conversation_arrivals(&mut self) -> Vec<(ChatId, i64)> {
-        std::mem::take(&mut self.navigation.arrivals)
-    }
-
     pub(super) fn navigation_workspace_changed(&mut self) {
         self.navigation.drag = None;
         self.navigation.menu = None;
-        self.navigation.chats.clear();
-        self.navigation.queue.clear();
-        self.navigation.reading = None;
-        self.navigation.received.clear();
-        self.navigation.nonempty.clear();
-        self.navigation.arrivals.clear();
         self.navigation.unread.clear();
         self.navigation.current = None;
     }
@@ -348,13 +210,8 @@ impl BotsRoster {
     }
 
     pub(crate) fn has_unread(&self, bot: BotId) -> bool {
-        self.navigation.unread.contains(&bot)
-    }
-
-    pub(super) fn navigation_awaiting(&self) -> bool {
-        self.navigation.reading.is_some()
-            || !self.navigation.queue.is_empty()
-            || self.navigation.refresh
+        self.row(bot)
+            .is_some_and(|row| summary::needs_attention(row, self.navigation.unread.contains(&bot)))
     }
 
     pub(crate) fn set_unread(&mut self, unread: HashSet<BotId>) -> bool {
@@ -362,105 +219,6 @@ impl BotsRoster {
             return false;
         }
         self.navigation.unread = unread;
-        true
-    }
-
-    pub(super) fn refresh_conversation_metadata(&mut self) {
-        self.navigation.refresh = true;
-    }
-
-    pub(super) fn ask_conversation_metadata(&mut self) -> bool {
-        if self.navigation.reading.is_some() {
-            return false;
-        }
-        if self.navigation.queue.is_empty() && self.navigation.refresh {
-            self.navigation.refresh = false;
-            self.navigation
-                .queue
-                .extend(self.bots.iter().map(|bot| bot.id));
-            self.navigation
-                .chats
-                .retain(|bot, _| self.bots.iter().any(|row| row.id == *bot));
-        }
-        let Some(bot) = self.navigation.queue.pop_front() else {
-            return false;
-        };
-        self.navigation.received.clear();
-        self.navigation.nonempty.clear();
-        self.send_conversation_page(bot, None)
-    }
-
-    fn send_conversation_page(&mut self, bot: BotId, cursor: Option<BotChatCursor>) -> bool {
-        self.navigation.seq = self.navigation.seq.wrapping_add(1);
-        let seq = self.navigation.seq;
-        if self.link.as_ref().is_some_and(|link| {
-            link.send(Command::ListChats {
-                seq,
-                bot,
-                cursor: cursor.clone(),
-                limit: 100,
-            })
-        }) {
-            self.navigation.reading = Some((seq, bot, cursor));
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(super) fn take_conversation_page(
-        &mut self,
-        seq: u64,
-        bot: BotId,
-        result: Result<BotChatPage, Failure>,
-    ) -> bool {
-        let Some((expected, owner, cursor)) = &self.navigation.reading else {
-            return false;
-        };
-        if *expected != seq || *owner != bot {
-            return false;
-        }
-        let cursor = cursor.clone();
-        self.navigation.reading = None;
-        if let Ok(page) = result {
-            for row in &page.chats {
-                if !row.chat.title.trim().is_empty() {
-                    self.titles.insert(row.chat.id, row.chat.title.clone());
-                }
-            }
-            self.navigation.nonempty.extend(
-                page.chats
-                    .iter()
-                    .filter(|row| row.chat.updated_at > row.chat.created_at)
-                    .map(|row| row.chat.id),
-            );
-            self.navigation.received.extend(
-                page.chats
-                    .iter()
-                    .map(|row| (row.chat.id, row.chat.updated_at.millis())),
-            );
-            if let Some(next) = page.next_cursor {
-                if cursor.as_ref() != Some(&next) {
-                    self.send_conversation_page(bot, Some(next));
-                }
-            } else {
-                if let Some(previous) = self.navigation.chats.get(&bot) {
-                    self.navigation.arrivals.extend(
-                        self.navigation
-                            .received
-                            .iter()
-                            .filter(|(chat, _)| {
-                                self.navigation.nonempty.contains(chat)
-                                    && !previous.iter().any(|(id, _)| id == chat)
-                            })
-                            .copied(),
-                    );
-                }
-                self.navigation
-                    .chats
-                    .insert(bot, std::mem::take(&mut self.navigation.received));
-            }
-        }
         true
     }
 }

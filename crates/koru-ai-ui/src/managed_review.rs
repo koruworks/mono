@@ -174,6 +174,9 @@ impl ChatSurface {
                 if page.bot == bot.as_uuid() =>
             {
                 let previous_len = self.review.items.len();
+                if self.review.count != page.count {
+                    self.note_activity();
+                }
                 self.review.count = page.count;
                 if before.is_none() {
                     self.review.items.clear();

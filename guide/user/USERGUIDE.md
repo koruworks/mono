@@ -4268,9 +4268,12 @@ Open a Bot, open the context pane and choose **Routines**. Each routine shows
 its name, a switch, its state in words (**On** or **Paused**) and, while it is
 on, its next time.
 
-Its conversation appears below the Bot in the sidebar after the first message.
-Before its first run, manage it here in **Routines**. Later runs reuse that same
-conversation under the routine's name.
+The sidebar shows one row per Bot, with its latest main-chat reply beneath the
+name. An accent dot means an unread main-chat reply, a pending routine result,
+or an open request. An open request replaces the preview with **Needs you**.
+Use **Conversations** inside the Bot tab to open its other conversations or
+manage their names and Trash. Routine history stays in **Routines**; later runs
+reuse the same routine conversation.
 
 - **Turn on or pause.** Use the switch. It reads *Turning on…* or *Pausing…*
   until the computer that owns the routine confirms, and only then shows the

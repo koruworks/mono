@@ -8,6 +8,7 @@ pub(crate) mod change;
 mod lifecycle_ops;
 mod lists;
 mod read;
+mod summary;
 
 use crate::{
     Database, Error,
@@ -172,6 +173,8 @@ pub enum Query {
     },
     Activity {
         workspace: Uuid,
+        #[serde(default)]
+        after: Option<koru_ai_core::bots::BotActivityCursor>,
     },
     Thread {
         thread: Uuid,
@@ -340,6 +343,8 @@ pub enum Change {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Bot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<koru_ai_core::bots::BotSummary>,
     pub id: Uuid,
     pub revision: u64,
     pub policy_revision: u64,

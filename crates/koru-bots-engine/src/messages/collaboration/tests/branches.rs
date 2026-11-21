@@ -271,7 +271,7 @@ fn cards_and_activity_project_actual_participants_without_joining() {
     let activity = command(
         &mut f,
         person::Command::Read {
-            query: person::Query::Activity { workspace },
+            query: person::Query::Activity { workspace, after: None },
         },
     )
     .unwrap();

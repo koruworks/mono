@@ -339,6 +339,7 @@ fn refresh_and_stale_responses_never_replace_the_selected_context() {
     assert!(view.review_response(thread, request, Ok(wire::Response::Review { detail })));
     view.review.stamp = None;
     view.refresh_reviews();
+    let _ = view.take_activity();
     let Command::RoutineReview { request, .. } = commands.try_recv().unwrap() else {
         panic!()
     };
@@ -354,6 +355,10 @@ fn refresh_and_stale_responses_never_replace_the_selected_context() {
             }
         })
     ));
+    assert!(
+        view.take_activity(),
+        "a changed count invalidates the roster summary"
+    );
     assert_eq!(
         view.review.selected.as_ref().unwrap().item.occurrence,
         first.occurrence

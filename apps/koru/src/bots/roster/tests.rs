@@ -52,9 +52,7 @@ impl Fixture {
                     return seq;
                 }
                 // Its read of the team pause (M8) rides beside the list.
-                Command::Activity { .. }
-                | Command::TeamPause { .. }
-                | Command::ListChats { .. } => continue,
+                Command::Activity { .. } | Command::TeamPause { .. } => continue,
                 _ => panic!("a roster only lists"),
             }
         }
@@ -68,7 +66,7 @@ impl Fixture {
                     assert_eq!(workspace, self.home, "about the window's workspace");
                     return seq;
                 }
-                Command::List { .. } | Command::TeamPause { .. } | Command::ListChats { .. } => {
+                Command::List { .. } | Command::TeamPause { .. } => {
                     continue;
                 }
                 _ => panic!("a roster only lists and reads activity"),
@@ -82,10 +80,7 @@ impl Fixture {
     fn nothing_asked(&self) {
         while let Ok(command) = self.commands.try_recv() {
             assert!(
-                matches!(
-                    command,
-                    Command::TeamPause { .. } | Command::ListChats { .. }
-                ),
+                matches!(command, Command::TeamPause { .. }),
                 "no request was sent"
             );
         }
@@ -358,29 +353,16 @@ fn a_stale_answer_is_ignored() {
     assert!(!f.roster.maintain(), "another workspace's reply");
     assert!(f.answer(second, Ok(vec![fresh.clone()])));
     assert_eq!(f.ids(), vec![fresh.id]);
-    // The listing is followed by activity and conversation metadata reads.
-    // Both must answer before the roster has no outstanding navigation work.
+    // A flat roster reads workspace activity, never per-Bot conversations.
     let mut activity = None;
-    let mut conversations = None;
     for command in f.commands.try_iter() {
         match command {
             Command::Activity { seq, workspace } => {
                 assert_eq!(workspace, f.home);
                 activity = Some(seq);
             }
-            Command::ListChats {
-                seq,
-                bot,
-                cursor,
-                limit,
-            } => {
-                assert_eq!(bot, fresh.id);
-                assert!(cursor.is_none());
-                assert_eq!(limit, 100);
-                conversations = Some(seq);
-            }
             Command::TeamPause { .. } => {}
-            _ => panic!("only the shown roster's reads are owed"),
+            _ => panic!("only workspace reads are owed"),
         }
     }
     f.answers
@@ -388,16 +370,6 @@ fn a_stale_answer_is_ignored() {
             seq: activity.expect("the activity read"),
             workspace: f.home,
             result: Ok(activity_page(Vec::new(), false)),
-        })
-        .unwrap();
-    f.answers
-        .send(Answer::Chats {
-            seq: conversations.expect("the conversation metadata read"),
-            bot: fresh.id,
-            result: Ok(koru_ai_core::bots::BotChatPage {
-                chats: Vec::new(),
-                next_cursor: None,
-            }),
         })
         .unwrap();
     f.roster.maintain();
@@ -552,32 +524,16 @@ fn accessibility_names_the_list_and_each_bot_in_order() {
     assert_eq!(list.role, Role::List);
     assert_eq!(list.key, Some(LIST));
     assert_eq!(names(&roots), vec!["Bots"]);
-    // Each Bot is followed by its main conversation, even when idle.
-    assert_eq!(
-        names(&list.children),
-        vec![
-            "Scout",
-            "Main conversation",
-            "Ledger, paused",
-            "Main conversation"
-        ]
-    );
+    // Conversations remain inside their Bot tab.
+    assert_eq!(names(&list.children), vec!["Scout", "Ledger, paused"]);
     let keys: Vec<_> = list.children.iter().map(|node| node.key).collect();
-    assert_eq!(
-        keys,
-        vec![
-            Some(row_key(a.id)),
-            Some(activity_key(a.main_chat)),
-            Some(row_key(b.id)),
-            Some(activity_key(b.main_chat)),
-        ]
-    );
+    assert_eq!(keys, vec![Some(row_key(a.id)), Some(row_key(b.id)),]);
     for item in &list.children {
         assert_eq!(item.role, Role::ListItem);
         assert!(item.focusable);
         assert!(item.actions.contains(&Action::Click));
     }
-    for (index, bot) in [(0, a.id), (2, b.id)] {
+    for (index, bot) in [(0, a.id), (1, b.id)] {
         let item = &list.children[index];
         assert_eq!(item.actions, vec![Action::Click, Action::Focus]);
         assert!(
@@ -588,9 +544,7 @@ fn accessibility_names_the_list_and_each_bot_in_order() {
         );
     }
     assert_eq!(list.children[0].selected, Some(true));
-    assert_eq!(list.children[2].selected, Some(false));
     assert_eq!(list.children[1].selected, Some(false));
-    assert_eq!(list.children[3].selected, Some(false));
     assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
 }
 
@@ -625,18 +579,11 @@ fn every_word_the_roster_draws_is_in_all_eight_languages() {
 }
 
 #[test]
-fn the_keyboard_walks_bots_menus_and_idle_conversations() {
+fn the_keyboard_walks_only_bots_and_their_menus() {
     let mut f = fixture();
     let (a, b) = (f.bot("A"), f.bot("B"));
     f.shown_with(vec![a.clone(), b.clone()]);
-    let expected = [
-        row_key(a.id),
-        more_key(a.id),
-        activity_key(a.main_chat),
-        row_key(b.id),
-        more_key(b.id),
-        activity_key(b.main_chat),
-    ];
+    let expected = [row_key(a.id), more_key(a.id), row_key(b.id), more_key(b.id)];
     assert_eq!(f.roster.keyboard_stops(), expected);
     assert!(f.roster.focus_first());
     for key in expected {
@@ -645,8 +592,7 @@ fn the_keyboard_walks_bots_menus_and_idle_conversations() {
         f.roster.key(Press::Down);
     }
     assert!(f.roster.key(Press::Open));
-    let (bot, chat) = f.roster.take_wants_open_chat().unwrap();
-    assert_eq!((bot.id, chat), (b.id, b.main_chat));
+    assert_eq!(f.roster.take_menu(), Some((Some(b.id), None)));
     assert!(f.roster.key(Press::Escape));
     assert!(!f.roster.has_keyboard());
 }
@@ -768,6 +714,7 @@ fn activity_page(
     truncated: bool,
 ) -> BotActivityPage {
     BotActivityPage {
+        next_cursor: None,
         entries: entries
             .into_iter()
             .map(|(bot_id, chat_id, state)| BotActivity {
@@ -793,8 +740,14 @@ fn activity_is_read_after_the_listing_once_and_coalesced() {
     // Owed twice while one is on its way: one more, after it.
     f.roster.owe_activity();
     f.roster.owe_activity();
-    assert!(!f.roster.maintain());
+    assert!(f.roster.maintain());
+    let listing = f.asked();
+    assert!(
+        !f.roster.maintain(),
+        "one batched summary read for both changes"
+    );
     f.nothing_asked();
+    f.answer(listing, Ok(vec![scout]));
     assert!(f.roster.awaiting(), "an answer is owed");
     f.answers
         .send(Answer::Activity {
@@ -819,96 +772,31 @@ fn activity_is_read_after_the_listing_once_and_coalesced() {
 /// nothing: never *idle*. A read that stopped at its bound says more work
 /// exists; a failed read keeps what was shown.
 #[test]
-fn running_and_needs_you_conversations_sit_under_their_bot() {
+fn running_and_needs_you_targets_remain_available_without_roster_subrows() {
     let mut f = fixture();
-    let (scout, quiet) = (f.bot("Scout"), f.bot("Quiet"));
-    f.shown_with(vec![scout.clone(), quiet.clone()]);
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
     let seq = f.activity_asked();
     let other = koru_ai_core::ChatId::new();
+    let targets = vec![
+        (scout.id, scout.main_chat, BotActivityState::NeedsYou),
+        (scout.id, other, BotActivityState::Running),
+    ];
     f.answers
         .send(Answer::Activity {
             seq,
             workspace: f.home,
-            result: Ok(activity_page(
-                vec![
-                    (scout.id, scout.main_chat, BotActivityState::NeedsYou),
-                    (scout.id, other, BotActivityState::Running),
-                ],
-                true,
-            )),
-        })
-        .unwrap();
-    assert!(f.roster.maintain());
-    assert!(f.roster.animating());
-    f.roster.set_reduced_motion(true);
-    assert!(!f.roster.animating());
-    f.roster.set_reduced_motion(false);
-    f.roster.shown = false;
-    assert!(!f.roster.animating());
-    f.roster.shown = true;
-    let frame = frame_of(&f.roster);
-    assert!(frame.contains(activity_key(scout.main_chat)));
-    assert!(frame.contains(activity_key(other)));
-    assert!(frame.contains(MORE_WORK), "more work than is listed: said");
-    let listed = f.roster.bots()[0].clone();
-    let names: Vec<String> = f
-        .roster
-        .activity()
-        .iter()
-        .map(|entry| f.roster.activity_name(&listed, entry))
-        .collect();
-    assert_eq!(
-        names,
-        [
-            format!(
-                "{}, {}",
-                t(Lang::En, Words::BotsMainConversation),
-                t(Lang::En, Words::ChatsStatusNeedsYou)
-            ),
-            format!(
-                "{}, {}",
-                t(Lang::En, Words::BotsOtherConversation),
-                t(Lang::En, Words::ChatsStatusWorking)
-            ),
-        ]
-    );
-    // **Once an open tab has listed it, the row says the conversation's own
-    // title** — the words its row in the tab shows (the second window run:
-    // the roster said *Another conversation* for a conversation the list
-    // titled otherwise).
-    assert!(f.roster.know_titles([(other, "Builder forums".to_owned())]));
-    assert_eq!(
-        f.roster.activity_name(&listed, &f.roster.activity()[1]),
-        format!("Builder forums, {}", t(Lang::En, Words::ChatsStatusWorking))
-    );
-    assert!(!f.roster.know_titles([(other, "Builder forums".to_owned())]));
-    let statuses = f.roster.activity_of(scout.id);
-    assert_eq!(statuses.get(&other), Some(&ChatStatus::Working));
-    assert!(f.roster.activity_of(quiet.id).is_empty(), "nothing claimed");
-
-    // A press on the Running sub-row asks for that conversation.
-    let rect = frame.node(activity_key(other)).expect("its row").rect;
-    assert!(
-        f.roster
-            .mouse_down(area(), top(), rect.x + rect.w * 0.5, rect.y + rect.h * 0.5)
-    );
-    let (bot, chat) = f.roster.take_wants_open_chat().expect("asked");
-    assert_eq!((bot.id, chat), (scout.id, other));
-    assert!(f.roster.take_wants_open().is_none(), "not the Bot row");
-
-    // A failed read keeps what was shown.
-    f.roster.owe_activity();
-    f.roster.maintain();
-    let again = f.activity_asked();
-    f.answers
-        .send(Answer::Activity {
-            seq: again,
-            workspace: f.home,
-            result: Err(Failure::lost()),
+            result: Ok(activity_page(targets, false)),
         })
         .unwrap();
     f.roster.maintain();
     assert_eq!(f.roster.activity().len(), 2);
+    let frame = frame_of(&f.roster);
+    assert!(!frame.nodes.iter().any(|n| n.name == "Bot activity"));
+    assert_eq!(
+        f.roster.keyboard_stops(),
+        vec![row_key(scout.id), more_key(scout.id)]
+    );
 }
 
 /// Another workspace's activity is never this roster's.
@@ -1731,46 +1619,29 @@ fn an_unarchive_whose_outcome_is_unknown_is_never_said_as_refused() {
 /// review's item 10): under their Bot's row, in the order drawn, and Enter
 /// opens that conversation.
 #[test]
-fn the_keyboard_walks_the_activity_sub_rows_and_enter_opens_one() {
+fn activity_does_not_add_hidden_keyboard_targets() {
     let mut f = fixture();
-    let (scout, quiet) = (f.bot("Scout"), f.bot("Quiet"));
-    f.shown_with(vec![scout.clone(), quiet.clone()]);
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
     let seq = f.activity_asked();
-    let other = koru_ai_core::ChatId::new();
     f.answers
         .send(Answer::Activity {
             seq,
             workspace: f.home,
             result: Ok(activity_page(
-                vec![
-                    (scout.id, scout.main_chat, BotActivityState::NeedsYou),
-                    (scout.id, other, BotActivityState::Running),
-                ],
+                vec![(
+                    scout.id,
+                    koru_ai_core::ChatId::new(),
+                    BotActivityState::NeedsYou,
+                )],
                 false,
             )),
         })
         .unwrap();
     f.roster.maintain();
-    let stops = f.roster.keyboard_stops();
-    let at = |key| stops.iter().position(|stop| *stop == key).expect("a stop");
-    let (first, main, running, second) = (
-        at(row_key(scout.id)),
-        at(activity_key(scout.main_chat)),
-        at(activity_key(other)),
-        at(row_key(quiet.id)),
-    );
-    assert!(
-        first < main && main < running && running < second,
-        "{stops:?}"
-    );
-    assert!(f.roster.set_focus(scout.id));
-    assert!(f.roster.key(Press::Down));
-    assert!(f.roster.key(Press::Down));
-    assert!(f.roster.key(Press::Down));
-    assert_eq!(f.roster.focus(), Some(activity_key(other)));
+    f.roster.set_focus(scout.id);
     assert!(f.roster.key(Press::Open));
-    let (bot, chat) = f.roster.take_wants_open_chat().expect("asked");
-    assert_eq!((bot.id, chat), (scout.id, other));
+    assert_eq!(f.roster.take_wants_open().unwrap().id, scout.id);
 }
 
 /// **No Unarchive while another operation of the Bot is open**: the owner
@@ -1854,7 +1725,6 @@ fn the_keyboard_walks_unfinished_and_archived_controls_and_enter_presses_them() 
     let walk = [
         row_key(scout.id),
         more_key(scout.id),
-        activity_key(scout.main_chat),
         creation_retry_key(stuck.request_id),
         creation_abandon_key(stuck.request_id),
         creation_abandon_key(ended.request_id),
@@ -1916,7 +1786,6 @@ fn the_keyboard_walks_unfinished_and_archived_controls_and_enter_presses_them() 
     // Up from the archived row, back through the Unfinished controls; Enter
     // on Retry retries it by its request.
     f.roster.set_focus(scout.id);
-    assert!(f.roster.key(Press::Down));
     assert!(f.roster.key(Press::Down));
     assert!(f.roster.key(Press::Down));
     assert_eq!(f.roster.focus(), Some(creation_retry_key(stuck.request_id)));

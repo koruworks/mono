@@ -1027,6 +1027,7 @@ fn renaming_window() -> (
         ],
     );
     view.listed_for_test(page.clone());
+    view.toggle_conversation_list();
     let tab = Tab::bot(view);
     let id = tab.id;
     v.tabs_mut().push(tab);
@@ -1042,7 +1043,6 @@ fn renaming_window() -> (
     v.explore
         .bots_mut()
         .listed_for_test(vec![bot.clone().into()]);
-    v.explore.bots_mut().conversations_for_test(bot.id, page);
     v.sidebar
         .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
     lay_out(&mut v, &workspace);
@@ -1074,11 +1074,11 @@ fn front_bot(v: &mut MainView) -> &mut BotView {
 
 /// The centre of `chat`'s row, in the window's coordinates.
 fn row_centre(v: &mut MainView, chat: koru_ai_ui::ChatId) -> (f32, f32) {
-    let row = v
-        .explore
-        .bot_conversation_label_rect(v.explore_area(), chat)
-        .expect("the conversation is below its Bot in the navigator");
-    (row.x + row.w * 0.5, row.y + row.h * 0.5)
+    let area = v.focused_view_rect();
+    let row = front_bot(v)
+        .rename_rect(chat)
+        .expect("the conversation is in the Bot tab list");
+    (area.x + row.x + row.w * 0.5, area.y + row.y + row.h * 0.5)
 }
 
 /// Type `text` into whatever has the keyboard, as the shell hands keys.
@@ -1137,10 +1137,11 @@ fn a_bot_conversation_is_renamed_in_its_row_as_a_chat_is() {
         field.target,
         crate::mainview::workspace_rename::Target::BotChat { chat, .. } if chat == other
     ));
-    let row = v
-        .explore
-        .bot_conversation_label_rect(v.explore_area(), other)
-        .expect("the navigator row");
+    let area = v.focused_view_rect();
+    let local = front_bot(&mut v)
+        .rename_rect(other)
+        .expect("the tab list row");
+    let row = koru_draw::geometry::Rect::new(area.x + local.x, area.y + local.y, local.w, local.h);
     assert_eq!(
         v.workspace_rename_row(),
         Some(row),
@@ -1293,60 +1294,41 @@ fn a_refused_rename_says_the_owners_reason_and_the_row_keeps_its_name() {
     }
 }
 
-/// Conversation rows now live below their Bot in the navigator. The same
-/// keyboard reaches those rows, renames them, asks before Trash and opens them
-/// without reviving the removed header or compact conversation column.
+/// The in-tab conversation list preserves Rename, Trash and Open after the
+/// navigator's sub-rows are removed.
 #[test]
-fn navigator_conversation_rows_keep_keyboard_rename_trash_and_open() {
+fn tab_conversation_list_keeps_keyboard_rename_trash_and_open() {
     use winit::keyboard::NamedKey;
-    let (mut v, mut workspace, bot, other, _tab) = renaming_window();
+    let (mut v, mut workspace, _bot, other, _tab) = renaming_window();
     koru_workspace_host::View::set_viewport(&mut v, 940.0, 620.0);
     lay_out(&mut v, &workspace);
-    assert!(
-        !front_bot(&mut v).header_stop(),
-        "the chat has no header controls"
-    );
-    assert!(!front_bot(&mut v).compact_list_shown());
-    // Start on the Bot row, then walk past its menu and main conversation.
+    assert!(front_bot(&mut v).compact_list_shown());
     v.chrome_focus = None;
-    v.explore.bots_mut().set_focus(bot.id);
+    v.explore.clear_focus();
     koru_workspace_host::View::mouse_move(&mut v, -1.0, -1.0);
-    for _ in 0..6 {
-        if v.explore.bots().focused_conversation() == Some((bot.id, other)) {
+    for _ in 0..3 {
+        if front_bot(&mut v).rename_target(None) == Some(other) {
             break;
         }
         assert!(press(&mut v, &mut workspace.ws, NamedKey::ArrowDown));
     }
-    assert_eq!(
-        v.explore.bots().focused_conversation(),
-        Some((bot.id, other))
-    );
+    assert_eq!(front_bot(&mut v).rename_target(None), Some(other));
     assert!(press(&mut v, &mut workspace.ws, NamedKey::F2));
     assert!(
         matches!(v.workspace_rename.as_ref().map(|field| field.target),
         Some(crate::mainview::workspace_rename::Target::BotChat { chat, .. }) if chat == other)
     );
     assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
-    assert!(v.workspace_rename.is_none());
-    assert_eq!(
-        v.explore.bots().focused_conversation(),
-        Some((bot.id, other))
-    );
     assert!(press(&mut v, &mut workspace.ws, NamedKey::Delete));
+    lay_out(&mut v, &workspace);
+    v.drain_bot_lifecycle_asks();
     assert!(matches!(v.confirm.as_ref().map(|(_, subject)| subject),
         Some(ConfirmSubject::TrashBotConversation { chat, .. }) if *chat == other));
     assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
-    assert!(v.confirm.is_none());
-    assert_eq!(
-        v.explore.bots().focused_conversation(),
-        Some((bot.id, other))
-    );
     assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
     lay_out(&mut v, &workspace);
     assert_eq!(front_bot(&mut v).chat_id(), other);
-    assert!(press(&mut v, &mut workspace.ws, NamedKey::Escape));
-    assert!(!v.explore.has_focus(), "Escape returns to the conversation");
-    assert_eq!(front_bot(&mut v).focus(), None);
+    assert!(!front_bot(&mut v).compact_list_shown());
 }
 /// **A conversation the tab has read and finds idle is known idle**, with
 /// no roster activity read at all (the fourth window run: the roster's read
@@ -1401,6 +1383,8 @@ fn the_tabs_own_idle_conversation_is_asked_about_as_idle_without_the_roster() {
                 .expect("bound")
                 .pretend_read(other);
         }
+        front_bot(&mut v).toggle_conversation_list();
+        lay_out(&mut v, &workspace);
         let ws = &mut workspace.ws;
         assert!(press(&mut v, ws, NamedKey::Delete), "{chat:?}");
         lay_out(&mut v, &workspace);
@@ -1432,6 +1416,9 @@ fn an_unsent_message_stays_with_the_conversation_it_was_typed_in() {
             .composer_text()
     };
     let go_to = |v: &mut MainView, workspace: &mut koru_workspace::Workspace, chat| {
+        if !front_bot(v).compact_list_shown() {
+            front_bot(v).toggle_conversation_list();
+        }
         lay_out(v, workspace);
         let (x, y) = row_centre(v, chat);
         let ws = &mut workspace.ws;

@@ -210,7 +210,7 @@ impl Gateway {
                     page: BotTrashedChatPage { chats, next_cursor },
                 })
             }
-            BotCommand::ListActivity { workspace } => {
+            BotCommand::ListActivity { workspace, cursor } => {
                 self.window_workspace(owner, workspace)?;
                 #[derive(serde::Deserialize)]
                 struct Item {
@@ -222,15 +222,18 @@ impl Gateway {
                 struct Activity {
                     items: Vec<Item>,
                     truncated: bool,
+                    next: Option<BotActivityCursor>,
                 }
                 let activity: Activity = self.person_read(
                     owner,
                     Query::Activity {
                         workspace: workspace.as_uuid(),
+                        after: cursor,
                     },
                 )?;
                 Ok(BotResponse::Activity {
                     activity: BotActivityPage {
+                        next_cursor: activity.next,
                         truncated: activity.truncated,
                         entries: activity
                             .items

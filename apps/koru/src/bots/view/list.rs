@@ -53,14 +53,8 @@ pub(crate) const CREATE_REFUSED: Key = Key::surface(SURFACE, "create-refused");
 pub(crate) const TRASH_NOTICE: Key = Key::surface(SURFACE, "conversation-trash-notice");
 /// A conversation row's part, under the conversation's own id.
 pub(crate) const CONVERSATION_PART: &str = "bot-conversation";
-/// The header's *Conversations*, while the tab is compact.
+/// The header's *Conversations* button at every width.
 pub(crate) const CONVERSATIONS_BUTTON: Key = Key::surface(SURFACE, "conversations-button");
-
-/// **The narrowest the conversation is comfortable at** beside the column:
-/// its composer's placeholder and its model chip whole. At the default
-/// window (940 x 620, a tab about 628 px wide) the column left the chat
-/// about 350 px, its placeholder and chip cut (the second window run).
-const CHAT_MIN_W: f32 = 480.0;
 
 /// A conversation row's key, as the accessibility tree names it.
 pub(crate) fn conversation_key(chat: ChatId) -> Key {
@@ -68,14 +62,14 @@ pub(crate) fn conversation_key(chat: ChatId) -> Key {
 }
 
 impl BotView {
-    /// **Compact, with the list opened from the header**: the list takes
+    /// **Opened from the header**: the list takes
     /// the conversation's place, which takes no keys or presses meanwhile.
     pub(super) fn list_covers(&self) -> bool {
-        false
+        self.list_open && !self.settings_open
     }
 
     /// The header's *Conversations*: the list in the conversation's place,
-    /// or the conversation back. Only while compact. `true` when it moved.
+    /// or the conversation back. `true` when it moved.
     ///
     /// **Opening it gives the list the keyboard, on the open conversation's
     /// row** (the fourth window run: Enter or a click opened the list and
@@ -84,10 +78,7 @@ impl BotView {
     /// as at the wide size; Escape closes it and gives the keyboard back to
     /// *Conversations* ([`Self::list_key`]). Closing it from here while the
     /// keyboard is in it does the same.
-    pub(super) fn toggle_conversation_list(&mut self) -> bool {
-        if !self.compact() {
-            return false;
-        }
+    pub(crate) fn toggle_conversation_list(&mut self) -> bool {
         if self.list_covers() {
             let keyboard = self.focus == Some(CONVERSATION_LIST);
             self.close_compact_list();
@@ -101,20 +92,6 @@ impl BotView {
         self.focus = Some(CONVERSATION_LIST);
         self.focus_list();
         true
-    }
-
-    /// **Narrower than a page's compact width**, the conversation column
-    /// leaves and the conversation takes the tab — the rule the app's other
-    /// two-column pages follow (`koru_ui::PageShell::compact`: Settings and
-    /// Manage drop their nav column below `COMPACT_BELOW`). The column kept
-    /// its 258 px at any width, and at 720 × 600 the chat was left about
-    /// 120 px: a word per line, its composer clipped (the first window run's
-    /// finding 9).
-    ///
-    /// **And sooner, where the column would squeeze the conversation**
-    /// below [`CHAT_MIN_W`]: the column is kept only where both fit.
-    pub(super) fn compact(&self) -> bool {
-        self.size.0 < koru_ui::PageShell::COMPACT_BELOW.max(koru_draw::theme::PANEL_W + CHAT_MIN_W)
     }
 
     /// The column as elements.

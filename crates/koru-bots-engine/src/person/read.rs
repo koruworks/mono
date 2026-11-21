@@ -6,6 +6,7 @@ pub(super) fn bot(c: &Connection, who: &Person, key: Uuid) -> Result<Bot, Error>
     owner(c, who, key)?;
     let row=c.query_row("SELECT name,settings,access,role_page,knowledge_pages,memory_page,paused,lifecycle,revision,created_at_ms,updated_at_ms,(SELECT id FROM threads WHERE bot=b.id AND kind='main'),avatar,folder_frozen_at_ms,policy_revision,lifecycle_holder,may_ask FROM bots b WHERE id=?1",[key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,Option<String>>(5)?,r.get(6)?,r.get::<_,String>(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get::<_,String>(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get::<_,Option<Vec<u8>>>(15)?,r.get(16)?)))?;
     Ok(Bot {
+        summary: None,
         id: key,
         definition: Definition {
             name: row.0,
@@ -144,7 +145,12 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
             lifecycle,
         } => {
             let keys=c.prepare("SELECT id FROM bots WHERE owner=?1 AND json_extract(CAST(access AS TEXT),'$.workspace')=?2 AND lifecycle=?3 AND (?4 IS NULL OR id>?4) ORDER BY id LIMIT 65")?.query_map(params![who.owner,workspace.to_string(),lifecycle.token(),after.map(|x|x.to_string())],|r|r.get(0))?.collect::<Result<Vec<String>,_>>()?;
-            page(keys, |key| bot(c, who, key))
+            let mut summaries = summary::page(c, who, workspace, &keys)?;
+            page(keys, |key| {
+                let mut item = bot(c, who, key)?;
+                item.summary = summaries.remove(&key);
+                Ok(item)
+            })
         }
         Query::Threads {
             bot,
@@ -223,7 +229,7 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
             after,
             limit,
         } => lists::trashed(c, who, workspace, after, limit),
-        Query::Activity { workspace } => lists::activity(c, who, workspace),
+        Query::Activity { workspace, after } => lists::activity_page(c, who, workspace, after),
         Query::LifecycleOperation { bot, request } => {
             value(lifecycle_ops::read(c, who, bot, request)?)
         }

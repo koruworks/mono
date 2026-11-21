@@ -173,8 +173,7 @@ impl MainView {
             .map(|chat| (chat.id, chat.updated_at.millis()))
             .collect();
         let was_looking = std::mem::take(&mut self.chats_looking);
-        let bot_chats: Vec<_> = self.explore.bots().conversation_metadata().collect();
-        let bot_arrivals = self.explore.bots_mut().take_conversation_arrivals();
+        let bot_chats: Vec<_> = self.explore.bots().main_message_metadata().collect();
         listed.extend(bot_chats.iter().map(|(_, chat, at)| (*chat, *at)));
         if open.values().any(|facts| facts.moved) {
             self.explore.bots_mut().owe_activity();
@@ -190,11 +189,6 @@ impl MainView {
             for (_, chat, at) in &bot_chats {
                 if book.mark(*chat).is_none() {
                     moved |= book.seen(*chat, *at, None);
-                }
-            }
-            for (chat, at) in &bot_arrivals {
-                if !looking.contains(chat) {
-                    moved |= book.arrived(*chat, *at, None);
                 }
             }
             for (chat, facts) in &open {
@@ -234,7 +228,13 @@ impl MainView {
             }
             let unread_bots = bot_chats
                 .iter()
-                .filter_map(|(bot, chat, _)| unread(*chat).then_some(*bot))
+                // A Bot row uses only its eligible published-main timestamp.
+                // Generic chat arrival flags also include requests and cards.
+                .filter_map(|(bot, chat, at)| {
+                    (!looking.contains(chat)
+                        && book.mark(*chat).is_some_and(|mark| *at > mark.at_ms))
+                    .then_some(*bot)
+                })
                 .collect();
             ((statuses, unread_bots), moved)
         });

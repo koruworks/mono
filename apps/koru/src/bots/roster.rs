@@ -8,15 +8,11 @@
 //!
 //! The Bot's **name**, and **Paused** when its owner says it is paused.
 //!
-//! **Under it, its running and Needs-you conversations** (Bots P1.8 S10,
-//! E3), from the owner's activity read (`ListActivity`): one sub-row each,
-//! wearing the Chats list's own mark and words (`ChatStatus`), so what it
-//! means is never said by color alone. Pressing one opens that conversation
-//! in the Bot's tab. **A Bot with no sub-row is not claimed idle**: the read
-//! cannot tell queued from executing, does not count a reply being settled
-//! after an AI restart or a task started through the API without a
-//! conversation, and stops at 200 conversations — when it stopped, the
-//! roster says more work exists than it lists.
+//! One clipped latest-main-reply caption, overridden by Needs you while a
+//! current request is open. The dot combines main-message unread, pending
+//! Routine results and open requests. Conversations and their actions live
+//! inside the Bot tab. Activity remains available to that tab and lifecycle
+//! confirmations; it adds no roster sub-rows or keyboard targets.
 //!
 //! ## What it says when it has no rows
 //!
@@ -77,6 +73,7 @@ use vello::kurbo::Affine;
 use super::link::{Answer, BotsLink, Command, Failure, Reread};
 
 mod navigation;
+mod summary;
 pub(crate) use navigation::more_key;
 
 /// The surface every key below that names no Bot belongs to.
@@ -95,9 +92,6 @@ pub(crate) const MORE_WORK: Key = Key::surface(SURFACE, "more-work");
 pub(crate) const TEAM_CONTROL: Key = Key::surface(SURFACE, "team-pause");
 /// The line under it: what it waits for, or that every Bot is paused.
 pub(crate) const TEAM_LINE: Key = Key::surface(SURFACE, "team-pause-line");
-/// An activity sub-row's part. The sub-row is the conversation's model key
-/// with this part.
-pub(crate) const ACTIVITY_PART: &str = "bot-activity";
 /// **How long an activity read counts as what is running now** for the
 /// question before an Archive or a Trash (`bots::stops`). Work a window
 /// does not see start — a task started through the API, another device's
@@ -172,11 +166,6 @@ pub(crate) fn unarchive_key(bot: BotId) -> Key {
     Key::model(bot.as_uuid().as_u128(), UNARCHIVE_PART)
 }
 
-/// An activity sub-row's key: its conversation's own id.
-pub(crate) fn activity_key(chat: koru_ai_core::ChatId) -> Key {
-    Key::model(chat.as_uuid().as_u128(), ACTIVITY_PART)
-}
-
 /// The mark a sub-row wears and the status it says, from the owner's
 /// state: the Chats list's own vocabulary.
 pub(crate) fn activity_status(state: BotActivityState) -> ChatStatus {
@@ -236,6 +225,7 @@ pub(crate) enum Load {
 /// what opening it needs — its main conversation, its home and its agent.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct RosterBot {
+    pub summary: Option<koru_ai_core::bots::BotSummary>,
     pub id: BotId,
     pub name: String,
     pub paused: bool,
@@ -262,6 +252,7 @@ impl From<Bot> for RosterBot {
     fn from(bot: Bot) -> Self {
         Self {
             avatar: bot.avatar(),
+            summary: bot.summary,
             id: bot.id,
             name: bot.config.name,
             paused: bot.paused,
@@ -338,8 +329,6 @@ pub(crate) struct BotsRoster {
     /// in the list. `Some` doubles as *the roster holds the keyboard*.
     focus: Option<Key>,
     hover: Option<BotId>,
-    /// The activity sub-row under the pointer, by its conversation.
-    hover_activity: Option<koru_ai_core::ChatId>,
     /// The list's offset, as the last layout clamped it.
     scroll: f32,
     /// The keyboard moved; the next draw brings its row into view.
@@ -361,8 +350,6 @@ pub(crate) struct BotsRoster {
     /// roster being hidden (nothing is read while hidden) and by a change
     /// of workspace.
     activity_read_at: Option<std::time::Instant>,
-    /// A sub-row asked for: the Bot and the conversation, for the window.
-    wants_open_chat: Option<(BotId, koru_ai_core::ChatId)>,
     work: Cell<Work>,
     cache: RefCell<TextCache>,
     started: bool,
@@ -584,7 +571,6 @@ impl BotsRoster {
         self.activity_in_flight = false;
         self.activity_read_at = None;
         self.activity_seq = self.activity_seq.wrapping_add(1);
-        self.wants_open_chat = None;
         self.archived.clear();
         self.archived_load = Load::Cold;
         self.archived_fresh = false;
@@ -630,6 +616,7 @@ impl BotsRoster {
         if !shown {
             self.cancel_drag();
             self.fresh = false;
+            self.in_flight = false;
             self.archived_fresh = false;
             // Nothing tells a hidden roster that work started or stopped.
             self.activity_read_at = None;
@@ -672,8 +659,7 @@ impl BotsRoster {
         let answered = self.poll();
         let activity = self.ask_activity();
         let team = self.ask_team();
-        let conversations = self.ask_conversation_metadata();
-        asked || answered || activity || archived || team || conversations
+        asked || answered || activity || archived || team
     }
 
     /// Every Bot a row stands for, in the order the roster draws them.
@@ -820,7 +806,12 @@ impl BotsRoster {
     /// renamed, paused or resumed there: its row says so at once, shown or
     /// not, rather than when the roster next lists. A Bot the roster does
     /// not list is left to the list. `true` when a row changed.
-    pub(crate) fn know_bot(&mut self, bot: RosterBot) -> bool {
+    pub(crate) fn know_bot(&mut self, mut bot: RosterBot) -> bool {
+        // A settings response carries no list projection. Keep the confirmed
+        // preview/counts until the next owner listing supplies new facts.
+        if bot.summary.is_none() {
+            bot.summary = self.row(bot.id).and_then(|row| row.summary.clone());
+        }
         match self.bots.iter_mut().find(|row| row.id == bot.id) {
             Some(row) if *row != bot => {
                 *row = bot;
@@ -1022,7 +1013,7 @@ impl BotsRoster {
     /// roster is shown, never from a hidden one and never on a timer.
     pub(crate) fn owe_activity(&mut self) {
         self.activity_owed = true;
-        self.refresh_conversation_metadata();
+        self.fresh = false;
     }
 
     /// Ask for the workspace's activity when it is owed and none is on its
@@ -1084,66 +1075,6 @@ impl BotsRoster {
             .collect()
     }
 
-    /// A sub-row a press, a key or an accessibility action asked for, taken
-    /// once, with what the Bot's tab needs.
-    pub(crate) fn take_wants_open_chat(&mut self) -> Option<(RosterBot, koru_ai_core::ChatId)> {
-        let (bot, chat) = self.wants_open_chat.take()?;
-        let row = self.bots.iter().find(|row| row.id == bot)?.clone();
-        Some((row, chat))
-    }
-
-    /// Ask for one of a Bot's running or Needs-you conversations.
-    pub(crate) fn ask_open_chat(&mut self, chat: koru_ai_core::ChatId) -> bool {
-        let Some(bot) = self
-            .bots
-            .iter()
-            .find(|bot| self.conversation_ids(bot.id).contains(&chat))
-            .map(|bot| bot.id)
-        else {
-            return false;
-        };
-        self.selected = Some(bot);
-        self.focus_conversation(chat);
-        self.wants_open_chat = Some((bot, chat));
-        true
-    }
-
-    /// A sub-row's accessible name: which conversation, then its state's
-    /// words — the Chats list's.
-    pub(crate) fn activity_name(&self, bot: &RosterBot, entry: &BotActivity) -> String {
-        let which = self.conversation_words(bot, entry.chat_id);
-        match self.state_words(entry) {
-            Some(state) => format!("{which}, {state}"),
-            None => which.to_owned(),
-        }
-    }
-
-    /// A sub-row's state in words: the Chats list's running and Needs you.
-    pub(crate) fn state_words(&self, entry: &BotActivity) -> Option<String> {
-        activity_status(entry.state)
-            .spoken(self.lang)
-            .map(str::to_owned)
-    }
-
-    /// **Which conversation an activity row is**, in the words its Bot
-    /// tab's list titles it with (`conversations::shown_title`), when an
-    /// open tab has listed it; else the main one by that name and another
-    /// by what it is — the activity read names no title.
-    fn conversation_words(&self, bot: &RosterBot, chat: koru_ai_core::ChatId) -> String {
-        if let Some(title) = self.titles.get(&chat) {
-            return title.clone();
-        }
-        t(
-            self.lang,
-            if chat == bot.main_chat {
-                Words::BotsMainConversation
-            } else {
-                Words::BotsOtherConversation
-            },
-        )
-        .to_owned()
-    }
-
     /// The title an open Bot tab shows for `chat`, when one has listed it.
     pub(crate) fn known_title(&self, chat: koru_ai_core::ChatId) -> Option<&str> {
         self.titles.get(&chat).map(String::as_str)
@@ -1170,6 +1101,9 @@ impl BotsRoster {
     /// link to ask through. A full queue leaves it unasked, to ask on a later
     /// pass. `true` when a request went.
     fn refresh(&mut self) -> bool {
+        if self.in_flight {
+            return false;
+        }
         let (Some(workspace), Some(link)) = (self.workspace, &self.link) else {
             return false;
         };
@@ -1208,9 +1142,6 @@ impl BotsRoster {
             // The roster asks for lists, for activity, for its Archived
             // filter and its Unarchives; any other answer is not its.
             match answer {
-                Answer::Chats { seq, bot, result } => {
-                    changed |= self.take_conversation_page(seq, bot, result);
-                }
                 Answer::Listed {
                     seq,
                     workspace,
@@ -1327,7 +1258,6 @@ impl BotsRoster {
                 self.cancel_drag();
                 self.bots = bots.into_iter().map(RosterBot::from).collect();
                 self.apply_order();
-                self.refresh_conversation_metadata();
                 self.load = Load::Ready;
                 // A listing is the roster's own command: its activity is read
                 // after it, once.
@@ -1428,7 +1358,6 @@ impl BotsRoster {
     pub(crate) fn awaiting(&self) -> bool {
         self.shown
             && (self.in_flight
-                || self.navigation_awaiting()
                 || self.activity_in_flight
                 || self.archived_in_flight
                 || self.creations_in_flight
@@ -1496,7 +1425,6 @@ impl BotsRoster {
         for bot in &self.bots {
             stops.push(row_key(bot.id));
             stops.push(more_key(bot.id));
-            stops.extend(self.conversation_ids(bot.id).into_iter().map(activity_key));
         }
         if self
             .abandoned
@@ -1627,16 +1555,6 @@ impl BotsRoster {
                 return self.ask_open(bot);
             }
         }
-        // A running or Needs-you sub-row opens its conversation, as a
-        // press of it does.
-        if key.part == ACTIVITY_PART
-            && let Some(chat) = self
-                .conversation_ids_all()
-                .into_iter()
-                .find(|chat| activity_key(*chat) == key)
-        {
-            return self.ask_open_chat(chat);
-        }
         let pressed =
             if key == ARCHIVED_TOGGLE || key.part == ARCHIVED_PART || key.part == UNARCHIVE_PART {
                 self.press_archived(key)
@@ -1678,20 +1596,10 @@ impl BotsRoster {
             self.press_archived(key);
             return true;
         }
-        if let Some(chat) = self.activity_at(area, top, x, y) {
-            self.ask_open_chat(chat);
-        } else if let Some(bot) = self.bot_at(area, top, x, y) {
+        if let Some(bot) = self.bot_at(area, top, x, y) {
             self.begin_drag(bot, area, top, x, y);
         }
         true
-    }
-
-    /// The activity sub-row under a point, by its conversation.
-    fn activity_at(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<koru_ai_core::ChatId> {
-        let key = self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y))?;
-        self.conversation_ids_all()
-            .into_iter()
-            .find(|chat| activity_key(*chat) == key)
     }
 
     /// The Archived filter's control under a point: its toggle, an archived
@@ -1736,25 +1644,18 @@ impl BotsRoster {
         let archived = self
             .unfinished_at(area, top, x, y)
             .or_else(|| self.archived_at(area, top, x, y));
-        let activity = if archived.is_some() {
-            None
-        } else {
-            self.activity_at(area, top, x, y)
-        };
-        let hover = if activity.is_some() || archived.is_some() {
+        let hover = if archived.is_some() {
             None
         } else {
             self.bot_at(area, top, x, y)
         };
-        let moved = std::mem::replace(&mut self.hover_activity, activity) != activity;
         let lit = std::mem::replace(&mut self.hover_archived, archived) != archived;
-        std::mem::replace(&mut self.hover, hover) != hover || moved || lit
+        std::mem::replace(&mut self.hover, hover) != hover || lit
     }
 
     pub(crate) fn clear_hover(&mut self) -> bool {
-        let activity = self.hover_activity.take().is_some();
         let archived = self.hover_archived.take().is_some();
-        self.hover.take().is_some() || activity || archived
+        self.hover.take().is_some() || archived
     }
 
     /// The list's offset, as the last layout clamped it: what the published
@@ -1810,6 +1711,12 @@ impl BotsRoster {
         } else {
             bot.name.clone()
         };
+        let preview = summary::caption(bot, self.lang);
+        let name = if preview.is_empty() {
+            name
+        } else {
+            format!("{name}, {preview}")
+        };
         if self.has_unread(bot.id) {
             format!("{name}, {}", t(self.lang, Words::ChatsStatusUnread))
         } else {
@@ -1850,19 +1757,7 @@ impl BotsRoster {
                 )
                 .decorative(),
             )
-            .child(
-                text(&bot.name)
-                    .named("Bot name")
-                    .role(roles::ROW)
-                    .ink(if selected {
-                        Ink::Primary
-                    } else {
-                        Ink::Secondary
-                    })
-                    .emphasis(selected)
-                    .fill()
-                    .truncate(),
-            );
+            .child(summary::labels(bot, selected, self.lang));
         if bot.paused {
             primary = primary.child(
                 text(t(self.lang, Words::BotsPaused))
@@ -1879,73 +1774,16 @@ impl BotsRoster {
             );
         }
         primary = primary.child(self.more_button(bot.id));
-        if self.navigation.unread.contains(&bot.id) {
+        if self.has_unread(bot.id) {
             primary = primary.child(self.unread_mark());
         }
         // The margins press the row's primary, so the whole band is the row.
-        let mut block = col("Bot block").child(
+        col("Bot block").child(
             row("Bot row")
                 .pad_x(alias::ROW_PLATE_INSET)
                 .hit_as(key)
                 .child(primary),
-        );
-        for chat in self.conversation_ids(bot.id) {
-            block = block.child(self.activity_row(bot, chat));
-        }
-        block
-    }
-
-    /// **One running or Needs-you conversation under its Bot** (S10): the
-    /// Chats list's mark and its words, then which conversation — the main
-    /// one by name; another by what it is, the read naming no title.
-    fn activity_row(&self, bot: &RosterBot, chat: koru_ai_core::ChatId) -> El {
-        let entry = self.activity.iter().find(|entry| entry.chat_id == chat);
-        let key = activity_key(chat);
-        let status = entry.map_or(ChatStatus::Idle, |entry| activity_status(entry.state));
-        let which = self.conversation_words(bot, chat);
-        let primary = row("Bot activity")
-            .id(key)
-            .selected(self.navigation.current == Some(chat))
-            .fill()
-            .min_h(metrics::NAV_ROW_MIN)
-            .pad_start(Space::S6)
-            .pad_end(alias::ROW_PLATE_INSET)
-            .gap(Space::S2)
-            .items_center()
-            .radius(Radius::M)
-            .states(&BOT_ROW_STATES)
-            .hit()
-            .focusable()
-            .action(Action::Click)
-            .semantics(Role::ListItem)
-            .name_text(self.conversation_name(bot, chat))
-            .child(
-                koru_draw::el::leaf("Bot activity mark", MarkLeaf(status, !self.reduced_motion))
-                    .decorative()
-                    .w(metrics::TRAILING_LANE_W),
-            )
-            .child(
-                text(which)
-                    .named("Bot activity conversation")
-                    .role(roles::META)
-                    .ink(Ink::Secondary)
-                    .fill()
-                    .truncate(),
-            )
-            .child(
-                text(
-                    entry
-                        .and_then(|entry| self.state_words(entry))
-                        .unwrap_or_default(),
-                )
-                .named("Bot activity state")
-                .role(roles::META)
-                .ink(Ink::Hint),
-            );
-        row("Bot activity row")
-            .pad_x(alias::ROW_PLATE_INSET)
-            .hit_as(key)
-            .child(primary)
+        )
     }
 
     fn sentence(name: &'static str, part: Key, words: &str) -> El {
@@ -2599,10 +2437,7 @@ impl BotsRoster {
 
     fn interaction(&self) -> Interaction {
         Interaction {
-            hot: self
-                .hover_archived
-                .or(self.hover_activity.map(activity_key))
-                .or(self.hover.map(row_key)),
+            hot: self.hover_archived.or(self.hover.map(row_key)),
             pressed: self.carried_key(),
             focused: self.focus,
         }

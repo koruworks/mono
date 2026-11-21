@@ -5,6 +5,59 @@ use koru_ai_core::ChatId;
 use koru_ai_core::bots::{BotChatReference, BotId};
 
 #[test]
+fn activity_reader_reaches_requests_after_two_hundred_and_rejects_repeating_cursors() {
+    use koru_ai_core::bots::{BotActivity, BotActivityCursor, BotActivityState};
+    let bot = BotId::mint();
+    let cursor = BotActivityCursor {
+        bot: bot.as_uuid(),
+        thread: uuid::Uuid::from_u128(200),
+    };
+    let mut calls = 0;
+    let page = activity_pages(|after| {
+        calls += 1;
+        let (start, end, next) = if after.is_none() {
+            (1, 200, Some(cursor))
+        } else {
+            assert_eq!(after, Some(cursor));
+            (201, 205, None)
+        };
+        Ok(BotActivityPage {
+            entries: (start..=end)
+                .map(|n| BotActivity {
+                    bot_id: bot,
+                    chat_id: ChatId::from_uuid(uuid::Uuid::from_u128(n)),
+                    state: if n == 205 {
+                        BotActivityState::NeedsYou
+                    } else {
+                        BotActivityState::Running
+                    },
+                })
+                .collect(),
+            truncated: next.is_some(),
+            next_cursor: next,
+        })
+    })
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(page.entries.len(), 205);
+    assert_eq!(page.entries[204].state, BotActivityState::NeedsYou);
+    assert!(!page.truncated);
+    let mut calls = 0;
+    assert!(
+        activity_pages(|_| {
+            calls += 1;
+            Ok(BotActivityPage {
+                entries: vec![],
+                truncated: true,
+                next_cursor: Some(cursor),
+            })
+        })
+        .is_err()
+    );
+    assert_eq!(calls, 2);
+}
+
+#[test]
 fn a_list_reply_is_the_roster() {
     let home = WorkspaceId::new();
     let one = crate::bots::tests::bot(BotId::mint(), home, "Scout", false);
