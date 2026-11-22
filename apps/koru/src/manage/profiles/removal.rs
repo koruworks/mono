@@ -71,9 +71,12 @@ pub(super) fn pending_copy(pending: &PendingHostedDelete) -> (String, String) {
                 pending.profile_name
             ),
         ),
-        HostedDeleteStage::Inspecting
-        | HostedDeleteStage::Deleting
-        | HostedDeleteStage::Reauthenticating => (
+        HostedDeleteStage::Reauthenticating => (
+            "Confirm sign-in to delete Profile".to_owned(),
+            "Finish signing in to confirm deleting this Profile from Koru. Nothing has been changed on this device."
+                .to_owned(),
+        ),
+        HostedDeleteStage::Inspecting | HostedDeleteStage::Deleting => (
             "Deleting Profile from Koru...".to_owned(),
             "Koru is confirming the hosted deletion before changing anything on this device."
                 .to_owned(),

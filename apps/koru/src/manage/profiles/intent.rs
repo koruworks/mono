@@ -352,6 +352,15 @@ impl ProfilesController {
                 }
             }
             Intent::CancelHostedDeleteFailure | Intent::PostponeHostedCleanup => {
+                if self
+                    .pending_hosted_delete
+                    .as_ref()
+                    .is_some_and(|pending| pending.stage == HostedDeleteStage::Reauthenticating)
+                {
+                    self.pending = Some(AccountCommand::Cancel {
+                        generation: self.account.generation,
+                    });
+                }
                 self.pending_hosted_delete = None;
                 self.notice = None;
             }

@@ -693,6 +693,7 @@ impl ManageView {
         } else {
             let (title, body) = self.c.hosted_delete_copy_for(profile.id)?;
             let answers = match self.c.hosted_delete().map(|(_, stage)| stage) {
+                Some(HostedDeleteStage::Reauthenticating) => vec![(A::CancelFailure, "Cancel")],
                 Some(HostedDeleteStage::Failed) => vec![
                     (A::RetryDelete, "Try again"),
                     (A::RemoveAfterFailure, "Remove from this device"),

@@ -769,11 +769,41 @@ impl ProfilesController {
                     "fresh_authentication_required" | "fresh_google_authentication_required"
                 ) && self.pending_hosted_delete.is_some() =>
             {
+                let provider = if code == "fresh_google_authentication_required" {
+                    "google".to_owned()
+                } else {
+                    let profile_storage = self
+                        .pending_hosted_delete
+                        .as_ref()
+                        .map(|pending| pending.profile.to_storage());
+                    self.signed_in_identity
+                        .as_ref()
+                        .map(|(provider, _)| provider.clone())
+                        .or_else(|| {
+                            let target = profile_storage.as_deref()?;
+                            self.account_profiles
+                                .iter()
+                                .find(|row| row.profile_id == target)
+                                .and_then(|row| row.auth_identities.first())
+                                .map(|identity| identity.provider.clone())
+                        })
+                        .unwrap_or_else(|| "google".to_owned())
+                };
                 if let Some(pending) = self.pending_hosted_delete.as_mut() {
                     pending.stage = HostedDeleteStage::Reauthenticating;
-                    self.pending = Some(AccountCommand::StartGoogle {
-                        locale: "en".into(),
-                        ab: None,
+                    self.pending = Some(match provider.as_str() {
+                        "apple" => AccountCommand::StartApple {
+                            locale: "en".into(),
+                            ab: None,
+                        },
+                        "email" => AccountCommand::StartEmailBrowser {
+                            locale: "en".into(),
+                            ab: None,
+                        },
+                        _ => AccountCommand::StartGoogle {
+                            locale: "en".into(),
+                            ab: None,
+                        },
                     });
                     self.notice = Some("Sign in again to continue".into());
                 }
@@ -782,7 +812,9 @@ impl ProfilesController {
                 if self.pending_hosted_delete.as_ref().is_some_and(|pending| {
                     matches!(
                         pending.stage,
-                        HostedDeleteStage::Inspecting | HostedDeleteStage::Deleting
+                        HostedDeleteStage::Inspecting
+                            | HostedDeleteStage::Deleting
+                            | HostedDeleteStage::Reauthenticating
                     )
                 }) =>
             {

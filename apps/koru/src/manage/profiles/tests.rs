@@ -879,6 +879,63 @@ fn a_hosted_delete_that_needs_a_fresh_sign_in_asks_for_one_and_resumes() {
     }
 }
 
+#[test]
+fn hosted_delete_reauth_uses_signed_in_provider_and_recovers_on_cancel_or_failure() {
+    for (provider, expect_apple, expect_email) in [
+        ("apple", true, false),
+        ("email", false, true),
+        ("google", false, false),
+    ] {
+        let mut c = ProfilesController::new();
+        c.take_request();
+        c.account.generation = 7;
+        c.signed_in_identity = Some((provider.into(), "me@example.com".into()));
+        let profile = ProfileId::new();
+        c.pending_hosted_delete = Some(PendingHostedDelete {
+            profile,
+            profile_name: "Apple".into(),
+            stage: HostedDeleteStage::Deleting,
+        });
+        c.complete(AccountOperationResult::Failed {
+            code: "fresh_authentication_required".into(),
+        });
+        assert_eq!(
+            c.pending_hosted_delete.as_ref().map(|p| p.stage),
+            Some(HostedDeleteStage::Reauthenticating),
+        );
+        let cmd = c.take_request();
+        if expect_apple {
+            assert!(matches!(cmd, Some(AccountCommand::StartApple { .. })));
+        } else if expect_email {
+            assert!(matches!(
+                cmd,
+                Some(AccountCommand::StartEmailBrowser { .. })
+            ));
+        } else {
+            assert!(matches!(cmd, Some(AccountCommand::StartGoogle { .. })));
+        }
+
+        // A sign-in failure during reauth does not leave the delete stuck.
+        c.complete(AccountOperationResult::Failed {
+            code: "browser_timeout".into(),
+        });
+        assert_eq!(
+            c.pending_hosted_delete.as_ref().map(|p| p.stage),
+            Some(HostedDeleteStage::Failed),
+        );
+
+        // Cancelling directly while reauthenticating cancels the browser flow
+        // and clears the pending hosted delete.
+        c.pending_hosted_delete.as_mut().unwrap().stage = HostedDeleteStage::Reauthenticating;
+        c.perform(Intent::CancelHostedDeleteFailure);
+        assert!(c.pending_hosted_delete.is_none());
+        assert_eq!(
+            c.take_request(),
+            Some(AccountCommand::Cancel { generation: 7 })
+        );
+    }
+}
+
 /// **No account id on a Profile's line** (2026-11-10): an account Profile
 /// says how it connects and syncs, not *Account 02e1519b*; one on no
 /// account does not infer a transport mode from that absence.
