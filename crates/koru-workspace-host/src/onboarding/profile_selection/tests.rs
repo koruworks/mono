@@ -786,10 +786,12 @@ fn workspace_modal_chooser_preselects_syncable_profiles_and_supports_not_you_wit
     assert_eq!(layout.primary_label, "Sync 2 profiles");
     assert!(layout.primary_enabled);
 
-    // Moving to "Create a new profile" does NOT show "Return to account choice" on Screen 2.
+    // Moving to "Create a new profile" opens the unified signed-in Welcome modal
+    // with no "Return to account choice".
     let create = layout.create_new.centre();
     assert!(view.mouse_down(create.0, create.1));
-    assert_eq!(view.screen, Screen::Setup);
+    assert_eq!(view.screen, Screen::Entry);
+    assert!(view.welcome_signed_in);
     assert!(!view.controls().contains(&Hit::ResumeAccount));
 
     // Going back to ExistingProfiles and clicking "Not you?" logs out and returns to Screen 1.

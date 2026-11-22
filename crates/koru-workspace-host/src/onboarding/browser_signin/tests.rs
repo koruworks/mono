@@ -12,7 +12,7 @@ fn waiting() -> (OnboardingView, CommandSubmissionId) {
     view.begin_browser_signin(BrowserProvider::Google);
     let submission = view
         .command_submission(&AccountCommand::StartGoogle {
-            locale: "en".into(),
+            locale: "en".into(), ab: None
         })
         .unwrap();
     assert_eq!(view.take_action(), Some(Action::StartGoogle));

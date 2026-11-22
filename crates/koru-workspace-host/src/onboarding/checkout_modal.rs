@@ -85,6 +85,7 @@ impl OnboardingView {
         self.screen == Screen::CheckoutPending
     }
 
+    #[cfg(test)]
     pub(crate) fn checkout_plan(&self) -> &'static str {
         self.welcome_billing.plan_code()
     }
@@ -106,8 +107,12 @@ impl OnboardingView {
     pub(super) fn activate_checkout_modal(&mut self, hit: Hit) {
         match hit {
             Hit::Back => {
-                self.modal_account_flow = false;
-                self.show_entry();
+                if self.workspace_modal && self.welcome_signed_in {
+                    self.show_welcome_signed_in();
+                } else {
+                    self.modal_account_flow = false;
+                    self.show_entry();
+                }
             }
             Hit::BillingMonthly => {
                 self.welcome_billing = WelcomeBillingInterval::Monthly;
@@ -132,9 +137,21 @@ impl OnboardingView {
             }
             Hit::ContinueOffline => {
                 // Keep the signed-in session in the agent so the person can
-                // start their trial later from Settings, and proceed straight
-                // to local profile & workspace creation.
-                self.show_setup();
+                // start their trial later from Settings. When the unified
+                // welcome form already holds both names, create and open the
+                // space right away; otherwise return to the signed-in form with
+                // Cloud toggled off.
+                if self.workspace_modal {
+                    self.welcome_cloud_enabled = false;
+                    self.welcome_path = WelcomePath::Offline;
+                    if self.setup_complete() {
+                        self.finish_welcome_profile_creation(true);
+                    } else {
+                        self.show_welcome_signed_in();
+                    }
+                } else {
+                    self.show_setup();
+                }
             }
             _ => {}
         }

@@ -1134,7 +1134,7 @@ fn unresolved_legacy_blocks_new_signin_even_when_another_account_restores() {
                 .enqueue(
                     7,
                     AccountCommand::StartGoogle {
-                        locale: "en".into(),
+                        locale: "en".into(), ab: None
                     },
                 )
                 .unwrap();
@@ -1279,7 +1279,7 @@ fn rejected_legacy_and_missing_or_rejected_ready_slot_allow_fresh_signin() {
             .enqueue(
                 7,
                 AccountCommand::StartGoogle {
-                    locale: "en".into(),
+                    locale: "en".into(), ab: None
                 },
             )
             .unwrap();
@@ -1366,7 +1366,7 @@ fn anonymous_add_reconciles_recovered_legacy_without_adopting_its_owner() {
         .enqueue(
             7,
             AccountCommand::StartGoogle {
-                locale: "en".into(),
+                locale: "en".into(), ab: None
             },
         )
         .unwrap();

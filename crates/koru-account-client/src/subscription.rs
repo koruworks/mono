@@ -14,12 +14,32 @@ struct Page {
     next_cursor: Option<String>,
 }
 
+/// Optional onboarding A/B variant codes forwarded on checkout handoff.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CheckoutHandoffAb<'a> {
+    pub code: Option<&'a str>,
+    pub header: Option<&'a str>,
+    pub billing: Option<&'a str>,
+}
+
+impl CheckoutHandoffAb<'_> {
+    pub fn is_empty(self) -> bool {
+        self.code.is_none() && self.header.is_none() && self.billing.is_none()
+    }
+}
+
 #[derive(Serialize)]
 struct CheckoutHandoffRequest<'a> {
     plan: &'a str,
     locale: &'a str,
     callback_port: u16,
     client_state: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    header: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    billing: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -201,24 +221,43 @@ impl AccountClient {
         locale: &str,
         callback_port: u16,
         client_state: &str,
+        ab: CheckoutHandoffAb<'_>,
     ) -> Result<String, ClientError> {
         if !matches!(plan, "s1" | "y1") || callback_port == 0 || client_state.is_empty() {
             return Err(ClientError::InvalidRequest);
         }
-        let body = serde_json::to_vec(&CheckoutHandoffRequest {
-            plan,
-            locale,
-            callback_port,
-            client_state,
-        })
-        .map_err(|_| ClientError::InvalidRequest)?;
-        let response: CheckoutHandoffResponse = self.execute(
-            RouteId::CreateProfile,
-            body,
-            Some(authorization),
-            false,
-            Some("/v1/billing/stripe/checkout-handoff".to_owned()),
-        )?;
+        let send = |ab: CheckoutHandoffAb<'_>| -> Result<CheckoutHandoffResponse, ClientError> {
+            let body = serde_json::to_vec(&CheckoutHandoffRequest {
+                plan,
+                locale,
+                callback_port,
+                client_state,
+                code: ab.code,
+                header: ab.header,
+                billing: ab.billing,
+            })
+            .map_err(|_| ClientError::InvalidRequest)?;
+            self.execute(
+                RouteId::CreateProfile,
+                body,
+                Some(authorization),
+                false,
+                Some("/v1/billing/stripe/checkout-handoff".to_owned()),
+            )
+        };
+        let response = match send(ab) {
+            Ok(response) => response,
+            // Older deployments enforce `deny_unknown_fields` on checkout-handoff
+            // and return `{"error":{"code":"invalid_request"}}` (HTTP 400, which
+            // decodes as `ApiWithoutCode { status: 400 }`) or `DeveloperErrorV1`
+            // (`Api { status: 400, .. }`). Fall back cleanly once without the
+            // optional A/B metadata so checkout still completes against older servers.
+            Err(
+                ClientError::Api { status: 400, .. }
+                | ClientError::ApiWithoutCode { status: 400 },
+            ) if !ab.is_empty() => send(CheckoutHandoffAb::default())?,
+            Err(err) => return Err(err),
+        };
         if response.checkout_url.is_empty() || response.checkout_url.len() > 8192 {
             return Err(ClientError::InvalidResponse);
         }

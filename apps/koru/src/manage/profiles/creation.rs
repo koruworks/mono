@@ -86,16 +86,19 @@ impl ProfilesController {
             Some(Action::StartGoogle) => {
                 self.pending = Some(AccountCommand::StartGoogle {
                     locale: "en".into(),
+                    ab: None,
                 });
             }
             Some(Action::StartApple) => {
                 self.pending = Some(AccountCommand::StartApple {
                     locale: "en".into(),
+                    ab: None,
                 });
             }
             Some(Action::StartEmailBrowser) => {
                 self.pending = Some(AccountCommand::StartEmailBrowser {
                     locale: "en".into(),
+                    ab: None,
                 });
             }
             Some(Action::OpenPricing)

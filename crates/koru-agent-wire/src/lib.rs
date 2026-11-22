@@ -255,7 +255,7 @@ use serde::{Deserialize, Serialize};
 /// Q-G: a Profile created from Manage never renames the account) and adds
 /// browser email sign-in, Cloud access / checkout handoff, and subscription
 /// kind labels. A 50 agent cannot read those commands; the handshake refuses it.
-pub const PROTOCOL_VERSION: u32 = 51;
+pub const PROTOCOL_VERSION: u32 = 52;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -1217,6 +1217,27 @@ pub enum Push {
     },
 }
 
+/// Closed A/B experiment codes carried from desktop onboarding into OAuth start
+/// and checkout handoff requests so conversions can be attributed by variant.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnboardingAb {
+    /// Koru Cloud copy variant (`"sync"` | `"backup"` | `"founding"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Welcome header/lead copy variant (`"speed"` | `"ownership"` | `"purpose"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Preselected billing interval variant (`"monthly"` | `"yearly"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<String>,
+}
+
+impl OnboardingAb {
+    pub fn is_empty(&self) -> bool {
+        self.code.is_none() && self.header.is_none() && self.billing.is_none()
+    }
+}
+
 /// Commands accepted by the account worker. String ids remain strings on this
 /// leaf IPC crate and are validated by the owning account/Profile domains.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1233,16 +1254,22 @@ pub enum AccountCommand {
     Status,
     StartGoogle {
         locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
     },
     /// Sign in with Apple in the system browser. Everything after the browser
     /// returns -- creation, Profile choice, the exchange -- is Google's path.
     StartApple {
         locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
     },
     /// Sign in with email in the system browser (`koru.do/login`), returning an
     /// OAuth grant over the same loopback + PKCE exchange as Google and Apple.
     StartEmailBrowser {
         locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
     },
     /// Sign in with an email address and a password.
     ///
@@ -1304,6 +1331,8 @@ pub enum AccountCommand {
     StartCheckout {
         plan: String,
         locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
     },
     InspectCloudPlan {
         request_id: u64,

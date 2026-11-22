@@ -34,14 +34,14 @@ pub(crate) const SETUP_FIELD_GAP: Tagged<Space> = Tagged::new("SETUP_FIELD_GAP",
 /// Between the actions under the primary: 4.
 pub(crate) const SETUP_ACTION_GAP: Tagged<Space> = Tagged::new("SETUP_ACTION_GAP", Space::S1);
 
-/// A name field's height: 44, today's first-run field.
-pub(crate) const SETUP_FIELD_H: Metric = Metric::new("SETUP_FIELD_H", 44.0);
+/// A name field's height: 38.
+pub(crate) const SETUP_FIELD_H: Metric = Metric::new("SETUP_FIELD_H", 38.0);
 
-/// The avatar chip and the workspace tile: 44, the field's height.
-pub(crate) const SETUP_CHIP: Metric = Metric::new("SETUP_CHIP", 44.0);
+/// The avatar chip and the workspace tile: 38, the field's height.
+pub(crate) const SETUP_CHIP: Metric = Metric::new("SETUP_CHIP", 38.0);
 
-/// The primary's height: 42, today's first-run primary.
-pub(crate) const SETUP_PRIMARY_H: Metric = Metric::new("SETUP_PRIMARY_H", 42.0);
+/// The primary's height: 38, matching the fields and social buttons.
+pub(crate) const SETUP_PRIMARY_H: Metric = Metric::new("SETUP_PRIMARY_H", 38.0);
 
 /// *Back* and *Resume*: 36, today's *Resume* button.
 pub(crate) const SETUP_ACTION_H: Metric = Metric::new("SETUP_ACTION_H", 36.0);
@@ -50,7 +50,7 @@ pub(crate) const SETUP_ACTION_H: Metric = Metric::new("SETUP_ACTION_H", 36.0);
 /// corner — the ring the form drew round its tiles.
 pub(crate) const SETUP_RING_W: Metric = Metric::new("SETUP_RING_W", 2.0);
 pub(crate) const SETUP_RING_GAP: Metric = Metric::new("SETUP_RING_GAP", 2.0);
-pub(crate) const SETUP_RING_RADIUS: Metric = Metric::new("SETUP_RING_RADIUS", 12.0);
+pub(crate) const SETUP_RING_RADIUS: Metric = Metric::new("SETUP_RING_RADIUS", 10.0);
 
 /// The hover overlay over the profile and workspace tiles: rounded to match
 /// `koru_draw::tile::Tile`'s corner ratio, darkened behind a centered pencil.

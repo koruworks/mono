@@ -45,9 +45,9 @@ impl PendingCreation {
         listener: Box<dyn SignInSession>,
     ) -> Self {
         let locale = match &start {
-            AccountCommand::StartGoogle { locale }
-            | AccountCommand::StartApple { locale }
-            | AccountCommand::StartEmailBrowser { locale } => locale.clone(),
+            AccountCommand::StartGoogle { locale, .. }
+            | AccountCommand::StartApple { locale, .. }
+            | AccountCommand::StartEmailBrowser { locale, .. } => locale.clone(),
             _ => String::new(),
         };
         Self {
@@ -78,6 +78,7 @@ impl PendingCreation {
             locale: pending.locale.clone(),
             start: AccountCommand::StartGoogle {
                 locale: pending.locale.clone(),
+                ab: pending.ab.clone(),
             },
             flow_id: pending.request.flow_id,
             listener: None,
@@ -208,9 +209,13 @@ impl ProductionAccountService {
                         ..
                     } => {
                         let locale = pending.locale.clone();
+                        let ab = match &pending.start {
+                            AccountCommand::StartGoogle { ab, .. } => ab.clone(),
+                            _ => None,
+                        };
                         self.continue_native_collision(generation, &mut reauthentication)?;
                         self.pending_creation = None;
-                        self.start_native_token(generation, locale, cancel, progress)
+                        self.start_native_token(generation, locale, ab, cancel, progress)
                     }
                     _ => Err(ServiceError::terminal("account_confirmation_invalid")),
                 }

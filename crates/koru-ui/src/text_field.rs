@@ -51,7 +51,7 @@ use koru_draw::theme::Brush;
 /// Here rather than beside the drawing, because hit-testing needs the same
 /// number: a click lands on the character it looks like it lands on only while
 /// both agree about where the text starts.
-pub const PAD: f32 = 7.0;
+pub const PAD: f32 = 12.0;
 
 /// How tall a field is when a floating panel wears one above its rows.
 pub const SEARCH_H: f32 = 30.0;
@@ -1645,8 +1645,9 @@ pub fn form_caret_span(
 
 /// Fill a [`FieldCaret::Form`] caret whose left edge is at `x`, centred on it
 /// so the thicker bar sits between two letters rather than on the next one.
+#[track_caller]
 pub fn fill_form_caret(scene: &mut Scene, root: Affine, x: f32, (top, bottom): (f32, f32)) {
-    koru_draw::scene::fill(
+    koru_draw::scene::fill_cursor(
         scene,
         root,
         theme::caret_color().color(),

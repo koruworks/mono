@@ -205,7 +205,7 @@ fn a_local_profile_signs_in_with_google_while_signed_out() {
         view.c.take_request(),
         Some(AccountCommand::StartGoogle {
             locale: "en".into()
-        })
+        , ab: None})
     );
 }
 

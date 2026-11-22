@@ -103,7 +103,30 @@ pub fn fill(scene: &mut Scene, root: Affine, color: Color, shape: &impl vello::k
     scene.fill(Fill::NonZero, root, color, None, shape);
 }
 
+/// Fill a text cursor (upright bar or italic parallelogram) and record it in
+/// the inspector as a `Cursor` part rather than an anonymous `fill` primitive.
+#[track_caller]
+pub fn fill_cursor(
+    scene: &mut Scene,
+    root: Affine,
+    color: Color,
+    shape: &impl vello::kurbo::Shape,
+) {
+    if color.components[3] > 0.0 {
+        let _cursor =
+            crate::inspect::scope("Cursor", "part", root, shape.bounding_box(), |record| {
+                record.property(
+                    "color",
+                    crate::inspect::color(color),
+                    "resolved caret paint",
+                );
+            });
+        scene.fill(Fill::NonZero, root, color, None, shape);
+    }
+}
+
 /// Fill a caret parallelogram (upright or italic-slanted).
+#[track_caller]
 pub fn fill_caret_quad(scene: &mut Scene, root: Affine, color: Color, quad: [(f64, f64); 4]) {
     let mut path = BezPath::new();
     path.move_to(quad[0]);
@@ -111,7 +134,7 @@ pub fn fill_caret_quad(scene: &mut Scene, root: Affine, color: Color, quad: [(f6
     path.line_to(quad[2]);
     path.line_to(quad[3]);
     path.close_path();
-    fill(scene, root, color, &path);
+    fill_cursor(scene, root, color, &path);
 }
 
 #[track_caller]

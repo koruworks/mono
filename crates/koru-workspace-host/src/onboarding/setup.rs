@@ -39,7 +39,7 @@ use super::welcome_modal::leaves::LinkLeaf;
 use super::*;
 
 pub(super) mod leaves;
-mod tokens;
+pub(super) mod tokens;
 
 use koru_draw::el::{
     Align, El, Frame, FrameCx, Interaction, Key as ElKey, Length, Look, Ring, Spacing, StateRecipe,
@@ -292,7 +292,7 @@ impl OnboardingView {
     /// selection does not linger; entering the workspace name while it is
     /// still the default selects all of it, so typing replaces it.
     pub(super) fn setup_focus_entered(&mut self, before: Option<Hit>) {
-        if self.screen != Screen::Setup {
+        if self.screen != Screen::Setup && !(self.screen == Screen::Entry && self.workspace_modal) {
             return;
         }
         let now = self.controls().get(self.focus).copied();

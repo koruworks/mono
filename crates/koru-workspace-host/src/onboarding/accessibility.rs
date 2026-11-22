@@ -104,12 +104,13 @@ use super::setup::{
     KEY_RESUME, KEY_STATUS, KEY_TILE, KEY_WORKSPACE_NAME, KEY_WORKSPACE_ROW, KEY_YOU_ROW,
 };
 use super::welcome_modal::{
-    KEY_ACCOUNT_CARD as WM_ACCOUNT_CARD, KEY_APPLE as WM_APPLE,
-    KEY_BILLING_MONTHLY as WM_BILLING_MONTHLY, KEY_BILLING_YEARLY as WM_BILLING_YEARLY,
-    KEY_CARD as WM_CARD, KEY_COMPARE_PLANS as WM_COMPARE_PLANS, KEY_CONTINUE as WM_CONTINUE,
-    KEY_EMAIL_LINK as WM_EMAIL_LINK, KEY_EXISTING_CARD as WM_EXISTING_CARD,
-    KEY_GOOGLE as WM_GOOGLE, KEY_LEAD as WM_LEAD, KEY_OFFLINE_CARD as WM_OFFLINE_CARD,
-    KEY_RECOVERY as WM_RECOVERY, KEY_STATUS as WM_STATUS,
+    KEY_APPLE as WM_APPLE, KEY_AVATAR as WM_AVATAR, KEY_BILLING_MONTHLY as WM_BILLING_MONTHLY,
+    KEY_BILLING_YEARLY as WM_BILLING_YEARLY, KEY_CARD as WM_CARD,
+    KEY_CLOUD_TOGGLE as WM_CLOUD_TOGGLE, KEY_CONTINUE as WM_CONTINUE,
+    KEY_EMAIL_LINK as WM_EMAIL_LINK, KEY_GOOGLE as WM_GOOGLE, KEY_LEAD as WM_LEAD,
+    KEY_NAME as WM_NAME, KEY_RECOVERY as WM_RECOVERY, KEY_SET_UP_SPACE as WM_SET_UP_SPACE,
+    KEY_SIGN_IN_LINK as WM_SIGN_IN_LINK, KEY_START_WITHOUT_CLOUD as WM_START_WITHOUT_CLOUD,
+    KEY_STATUS as WM_STATUS, KEY_TILE as WM_TILE, KEY_WORKSPACE_NAME as WM_WORKSPACE_NAME,
 };
 use super::{Hit, OnboardingView, Screen, WelcomeBillingInterval, WelcomePath};
 
@@ -145,6 +146,8 @@ pub mod parts {
     pub const WELCOME_OFFLINE: ControlPart = ControlPart::new("welcome-offline");
     pub const WELCOME_ACCOUNT: ControlPart = ControlPart::new("welcome-account");
     pub const WELCOME_EXISTING: ControlPart = ControlPart::new("welcome-existing");
+    pub const CLOUD_TOGGLE: ControlPart = ControlPart::new("cloud-toggle");
+    pub const START_WITHOUT_CLOUD: ControlPart = ControlPart::new("start-without-cloud");
     pub const BILLING_MONTHLY: ControlPart = ControlPart::new("billing-monthly");
     pub const BILLING_YEARLY: ControlPart = ControlPart::new("billing-yearly");
     pub const REOPEN_CHECKOUT: ControlPart = ControlPart::new("reopen-checkout");
@@ -216,6 +219,13 @@ fn part_of(screen: Screen, hit: Hit) -> Option<ControlPart> {
         (Screen::Entry, Hit::WelcomeOffline) => p::WELCOME_OFFLINE,
         (Screen::Entry, Hit::WelcomeAccount) => p::WELCOME_ACCOUNT,
         (Screen::Entry, Hit::WelcomeExisting) => p::WELCOME_EXISTING,
+        (Screen::Entry, Hit::CloudToggle) => p::CLOUD_TOGGLE,
+        (Screen::Entry, Hit::StartWithoutCloud) => p::START_WITHOUT_CLOUD,
+        (Screen::Entry, Hit::ProfileAppearance) => p::PROFILE_ICON,
+        (Screen::Entry, Hit::Name) => p::OWNER_NAME,
+        (Screen::Entry, Hit::WorkspaceAppearance) => p::WORKSPACE_ICON,
+        (Screen::Entry, Hit::WorkspaceName) => p::WORKSPACE_NAME,
+        (Screen::Entry, Hit::Back) => p::BACK,
         (Screen::Entry | Screen::CheckoutIncomplete, Hit::BillingMonthly) => p::BILLING_MONTHLY,
         (Screen::Entry | Screen::CheckoutIncomplete, Hit::BillingYearly) => p::BILLING_YEARLY,
         (Screen::CheckoutPending, Hit::ReopenCheckout) => p::REOPEN_CHECKOUT,
@@ -261,6 +271,13 @@ fn hit_of(screen: Screen, part: ControlPart) -> Option<Hit> {
             x if x == p::WELCOME_OFFLINE => Hit::WelcomeOffline,
             x if x == p::WELCOME_ACCOUNT => Hit::WelcomeAccount,
             x if x == p::WELCOME_EXISTING => Hit::WelcomeExisting,
+            x if x == p::CLOUD_TOGGLE => Hit::CloudToggle,
+            x if x == p::START_WITHOUT_CLOUD => Hit::StartWithoutCloud,
+            x if x == p::PROFILE_ICON => Hit::ProfileAppearance,
+            x if x == p::OWNER_NAME => Hit::Name,
+            x if x == p::WORKSPACE_ICON => Hit::WorkspaceAppearance,
+            x if x == p::WORKSPACE_NAME => Hit::WorkspaceName,
+            x if x == p::BACK => Hit::Back,
             x if x == p::BILLING_MONTHLY => Hit::BillingMonthly,
             x if x == p::BILLING_YEARLY => Hit::BillingYearly,
             x if x == p::RECOVERY => Hit::Recovery,
@@ -437,6 +454,10 @@ impl OnboardingView {
             WelcomePath::CreateAccount => 1,
             WelcomePath::ExistingAccount => 2,
         });
+        rev.bool(self.welcome_cloud_enabled);
+        rev.bool(self.welcome_signed_in);
+        rev.bool(self.welcome_cloud_access);
+        rev.bool(self.welcome_signin_mode);
         rev.bool(self.welcome_billing == WelcomeBillingInterval::Yearly);
         rev.str(self.account_email.as_deref().unwrap_or(""));
         rev.bool(self.creation_conflict);
@@ -676,7 +697,7 @@ impl OnboardingView {
         match (self.screen, hit) {
             // A finishing card takes nothing: a `SetValue` is routed before
             // the controls are consulted, so it is refused here.
-            (Screen::Setup, Hit::Name) if !self.setup_finishing => {
+            (Screen::Setup | Screen::Entry, Hit::Name) if !self.setup_finishing => {
                 if self.owner_name.borrow().raw_text() == value {
                     return true;
                 }
@@ -685,7 +706,7 @@ impl OnboardingView {
                     .set_text(&mut self.engine, value);
                 true
             }
-            (Screen::Setup, Hit::WorkspaceName) if !self.setup_finishing => {
+            (Screen::Setup | Screen::Entry, Hit::WorkspaceName) if !self.setup_finishing => {
                 if self.workspace_name.borrow().raw_text() == value {
                     return true;
                 }
@@ -938,86 +959,154 @@ impl OnboardingView {
             .with_children(children)
     }
 
-    /// **Screen 1 of the workspace-modal onboarding**: the three starting
-    /// paths (*Continue offline*, *Create a Koru account*, *I already have an
-    /// account*) and the action row they reveal.
+    /// **The unified workspace-modal welcome dialog**: either the compact
+    /// *Welcome back* sign-in view or the main setup + Koru Cloud card.
     fn welcome_modal_semantics(&mut self, cx: &Context) -> SemanticNode {
         let (_, frame) = self.welcome_modal_frame();
         let lang = cx.lang;
+        let finishing = self.setup_finishing;
         let none = LogicalRect::new(0.0, 0.0, 0.0, 0.0);
         let rect = |key| frame.node(key).map_or(none, |node| node.rect);
-        let mut children = vec![
-            label(
-                cx.at(parts::BLURB),
-                t(lang, Key::WelcomeModalLead),
-                rect(WM_LEAD),
-            ),
-            link(
-                cx.at(parts::COMPARE_PLANS),
-                t(lang, Key::WelcomeModalComparePlans),
-                rect(WM_COMPARE_PLANS),
-            ),
-            button(
-                cx.at(parts::WELCOME_OFFLINE),
-                t(lang, Key::WelcomeModalOfflineTitle),
-                rect(WM_OFFLINE_CARD),
-            ),
-            button(
-                cx.at(parts::WELCOME_ACCOUNT),
-                t(lang, Key::WelcomeModalAccountTitle),
-                rect(WM_ACCOUNT_CARD),
-            ),
-        ];
-        if self.welcome_path == WelcomePath::CreateAccount {
-            children.push(button(
-                cx.at(parts::BILLING_MONTHLY),
-                t(lang, Key::WelcomeModalBillingMonthly),
-                rect(WM_BILLING_MONTHLY),
-            ));
-            children.push(button(
-                cx.at(parts::BILLING_YEARLY),
-                t(lang, Key::WelcomeModalBillingYearly),
-                rect(WM_BILLING_YEARLY),
-            ));
-        }
-        children.push(button(
-            cx.at(parts::WELCOME_EXISTING),
-            t(lang, Key::WelcomeModalExistingTitle),
-            rect(WM_EXISTING_CARD),
-        ));
-        if frame.node(WM_STATUS).is_some() {
-            children.extend(self.status_semantics(cx, rect(WM_STATUS)));
-        }
-        match self.welcome_path {
-            WelcomePath::Offline => {
-                children.push(button(
-                    cx.at(parts::CONTINUE_OFFLINE),
-                    t(lang, Key::Continue),
-                    rect(WM_CONTINUE),
-                ));
-            }
-            WelcomePath::CreateAccount | WelcomePath::ExistingAccount => {
-                let email_key = if self.welcome_path == WelcomePath::ExistingAccount {
-                    Key::WelcomeModalEmailSignInLink
-                } else {
-                    Key::WelcomeModalEmailLink
-                };
-                children.push(button(
+
+        if self.welcome_signin_mode {
+            let mut children = vec![
+                label(
+                    cx.at(parts::BLURB),
+                    t(lang, Key::WelcomeSignInLead),
+                    rect(WM_LEAD),
+                ),
+                button(
                     cx.at(parts::GOOGLE),
                     t(lang, Key::A11yFirstRunSignInGoogle),
                     rect(WM_GOOGLE),
-                ));
-                children.push(button(
+                ),
+                button(
                     cx.at(parts::APPLE),
                     t(lang, Key::A11yFirstRunSignInApple),
                     rect(WM_APPLE),
-                ));
-                children.push(button(
+                ),
+                button(
                     cx.at(parts::CONTINUE_WITH_EMAIL),
-                    t(lang, email_key),
+                    t(lang, Key::WelcomeModalEmailSignInLink),
                     rect(WM_EMAIL_LINK),
-                ));
+                ),
+            ];
+            if frame.node(WM_STATUS).is_some() {
+                children.extend(self.status_semantics(cx, rect(WM_STATUS)));
             }
+            children.push(button(
+                cx.at(parts::BACK),
+                t(lang, Key::WelcomeSignInSetUpSpace),
+                rect(WM_SET_UP_SPACE),
+            ));
+            return SemanticNode::new(cx.at(parts::FORM), Role::Dialog)
+                .with_label(t(lang, Key::ProfileChooserWelcomeBack))
+                .with_bounds(rect(WM_CARD))
+                .with_children(children)
+                .modal();
+        }
+
+        let (_, placeholder_key) = self.setup_owner_keys();
+        let mut children = vec![
+            label(
+                cx.at(parts::BLURB),
+                t(lang, self.welcome_header_variant.lead_key()),
+                rect(WM_LEAD),
+            ),
+            button(
+                cx.at(parts::PROFILE_ICON),
+                t(lang, Key::A11yFirstRunProfileIcon),
+                rect(WM_AVATAR),
+            )
+            .disabled(finishing),
+            field(
+                cx.at(parts::OWNER_NAME),
+                t(lang, placeholder_key),
+                self.owner_name.borrow().raw_text().to_owned(),
+            )
+            .with_bounds(rect(WM_NAME))
+            .disabled(finishing),
+            button(
+                cx.at(parts::WORKSPACE_ICON),
+                t(lang, Key::A11yFirstRunWorkspaceIcon),
+                rect(WM_TILE),
+            )
+            .disabled(finishing),
+            field(
+                cx.at(parts::WORKSPACE_NAME),
+                t(lang, Key::WorkspaceName),
+                self.workspace_name.borrow().raw_text().to_owned(),
+            )
+            .with_bounds(rect(WM_WORKSPACE_NAME))
+            .disabled(finishing),
+            button(
+                cx.at(parts::CLOUD_TOGGLE),
+                t(lang, Key::WelcomeCloudTitle),
+                rect(WM_CLOUD_TOGGLE),
+            )
+            .with_toggled(self.welcome_cloud_enabled)
+            .disabled(finishing),
+        ];
+        if self.welcome_cloud_enabled {
+            children.push(
+                button(
+                    cx.at(parts::BILLING_MONTHLY),
+                    t(lang, Key::WelcomeModalBillingMonthly),
+                    rect(WM_BILLING_MONTHLY),
+                )
+                .disabled(finishing),
+            );
+            children.push(
+                button(
+                    cx.at(parts::BILLING_YEARLY),
+                    t(lang, Key::WelcomeModalBillingYearly),
+                    rect(WM_BILLING_YEARLY),
+                )
+                .disabled(finishing),
+            );
+        }
+        if frame.node(WM_STATUS).is_some() {
+            children.extend(self.status_semantics(cx, rect(WM_STATUS)));
+        }
+        if self.welcome_signed_in || !self.welcome_cloud_enabled {
+            let mut primary = button(
+                cx.at(parts::CONTINUE_OFFLINE),
+                self.welcome_modal_primary_label(),
+                rect(WM_CONTINUE),
+            )
+            .disabled(!self.setup_primary_enabled());
+            if finishing {
+                primary = primary.with_live(Live::Polite);
+            }
+            children.push(primary);
+        } else {
+            children.push(button(
+                cx.at(parts::GOOGLE),
+                t(lang, Key::A11yFirstRunSignInGoogle),
+                rect(WM_GOOGLE),
+            ));
+            children.push(button(
+                cx.at(parts::APPLE),
+                t(lang, Key::A11yFirstRunSignInApple),
+                rect(WM_APPLE),
+            ));
+            children.push(button(
+                cx.at(parts::CONTINUE_WITH_EMAIL),
+                t(lang, Key::WelcomeModalUseEmailInstead),
+                rect(WM_EMAIL_LINK),
+            ));
+            children.push(button(
+                cx.at(parts::START_WITHOUT_CLOUD),
+                t(lang, Key::WelcomeModalStartWithoutCloud),
+                rect(WM_START_WITHOUT_CLOUD),
+            ));
+        }
+        if !self.welcome_signed_in {
+            children.push(button(
+                cx.at(parts::WELCOME_EXISTING),
+                t(lang, Key::WelcomeModalSignInLink),
+                rect(WM_SIGN_IN_LINK),
+            ));
         }
         if frame.node(WM_RECOVERY).is_some() {
             children.push(button(
@@ -1027,7 +1116,7 @@ impl OnboardingView {
             ));
         }
         SemanticNode::new(cx.at(parts::FORM), Role::Dialog)
-            .with_label(t(lang, Key::WelcomeModalTitle))
+            .with_label(t(lang, self.welcome_header_variant.title_key()))
             .with_bounds(rect(WM_CARD))
             .with_children(children)
             .modal()

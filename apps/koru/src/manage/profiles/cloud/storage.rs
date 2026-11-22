@@ -220,8 +220,8 @@ impl ProfilesController {
         use koru_account_wire::cloud_plan::{AllowanceV1, UsageReason, UsageState};
         let storage = &self.cloud.storage;
         let t = |key| koru_i18n::t(lang, key);
-        let number = |value: koru_account_wire::cloud_plan::Decimal| {
-            koru_i18n::number::decimal(lang, value.get() as u64)
+        let size = |value: koru_account_wire::cloud_plan::Decimal| {
+            koru_i18n::number::decimal_bytes(lang, value.get() as u64)
         };
         let mut lines = Vec::new();
         if let Some(snapshot) = &storage.snapshot {
@@ -246,11 +246,11 @@ impl ProfilesController {
                     lines.push(match plan.usage.available_bytes {
                         Some(available) => koru_i18n::fill(
                             t(TextKey::CloudStorageAvailable),
-                            &[&number(available), &number(effective_bytes)],
+                            &[&size(available), &size(effective_bytes)],
                         ),
                         None => koru_i18n::fill(
                             t(TextKey::CloudStorageTotal),
-                            &[&number(effective_bytes)],
+                            &[&size(effective_bytes)],
                         ),
                     });
                 }
@@ -262,7 +262,7 @@ impl ProfilesController {
             if let Some(used) = plan.usage.used_bytes {
                 lines.push(koru_i18n::fill(
                     t(TextKey::CloudStorageUsed),
-                    &[&number(used)],
+                    &[&size(used)],
                 ));
             }
             match plan.usage.state {
@@ -347,15 +347,15 @@ mod tests {
             ] {
                 let words = controller.cloud_storage_words(lang);
                 let t = |key| koru_i18n::t(lang, key);
-                let number = |bytes: koru_account_wire::cloud_plan::Decimal| {
-                    koru_i18n::number::decimal(lang, bytes.get() as u64)
+                let size = |bytes: koru_account_wire::cloud_plan::Decimal| {
+                    koru_i18n::number::decimal_bytes(lang, bytes.get() as u64)
                 };
                 let plan = &controller.cloud_storage().snapshot.as_ref().unwrap().plan;
                 if let Some(used) = plan.usage.used_bytes {
                     assert!(
                         words.contains(&koru_i18n::fill(
                             t(TextKey::CloudStorageUsed),
-                            &[&number(used)]
+                            &[&size(used)]
                         )),
                         "{name}"
                     );
@@ -370,11 +370,11 @@ mod tests {
                     AllowanceV1::Finite {
                         effective_bytes, ..
                     } => {
-                        assert!(words.contains(&number(effective_bytes)));
+                        assert!(words.contains(&size(effective_bytes)));
                         if let Some(available) = plan.usage.available_bytes {
                             assert!(words.contains(&koru_i18n::fill(
                                 t(TextKey::CloudStorageAvailable),
-                                &[&number(available), &number(effective_bytes)]
+                                &[&size(available), &size(effective_bytes)]
                             )));
                         }
                     }
@@ -395,7 +395,7 @@ mod tests {
                 assert!(words.contains(t(TextKey::CloudStorageBasis)));
             }
         }
-        // Values above floating-point integer precision remain exact.
+        // Values above floating-point integer precision stay accurate through integer scaling.
         let mut value = fixture("unbounded");
         value["usage"]["used_bytes"] = "9007199254740993".into();
         value["usage"]["files_bytes"] = "9007199254740993".into();
@@ -406,7 +406,7 @@ mod tests {
         assert!(
             controller
                 .cloud_storage_words(Lang::En)
-                .contains("9,007,199,254,740,993")
+                .contains("9,007,199 GB")
         );
     }
 

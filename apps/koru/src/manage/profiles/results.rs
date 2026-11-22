@@ -752,6 +752,7 @@ impl ProfilesController {
                     unlink.awaiting_fresh_google = true;
                     self.pending = Some(AccountCommand::StartGoogle {
                         locale: "en".into(),
+                        ab: None,
                     });
                     self.notice = Some("Sign in again to continue".into());
                 }
@@ -772,6 +773,7 @@ impl ProfilesController {
                     pending.stage = HostedDeleteStage::Reauthenticating;
                     self.pending = Some(AccountCommand::StartGoogle {
                         locale: "en".into(),
+                        ab: None,
                     });
                     self.notice = Some("Sign in again to continue".into());
                 }

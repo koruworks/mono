@@ -4974,6 +4974,11 @@
           "app_version": {
             "type": "string"
           },
+          "billing": {
+            "description": "Optional onboarding A/B preselected billing code (`\"monthly\"` | `\"yearly\"`).",
+            "nullable": true,
+            "type": "string"
+          },
           "callback_port": {
             "description": "Zero exactly when `app_link_return` is set.",
             "format": "uint16",
@@ -4984,6 +4989,11 @@
           "client_state": {
             "$ref": "#/components/schemas/OAuthState"
           },
+          "code": {
+            "description": "Optional onboarding A/B copy code (`\"sync\"` | `\"backup\"` | `\"founding\"`).",
+            "nullable": true,
+            "type": "string"
+          },
           "descriptor": {
             "$ref": "#/components/schemas/SignedDeviceDescriptorV1"
           },
@@ -4993,6 +5003,11 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
+          },
+          "header": {
+            "description": "Optional onboarding A/B header code (`\"speed\"` | `\"ownership\"` | `\"purpose\"`).",
+            "nullable": true,
+            "type": "string"
           },
           "locale": {
             "type": "string"
@@ -5159,8 +5174,16 @@
           "app_version": {
             "type": "string"
           },
+          "billing": {
+            "nullable": true,
+            "type": "string"
+          },
           "client_state": {
             "$ref": "#/components/schemas/OAuthState"
+          },
+          "code": {
+            "nullable": true,
+            "type": "string"
           },
           "descriptor": {
             "$ref": "#/components/schemas/SignedDeviceDescriptorV1"
@@ -5170,6 +5193,10 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
+          },
+          "header": {
+            "nullable": true,
+            "type": "string"
           },
           "locale": {
             "type": "string"

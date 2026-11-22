@@ -555,9 +555,11 @@ impl MobileAccount {
             },
             wire::AccountAction::StartGoogle => AccountCommand::StartGoogle {
                 locale: request.locale.clone(),
+                ab: None,
             },
             wire::AccountAction::StartApple => AccountCommand::StartApple {
                 locale: request.locale.clone(),
+                ab: None,
             },
             // V2 gave the email journey an address, a code and a password, and
             // this action carries none of them. V2-C adds the fields and the

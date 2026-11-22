@@ -3436,12 +3436,11 @@ fn roadmap_template_files(slug: &str) -> koru_store_core::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// The packaged files a first workspace starts from: the one untitled
-/// document. There is no template choice (welcome D4); the folder stays the
-/// way the document is made until it can be made without a packaged file.
+/// The packaged files a first workspace starts from: the starter "What Koru
+/// means" document and its fern image. There is no template choice (welcome D4).
 const FIRST_WORKSPACE_TEMPLATE: &str = "empty";
 
-/// **The packaged untitled document could not be read**: this installation
+/// **The packaged starter document could not be read**: this installation
 /// is missing a file it needs. There is no other template to choose, so the
 /// person is told, in their language, to repair Koru (welcome Q-D); the
 /// technical cause goes to the log once and is not shown.
@@ -3917,6 +3916,7 @@ impl<H: Host> OnboardingApp<H> {
             koru_agent_wire::AccountCommand::StartCheckout {
                 plan: plan.to_owned(),
                 locale,
+                ab: Some(self.view.onboarding_ab()),
             },
         );
     }
@@ -4184,8 +4184,9 @@ impl<H: Host> OnboardingApp<H> {
     }
 
     fn settle_actions(&mut self) {
+        let ab = self.view.onboarding_ab_attrs();
         for telemetry in self.view.take_telemetry() {
-            crate::events_host::onboarding(telemetry);
+            crate::events_host::onboarding(telemetry, ab);
         }
         while let Some(action) = self.view.take_action() {
             match action {
@@ -4210,18 +4211,24 @@ impl<H: Host> OnboardingApp<H> {
                     },
                 ),
                 crate::onboarding::Action::StartGoogle => {
+                    let ab = self.view.workspace_modal.then(|| self.view.onboarding_ab());
                     self.start_modal_signin(koru_agent_wire::AccountCommand::StartGoogle {
                         locale: "en".into(),
+                        ab,
                     })
                 }
                 crate::onboarding::Action::StartApple => {
+                    let ab = self.view.workspace_modal.then(|| self.view.onboarding_ab());
                     self.start_modal_signin(koru_agent_wire::AccountCommand::StartApple {
                         locale: "en".into(),
+                        ab,
                     })
                 }
                 crate::onboarding::Action::StartEmailBrowser => {
+                    let ab = self.view.workspace_modal.then(|| self.view.onboarding_ab());
                     self.start_modal_signin(koru_agent_wire::AccountCommand::StartEmailBrowser {
                         locale: "en".into(),
+                        ab,
                     })
                 }
                 crate::onboarding::Action::ReopenBrowserSignin => {
@@ -4701,40 +4708,47 @@ impl<H: Host> OnboardingApp<H> {
                     }
                 }
                 koru_agent_wire::AccountOperationResult::SignedInIdentity {
-                    verified_email, ..
+                    provider,
+                    verified_email,
+                    ..
                 } => {
+                    self.view.set_account_provider(&provider);
                     self.view.set_account_email(verified_email);
                 }
                 koru_agent_wire::AccountOperationResult::CloudAccess { request_id, active } => {
                     if self.pending_cloud_access_request == Some(request_id) {
                         self.pending_cloud_access_request = None;
-                        match active {
-                            Some(true) => {
-                                self.cancel_onboarding_checkout();
-                                self.bring_to_front();
-                                self.host.account_command_owned(
-                                    self.view.account_scope(),
-                                    koru_agent_wire::AccountCommand::ListProfileChoices,
-                                );
-                            }
-                            Some(false) => {
-                                if self.view.is_checkout_pending() {
-                                    self.checkout_poll_at =
-                                        Some(Instant::now() + Duration::from_secs(4));
-                                } else {
-                                    let plan = self.view.checkout_plan();
-                                    self.begin_onboarding_checkout(plan);
-                                }
-                            }
-                            None => {
-                                if self.view.is_checkout_pending() {
-                                    self.checkout_poll_at =
-                                        Some(Instant::now() + Duration::from_secs(4));
-                                } else {
+                        if self.view.is_checkout_pending() {
+                            match active {
+                                Some(true) => {
+                                    self.cancel_onboarding_checkout();
+                                    self.view.set_cloud_access(true);
                                     self.bring_to_front();
-                                    self.view.show_checkout_incomplete();
+                                    if !self.view.finish_signed_in_welcome_after_checkout() {
+                                        self.host.account_command_owned(
+                                            self.view.account_scope(),
+                                            koru_agent_wire::AccountCommand::ListProfileChoices,
+                                        );
+                                    }
+                                }
+                                Some(false) | None => {
+                                    self.checkout_poll_at =
+                                        Some(Instant::now() + Duration::from_secs(4));
                                 }
                             }
+                        } else {
+                            // Post-sign-in inspection: record whether the account
+                            // already has Cloud access and list its profiles. Existing
+                            // profiles go straight to the profile chooser; accounts
+                            // with no profiles return to the signed-in Welcome screen
+                            // with inputs prefilled and ready for checkout (or direct
+                            // start when Cloud is already active).
+                            self.view.set_cloud_access(active.unwrap_or(false));
+                            self.bring_to_front();
+                            self.host.account_command_owned(
+                                self.view.account_scope(),
+                                koru_agent_wire::AccountCommand::ListProfileChoices,
+                            );
                         }
                     }
                 }
@@ -4743,10 +4757,13 @@ impl<H: Host> OnboardingApp<H> {
                     self.checkout_generation = None;
                     self.checkout_poll_at = None;
                     if active {
-                        self.host.account_command_owned(
-                            self.view.account_scope(),
-                            koru_agent_wire::AccountCommand::ListProfileChoices,
-                        );
+                        self.view.set_cloud_access(true);
+                        if !self.view.finish_signed_in_welcome_after_checkout() {
+                            self.host.account_command_owned(
+                                self.view.account_scope(),
+                                koru_agent_wire::AccountCommand::ListProfileChoices,
+                            );
+                        }
                     } else if self.view.is_checkout_pending() {
                         self.view.show_checkout_incomplete();
                     }
@@ -5229,8 +5246,13 @@ impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
                 self.request_cloud_access_check();
             }
         }
-        let blink = self.view.caret_blink_deadline(Instant::now());
-        let deadline = [account_deadline, blink, checkout_deadline]
+        let now = Instant::now();
+        if self.view.maintain_tooltip(now) {
+            self.request_redraw();
+        }
+        let blink = self.view.caret_blink_deadline(now);
+        let tip = self.view.tooltip_deadline(now);
+        let deadline = [account_deadline, blink, tip, checkout_deadline]
             .into_iter()
             .flatten()
             .min();
@@ -21678,6 +21700,116 @@ mod tests {
         assert!(!take_created_profile_connection(
             &mut connect_created_profile
         ));
+    }
+
+    #[test]
+    fn first_workspace_template_imports_welcome_document_and_image() {
+        use koru_import::Importer;
+        use std::sync::Mutex;
+
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        struct RecordingBlobSink {
+            blobs: Mutex<Vec<(String, Option<String>, usize)>>,
+        }
+
+        impl koru_import::BlobSink for RecordingBlobSink {
+            fn put(
+                &self,
+                bytes: Vec<u8>,
+                mime: &str,
+                filename: Option<&str>,
+            ) -> Result<koru_import::StoredBlob, koru_import::ImportError> {
+                let mut blobs = self.blobs.lock().unwrap();
+                let index = blobs.len() + 1;
+                blobs.push((
+                    mime.to_owned(),
+                    filename.map(str::to_owned),
+                    bytes.len(),
+                ));
+                Ok(koru_import::StoredBlob {
+                    hash: format!("b3:{index:064x}"),
+                    mime: mime.to_owned(),
+                })
+            }
+
+            fn put_from(
+                &self,
+                factory: &(dyn Fn() -> Box<dyn std::io::Read + Send> + Send + Sync),
+                mime: &str,
+                filename: Option<&str>,
+            ) -> Result<koru_import::StoredBlob, koru_import::ImportError> {
+                let mut reader = factory();
+                let mut bytes = Vec::new();
+                reader
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| koru_import::ImportError::new(error.to_string()))?;
+                self.put(bytes, mime, filename)
+            }
+        }
+
+        let files = roadmap_template_files(FIRST_WORKSPACE_TEMPLATE).unwrap();
+        let prepared = koru_import_markdown::MarkdownImporter
+            .inspect(
+                koru_import::ImportSource::Files(files),
+                &koru_import::NoProgress,
+            )
+            .unwrap();
+        let blobs = RecordingBlobSink {
+            blobs: Mutex::new(Vec::new()),
+        };
+        let occupied = std::collections::BTreeSet::new();
+        let context = koru_import::ImportContext {
+            target_profile: Some(koru_store_core::ids::ProfileId::new()),
+            target_workspace: Some(koru_store_core::ids::WorkspaceId::new()),
+            occupied_titles: &occupied,
+            blobs: &blobs,
+            tags: &koru_import::NoTagSink,
+        };
+        let koru_import::ImportProduct::Documents(content) = prepared
+            .build(
+                koru_import::ImportOptions {
+                    identity: koru_import::IdentityMode::Copy,
+                    accept_warnings: true,
+                },
+                &context,
+                &koru_import::NoProgress,
+            )
+            .unwrap()
+        else {
+            panic!("first workspace template must import as documents");
+        };
+
+        assert!(content.warnings.is_empty(), "{:?}", content.warnings);
+        assert_eq!(content.documents.len(), 1);
+        let imported = &content.documents[0];
+        assert_eq!(imported.title, "What Koru means");
+
+        let stored = blobs.blobs.lock().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].0, "image/jpeg");
+        assert_eq!(stored[0].1.as_deref(), Some("koru-fern.jpg"));
+        assert!(stored[0].2 > 0);
+
+        let doc = koru_core::WorkspaceDoc::from_snapshot(&imported.snapshot).unwrap();
+        let root = doc.children(koru_core::schema::Parent::Root).unwrap()[0];
+        let mut kinds = Vec::new();
+        let mut has_heading = false;
+        let mut stack = doc.children(koru_core::schema::Parent::Node(root)).unwrap();
+        while let Some(id) = stack.pop() {
+            let node = doc.read(id).unwrap();
+            kinds.push(node.kind);
+            if node.meta.heading.is_some() {
+                has_heading = true;
+            }
+            stack.extend(doc.children(koru_core::schema::Parent::Node(id)).unwrap());
+        }
+        assert!(kinds.contains(&koru_core::Kind::Image));
+        assert!(kinds.contains(&koru_core::Kind::Callout));
+        assert!(has_heading);
+        assert!(kinds.contains(&koru_core::Kind::Task));
     }
 
     #[test]

@@ -456,6 +456,9 @@ fn public_dto_debug_redacts_identifiers_pii_and_secrets() {
                 enrollment_protocol_version: Some(1),
                 peer_protocol_version: Some(1),
                 app_link_return: false,
+                code: None,
+                header: None,
+                billing: None,
             }
         ),
         format!("{account:?}"),

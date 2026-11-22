@@ -886,7 +886,7 @@ fn draw_refresh_link(
     let style = theme::TextStyle::new(theme::role::meta().metrics, theme::FontWeight::Medium);
     let layout = engine.simple_layout(label, style);
     let text_h = scene::first_line_height(&layout);
-    let color = p.link.fg;
+    let color = p.accent;
 
     // Circular refresh arrow on the left.
     let cx = f64::from(at.x + REFRESH_ICON_SIZE * 0.5);

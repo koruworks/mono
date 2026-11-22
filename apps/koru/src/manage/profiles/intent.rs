@@ -193,6 +193,7 @@ impl ProfilesController {
             Intent::SignInGoogle => {
                 self.pending = Some(AccountCommand::StartGoogle {
                     locale: "en".into(),
+                    ab: None,
                 })
             }
             Intent::AccountSwitcher(command) => self.pending = Some(command),
@@ -394,6 +395,7 @@ impl ProfilesController {
             Intent::SignInAnotherAccount => {
                 self.pending = Some(AccountCommand::StartGoogle {
                     locale: "en".into(),
+                    ab: None,
                 });
                 self.notice = Some("Waiting for Google...".into());
             }
@@ -504,6 +506,7 @@ impl ProfilesController {
             Action::SignInGoogle | Action::SignInAnotherGoogle => {
                 self.pending = Some(AccountCommand::StartGoogle {
                     locale: "en".into(),
+                    ab: None,
                 });
             }
             Action::ChooseProfile | Action::ContinueOffline => {

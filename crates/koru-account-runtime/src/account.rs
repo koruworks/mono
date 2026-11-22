@@ -1939,15 +1939,20 @@ impl ProductionAccountService {
             Apple,
             EmailBrowser,
         }
-        let (locale, provider) = match &start_command {
-            AccountCommand::StartGoogle { locale } => (locale.clone(), Provider::Google),
-            AccountCommand::StartApple { locale } => (locale.clone(), Provider::Apple),
-            AccountCommand::StartEmailBrowser { locale } => {
-                (locale.clone(), Provider::EmailBrowser)
+        let (locale, ab, provider) = match &start_command {
+            AccountCommand::StartGoogle { locale, ab } => {
+                (locale.clone(), ab.clone(), Provider::Google)
+            }
+            AccountCommand::StartApple { locale, ab } => {
+                (locale.clone(), ab.clone(), Provider::Apple)
+            }
+            AccountCommand::StartEmailBrowser { locale, ab } => {
+                (locale.clone(), ab.clone(), Provider::EmailBrowser)
             }
             _ => return Err(ServiceError::terminal("invalid_request")),
         };
         validate_locale(&locale)?;
+        validate_onboarding_ab(ab.as_ref())?;
         if self.pending_creation.is_some() {
             return self.finish_creation(generation, None, cancel, progress);
         }
@@ -1960,7 +1965,7 @@ impl ProductionAccountService {
         // The native account sheet is Google's; Apple and browser email have no
         // sheet, so even a phone takes the browser path for them.
         if self.delivery.supports_native_token() && provider == Provider::Google {
-            return self.start_native_token(generation, locale, cancel, progress);
+            return self.start_native_token(generation, locale, ab, cancel, progress);
         }
         let mut listener = self.delivery.bind()?;
         let client_state = random_secret(self.entropy.as_ref());
@@ -1984,6 +1989,9 @@ impl ProductionAccountService {
                 pkce_challenge: challenge,
                 locale: locale.clone(),
                 app_link_return: listener.app_link_return(),
+                code: ab.as_ref().and_then(|v| v.code.clone()),
+                header: ab.as_ref().and_then(|v| v.header.clone()),
+                billing: ab.as_ref().and_then(|v| v.billing.clone()),
             };
             match provider {
                 Provider::Google => self.client.google_native_start(&request),
@@ -2062,6 +2070,7 @@ impl ProductionAccountService {
         generation: u64,
         plan: &str,
         locale: &str,
+        ab: Option<&koru_agent_wire::OnboardingAb>,
         cancel: &Cancel,
         progress: &mut dyn FnMut(ServiceProgress),
     ) -> Result<ServiceOutcome, ServiceError> {
@@ -2087,6 +2096,11 @@ impl ProductionAccountService {
         }
         let client_state = random_secret(self.entropy.as_ref());
         let auth = self.authorization()?;
+        let handoff_ab = koru_account_client::CheckoutHandoffAb {
+            code: ab.and_then(|v| v.code.as_deref()),
+            header: ab.and_then(|v| v.header.as_deref()),
+            billing: ab.and_then(|v| v.billing.as_deref()),
+        };
         let checkout_url = match self
             .client
             .create_checkout_handoff(
@@ -2095,6 +2109,7 @@ impl ProductionAccountService {
                 locale,
                 listener.callback_port(),
                 &client_state,
+                handoff_ab,
             )
             .map_err(map_client_error)
         {
@@ -2653,6 +2668,7 @@ impl AccountService for ProductionAccountService {
                 return self.start_native_token(
                     generation,
                     pending.locale.clone(),
+                    pending.ab.clone(),
                     cancel,
                     progress,
                 );
@@ -2870,8 +2886,8 @@ impl AccountService for ProductionAccountService {
                     follow_up: None,
                 })
             }
-            AccountCommand::StartCheckout { plan, locale } => {
-                self.start_checkout(generation, &plan, &locale, cancel, progress)
+            AccountCommand::StartCheckout { plan, locale, ab } => {
+                self.start_checkout(generation, &plan, &locale, ab.as_ref(), cancel, progress)
             }
             AccountCommand::ConfirmAccountCreation => {
                 self.finish_creation(generation, Some(true), cancel, progress)
@@ -3673,6 +3689,25 @@ fn validate_locale(value: &str) -> Result<(), ServiceError> {
     }
     Ok(())
 }
+fn validate_onboarding_ab(ab: Option<&koru_agent_wire::OnboardingAb>) -> Result<(), ServiceError> {
+    let Some(ab) = ab else {
+        return Ok(());
+    };
+    for value in [ab.code.as_deref(), ab.header.as_deref(), ab.billing.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if value.is_empty()
+            || value.len() > 32
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_'))
+        {
+            return Err(ServiceError::terminal("invalid_request"));
+        }
+    }
+    Ok(())
+}
 fn validate_name(value: &str) -> Result<(), ServiceError> {
     if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
         return Err(ServiceError::terminal("invalid_profile_name"));
@@ -3707,9 +3742,12 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
                 .then_some(())
                 .ok_or(ServiceError::terminal("email_address_invalid"))
         }
-        AccountCommand::StartGoogle { locale }
-        | AccountCommand::StartApple { locale }
-        | AccountCommand::StartEmailBrowser { locale } => validate_locale(locale),
+        AccountCommand::StartGoogle { locale, ab }
+        | AccountCommand::StartApple { locale, ab }
+        | AccountCommand::StartEmailBrowser { locale, ab } => {
+            validate_locale(locale)?;
+            validate_onboarding_ab(ab.as_ref())
+        }
         AccountCommand::CreateProfile {
             profile_id,
             owner_display_name,
@@ -3801,11 +3839,12 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
                 .map(|_| ())
                 .map_err(|_| ServiceError::terminal("invalid_request"))
         }
-        AccountCommand::StartCheckout { plan, locale } => {
+        AccountCommand::StartCheckout { plan, locale, ab } => {
             if !matches!(plan.as_str(), "s1" | "y1") {
                 return Err(ServiceError::terminal("invalid_request"));
             }
-            validate_locale(locale)
+            validate_locale(locale)?;
+            validate_onboarding_ab(ab.as_ref())
         }
         AccountCommand::InspectCloudDocument { selection, .. }
         | AccountCommand::RemoveCloudFile { selection, .. } => {

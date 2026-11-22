@@ -9,15 +9,24 @@
 use super::*;
 
 #[test]
-fn workspace_setup_is_centered_and_switches_between_welcome_and_setup() {
+fn workspace_setup_is_centered_and_switches_between_welcome_and_signin() {
     for (width, height) in [(720.0, 640.0), (1000.0, 680.0), (1440.0, 900.0)] {
         let mut view = view(width, height);
         view.set_custom_caption(true);
         view.show_workspace_setup();
         assert_eq!(view.screen, Screen::Entry);
-        assert_eq!(view.welcome_path, WelcomePath::CreateAccount);
+        assert!(view.welcome_cloud_enabled);
+        assert!(!view.welcome_signin_mode);
         let (_, welcome_frame) = view.welcome_modal_frame();
         let welcome_card = rect(&welcome_frame, super::super::welcome_modal::KEY_CARD);
+        let name_r = rect(&welcome_frame, super::super::welcome_modal::KEY_NAME);
+        let ws_r = rect(&welcome_frame, super::super::welcome_modal::KEY_WORKSPACE_NAME);
+        let avatar_r = rect(&welcome_frame, super::super::welcome_modal::KEY_AVATAR);
+        let tile_r = rect(&welcome_frame, super::super::welcome_modal::KEY_TILE);
+        assert_eq!(name_r.h, 38.0);
+        assert_eq!(ws_r.h, 38.0);
+        assert_eq!((avatar_r.w, avatar_r.h), (38.0, 38.0));
+        assert_eq!((tile_r.w, tile_r.h), (38.0, 38.0));
         let area = view.setup_area();
         assert!((welcome_card.x + welcome_card.w * 0.5 - width * 0.5).abs() < 0.01);
         assert!(
@@ -25,24 +34,33 @@ fn workspace_setup_is_centered_and_switches_between_welcome_and_setup() {
         );
         let records = capture(&mut view);
         assert!(!records.iter().any(|r| r.name == "WelcomeSidebar"));
+        // The focused input's caret is recorded as a `Cursor` part inside
+        // `KoruTextInput`, never as an anonymous `fill` primitive.
+        let cursor_idx = records
+            .iter()
+            .position(|r| r.name == "Cursor" && r.kind == "part")
+            .expect("focused input records a Cursor part");
+        let input_idx = records
+            .iter()
+            .position(|r| r.name == "KoruTextInput" && within(&records, cursor_idx, records.iter().position(|n| std::ptr::eq(n, r)).unwrap()))
+            .expect("Cursor is nested inside KoruTextInput");
+        assert!(within(&records, cursor_idx, input_idx));
 
-        // Choose Offline -> Continue to enter Screen 2.
-        view.activate(Hit::WelcomeOffline);
-        view.activate(Hit::Primary);
-        assert_eq!(view.screen, Screen::Setup);
-        let layout = frame(&mut view);
-        let card = rect(&layout, KEY_CARD);
+        // Click "Sign in" to enter the compact Welcome back view, then return.
+        view.activate(Hit::WelcomeExisting);
+        assert_eq!(view.screen, Screen::Entry);
+        assert!(view.welcome_signin_mode);
+        let (_, signin_frame) = view.welcome_modal_frame();
+        let card = rect(&signin_frame, super::super::welcome_modal::KEY_CARD);
         assert!((card.x + card.w * 0.5 - width * 0.5).abs() < 0.01);
         assert!((card.y + card.h * 0.5 - (area.y + area.h * 0.5)).abs() < 0.01);
-        assert!(layout.node(KEY_BACK).is_some());
+        assert!(signin_frame.node(super::super::welcome_modal::KEY_SET_UP_SPACE).is_some());
         assert!(view.controls().contains(&Hit::Back));
         assert!(view.pending.is_none());
-        let records = capture(&mut view);
-        assert!(!records.iter().any(|r| r.name == "WelcomeSidebar"));
 
-        // Change returns cleanly to Screen 1.
         view.activate(Hit::Back);
         assert_eq!(view.screen, Screen::Entry);
+        assert!(!view.welcome_signin_mode);
     }
 }
 
@@ -51,8 +69,55 @@ fn workspace_setup_keeps_input_in_the_card_and_submits_local_creation() {
     use winit::keyboard::{Key, ModifiersState, NamedKey};
     let mut view = view(1000.0, 680.0);
     view.show_workspace_setup();
-    view.activate(Hit::WelcomeOffline);
-    view.activate(Hit::Primary);
+    let (_, expanded_f) = view.welcome_modal_frame();
+    let expanded_cloud = rect(&expanded_f, super::super::welcome_modal::KEY_CLOUD_CARD);
+    assert_eq!(rect(&expanded_f, super::super::welcome_modal::KEY_GOOGLE).h, 38.0);
+    assert_eq!(rect(&expanded_f, super::super::welcome_modal::KEY_APPLE).h, 38.0);
+    assert!(
+        expanded_f
+            .node(super::super::welcome_modal::KEY_BILLING_TRACK)
+            .is_some()
+    );
+    view.activate(Hit::CloudToggle);
+    assert!(!view.welcome_cloud_enabled);
+    // Turning Koru Cloud off collapses the card to the Koru Cloud header line
+    // and removes the billing controls from layout and keyboard navigation.
+    let (_, f) = view.welcome_modal_frame();
+    let collapsed_cloud = rect(&f, super::super::welcome_modal::KEY_CLOUD_CARD);
+    assert!(collapsed_cloud.h < expanded_cloud.h);
+    assert!(
+        (collapsed_cloud.h - 38.0).abs() < 0.5,
+        "collapsed cloud banner should be 38 px tall, got {}",
+        collapsed_cloud.h
+    );
+    assert!(
+        f.node(super::super::welcome_modal::KEY_BILLING_TRACK)
+            .is_none()
+    );
+    assert!(
+        f.node(super::super::welcome_modal::KEY_BILLING_MONTHLY)
+            .is_none()
+    );
+    assert!(
+        f.node(super::super::welcome_modal::KEY_BILLING_YEARLY)
+            .is_none()
+    );
+    assert!(!view.controls().contains(&Hit::BillingMonthly));
+    assert!(!view.controls().contains(&Hit::BillingYearly));
+    // Hovering the disabled "Start using Koru" button explains why it is disabled.
+    let toggle_r = rect(&f, super::super::welcome_modal::KEY_CLOUD_TOGGLE);
+    assert_eq!(toggle_r.w, koru_ui::toggle::Toggle::TRACK_W);
+    assert_eq!(toggle_r.h, koru_ui::toggle::Toggle::H);
+    let primary_r = rect(&f, super::super::welcome_modal::KEY_CONTINUE);
+    assert_eq!(primary_r.h, 38.0);
+    view.mouse_move(primary_r.x + primary_r.w * 0.5, primary_r.y + primary_r.h * 0.5);
+    assert_eq!(
+        view.tooltip.label(),
+        Some(koru_i18n::t(
+            view.language,
+            koru_i18n::Key::WelcomePrimaryDisabledNeedName
+        ))
+    );
     view.owner_name
         .borrow_mut()
         .set_text(&mut view.engine, "Mara");
@@ -64,7 +129,7 @@ fn workspace_setup_keeps_input_in_the_card_and_submits_local_creation() {
     }
     assert_eq!(view.focus, start);
     view.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty());
-    assert_eq!(view.screen, Screen::Setup);
+    assert_eq!(view.screen, Screen::Entry);
     assert!(view.pending.is_none());
     view.activate(Hit::Primary);
     assert!(matches!(
@@ -77,13 +142,23 @@ fn workspace_setup_keeps_input_in_the_card_and_submits_local_creation() {
 }
 
 #[test]
-fn welcome_modal_dispatches_pricing_browser_oauth_and_plus_checkout() {
+fn welcome_modal_dispatches_ab_oauth_signed_in_checkout_and_recovery() {
     let mut view = view(1000.0, 680.0);
     view.show_workspace_setup();
-    assert_eq!(view.welcome_path, WelcomePath::CreateAccount);
+    assert!(view.welcome_cloud_enabled);
 
-    view.activate(Hit::ComparePlans);
-    assert_eq!(view.take_action(), Some(Action::OpenPricing));
+    // Every A/B experiment code is populated from the closed vocabulary.
+    let ab = view.onboarding_ab();
+    assert!(matches!(
+        ab.code.as_deref(),
+        Some("sync" | "backup" | "founding")
+    ));
+    assert!(matches!(
+        ab.header.as_deref(),
+        Some("speed" | "ownership" | "purpose")
+    ));
+    assert!(matches!(ab.billing.as_deref(), Some("monthly" | "yearly")));
+    assert_eq!(view.take_telemetry(), vec![Telemetry::Shown]);
 
     view.activate(Hit::Secondary);
     assert_eq!(view.take_action(), Some(Action::StartGoogle));
@@ -100,18 +175,33 @@ fn welcome_modal_dispatches_pricing_browser_oauth_and_plus_checkout() {
     assert_eq!(view.browser_provider, BrowserProvider::Email);
     view.account_cancelled();
 
-    // Default billing interval is Yearly ("y1") and toggles cleanly to Monthly ("s1").
-    assert_eq!(view.welcome_billing, WelcomeBillingInterval::Yearly);
-    assert_eq!(view.checkout_plan(), "y1");
+    // Billing interval toggles cleanly between Monthly ("s1") and Yearly ("y1")
+    // while keeping the assigned A/B default billing immutable.
+    let initial_ab_billing = view.onboarding_ab().billing;
     view.activate(Hit::BillingMonthly);
     assert_eq!(view.welcome_billing, WelcomeBillingInterval::Monthly);
     assert_eq!(view.checkout_plan(), "s1");
     view.activate(Hit::BillingYearly);
     assert_eq!(view.welcome_billing, WelcomeBillingInterval::Yearly);
     assert_eq!(view.checkout_plan(), "y1");
+    assert_eq!(view.onboarding_ab().billing, initial_ab_billing);
 
-    // Checkout pending & incomplete modals fit cleanly and dispatch retry/cancel/offline.
+    // Signed-in account with 0 profiles returns to the unified Welcome screen
+    // with `You` prefilled and "Continue to checkout" ready.
+    view.set_account_provider("google");
     view.set_account_email("steven@example.com".into());
+    view.show_account_profile_choices("Steven Liechti", Vec::new());
+    assert_eq!(view.screen, Screen::Entry);
+    assert!(view.welcome_signed_in);
+    assert_eq!(view.owner_name.borrow().value(), "Steven Liechti");
+
+    view.activate(Hit::Primary);
+    assert_eq!(
+        view.take_action(),
+        Some(Action::StartCheckout { plan: "y1" })
+    );
+
+    // Checkout pending & incomplete modals fit cleanly and dispatch retry/cancel/back/offline.
     view.show_checkout_pending();
     assert!(view.is_checkout_pending());
     let (_, pending_frame) = view.checkout_modal_frame();
@@ -133,46 +223,23 @@ fn welcome_modal_dispatches_pricing_browser_oauth_and_plus_checkout() {
     assert_eq!(view.screen, Screen::CheckoutPending);
     assert_eq!(view.take_action(), Some(Action::StartCheckout { plan: "s1" }));
 
+    // Back on CheckoutIncomplete returns to the signed-in Welcome screen.
     view.show_checkout_incomplete();
     assert!(view.controls().contains(&Hit::Back));
     view.activate(Hit::Back);
     assert_eq!(view.screen, Screen::Entry);
-    assert!(!view.modal_account_active());
+    assert!(view.welcome_signed_in);
 
-    view.show_checkout_incomplete();
-    view.activate(Hit::ContinueOffline);
-    assert_eq!(view.screen, Screen::Setup);
-    assert!(!view.connect_account);
-
-    // Modal cards share a steady minimum height across Screen 1 options,
-    // checkout states, and Screen 2 so switching never jumps vertically.
-    let mut steady = self::view(1000.0, 680.0);
-    steady.language = koru_i18n::Lang::En;
-    steady.set_custom_caption(true);
-    steady.show_workspace_setup();
-    let h_create = rect(&steady.welcome_modal_frame().1, super::super::welcome_modal::KEY_CARD).h;
-    steady.welcome_path = WelcomePath::Offline;
-    let h_offline = rect(&steady.welcome_modal_frame().1, super::super::welcome_modal::KEY_CARD).h;
-    steady.welcome_path = WelcomePath::ExistingAccount;
-    let h_existing = rect(&steady.welcome_modal_frame().1, super::super::welcome_modal::KEY_CARD).h;
-    steady.show_checkout_pending();
-    let h_pending = rect(&steady.checkout_modal_frame().1, super::super::checkout_modal::KEY_CARD).h;
-    steady.show_checkout_incomplete();
-    let h_incomplete = rect(&steady.checkout_modal_frame().1, super::super::checkout_modal::KEY_CARD).h;
-    steady.show_setup();
-    let h_setup = rect(&steady.setup_frame().1, KEY_CARD).h;
-    for (name, h) in [
-        ("offline", h_offline),
-        ("existing", h_existing),
-        ("pending", h_pending),
-        ("incomplete", h_incomplete),
-        ("setup", h_setup),
-    ] {
-        assert!(
-            (h - h_create).abs() < 0.5,
-            "modal height jumped for {name}: {h} vs create {h_create}"
-        );
-    }
+    // Completing checkout immediately creates the profile from the Welcome inputs.
+    view.show_checkout_pending();
+    assert!(view.finish_signed_in_welcome_after_checkout());
+    assert!(matches!(
+        view.take_action(),
+        Some(Action::CreateLocalProfile {
+            connect_account: true,
+            ..
+        })
+    ));
 
     // Pricing URL obeys origin normalization and locale segments.
     assert_eq!(
@@ -191,26 +258,32 @@ fn welcome_modal_dispatches_pricing_browser_oauth_and_plus_checkout() {
 #[test]
 fn welcome_modal_fits_minimum_window_in_every_language() {
     for lang in koru_i18n::Lang::ALL {
-        for path in [
-            WelcomePath::Offline,
-            WelcomePath::CreateAccount,
-            WelcomePath::ExistingAccount,
+        for (cloud_on, signed_in, signin_mode) in [
+            (true, false, false),
+            (false, false, false),
+            (true, true, false),
+            (true, false, true),
         ] {
             let mut view = view(720.0, 640.0);
             view.language = lang;
             view.set_custom_caption(true);
             view.show_workspace_setup();
-            view.welcome_path = path;
+            view.welcome_cloud_enabled = cloud_on;
+            view.welcome_signed_in = signed_in;
+            view.welcome_signin_mode = signin_mode;
+            if signed_in {
+                view.set_account_email("steven@example.com".into());
+            }
             let area = view.setup_area();
             let (_, frame) = view.welcome_modal_frame();
             let card = rect(&frame, super::super::welcome_modal::KEY_CARD);
             assert!(
                 card.x >= area.x - 0.5 && card.x + card.w <= area.x + area.w + 0.5,
-                "{lang:?} {path:?} horizontal overflow: card={card:?} area={area:?}"
+                "{lang:?} ({cloud_on},{signed_in},{signin_mode}) horizontal overflow: card={card:?} area={area:?}"
             );
             assert!(
                 card.y >= area.y - 0.5 && card.y + card.h <= area.y + area.h + 0.5,
-                "{lang:?} {path:?} vertical overflow: card={card:?} area={area:?}"
+                "{lang:?} ({cloud_on},{signed_in},{signin_mode}) vertical overflow: card={card:?} area={area:?}"
             );
         }
     }

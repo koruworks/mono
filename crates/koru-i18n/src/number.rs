@@ -69,6 +69,62 @@ pub fn bytes(lang: Lang, value: u64) -> String {
     fill(t(lang, UNITS[unit]), &[&number])
 }
 
+/// A byte count formatted in decimal (SI, 1,000-step) units (`B`, `KB`, `MB`,
+/// `GB`) for Cloud storage quotas and usage, where 1 GB is 1,000,000,000 bytes.
+///
+/// Uses integer arithmetic (`u128`) so large values never lose precision to
+/// `f64`, shows one decimal place below 100 (omitting a trailing `.0`), and
+/// promotes values that round up to 1,000 into the next unit.
+pub fn decimal_bytes(lang: Lang, value: u64) -> String {
+    const UNITS: [(u128, Key); 3] = [
+        (1_000, Key::SizeKilobytes),
+        (1_000_000, Key::SizeMegabytes),
+        (1_000_000_000, Key::SizeGigabytes),
+    ];
+    let v = u128::from(value);
+    if v < 1_000 {
+        return fill(t(lang, Key::SizeBytes), &[&decimal(lang, value)]);
+    }
+    let mut idx = if v >= 1_000_000_000 {
+        2
+    } else if v >= 1_000_000 {
+        1
+    } else {
+        0
+    };
+    loop {
+        let div = UNITS[idx].0;
+        if v < div * 100 {
+            let tenths = (v * 10 + div / 2) / div;
+            if tenths >= 1_000 {
+                let whole = (v + div / 2) / div;
+                if whole >= 1_000 && idx + 1 < UNITS.len() {
+                    idx += 1;
+                    continue;
+                }
+                return fill(t(lang, UNITS[idx].1), &[&decimal(lang, whole as u64)]);
+            }
+            let whole = (tenths / 10) as u64;
+            let frac = (tenths % 10) as u8;
+            let number = if frac == 0 {
+                decimal(lang, whole)
+            } else {
+                let mut spelled = decimal(lang, whole);
+                spelled.push(decimal_separator(lang));
+                spelled.push(localize_digit(lang, b'0' + frac));
+                spelled
+            };
+            return fill(t(lang, UNITS[idx].1), &[&number]);
+        }
+        let whole = (v + div / 2) / div;
+        if whole >= 1_000 && idx + 1 < UNITS.len() {
+            idx += 1;
+            continue;
+        }
+        return fill(t(lang, UNITS[idx].1), &[&decimal(lang, whole as u64)]);
+    }
+}
+
 /// Format a nonnegative fractional setting with at most two decimal places.
 pub fn fraction(lang: Lang, value: f32) -> String {
     let ascii = format!("{value:.2}");
@@ -110,7 +166,7 @@ fn localize_digit(lang: Lang, ascii: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes, decimal};
+    use super::{bytes, decimal, decimal_bytes};
     use crate::Lang;
 
     #[test]
@@ -170,6 +226,35 @@ mod tests {
         for lang in Lang::ALL {
             for value in [0, 1, 1_023, 1_024, 4_404_019, u64::MAX] {
                 let spelled = bytes(lang, value);
+                assert!(!spelled.contains("{}"), "{} {spelled}", lang.tag());
+                assert!(!spelled.trim().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn decimal_bytes_uses_si_steps_and_localizes_every_language() {
+        assert_eq!(decimal_bytes(Lang::En, 0), "0 B");
+        assert_eq!(decimal_bytes(Lang::En, 999), "999 B");
+        assert_eq!(decimal_bytes(Lang::En, 1_000), "1 KB");
+        assert_eq!(decimal_bytes(Lang::En, 1_540), "1.5 KB");
+        assert_eq!(decimal_bytes(Lang::En, 99_950), "100 KB");
+        assert_eq!(decimal_bytes(Lang::En, 999_500), "1 MB");
+        assert_eq!(decimal_bytes(Lang::En, 13_551_616), "13.6 MB");
+        assert_eq!(decimal_bytes(Lang::En, 986_448_384), "986 MB");
+        assert_eq!(decimal_bytes(Lang::En, 1_000_000_000), "1 GB");
+        assert_eq!(decimal_bytes(Lang::En, 100_000_000_000), "100 GB");
+        assert_eq!(
+            decimal_bytes(Lang::En, 9_007_199_254_740_993),
+            "9,007,199 GB"
+        );
+        assert_eq!(decimal_bytes(Lang::De, 13_551_616), "13,6 MB");
+        assert_eq!(decimal_bytes(Lang::Fr, 13_551_616), "13,6 Mo");
+        assert_eq!(decimal_bytes(Lang::Fr, 1_000_000_000), "1 Go");
+
+        for lang in Lang::ALL {
+            for value in [0, 999, 1_000, 13_551_616, 1_000_000_000, u64::MAX] {
+                let spelled = decimal_bytes(lang, value);
                 assert!(!spelled.contains("{}"), "{} {spelled}", lang.tag());
                 assert!(!spelled.trim().is_empty());
             }

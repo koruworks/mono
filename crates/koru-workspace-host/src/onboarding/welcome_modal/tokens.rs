@@ -35,16 +35,18 @@ pub(crate) const WELCOME_LOGO_GAP: Tagged<Space> = Tagged::new("WELCOME_LOGO_GAP
 /// Size of the Koru logo mark beside "Welcome to Koru".
 pub(crate) const WELCOME_LOGO_SIZE: Metric = Metric::new("WELCOME_LOGO_SIZE", 28.0);
 
-/// Rounded border radius for each option card.
+/// Rounded border radius for the Koru Cloud card and checkout summary.
 pub(crate) const WELCOME_OPTION_RADIUS: Metric = Metric::new("WELCOME_OPTION_RADIUS", 12.0);
-
-/// Border thickness of the option cards.
-pub(crate) const WELCOME_OPTION_BORDER_W: f64 = 1.5;
 
 /// Padding inside an option card header.
 pub(crate) const WELCOME_OPTION_PAD_X: Tagged<Space> = Tagged::new("WELCOME_OPTION_PAD_X", Space::S4);
 pub(crate) const WELCOME_OPTION_PAD_Y: Tagged<Space> =
     Tagged::new("WELCOME_OPTION_PAD_Y", Space::S2);
+/// Vertical padding inside the Koru Cloud card: 12 when expanded, 10 when
+/// collapsed to the single header line so the banner stays 38 px tall.
+pub(crate) const WELCOME_CLOUD_PAD_Y: Tagged<Space> = Tagged::new("WELCOME_CLOUD_PAD_Y", Space::S3);
+pub(crate) const WELCOME_CLOUD_COLLAPSED_PAD_Y: Tagged<Space> =
+    Tagged::new("WELCOME_CLOUD_COLLAPSED_PAD_Y", Space::S2_5);
 
 /// Gap between title and subtitle inside an option card.
 pub(crate) const WELCOME_OPTION_TEXT_GAP: Tagged<Space> =
@@ -53,16 +55,13 @@ pub(crate) const WELCOME_OPTION_TEXT_GAP: Tagged<Space> =
 /// Horizontal gap inside option and plan rows.
 pub(crate) const WELCOME_ROW_GAP: Tagged<Space> = Tagged::new("WELCOME_ROW_GAP", Space::S2_5);
 
-/// Selection checkmark badge on the right of the selected option card.
-pub(crate) const WELCOME_CHECK_SIZE: Metric = Metric::new("WELCOME_CHECK_SIZE", 20.0);
-
-/// Pill badge dimensions for "7-day free trial".
+/// Pill badge dimensions for inline savings badges (e.g. "Save 16%").
 pub(crate) const WELCOME_PILL_H: Metric = Metric::new("WELCOME_PILL_H", 20.0);
 pub(crate) const WELCOME_PILL_RADIUS: Metric = Metric::new("WELCOME_PILL_RADIUS", 10.0);
 pub(crate) const WELCOME_PILL_PAD_X: Metric = Metric::new("WELCOME_PILL_PAD_X", 8.0);
 
 /// Height and spacing of the Google / Apple provider buttons and Continue CTA.
-pub(crate) const WELCOME_PROVIDER_H: Metric = Metric::new("WELCOME_PROVIDER_H", 40.0);
+pub(crate) const WELCOME_PROVIDER_H: Metric = Metric::new("WELCOME_PROVIDER_H", 38.0);
 pub(crate) const WELCOME_PROVIDER_GAP: Tagged<Space> =
     Tagged::new("WELCOME_PROVIDER_GAP", Space::S2);
 pub(crate) const WELCOME_PROVIDER_RADIUS: Metric = Metric::new("WELCOME_PROVIDER_RADIUS", 8.0);
@@ -113,5 +112,12 @@ pub(crate) const BROWSER_STATUS_GAP: Metric = Metric::new("BROWSER_STATUS_GAP", 
 /// Leading external-link glyph size inside *Open the browser again*.
 pub(crate) const BROWSER_BUTTON_ICON: Metric = Metric::new("BROWSER_BUTTON_ICON", 16.0);
 pub(crate) const BROWSER_BUTTON_ICON_GAP: Metric = Metric::new("BROWSER_BUTTON_ICON_GAP", 8.0);
-pub(crate) const BROWSER_BUTTON_H: Metric = Metric::new("BROWSER_BUTTON_H", 44.0);
+pub(crate) const BROWSER_BUTTON_H: Metric = Metric::new("BROWSER_BUTTON_H", 38.0);
 pub(crate) const BROWSER_FOOTER_GAP: Tagged<Space> = Tagged::new("BROWSER_FOOTER_GAP", Space::S1);
+
+/// Thin horizontal divider above the *Already have an account? Sign in* row,
+/// and the extra vertical margin added above and below it.
+pub(crate) const WELCOME_DIVIDER_H: Metric = Metric::new("WELCOME_DIVIDER_H", 1.0);
+pub(crate) const WELCOME_DIVIDER_STROKE: Metric = Metric::new("WELCOME_DIVIDER_STROKE", 0.5);
+pub(crate) const WELCOME_DIVIDER_MARGIN: Tagged<Space> =
+    Tagged::new("WELCOME_DIVIDER_MARGIN", Space::S2);

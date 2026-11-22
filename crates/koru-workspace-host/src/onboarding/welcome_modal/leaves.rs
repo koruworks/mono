@@ -6,8 +6,12 @@
 
 use koru_draw::el::{ElState, FrameCx, Leaf};
 use koru_draw::geometry::Rect;
+use koru_draw::icons;
 use koru_draw::text::TextEngine;
+use koru_draw::tile::Tile;
 use koru_draw::{brand, inspect, scene, theme};
+use koru_ui::avatar::KoruAvatar;
+use koru_ui::toggle::Toggle;
 use vello::Scene;
 use vello::kurbo::{Affine, Arc as KurboArc, BezPath, Circle, Line, Point, Stroke, Vec2};
 
@@ -15,12 +19,17 @@ use super::tokens::{
     BROWSER_BADGE_DOT_GAP, BROWSER_BADGE_DOT_RADIUS, BROWSER_BADGE_DOT_STEP, BROWSER_BADGE_MARK,
     BROWSER_BADGE_RADIUS, BROWSER_BADGE_SIZE, BROWSER_BUTTON_H, BROWSER_BUTTON_ICON,
     BROWSER_BUTTON_ICON_GAP, BROWSER_STATUS_GAP, BROWSER_STATUS_H, BROWSER_STATUS_PAD_X,
-    BROWSER_STATUS_RADIUS, BROWSER_STATUS_SPINNER, CHECKOUT_ICON_SIZE, WELCOME_CHECK_SIZE,
-    WELCOME_LINK_ARROW_GAP, WELCOME_LINK_ARROW_SIZE, WELCOME_LINK_H, WELCOME_LINK_PAD_X,
-    WELCOME_LOGO_SIZE, WELCOME_PILL_H, WELCOME_PILL_PAD_X, WELCOME_PILL_RADIUS, WELCOME_PROVIDER_H,
-    WELCOME_PROVIDER_MARK, WELCOME_PROVIDER_MARK_GAP, WELCOME_PROVIDER_RADIUS, WELCOME_RING_GAP,
-    WELCOME_RING_W, WELCOME_SEGMENT_BADGE_GAP, WELCOME_SEGMENT_H, WELCOME_SEGMENT_PAD_X,
-    WELCOME_SEGMENT_RADIUS,
+    BROWSER_STATUS_RADIUS, BROWSER_STATUS_SPINNER, CHECKOUT_ICON_SIZE, WELCOME_DIVIDER_H,
+    WELCOME_DIVIDER_STROKE, WELCOME_LINK_ARROW_GAP, WELCOME_LINK_ARROW_SIZE, WELCOME_LINK_H,
+    WELCOME_LINK_PAD_X,
+    WELCOME_LOGO_SIZE, WELCOME_PILL_H, WELCOME_PILL_PAD_X, WELCOME_PILL_RADIUS,
+    WELCOME_PROVIDER_H, WELCOME_PROVIDER_MARK, WELCOME_PROVIDER_MARK_GAP, WELCOME_PROVIDER_RADIUS,
+    WELCOME_RING_GAP, WELCOME_RING_W, WELCOME_SEGMENT_BADGE_GAP, WELCOME_SEGMENT_H,
+    WELCOME_SEGMENT_PAD_X, WELCOME_SEGMENT_RADIUS,
+};
+use super::super::setup::tokens::{
+    SETUP_CHIP, SETUP_RING_GAP, SETUP_RING_RADIUS, SETUP_RING_W, SETUP_TILE_HOVER_ICON,
+    SETUP_TILE_HOVER_SCRIM, SETUP_TILE_RADIUS_RATIO,
 };
 use super::super::BrowserProvider;
 
@@ -45,121 +54,8 @@ impl Leaf for LogoLeaf {
     }
 }
 
-/// Visual tone for an onboarding status badge.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum BadgeTone {
-    /// Cool teal tint (e.g. *7-day free trial*).
-    Teal,
-}
-
-/// Compact rounded pill badge (e.g. *7-day free trial*).
-pub(crate) struct BadgeLeaf {
-    pub(crate) label: String,
-    pub(crate) width: f32,
-    pub(crate) tone: BadgeTone,
-}
-
-impl BadgeLeaf {
-    pub(crate) fn new(engine: &mut TextEngine, label: &str, tone: BadgeTone) -> Self {
-        let style = badge_style();
-        let text_w = engine.simple_layout(label, style).width();
-        Self {
-            label: label.to_owned(),
-            width: text_w + WELCOME_PILL_PAD_X.value * 2.0,
-            tone,
-        }
-    }
-}
-
 fn badge_style() -> theme::TextStyle {
     theme::TextStyle::new(theme::role::hint().metrics, theme::FontWeight::SemiBold)
-}
-
-impl Leaf for BadgeLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (self.width, WELCOME_PILL_H.value)
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        cx: &FrameCx,
-        _state: ElState,
-    ) {
-        let p = cx.palette();
-        let (bg, fg) = match self.tone {
-            // Index 4 is `"teal"` in `theme::ACCENT_TOKENS`.
-            BadgeTone::Teal => (p.accents[4].fill, p.accents[4].ink),
-        };
-        let _scope = inspect::scope(
-            "Badge",
-            "component",
-            root,
-            scene::rect(at.x, at.y, at.w, at.h),
-            |record| {
-                record.property("label", self.label.as_str(), "badge");
-            },
-        );
-        scene::fill(
-            scene,
-            root,
-            bg,
-            &scene::rrect(at.x, at.y, at.w, at.h, WELCOME_PILL_RADIUS.value),
-        );
-        let layout = engine.simple_layout(&self.label, badge_style());
-        let h = scene::first_line_height(&layout);
-        scene::draw_layout(
-            scene,
-            root,
-            &layout,
-            at.x + (at.w - layout.width()) * 0.5,
-            at.y + (at.h - h) * 0.5,
-            Some(fg),
-        );
-    }
-}
-
-/// Circular selection checkmark shown at the trailing edge of the selected
-/// onboarding option card.
-pub(crate) struct CheckCircleLeaf;
-
-impl Leaf for CheckCircleLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (WELCOME_CHECK_SIZE.value, WELCOME_CHECK_SIZE.value)
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        _engine: &mut TextEngine,
-        at: Rect,
-        cx: &FrameCx,
-        _state: ElState,
-    ) {
-        let p = cx.palette();
-        let r = at.w.min(at.h) * 0.5;
-        let center = Point::new(f64::from(at.x + at.w * 0.5), f64::from(at.y + at.h * 0.5));
-        scene::fill(scene, root, p.text, &Circle::new(center, f64::from(r)));
-        let mut path = BezPath::new();
-        let ox = f64::from(at.x + at.w * 0.5 - 6.0);
-        let oy = f64::from(at.y + at.h * 0.5 - 6.0);
-        path.move_to((ox + 2.5, oy + 6.2));
-        path.line_to((ox + 4.8, oy + 8.5));
-        path.line_to((ox + 9.5, oy + 3.5));
-        scene.stroke(
-            &Stroke::new(1.8)
-                .with_caps(vello::kurbo::Cap::Round)
-                .with_join(vello::kurbo::Join::Round),
-            root,
-            p.bg,
-            None,
-            &path,
-        );
-    }
 }
 
 /// Which third-party sign-in brand a provider button displays.
@@ -260,7 +156,8 @@ impl Leaf for ProviderButtonLeaf {
     }
 }
 
-/// Inline green link (*Compare plans ↗*, *or continue with email*, *Change*).
+/// Inline accent link (*Use email instead*, *Start without Cloud*, *Sign in*,
+/// *Not you?*, *Cancel*, *Copy the sign-in link*).
 pub(crate) struct LinkLeaf {
     pub(crate) label: String,
     pub(crate) width: f32,
@@ -326,13 +223,14 @@ impl Leaf for LinkLeaf {
         let content_w = layout.width() + arrow_extra;
         let text_x = at.x + (at.w - content_w) * 0.5;
         let text_y = at.y + (at.h - h) * 0.5;
-        scene::draw_layout(scene, root, &layout, text_x, text_y, Some(p.link.fg));
+        let color = p.accent;
+        scene::draw_layout(scene, root, &layout, text_x, text_y, Some(color));
         if self.underlined || self.hovered || self.focused {
             let line_y = f64::from(text_y + h + 1.0);
             scene::stroke(
                 scene,
                 root,
-                p.link.fg,
+                color,
                 1.0,
                 &Line::new(
                     (f64::from(text_x), line_y),
@@ -356,7 +254,7 @@ impl Leaf for LinkLeaf {
                     .with_caps(vello::kurbo::Cap::Round)
                     .with_join(vello::kurbo::Join::Round),
                 root,
-                p.link.fg,
+                color,
                 None,
                 &arrow,
             );
@@ -897,5 +795,169 @@ impl Leaf for CenteredTextLeaf {
         let color = if self.secondary { p.text_dim } else { p.text };
         let layout = engine.simple_layout_wrapped_centered(&self.text, self.style, at.w);
         scene::draw_layout(scene, root, &layout, at.x, at.y, Some(color));
+    }
+}
+
+/// Shared `KoruToggle` switch for the Koru Cloud opt-in card.
+pub(crate) struct CloudToggleLeaf {
+    pub(crate) on: bool,
+    pub(crate) rtl: bool,
+    pub(crate) hovered: bool,
+    pub(crate) focused: bool,
+    pub(crate) disabled: bool,
+}
+
+impl Leaf for CloudToggleLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (Toggle::TRACK_W, Toggle::H)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        _state: ElState,
+    ) {
+        Toggle::new(self.on)
+            .enabled(!self.disabled)
+            .draw(scene, root, engine, at, self.rtl, self.hovered, self.focused);
+    }
+}
+
+/// Thin horizontal divider spanning its container width.
+pub(crate) struct DividerLeaf;
+
+impl Leaf for DividerLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (0.0, WELCOME_DIVIDER_H.value)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        _engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        _state: ElState,
+    ) {
+        let p = cx.palette();
+        let y = f64::from(at.y + at.h * 0.5);
+        scene::stroke(
+            scene,
+            root,
+            p.panel_border,
+            f64::from(WELCOME_DIVIDER_STROKE.value),
+            &Line::new((f64::from(at.x), y), (f64::from(at.x + at.w), y)),
+        );
+    }
+}
+
+/// Profile tile on the Welcome modal: circular `KoruAvatar` once signed in (when
+/// no custom emoji/color is chosen) and rounded square `Tile` otherwise, with the
+/// same hover pencil affordance and focus ring as the setup card.
+pub(crate) struct WelcomeProfileTileLeaf {
+    pub(crate) icon: Option<String>,
+    pub(crate) color: Option<String>,
+    pub(crate) name: String,
+    pub(crate) circular_avatar: bool,
+    pub(crate) hovered: bool,
+    pub(crate) focused: bool,
+    pub(crate) disabled: bool,
+}
+
+impl Leaf for WelcomeProfileTileLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (SETUP_CHIP.value, SETUP_CHIP.value)
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        cx: &FrameCx,
+        _state: ElState,
+    ) {
+        let hovered = self.hovered && !self.disabled;
+        let focused = self.focused && !self.disabled;
+        let palette = cx.palette();
+        let trimmed = self.name.trim();
+        let use_circle = self.circular_avatar
+            && self.icon.is_none()
+            && self.color.is_none()
+            && !trimmed.is_empty();
+        let _scope = inspect::scope(
+            "ProfileIcon",
+            "component",
+            root,
+            scene::rect(at.x, at.y, at.w, at.h),
+            |record| {
+                record.property("hovered", hovered, "view state");
+                record.property("focused", focused, "view state");
+            },
+        );
+        if use_circle {
+            KoruAvatar::initial(trimmed).draw_in(scene, root, engine, at, palette);
+        } else {
+            let icon = match self.icon.as_deref() {
+                Some(icon) => Some(icon),
+                None if trimmed.is_empty() => Some(""),
+                None => None,
+            };
+            Tile {
+                icon,
+                color: self.color.as_deref(),
+                name: trimmed,
+            }
+            .draw_in(scene, root, engine, at, palette);
+        }
+        if hovered {
+            let radius = if use_circle {
+                at.w.min(at.h) * 0.5
+            } else {
+                at.w.min(at.h) * SETUP_TILE_RADIUS_RATIO
+            };
+            scene::fill(
+                scene,
+                root,
+                palette.bubble_bg.multiply_alpha(SETUP_TILE_HOVER_SCRIM),
+                &scene::rrect(at.x, at.y, at.w, at.h, radius),
+            );
+            let pencil = engine.icon_layout(icons::PENCIL, SETUP_TILE_HOVER_ICON.value);
+            scene::draw_layout(
+                scene,
+                root,
+                &pencil,
+                at.x + (at.w - pencil.width()) * 0.5,
+                at.y + (at.h - pencil.height()) * 0.5,
+                Some(palette.bubble_fg),
+            );
+        }
+        if focused {
+            let out = SETUP_RING_GAP.value;
+            let radius = if use_circle {
+                at.w.min(at.h) * 0.5 + out
+            } else {
+                SETUP_RING_RADIUS.value
+            };
+            scene::stroke(
+                scene,
+                root,
+                palette.focus_ring,
+                f64::from(SETUP_RING_W.value),
+                &scene::rrect(
+                    at.x - out,
+                    at.y - out,
+                    at.w + out * 2.0,
+                    at.h + out * 2.0,
+                    radius,
+                ),
+            );
+        }
     }
 }

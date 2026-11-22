@@ -28,28 +28,39 @@ fn workspace_setup_exposes_only_the_modal_and_its_controls() {
     assert_eq!(nodes[0].role, Role::Dialog);
     assert!(nodes[0].modal);
     let flat = flatten(&nodes);
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::COMPARE_PLANS));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_OFFLINE));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_ACCOUNT));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::OWNER_NAME));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::WORKSPACE_NAME));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::CLOUD_TOGGLE));
     assert!(flat.iter().any(|node| node.occurrence.part == parts::BILLING_MONTHLY));
     assert!(flat.iter().any(|node| node.occurrence.part == parts::BILLING_YEARLY));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_EXISTING));
     assert!(flat.iter().any(|node| node.occurrence.part == parts::GOOGLE));
     assert!(flat.iter().any(|node| node.occurrence.part == parts::APPLE));
     assert!(flat.iter().any(|node| node.occurrence.part == parts::CONTINUE_WITH_EMAIL));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::START_WITHOUT_CLOUD));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_EXISTING));
     assert!(view.pending.is_none());
 
-    // Picking Offline -> Continue moves into Screen 2 (modal setup card).
-    view.activate(Hit::WelcomeOffline);
-    view.activate(Hit::Primary);
+    // Toggling Koru Cloud OFF switches the footer to the offline primary CTA.
+    view.activate(Hit::CloudToggle);
     let nodes = view.accessibility_semantics(window, slot);
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].role, Role::Dialog);
     assert!(nodes[0].modal);
     let flat = flatten(&nodes);
     assert!(flat.iter().any(|node| node.role == Role::TextInput));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::BACK));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::CONTINUE_OFFLINE));
     assert!(view.pending.is_none());
+
+    // Clicking "Sign in" opens the compact Welcome back sign-in dialog.
+    view.activate(Hit::WelcomeExisting);
+    let nodes = view.accessibility_semantics(window, slot);
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].role, Role::Dialog);
+    assert!(nodes[0].modal);
+    let flat = flatten(&nodes);
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::GOOGLE));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::APPLE));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::BACK));
 
     view.screen = Screen::Recovery;
     let nodes = view.accessibility_semantics(window, slot);

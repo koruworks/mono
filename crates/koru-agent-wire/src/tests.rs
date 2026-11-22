@@ -669,7 +669,7 @@ fn the_two_version_numbers_are_not_the_same_declaration() {
     // `Push::RootSync` while the frame stayed at 1, and welcome taking it to
     // 51 for optional `owner_display_name` on `CreateProfile`, browser email
     // sign-in and desktop checkout handoff.
-    assert_eq!(PROTOCOL_VERSION, 51);
+    assert_eq!(PROTOCOL_VERSION, 52);
     assert_eq!(FRAME_VERSION, 1);
 }
 

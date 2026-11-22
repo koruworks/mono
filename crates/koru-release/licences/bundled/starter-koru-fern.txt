@@ -1,0 +1,16 @@
+Component: Starter workspace fern photograph (koru-fern.jpg)
+Version: Vecteezy resource 68996338
+Source: https://www.vecteezy.com/photo/68996338
+Files: docs/templates/roadmap/empty/koru-fern.jpg (packaged from assets/templates/empty/koru-fern.jpg)
+License: Vecteezy Commercial License
+Note: Licensed by Koru Works, Inc. under the Vecteezy Commercial License (not MPL-2.0). Resized to 1440x573 JPEG for the starter "What Koru means" document.
+Platforms: windows, macos, linux
+---
+"Curled green fern frond unfurling in spring nature macro" (Vecteezy resource #68996338)
+Source: https://www.vecteezy.com/photo/68996338
+
+This photograph is licensed to Koru Works, Inc. under the Vecteezy Commercial
+License (https://www.vecteezy.com/licensing-agreement) for inclusion in Koru
+distributions. It is not licensed under MPL-2.0. Independent redistributions
+of this repository must remove or replace this image or obtain a separate
+license from Vecteezy.

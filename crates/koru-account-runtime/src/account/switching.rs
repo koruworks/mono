@@ -727,6 +727,7 @@ pub(super) fn start(
                                     if !resume {
                                         envelope.command = AccountCommand::StartGoogle {
                                             locale: locale.clone(),
+                                            ab: None,
                                         };
                                         h.queue.push_back(envelope);
                                     } else {

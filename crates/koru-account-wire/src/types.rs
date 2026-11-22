@@ -492,6 +492,15 @@ pub struct GoogleNativeStartRequestV1 {
     /// port: how a phone completes a browser sign-in (RFC 8252 §7.2).
     #[serde(default)]
     pub app_link_return: bool,
+    /// Optional onboarding A/B copy code (`"sync"` | `"backup"` | `"founding"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Optional onboarding A/B header code (`"speed"` | `"ownership"` | `"purpose"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Optional onboarding A/B preselected billing code (`"monthly"` | `"yearly"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<String>,
 }
 
 impl fmt::Debug for GoogleNativeStartRequestV1 {
@@ -505,6 +514,9 @@ impl fmt::Debug for GoogleNativeStartRequestV1 {
             .field("client_state", &"<redacted>")
             .field("pkce_challenge", &"<redacted>")
             .field("locale", &"<redacted>")
+            .field("code", &self.code)
+            .field("header", &self.header)
+            .field("billing", &self.billing)
             .finish()
     }
 }
@@ -520,6 +532,12 @@ pub struct GoogleNativeTokenStartRequestV1 {
     pub client_state: OAuthState,
     pub pkce_challenge: String,
     pub locale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

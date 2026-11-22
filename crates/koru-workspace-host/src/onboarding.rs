@@ -64,9 +64,11 @@ const EXISTING_ROW_PITCH: f32 = 58.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Telemetry {
+    Shown,
     EntryOffline,
     EntryGoogle,
     EntryApple,
+    EntryEmail,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -248,6 +250,8 @@ enum Hit {
     WelcomeOffline,
     WelcomeAccount,
     WelcomeExisting,
+    CloudToggle,
+    StartWithoutCloud,
     BillingMonthly,
     BillingYearly,
     ReopenCheckout,
@@ -283,6 +287,81 @@ impl WelcomeBillingInterval {
             Self::Yearly => "y1",
         }
     }
+
+    pub(super) fn ab_code(self) -> &'static str {
+        match self {
+            Self::Monthly => "monthly",
+            Self::Yearly => "yearly",
+        }
+    }
+}
+
+/// A/B variants for the Welcome modal's header title & subtitle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WelcomeHeaderVariant {
+    Speed,
+    Ownership,
+    Purpose,
+}
+
+impl WelcomeHeaderVariant {
+    pub(super) fn code(self) -> &'static str {
+        match self {
+            Self::Speed => "speed",
+            Self::Ownership => "ownership",
+            Self::Purpose => "purpose",
+        }
+    }
+
+    pub(super) fn title_key(self) -> koru_i18n::Key {
+        match self {
+            Self::Speed => koru_i18n::Key::WelcomeAbHeaderSpeedTitle,
+            Self::Ownership => koru_i18n::Key::WelcomeAbHeaderOwnershipTitle,
+            Self::Purpose => koru_i18n::Key::WelcomeModalTitle,
+        }
+    }
+
+    pub(super) fn lead_key(self) -> koru_i18n::Key {
+        match self {
+            Self::Speed => koru_i18n::Key::WelcomeAbHeaderSpeedLead,
+            Self::Ownership => koru_i18n::Key::WelcomeAbHeaderOwnershipLead,
+            Self::Purpose => koru_i18n::Key::WelcomeAbHeaderPurposeLead,
+        }
+    }
+}
+
+/// A/B variants for the Koru Cloud card's value-proposition copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WelcomeCloudVariant {
+    Sync,
+    Backup,
+    Founding,
+}
+
+impl WelcomeCloudVariant {
+    pub(super) fn code(self) -> &'static str {
+        match self {
+            Self::Sync => "sync",
+            Self::Backup => "backup",
+            Self::Founding => "founding",
+        }
+    }
+
+    pub(super) fn body_key(self) -> koru_i18n::Key {
+        match self {
+            Self::Sync => koru_i18n::Key::WelcomeAbCloudSync,
+            Self::Backup => koru_i18n::Key::WelcomeAbCloudBackup,
+            Self::Founding => koru_i18n::Key::WelcomeAbCloudFounding,
+        }
+    }
+}
+
+fn random_ab_u64() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let state = std::collections::hash_map::RandomState::new();
+    let mut hasher = state.build_hasher();
+    hasher.write_u64(0x9e37_79b9_7f4a_7c15);
+    hasher.finish()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -339,7 +418,22 @@ pub struct OnboardingView {
     browser_provider: BrowserProvider,
     /// The welcome modal's Screen 1 selection (default: Create a Koru account).
     welcome_path: WelcomePath,
-    /// Billing interval selected on Screen 1 or CheckoutIncomplete (default: Yearly).
+    /// Whether the Koru Cloud opt-in toggle on the unified Welcome modal is ON.
+    welcome_cloud_enabled: bool,
+    /// True once OAuth has succeeded for an account with no existing profiles
+    /// (or after clicking *Create a new profile* from the profile chooser).
+    welcome_signed_in: bool,
+    /// Whether the signed-in account already has active Cloud access.
+    welcome_cloud_access: bool,
+    /// Compact *Welcome back* sign-in mode toggled by *Already have an account? Sign in*.
+    welcome_signin_mode: bool,
+    /// Assigned A/B variant for the Welcome header/lead copy.
+    welcome_header_variant: WelcomeHeaderVariant,
+    /// Assigned A/B variant for the Koru Cloud card copy.
+    welcome_cloud_variant: WelcomeCloudVariant,
+    /// Randomly preselected billing interval for this onboarding session's A/B test.
+    welcome_default_billing: WelcomeBillingInterval,
+    /// Billing interval selected on Screen 1 or CheckoutIncomplete.
     welcome_billing: WelcomeBillingInterval,
     /// Signed-in account email for Screen 2 / checkout cards, once resolved.
     account_email: Option<String>,
@@ -448,6 +542,8 @@ pub struct OnboardingView {
     keyboard_focus: bool,
     /// When *Copy the sign-in link* was last pressed, to flash *Sign-in link copied*.
     browser_link_copied_at: Option<std::time::Instant>,
+    /// Shared hover tooltip (e.g. explaining why the disabled primary CTA needs a name).
+    tooltip: koru_ui::tooltip::Tooltip,
 }
 
 impl Default for OnboardingView {
@@ -479,6 +575,13 @@ impl Default for OnboardingView {
             browser_signin: None,
             browser_provider: BrowserProvider::Google,
             welcome_path: WelcomePath::CreateAccount,
+            welcome_cloud_enabled: true,
+            welcome_signed_in: false,
+            welcome_cloud_access: false,
+            welcome_signin_mode: false,
+            welcome_header_variant: WelcomeHeaderVariant::Purpose,
+            welcome_cloud_variant: WelcomeCloudVariant::Sync,
+            welcome_default_billing: WelcomeBillingInterval::Yearly,
             welcome_billing: WelcomeBillingInterval::Yearly,
             account_email: None,
             account_owner_name: None,
@@ -541,6 +644,7 @@ impl Default for OnboardingView {
             window_focused: true,
             keyboard_focus: false,
             browser_link_copied_at: None,
+            tooltip: koru_ui::tooltip::Tooltip::default(),
         }
     }
 }
@@ -623,6 +727,13 @@ impl OnboardingView {
         next.embedded = self.embedded;
         next.workspace_modal = self.workspace_modal;
         next.welcome_path = self.welcome_path;
+        next.welcome_cloud_enabled = self.welcome_cloud_enabled;
+        next.welcome_signed_in = self.welcome_signed_in;
+        next.welcome_cloud_access = self.welcome_cloud_access;
+        next.welcome_signin_mode = self.welcome_signin_mode;
+        next.welcome_header_variant = self.welcome_header_variant;
+        next.welcome_cloud_variant = self.welcome_cloud_variant;
+        next.welcome_default_billing = self.welcome_default_billing;
         next.welcome_billing = self.welcome_billing;
         next.modal_account_flow = self.modal_account_flow;
         next.owner_label = self.owner_label;
@@ -652,18 +763,62 @@ impl OnboardingView {
     }
 
     /// First launch and an emptied Profile catalog share this presentation:
-    /// Screen 1 offers the three starting paths when Koru Cloud is available,
-    /// then Screen 2 sets up the profile and first workspace.
+    /// the unified Welcome modal (inputs + Koru Cloud opt-in) when Koru Cloud
+    /// is available, with randomized A/B copy and preselected billing interval.
     pub fn show_workspace_setup(&mut self) {
         self.workspace_modal = true;
         self.modal_account_flow = false;
+        self.welcome_signed_in = false;
+        self.welcome_cloud_access = false;
+        self.welcome_signin_mode = false;
+        self.setup_finishing = false;
         if koru_features::cloud_sync() && self.accounts_offered() {
             self.welcome_path = WelcomePath::CreateAccount;
-            self.welcome_billing = WelcomeBillingInterval::Yearly;
+            self.welcome_cloud_enabled = true;
+            self.welcome_header_variant = match random_ab_u64() % 3 {
+                0 => WelcomeHeaderVariant::Speed,
+                1 => WelcomeHeaderVariant::Ownership,
+                _ => WelcomeHeaderVariant::Purpose,
+            };
+            self.welcome_cloud_variant = match random_ab_u64() % 3 {
+                0 => WelcomeCloudVariant::Sync,
+                1 => WelcomeCloudVariant::Backup,
+                _ => WelcomeCloudVariant::Founding,
+            };
+            self.welcome_default_billing = if random_ab_u64() & 1 == 0 {
+                WelcomeBillingInterval::Monthly
+            } else {
+                WelcomeBillingInterval::Yearly
+            };
+            self.welcome_billing = self.welcome_default_billing;
+            self.telemetry.push(Telemetry::Shown);
             self.show_entry();
         } else {
             self.welcome_path = WelcomePath::Offline;
+            self.welcome_cloud_enabled = false;
             self.show_setup();
+        }
+    }
+
+    /// Return the assigned A/B experiment codes for OAuth start and checkout
+    /// handoff requests.
+    pub(crate) fn onboarding_ab(&self) -> koru_agent_wire::OnboardingAb {
+        koru_agent_wire::OnboardingAb {
+            code: Some(self.welcome_cloud_variant.code().to_owned()),
+            header: Some(self.welcome_header_variant.code().to_owned()),
+            billing: Some(self.welcome_default_billing.ab_code().to_owned()),
+        }
+    }
+
+    /// Return the assigned A/B experiment codes as closed telemetry attributes.
+    pub(crate) fn onboarding_ab_attrs(&self) -> koru_events::OnboardingAbAttrs {
+        if !self.workspace_modal {
+            return koru_events::OnboardingAbAttrs::default();
+        }
+        koru_events::OnboardingAbAttrs {
+            code: Some(self.welcome_cloud_variant.code()),
+            header: Some(self.welcome_header_variant.code()),
+            billing: Some(self.welcome_default_billing.ab_code()),
         }
     }
 
@@ -680,8 +835,46 @@ impl OnboardingView {
         self.account_email = (!trimmed.is_empty()).then(|| trimmed.to_owned());
     }
 
+    pub(crate) fn set_account_provider(&mut self, provider: &str) {
+        self.browser_provider = match provider {
+            "google" => BrowserProvider::Google,
+            "apple" => BrowserProvider::Apple,
+            _ => BrowserProvider::Email,
+        };
+    }
+
+    pub(crate) fn set_cloud_access(&mut self, active: bool) {
+        self.welcome_cloud_access = active;
+    }
+
     pub(crate) fn clear_account_email(&mut self) {
         self.account_email = None;
+    }
+
+    /// Transition to the unified Welcome screen in its signed-in state (inputs
+    /// prefilled from OAuth, Koru Cloud card showing the signed-in identity,
+    /// primary CTA ready for checkout or immediate start).
+    pub(super) fn show_welcome_signed_in(&mut self) {
+        self.welcome_signed_in = true;
+        self.welcome_signin_mode = false;
+        self.connect_account = true;
+        self.setup_finishing = false;
+        self.screen = Screen::Entry;
+        self.keyboard_focus = false;
+        self.focus = self.welcome_modal_initial_focus();
+        self.error = None;
+    }
+
+    /// Complete onboarding immediately after Stripe checkout activates Cloud
+    /// access, using the inputs already entered on the Welcome screen. Returns
+    /// `true` when creation was queued.
+    pub(crate) fn finish_signed_in_welcome_after_checkout(&mut self) -> bool {
+        if !self.workspace_modal || !self.welcome_signed_in || !self.setup_complete() {
+            return false;
+        }
+        self.welcome_cloud_access = true;
+        self.finish_welcome_profile_creation(true);
+        true
     }
 
     /// Localized pricing destination (`{origin}/{lang}/pricing`), sharing the
@@ -1166,6 +1359,8 @@ impl OnboardingView {
         self.keyboard_focus = false;
         self.focus = if self.screen == Screen::Setup {
             self.setup_initial_focus()
+        } else if self.workspace_modal {
+            self.welcome_modal_initial_focus()
         } else {
             0
         };
@@ -1183,16 +1378,26 @@ impl OnboardingView {
     }
 
     fn show_connected_profile(&mut self) {
-        self.begin_connected_profile_creation();
+        if self.workspace_modal {
+            self.show_welcome_signed_in();
+        } else {
+            self.begin_connected_profile_creation();
+        }
     }
 
     /// A Store refusal before Profile acknowledgement is safe to retry from
     /// the card: it comes back enabled with the reason, every typed value
     /// intact and the same creation id.
     pub fn creation_failed(&mut self, message: impl Into<String>) {
-        self.screen = Screen::Setup;
         self.setup_finishing = false;
-        self.focus = self.setup_initial_focus();
+        if self.workspace_modal && koru_features::cloud_sync() && self.accounts_offered() {
+            self.screen = Screen::Entry;
+            self.welcome_signin_mode = false;
+            self.focus = self.welcome_modal_initial_focus();
+        } else {
+            self.screen = Screen::Setup;
+            self.focus = self.setup_initial_focus();
+        }
         self.error = Some(message.into());
     }
 
@@ -1245,12 +1450,70 @@ impl OnboardingView {
             {
                 self.setup_drag(x)
             }
+            Screen::Entry
+                if self.workspace_modal
+                    && (self.owner_name.borrow().is_dragging()
+                        || self.workspace_name.borrow().is_dragging()) =>
+            {
+                self.welcome_modal_drag(x)
+            }
             _ => false,
         };
         let next = self.hit(x, y);
         let changed = next != self.hover;
         self.hover = next;
-        caption_changed || dragged || changed
+        let tip_changed = self.update_disabled_primary_tooltip(x, y);
+        caption_changed || dragged || changed || tip_changed
+    }
+
+    fn disabled_primary_tooltip_content(
+        &mut self,
+        x: f32,
+        y: f32,
+    ) -> Option<koru_ui::tooltip::TooltipContent> {
+        if self.setup_finishing || self.creation_conflict || self.setup_complete() {
+            return None;
+        }
+        let rect = match self.screen {
+            Screen::Entry if self.workspace_modal && self.welcome_modal_shows_primary() => {
+                let (_, frame) = self.welcome_modal_frame();
+                frame.node(welcome_modal::KEY_CONTINUE).map(|n| n.rect)
+            }
+            Screen::Setup => {
+                let (_, frame) = self.setup_frame();
+                frame.node(setup::KEY_PRIMARY).map(|n| n.rect)
+            }
+            _ => None,
+        }?;
+        if !rect.contains(x, y) {
+            return None;
+        }
+        let (key, label_key) = if self.owner_name.borrow().value().is_empty() {
+            (1_u64, koru_i18n::Key::WelcomePrimaryDisabledNeedName)
+        } else {
+            (2_u64, koru_i18n::Key::WelcomePrimaryDisabledNeedWorkspace)
+        };
+        Some(
+            koru_ui::tooltip::TooltipContent::new(key, rect, koru_i18n::t(self.language, label_key))
+                .above(),
+        )
+    }
+
+    fn update_disabled_primary_tooltip(&mut self, x: f32, y: f32) -> bool {
+        let content = self.disabled_primary_tooltip_content(x, y);
+        self.tooltip.set_hover(content, std::time::Instant::now())
+    }
+
+    pub fn maintain_tooltip(&mut self, now: std::time::Instant) -> bool {
+        self.tooltip.maintain(now) || self.tooltip.animating(now)
+    }
+
+    pub fn tooltip_deadline(&self, now: std::time::Instant) -> Option<std::time::Instant> {
+        if self.tooltip.animating(now) {
+            Some(now + std::time::Duration::from_millis(16))
+        } else {
+            self.tooltip.maintenance_deadline()
+        }
     }
 
     pub fn set_window_focused(&mut self, focused: bool) {
@@ -1300,6 +1563,7 @@ impl OnboardingView {
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.restart_caret_blink();
+        self.tooltip.clear();
         self.keyboard_focus = false;
         self.pointer = (x, y);
         let area = self.appearance_area();
@@ -1323,7 +1587,7 @@ impl OnboardingView {
         }
         let before = self.controls().get(self.focus).copied();
         let field_clicked = match self.screen {
-            Screen::Entry if self.workspace_modal => None,
+            Screen::Entry if self.workspace_modal => self.welcome_modal_field_press(x, y),
             Screen::Entry if !self.accounts_offered() => None,
             Screen::Entry => {
                 let layout = self.welcome_layout();
@@ -1401,6 +1665,14 @@ impl OnboardingView {
                 true
             }
             (Screen::Setup, Some(Hit::WorkspaceName)) => {
+                self.workspace_name.borrow_mut().blur(&mut self.engine);
+                true
+            }
+            (Screen::Entry, Some(Hit::Name)) if self.workspace_modal => {
+                self.owner_name.borrow_mut().blur(&mut self.engine);
+                true
+            }
+            (Screen::Entry, Some(Hit::WorkspaceName)) if self.workspace_modal => {
                 self.workspace_name.borrow_mut().blur(&mut self.engine);
                 true
             }
@@ -1502,6 +1774,8 @@ impl OnboardingView {
                     | Hit::WelcomeOffline
                     | Hit::WelcomeAccount
                     | Hit::WelcomeExisting
+                    | Hit::CloudToggle
+                    | Hit::StartWithoutCloud
                     | Hit::BillingMonthly
                     | Hit::BillingYearly
                     | Hit::ReopenCheckout
@@ -1538,6 +1812,7 @@ impl OnboardingView {
 
     pub fn key(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) -> bool {
         self.restart_caret_blink();
+        self.tooltip.clear();
         if let Some(appearance) = self.workspace_appearance.as_mut() {
             let outcome = appearance.key(&mut self.engine, key, text, mods);
             return self.settle_workspace_appearance(outcome);
@@ -1545,12 +1820,14 @@ impl OnboardingView {
         let focused = self.controls().get(self.focus).copied();
         if let Some(focused) = focused {
             let typed = match (self.screen, focused) {
-                (Screen::Setup, Hit::Name) => {
+                (Screen::Setup, Hit::Name)
+                | (Screen::Entry, Hit::Name) => {
                     self.owner_name
                         .borrow_mut()
                         .key(&mut self.engine, key, text, mods)
                 }
-                (Screen::Setup, Hit::WorkspaceName) => {
+                (Screen::Setup, Hit::WorkspaceName)
+                | (Screen::Entry, Hit::WorkspaceName) => {
                     let before = self.workspace_name.borrow().value();
                     let typed =
                         self.workspace_name
@@ -1648,6 +1925,13 @@ impl OnboardingView {
                     (Screen::Setup, Some(Hit::Name | Hit::WorkspaceName)) => {
                         self.activate(Hit::Primary)
                     }
+                    (Screen::Entry, Some(Hit::Name | Hit::WorkspaceName))
+                        if self.workspace_modal =>
+                    {
+                        if self.welcome_modal_shows_primary() {
+                            self.activate(Hit::Primary);
+                        }
+                    }
                     // Enter anywhere in the email form submits it, which is
                     // what a browser does and what a password manager's fill
                     // ends with.
@@ -1694,9 +1978,21 @@ impl OnboardingView {
                 }
                 true
             }
+            Key::Named(NamedKey::Escape)
+                if self.screen == Screen::Entry
+                    && self.workspace_modal
+                    && self.welcome_signin_mode =>
+            {
+                self.activate(Hit::Back);
+                true
+            }
             Key::Named(NamedKey::Escape) if self.screen == Screen::CheckoutIncomplete => {
-                self.modal_account_flow = false;
-                self.show_entry();
+                if self.workspace_modal && self.welcome_signed_in {
+                    self.show_welcome_signed_in();
+                } else {
+                    self.modal_account_flow = false;
+                    self.show_entry();
+                }
                 true
             }
             Key::Named(NamedKey::Escape) if self.screen == Screen::Recovery => {
@@ -1735,12 +2031,14 @@ impl OnboardingView {
         // as well drew the welcome split twice — the inspector showed two
         // WelcomeSidebar containers, and the sidebar paid double overdraw.
         if self.workspace_modal {
-            let area = self.setup_area();
+            // Cover the full window including the top header bar so the chrome
+            // behind the modal is dimmed uniformly; window caption controls
+            // (`draw_caption`) paint last on top and remain clickable.
             scene::fill(
                 canvas,
                 root,
                 theme::p().scrim,
-                &scene::rect(area.x, area.y, area.w, area.h),
+                &scene::rect(0.0, 0.0, self.viewport.0, self.viewport.1),
             );
         } else if self.screen != Screen::Entry {
             welcome::draw_backdrop(
@@ -1805,6 +2103,15 @@ impl OnboardingView {
                 self.workspace_appearance = Some(appearance);
             }
         }
+        // Shared hover tooltip over disabled primary controls.
+        let viewport = Rect::new(0.0, 0.0, self.viewport.0, self.viewport.1);
+        self.tooltip.draw(
+            canvas,
+            root,
+            &mut self.engine,
+            viewport,
+            std::time::Instant::now(),
+        );
         // Window furniture, not screen content: the caption hangs directly
         // under the window root, a sibling of the screen — and, painted last,
         // stays on top of anything a form pops over it.
@@ -2175,6 +2482,9 @@ impl OnboardingView {
                 self.account_profile_sources.clear();
                 self.account_email = None;
                 self.account_owner_name = None;
+                self.welcome_signed_in = false;
+                self.welcome_cloud_access = false;
+                self.welcome_signin_mode = false;
                 self.selection.checked.clear();
                 self.selection.settled();
                 self.modal_account_flow = false;
