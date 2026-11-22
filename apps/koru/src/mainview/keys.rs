@@ -46,9 +46,8 @@ pub enum Chord {
     /// Rename what is under the pointer in the pane, or the document showing.
     /// F2, which is what every file list on this platform uses.
     Rename,
-    /// `Alt+H` — Home, the one view with a chord of its own (E69). Opens the
-    /// column if it is closed: a view you asked for by name is a view you
-    /// meant to see.
+    /// `Alt+H` — Home, the one view with a chord of its own (E69). Selects
+    /// its floating preview when collapsed, without docking the explorer.
     ShowNavigator(NavigatorMode),
     /// `Alt+1` … `Alt+8` — the view in that slot down the rail, counted from
     /// zero here, **whichever view the person has put there** (the user,

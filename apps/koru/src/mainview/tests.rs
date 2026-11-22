@@ -56,6 +56,62 @@ fn collapsed_rail_previews_without_resizing_content_and_fades_on_exit() {
 }
 
 #[test]
+fn keyboard_preview_waits_two_seconds_for_entry_without_following_the_pointer() {
+    for reduced_motion in [false, true] {
+        let (mut view, _) = super::harness::container();
+        view.reduced_motion = reduced_motion;
+        view.pointer = (900.0, 400.0);
+        view.show_rail_slot(2);
+        let due = view
+            .explore_preview_deadline
+            .expect("keyboard grace period");
+        view.preview_pointer(950.0, 410.0);
+        assert!(view.explore_preview_fade.is_none());
+        assert!(!view.maintain_explore_preview(due - Duration::from_millis(1)));
+        assert!(view.explore_preview);
+        assert!(view.maintain_explore_preview(due));
+        assert!(view.explore_preview_deadline.is_none());
+        if reduced_motion {
+            assert!(!view.explore_preview);
+        } else {
+            assert_eq!(view.explore_preview_fade, Some(due));
+        }
+    }
+}
+
+#[test]
+fn entering_a_keyboard_preview_returns_to_normal_hover_dismissal() {
+    let (mut view, _) = super::harness::container();
+    view.pointer = (900.0, 400.0);
+    view.show_rail_slot(2);
+    assert!(view.explore_preview_deadline.is_some());
+    let panel = view.explore_preview_rect();
+    view.mouse_move(panel.x + 20.0, panel.y + 20.0);
+    assert!(view.explore_preview_deadline.is_none());
+    view.mouse_move(900.0, 400.0);
+    assert!(view.explore_preview_fade.is_some());
+}
+
+#[test]
+fn keyboard_navigation_refreshes_the_preview_deadline() {
+    let (mut view, mut workspace) = super::harness::on_document();
+    view.pointer = (900.0, 400.0);
+    view.show_rail_slot(2);
+    let old = Instant::now() + Duration::from_millis(100);
+    view.explore_preview_deadline = Some(old);
+    assert!(view.key(
+        &mut workspace.ws,
+        &Key::Named(winit::keyboard::NamedKey::ArrowDown),
+        None,
+        ModifiersState::empty(),
+    ));
+    assert!(view.explore_preview_deadline.unwrap() > old + Duration::from_secs(1));
+    assert!(view.explore_preview_fade.is_none());
+    view.toggle_sidebar();
+    assert!(view.explore_preview_deadline.is_none());
+}
+
+#[test]
 fn ocr_text_opens_reuses_and_closes_as_a_tab_without_a_modal() {
     use koru_workspace_host::{View, reading_details};
     let (mut view, _) = super::harness::container();
@@ -161,7 +217,7 @@ fn socials_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
     assert!(matches!(view.tabs().active_tab().view, TabView::Socials(_)));
     assert!(!view.tabs().active_tab().is_reusable());
     assert!(view.explore.showing_socials());
-    assert!(view.sidebar.is_open());
+    assert!(!view.sidebar.is_open());
     let shared = view.explore.socials().expect("navigator owns the surface");
     assert!(view.open_socials_tab());
     assert_eq!(view.tabs().len(), count);
@@ -9790,8 +9846,8 @@ fn dragging_a_list_on_the_rail_writes_the_move() {
     );
 }
 
-/// **`Alt+1..3` show the views in the rail's first three slots**, opening
-/// the column when it is closed, and each icon's tooltip names its view and
+/// **`Alt+1..3` show the views in the rail's first three slots**, preserving
+/// the collapsed column, and each icon's tooltip names its view and
 /// teaches its slot's chord from the registry.
 #[test]
 fn alt_digits_show_the_views_and_the_icons_teach_them() {
@@ -9801,7 +9857,14 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     // The view modifier: Alt, or ⌃⌘ on a Mac (M42).
     let alt = koru_keys::VIEW;
     assert!(v.key(&mut w.ws, &Key::Character("3".into()), Some("3"), alt));
-    assert!(v.sidebar.is_open(), "a view asked for by name is opened");
+    assert!(
+        !v.sidebar.is_open(),
+        "app selection does not dock the explorer"
+    );
+    assert!(
+        v.explore_preview,
+        "the requested view is available in the preview"
+    );
     assert!(v.explore.showing_tasks());
     assert!(v.key(&mut w.ws, &Key::Character("2".into()), Some("2"), alt));
     assert_eq!(v.explore.navigator_mode(), NavigatorMode::Files);
@@ -9843,6 +9906,36 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     let (x, y) = mode_icon(&v, NavigatorMode::Tasks).centre();
     View::mouse_move(&mut v, x, y);
     assert_eq!(v.tooltip.label(), Some("Tasks"));
+}
+
+#[test]
+fn app_clicks_and_slot_shortcuts_preserve_the_explorer_docking_state() {
+    use crate::panes::explore::NavigatorMode;
+    for expanded in [false, true] {
+        let (mut view, mut workspace) = on_document();
+        view.sidebar.set_immediately(expanded);
+        view.relayout();
+        let content = view.content();
+        for mode in [
+            NavigatorMode::Files,
+            NavigatorMode::Tasks,
+            NavigatorMode::Chats,
+        ] {
+            let (x, y) = mode_icon(&view, mode).centre();
+            assert!(view.mouse_down(&mut workspace.ws, x, y, false));
+            view.mouse_up(&mut workspace.ws);
+            assert_eq!(view.explore.navigator_mode(), mode);
+            assert_eq!(view.sidebar.is_open(), expanded);
+            assert_eq!(view.content(), content);
+            assert_eq!(view.explore_preview, !expanded);
+        }
+        for slot in 0..3 {
+            assert!(view.show_rail_slot(slot));
+            assert_eq!(view.sidebar.is_open(), expanded);
+            assert_eq!(view.content(), content);
+            assert_eq!(view.explore_preview, !expanded);
+        }
+    }
 }
 
 /// **No tooltip while a rail view is carried** (the user's screenshot,

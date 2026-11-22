@@ -4,6 +4,43 @@ use super::*;
 use crate::panes::explore::popover_elements::profiles::MenuAction;
 
 #[test]
+fn rail_popovers_keep_the_same_anchor_expanded_collapsed_or_previewing() {
+    use crate::panes::explore::PopoverKind;
+    for kind in [PopoverKind::Summary, PopoverKind::Profiles] {
+        let mut expected = None;
+        for (expanded, preview) in [(true, false), (false, false), (false, true)] {
+            let (mut view, _) = harness::container();
+            view.sidebar.set_immediately(expanded);
+            view.relayout();
+            view.explore_preview = preview;
+            view.explore.open_popover(kind);
+            let panel = view
+                .explore
+                .popover_panel(view.explore_popover_area(), view.viewport)
+                .unwrap();
+            assert_eq!(panel.x, theme::RAIL_W + 4.0);
+            if let Some(expected) = expected {
+                assert_eq!(panel, expected, "rail menu moved with the explorer");
+            } else {
+                expected = Some(panel);
+            }
+        }
+    }
+}
+
+#[test]
+fn floating_heading_menu_keeps_its_anchor_while_fading() {
+    use crate::panes::explore::PopoverKind;
+    let (mut view, _) = harness::container();
+    view.explore_preview = true;
+    view.explore.open_popover(PopoverKind::LibraryActions);
+    let area = view.explore_area();
+    assert_eq!(view.explore_popover_area(), area);
+    view.explore.close_popover();
+    assert_eq!(view.explore_popover_area(), area);
+}
+
+#[test]
 fn opening_another_profile_in_a_window_does_not_switch_the_source() {
     let (mut view, workspace) = harness::container();
     let destination = ProfileId::new();

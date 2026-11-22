@@ -235,6 +235,7 @@ fn the_rail_ground_runs_under_the_lane_so_no_seam_shows_under_the_mark() {
     let (mut view, workspace) = crate::mainview::harness::on_document();
     view.viewport = (1200.0, 700.0);
     view.show_navigator(crate::panes::explore::NavigatorMode::Documents);
+    view.toggle_sidebar();
     view.sidebar
         .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
     view.relayout();
@@ -288,6 +289,7 @@ fn the_document_corner_beside_the_pane_has_one_clean_arc() {
     let (mut view, workspace) = crate::mainview::harness::on_document();
     view.viewport = (1200.0, 700.0);
     view.show_navigator(crate::panes::explore::NavigatorMode::Documents);
+    view.toggle_sidebar();
     view.sidebar
         .advance(std::time::Instant::now() + std::time::Duration::from_secs(5));
     view.relayout();

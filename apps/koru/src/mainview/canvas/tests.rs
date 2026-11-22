@@ -695,8 +695,8 @@ fn the_canvases_section_survives_a_restart_and_answers_alt_7() {
         koru_keys::VIEW,
     );
     assert!(
-        v.sidebar.is_open(),
-        "the column opened for the view asked for"
+        !v.sidebar.is_open() && v.explore_preview,
+        "the requested view floats without expanding the column"
     );
     assert_eq!(
         v.explore.navigator_mode(),

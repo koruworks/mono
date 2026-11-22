@@ -3680,8 +3680,13 @@ the letters. All of these are yours only — documents never store them.
 The top-left sidebar button expands or collapses the explorer. Collapsing
 keeps the app rail visible. Hover an app to preview its explorer in a floating
 panel without resizing the document; move outside to fade it away, or press
-Escape to dismiss it. Click an app to keep its explorer expanded. The expanded
+Escape to dismiss it. Clicking an app or pressing Alt+number selects its view
+without expanding the pane; use the sidebar toggle to dock it. The expanded
 explorer shares the rail's base color.
+An Alt+number preview waits two seconds for you to enter it with the mouse or
+use its keyboard navigation. Keyboard activity restarts that timeout while
+the mouse is outside. Enter opens the selected item and hides the floating
+pane; an expanded pane stays open.
 
 The top-right keeps direct **minimize**, **maximize/restore**, and **close**
 controls. The leftmost control is an overflow `…` menu. Move the pointer onto it

@@ -704,7 +704,9 @@ fn draw_tab(
             p.text_dim
         };
         let close = Rect::new(t.close.x + tab.slide, t.close.y, t.close.w, t.close.h);
-        draw_icon(scene, root, engine, icons::WINDOW_CLOSE, close, colour);
+        let layout = engine.icon_layout(icons::WINDOW_CLOSE, 12.0);
+        let (x, y) = scene::centre_in(&layout, close);
+        scene::draw_layout(scene, root, &layout, x, y, Some(colour));
     }
 }
 

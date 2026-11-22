@@ -343,15 +343,14 @@ impl MainView {
 
     /// The area the Explore popover uses as its anchor.
     ///
-    /// With the pane open this is its ordinary settled region. With it shut,
-    /// the region is deliberately zero-width so the document reclaims all of
-    /// the room; the workspace shortcut must not change that layout merely to
-    /// give its floating panel an anchor. In that state, use the pane's
-    /// remembered width as virtual geometry. Nothing draws or hit-tests the
-    /// pane itself there — only the popover uses this rectangle.
+    /// Rail menus use the real rail, independently of the floating explorer.
+    /// A collapsed pane gets positive virtual width so Explore can recover
+    /// the rail to its left. Heading menus follow the visible pane instead.
     pub(super) fn explore_popover_area(&self) -> Rect {
-        if self.regions.sidebar.w > 0.0 {
+        if self.explore.popover_anchors_to_heading() {
             self.explore_area()
+        } else if self.regions.sidebar.w > theme::RAIL_W {
+            Self::pane_of(self.regions.sidebar)
         } else {
             Self::pane_of(Rect::new(0.0, 0.0, self.sidebar.full(), self.viewport.1))
         }
@@ -435,7 +434,12 @@ impl MainView {
             panel.h,
         );
         if self.explore_preview && (bridge.contains(x, y) || self.explore.popover_open()) {
-            return self.explore_preview_fade.take().is_some();
+            let entered = panel.contains(x, y) || self.explore.popover_open();
+            let released = entered && self.explore_preview_deadline.take().is_some();
+            return self.explore_preview_fade.take().is_some() || released;
+        }
+        if self.explore_preview_deadline.is_some() {
+            return false;
         }
         if self.explore_preview && self.explore_preview_fade.is_none() {
             if self.reduced_motion {
@@ -457,9 +461,47 @@ impl MainView {
         if alpha == 0.0 {
             self.explore_preview = false;
             self.explore_preview_fade = None;
+            self.explore_preview_deadline = None;
             self.explore.clear_focus();
         }
         alpha
+    }
+
+    /// Keyboard entry gets an idle deadline instead of following an unrelated
+    /// pointer outside the pane. Navigation refreshes it without reflowing.
+    pub(super) fn preview_keyboard_activity(&mut self, now: Instant) {
+        if !self.explore_preview || self.sidebar.is_open() {
+            return;
+        }
+        self.explore_preview_fade = None;
+        self.explore_preview_deadline = (!self
+            .explore_preview_rect()
+            .contains(self.pointer.0, self.pointer.1))
+        .then_some(now + std::time::Duration::from_secs(2));
+    }
+
+    pub(super) fn maintain_explore_preview(&mut self, now: Instant) -> bool {
+        if !self.explore_preview_deadline.is_some_and(|due| now >= due) {
+            return false;
+        }
+        self.explore_preview_deadline = None;
+        if !self.explore_preview || self.sidebar.is_open() {
+            return false;
+        }
+        if self.explore.popover_open()
+            || self
+                .explore_preview_rect()
+                .contains(self.pointer.0, self.pointer.1)
+        {
+            return false;
+        }
+        if self.reduced_motion {
+            self.explore_preview = false;
+            self.explore.clear_focus();
+        } else {
+            self.explore_preview_fade = Some(now);
+        }
+        true
     }
 
     /// The settled rail.
@@ -785,6 +827,7 @@ impl MainView {
     pub(super) fn toggle_sidebar(&mut self) -> bool {
         self.explore_preview = false;
         self.explore_preview_fade = None;
+        self.explore_preview_deadline = None;
         let now = Instant::now();
         // **The fold** (`theme::motion::pane_fold`): the panel's own slide,
         // reversed from where it is on interrupt, with the contents' fade
@@ -999,9 +1042,6 @@ impl MainView {
                 .map(|id| koru_store_core::WorkspaceId::from_uuid(id.as_uuid())),
         );
         self.explore.show_socials();
-        if !self.sidebar.is_open() {
-            self.toggle_sidebar();
-        }
         if self.sidebar.full() < 280. {
             self.set_sidebar_width(280.);
             self.commit_sidebar_width();

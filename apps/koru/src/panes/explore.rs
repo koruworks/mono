@@ -3563,6 +3563,13 @@ impl ExploreView {
         self.live().is_some_and(|p| p.kind == kind)
     }
 
+    /// Retain the heading anchor through dismissal so its fade does not jump.
+    pub(crate) fn popover_anchors_to_heading(&self) -> bool {
+        self.popover
+            .as_ref()
+            .is_some_and(|p| p.anchor == PopoverAnchor::Heading)
+    }
+
     /// Which row of the open popover is highlighted, if any.
     ///
     /// Public because a row's **remove** box only draws while its row is hot, so

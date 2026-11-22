@@ -700,6 +700,7 @@ pub struct MainView {
     sidebar: Panel,
     explore_preview: bool,
     explore_preview_fade: Option<Instant>,
+    explore_preview_deadline: Option<Instant>,
     explore: ExploreView,
     /// Whether the tree needs rebuilding before it is next drawn. Set by
     /// `adopt` and by anything that expands a row, so a rebuild costs one walk
@@ -1931,6 +1932,7 @@ impl MainView {
             sidebar: Panel::new(theme::SIDEBAR_W + theme::RAIL_W, false),
             explore_preview: false,
             explore_preview_fade: None,
+            explore_preview_deadline: None,
             explore: ExploreView::new(),
             explore_stale: true,
             naming: None,
@@ -11315,7 +11317,7 @@ impl MainView {
                     Some(crate::panes::sidebar::apps_rail::Hit::App(_))
                 )
             {
-                self.toggle_sidebar();
+                self.preview_pointer(x, y);
             }
             // The rail: an app, Settings, Help or the profile square. A press
             // on it is a press outside the popover, so the popover shuts
@@ -16552,6 +16554,7 @@ impl View for MainView {
             self.profile_wait_deadline(),
             self.support.as_ref().and_then(|s| s.maintenance_deadline()),
             self.tooltip.maintenance_deadline(),
+            self.explore_preview_deadline,
             self.entity_search
                 .pending()
                 .then(|| Instant::now() + std::time::Duration::from_millis(16)),
@@ -16619,6 +16622,7 @@ impl View for MainView {
     }
 
     fn maintain(&mut self, ws: &mut WorkspaceDoc, now: Instant) -> bool {
+        let preview_changed = self.maintain_explore_preview(now);
         let files_reader_changed = self.maintain_files_reader();
         self.refresh_help();
         if self.support.is_some() || self.fab.is_some() {
@@ -17123,6 +17127,7 @@ impl View for MainView {
             || reminder_preferences_changed
             || reminder_settings_view_changed
             || welcome_ticks
+            || preview_changed
             || reminder_clock_changed
             || reminder_health_changed
             || reminder_failure_changed
@@ -17441,6 +17446,7 @@ impl MainView {
         {
             self.explore_preview = false;
             self.explore_preview_fade = None;
+            self.explore_preview_deadline = None;
             self.explore.clear_focus();
             return true;
         }
@@ -17545,6 +17551,7 @@ impl MainView {
             if self.explore.take_quick_filter_stale() {
                 self.explore_stale = true;
             }
+            self.preview_keyboard_activity(Instant::now());
             return true;
         }
         // **The tree, while it holds the keyboard.** Only the navigation keys —
@@ -17562,7 +17569,17 @@ impl MainView {
             inputdebug::write(format_args!("[Koru][input] view key claimed=explore-nav"));
             // An expand or a collapse changed which rows there are.
             self.explore_stale = true;
-            return self.apply(ws, out);
+            self.preview_keyboard_activity(Instant::now());
+            let dismiss =
+                self.explore_preview && matches!(key, Key::Named(winit::keyboard::NamedKey::Enter));
+            let applied = self.apply(ws, out);
+            if dismiss {
+                self.explore_preview = false;
+                self.explore_preview_fade = None;
+                self.explore_preview_deadline = None;
+                self.explore.clear_focus();
+            }
+            return applied || dismiss;
         }
         // The editor owns the prompt and its write, while the container owns two
         // caches of the resulting name: the **tab's label** and the explore
@@ -19609,13 +19626,14 @@ impl MainView {
         }
     }
 
-    /// Show one of the explore column's views, opening the column when it is
-    /// closed — the view was asked for by name.
+    /// Select an app without changing whether its explorer is docked.
+    /// A collapsed explorer presents the requested view as a floating preview.
     pub(super) fn show_navigator(&mut self, mode: crate::panes::explore::NavigatorMode) -> bool {
         let rail_focus = self.focused_rail_identity();
         chrome_debug::chrome_debug!("app switch by chord to {}", mode.token());
         if !self.sidebar.is_open() {
-            self.toggle_sidebar();
+            self.explore_preview = true;
+            self.explore_preview_fade = None;
         }
         match mode {
             crate::panes::explore::NavigatorMode::Documents => self.explore.show_documents(),
@@ -19641,6 +19659,10 @@ impl MainView {
         }
         self.retain_rail_focus(rail_focus);
         self.explore_stale = true;
+        if self.explore_preview {
+            self.explore.focus_tree(self.explore_area());
+            self.preview_keyboard_activity(Instant::now());
+        }
         true
     }
 
