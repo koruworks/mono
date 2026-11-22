@@ -13,6 +13,105 @@
 use super::*;
 
 #[test]
+fn collapsed_rail_previews_without_resizing_content_and_fades_on_exit() {
+    let _guard = crate::tests::lock_theme();
+    let (mut view, _) = super::harness::container();
+    view.sidebar.set_immediately(false);
+    view.relayout();
+    let content = view.content();
+    assert_eq!(view.rail_area().w, theme::RAIL_W);
+    let app = view.explore.apps_rail_rects(view.rail_area()).apps[0].1;
+    let (x, y) = app.centre();
+    assert!(view.preview_pointer(x, y));
+    assert!(view.explore_preview);
+    assert!(!view.sidebar.is_open());
+    assert_eq!(view.content(), content);
+    let panel = view.explore_preview_rect();
+    assert_eq!(view.hit_at(panel.x + 10.0, panel.y + 10.0), Hit::Sidebar);
+    view.preview_pointer(panel.x - 2.0, panel.y + 10.0);
+    assert!(
+        view.explore_preview_fade.is_none(),
+        "the gap is traversable"
+    );
+    view.preview_pointer(panel.x + panel.w + 30.0, panel.y + 10.0);
+    assert!(view.explore_preview_fade.is_some());
+    view.preview_pointer(panel.x + 10.0, panel.y + 10.0);
+    assert!(
+        view.explore_preview_fade.is_none(),
+        "returning cancels dismissal"
+    );
+    view.mouse_move(-1.0, -1.0);
+    assert!(
+        view.explore_preview_fade.is_some(),
+        "leaving the window dismisses the preview"
+    );
+    view.explore_preview_fade = Some(Instant::now() - std::time::Duration::from_millis(200));
+    assert_eq!(view.preview_alpha(), 0.0);
+    assert!(!view.explore_preview);
+    assert!(
+        view.explore_preview_fade.is_none(),
+        "idle does not keep repainting"
+    );
+    assert_eq!(view.content(), content);
+}
+
+#[test]
+fn keyboard_preview_waits_two_seconds_for_entry_without_following_the_pointer() {
+    for reduced_motion in [false, true] {
+        let (mut view, _) = super::harness::container();
+        view.reduced_motion = reduced_motion;
+        view.pointer = (900.0, 400.0);
+        view.show_rail_slot(2);
+        let due = view
+            .explore_preview_deadline
+            .expect("keyboard grace period");
+        view.preview_pointer(950.0, 410.0);
+        assert!(view.explore_preview_fade.is_none());
+        assert!(!view.maintain_explore_preview(due - Duration::from_millis(1)));
+        assert!(view.explore_preview);
+        assert!(view.maintain_explore_preview(due));
+        assert!(view.explore_preview_deadline.is_none());
+        if reduced_motion {
+            assert!(!view.explore_preview);
+        } else {
+            assert_eq!(view.explore_preview_fade, Some(due));
+        }
+    }
+}
+
+#[test]
+fn entering_a_keyboard_preview_returns_to_normal_hover_dismissal() {
+    let (mut view, _) = super::harness::container();
+    view.pointer = (900.0, 400.0);
+    view.show_rail_slot(2);
+    assert!(view.explore_preview_deadline.is_some());
+    let panel = view.explore_preview_rect();
+    view.mouse_move(panel.x + 20.0, panel.y + 20.0);
+    assert!(view.explore_preview_deadline.is_none());
+    view.mouse_move(900.0, 400.0);
+    assert!(view.explore_preview_fade.is_some());
+}
+
+#[test]
+fn keyboard_navigation_refreshes_the_preview_deadline() {
+    let (mut view, mut workspace) = super::harness::on_document();
+    view.pointer = (900.0, 400.0);
+    view.show_rail_slot(2);
+    let old = Instant::now() + Duration::from_millis(100);
+    view.explore_preview_deadline = Some(old);
+    assert!(view.key(
+        &mut workspace.ws,
+        &Key::Named(winit::keyboard::NamedKey::ArrowDown),
+        None,
+        ModifiersState::empty(),
+    ));
+    assert!(view.explore_preview_deadline.unwrap() > old + Duration::from_secs(1));
+    assert!(view.explore_preview_fade.is_none());
+    view.toggle_sidebar();
+    assert!(view.explore_preview_deadline.is_none());
+}
+
+#[test]
 fn ocr_text_opens_reuses_and_closes_as_a_tab_without_a_modal() {
     use koru_workspace_host::{View, reading_details};
     let (mut view, _) = super::harness::container();
@@ -118,7 +217,7 @@ fn socials_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
     assert!(matches!(view.tabs().active_tab().view, TabView::Socials(_)));
     assert!(!view.tabs().active_tab().is_reusable());
     assert!(view.explore.showing_socials());
-    assert!(view.sidebar.is_open());
+    assert!(!view.sidebar.is_open());
     let shared = view.explore.socials().expect("navigator owns the surface");
     assert!(view.open_socials_tab());
     assert_eq!(view.tabs().len(), count);
@@ -4503,7 +4602,7 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
     assert!(!v.explore.popover_open(), "switching closes the list");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
-        Some(crate::panes::explore::PopoverRow::ProfilesHeading),
+        Some(crate::panes::explore::PopoverRow::Profile(0)),
         "still the Profiles page"
     );
 }
@@ -4530,11 +4629,7 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     let (sx, sy) = v.explore.apps_rail_rects(rail).profile.centre();
     v.mouse_down(&mut w.ws, sx, sy, false);
     assert!(v.explore.popover_open(), "the square opens its page");
-    assert_eq!(
-        first(&v),
-        Some(PopoverRow::ProfilesHeading),
-        "the Profiles page"
-    );
+    assert_eq!(first(&v), Some(PopoverRow::Profile(0)), "the Profiles page");
 
     v.mouse_down(&mut w.ws, sx, sy, false);
     assert!(!v.explore.popover_open(), "the square shuts it");
@@ -4586,8 +4681,7 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         assert!(!v.explore.popover_open(), "the square shuts it on {mode:?}");
         v.explore
             .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-        let (hx, hy) = rail.help.centre();
-        v.mouse_down(&mut w.ws, hx, hy, false);
+        press_help(&mut v, &mut w);
         assert!(
             v.explore
                 .popover_is(crate::panes::explore::PopoverKind::Help),
@@ -6765,7 +6859,7 @@ fn the_zoom_steppers_controls_zoom_and_leave_the_menu_open() {
         // pointer path is checked on the two that are live there. What all
         // three ask for is `each_zoom_control_names_the_action_it_takes`, and
         // the verb each one runs is the arm below.
-        for (control, expected) in [(0, ZoomIntent::Out), (2, ZoomIntent::In)] {
+        for (control, expected) in [(1, ZoomIntent::Out), (3, ZoomIntent::In)] {
             let (mut v, mut workspace) = container();
             let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
             v.mouse_down(&mut workspace.ws, x, y, false);
@@ -6841,6 +6935,66 @@ fn window_theme_segments_change_the_shared_preference_without_closing() {
     });
 }
 
+#[test]
+fn window_pin_switch_tracks_the_host_without_closing_the_menu() {
+    crate::tests::with_menu(true, || {
+        let (mut v, mut workspace) = container();
+        let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
+        v.mouse_down(&mut workspace.ws, x, y, false);
+        for pinned in [false, true] {
+            v.set_pinned(pinned);
+            let menu = v.menu.as_ref().unwrap();
+            let index = menu
+                .items()
+                .iter()
+                .position(|action| {
+                    matches!(
+                        action,
+                        MenuAction::WindowAlwaysOnTop | MenuAction::WindowUnpinTop
+                    )
+                })
+                .unwrap();
+            let action = menu.items()[index];
+            assert!(
+                matches!(koru_ui::MenuItem::controls(&action)[0], koru_ui::Control::Toggle { on } if on == pinned)
+            );
+            let (x, y) = menu.control_rect(v.viewport, index, 0).unwrap().centre();
+            v.mouse_down(&mut workspace.ws, x, y, false);
+            assert_eq!(v.take_window_request(), Some(WindowRequest::TogglePin));
+            assert!(v.window_menu_open());
+        }
+    });
+}
+
+#[test]
+fn window_menu_labeled_controls_fit_in_each_language() {
+    crate::tests::with_menu(true, || {
+        for lang in koru_i18n::Lang::ALL {
+            koru_i18n::with_current(lang, || {
+                let (mut v, mut workspace) = container();
+                let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
+                v.mouse_down(&mut workspace.ws, x, y, false);
+                let menu = v.menu.as_ref().unwrap();
+                for (index, action) in menu.items().iter().enumerate() {
+                    let row = menu.item_rect(v.viewport, index);
+                    let controls = koru_ui::MenuItem::controls(action);
+                    let mut end = row.x + 60.0;
+                    for control in 0..controls.len() {
+                        let rect = menu.control_rect(v.viewport, index, control).unwrap();
+                        assert!(
+                            rect.x >= end,
+                            "{lang:?} {action:?} reserves its label and separates controls"
+                        );
+                        assert!(rect.x + rect.w <= row.x + row.w);
+                        assert!(rect.y >= row.y && rect.y + rect.h <= row.y + row.h);
+                        end = rect.x + rect.w;
+                    }
+                }
+            });
+        }
+    });
+}
+
 /// The readout is not a button, and neither is a control at the end of its
 /// range: pressing either must neither zoom nor dismiss. The press is still
 /// swallowed — falling through would read as a click on the panel and take the
@@ -6849,7 +7003,7 @@ fn window_theme_segments_change_the_shared_preference_without_closing() {
 fn a_readout_or_a_dimmed_zoom_control_does_nothing_and_keeps_the_menu() {
     crate::tests::with_menu(true, || {
         // The readout, and `↺` — dim because a fresh window is at 100%.
-        for control in [1, 3] {
+        for control in [2, 0] {
             let (mut v, mut workspace) = container();
             let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
             v.mouse_down(&mut workspace.ws, x, y, false);
@@ -6880,10 +7034,12 @@ fn a_readout_or_a_dimmed_zoom_control_does_nothing_and_keeps_the_menu() {
 fn hovering_a_zoom_control_teaches_what_it_does_and_its_chord() {
     crate::tests::with_menu(true, || {
         use koru_keys::ShortcutId;
+        let before = theme::zoom();
+        theme::set_zoom(1.25);
         for (control, id) in [
-            (0, ShortcutId::ZoomOut),
-            (2, ShortcutId::ZoomIn),
-            (3, ShortcutId::ZoomReset),
+            (1, ShortcutId::ZoomOut),
+            (3, ShortcutId::ZoomIn),
+            (0, ShortcutId::ZoomReset),
         ] {
             let (mut v, mut workspace) = container();
             let (bx, by) = button_rect(&v, CaptionAction::WindowMenu).centre();
@@ -6912,6 +7068,7 @@ fn hovering_a_zoom_control_teaches_what_it_does_and_its_chord() {
                 "control {control}"
             );
         }
+        theme::set_zoom(before);
     });
 }
 
@@ -6930,7 +7087,7 @@ fn moving_off_a_zoom_control_takes_its_chip_down() {
             .position(|item| *item == MenuAction::HeaderZoom)
             .expect("the zoom row");
         let (cx, cy) = menu
-            .control_rect(v.viewport, row, 0)
+            .control_rect(v.viewport, row, 1)
             .expect("the − control")
             .centre();
         v.mouse_move(cx, cy);
@@ -6938,7 +7095,7 @@ fn moving_off_a_zoom_control_takes_its_chip_down() {
 
         // The readout, which is not a control — one row, one step sideways.
         let (rx, ry) = menu
-            .control_rect(v.viewport, row, 1)
+            .control_rect(v.viewport, row, 2)
             .expect("the readout")
             .centre();
         v.mouse_move(rx, ry);
@@ -7328,26 +7485,32 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
 /// **The rail's App settings tooltip carries its chord**, the way the
 /// lane's controls carry theirs; the `?` has no chord to carry.
 #[test]
-fn the_rails_settings_tooltip_carries_its_chord() {
+fn settings_menu_uses_the_registered_shortcut() {
     let (mut v, _w) = container();
-    v.toggle_sidebar();
-    let rects = v.explore.apps_rail_rects(v.rail_area());
-    let (x, y) = rects.settings.centre();
-    v.mouse_move(x, y);
-    assert_eq!(
-        v.tooltip.label(),
-        Some(koru_i18n::t(
-            crate::format::lang(),
-            koru_i18n::Key::ProfileAppSettings
-        ))
+    v.explore
+        .open_popover(crate::panes::explore::PopoverKind::Profiles);
+    let mut engine = koru_draw::text::TextEngine::new();
+    let panel = v
+        .explore
+        .popover_panel(v.explore_popover_area(), v.viewport)
+        .unwrap();
+    let (tree, frame) = v
+        .explore
+        .page_at(
+            &mut engine,
+            crate::panes::explore::PopoverKind::Profiles,
+            panel,
+            0.0,
+            None,
+            None,
+        )
+        .unwrap();
+    let key = crate::panes::explore::popover_elements::profiles::MenuAction::Settings.key();
+    assert!(frame.node(key).is_some());
+    let _ = tree;
+    assert!(
+        koru_keys::show_hint(koru_keys::ShortcutId::Settings, koru_keys::Section::Menu).is_some()
     );
-    assert_eq!(
-        v.tooltip.shortcut(),
-        Some(koru_keys::label_of(koru_keys::ShortcutId::Settings).as_str())
-    );
-    let (hx, hy) = rects.help.centre();
-    v.mouse_move(hx, hy);
-    assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
 }
 
 /// **The profile tile and the chip's tile share a baseline** (the review's
@@ -7370,7 +7533,7 @@ fn the_workspace_and_profile_squares_keep_their_rail_positions() {
 fn the_lane_has_no_plus() {
     let (mut v, _w) = container();
     v.toggle_sidebar();
-    let lane = v.lane_controls();
+    let lane = v.settled_lane_controls();
     assert_eq!(lane.new.w, 0.0, "no New square");
     assert!(lane.search.w > 0.0 && lane.toggle.w > 0.0);
 }
@@ -9684,8 +9847,8 @@ fn dragging_a_list_on_the_rail_writes_the_move() {
     );
 }
 
-/// **`Alt+1..3` show the views in the rail's first three slots**, opening
-/// the column when it is closed, and each icon's tooltip names its view and
+/// **`Alt+1..3` show the views in the rail's first three slots**, preserving
+/// the collapsed column, and each icon's tooltip names its view and
 /// teaches its slot's chord from the registry.
 #[test]
 fn alt_digits_show_the_views_and_the_icons_teach_them() {
@@ -9695,7 +9858,14 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     // The view modifier: Alt, or ⌃⌘ on a Mac (M42).
     let alt = koru_keys::VIEW;
     assert!(v.key(&mut w.ws, &Key::Character("3".into()), Some("3"), alt));
-    assert!(v.sidebar.is_open(), "a view asked for by name is opened");
+    assert!(
+        !v.sidebar.is_open(),
+        "app selection does not dock the explorer"
+    );
+    assert!(
+        v.explore_preview,
+        "the requested view is available in the preview"
+    );
     assert!(v.explore.showing_tasks());
     assert!(v.key(&mut w.ws, &Key::Character("2".into()), Some("2"), alt));
     assert_eq!(v.explore.navigator_mode(), NavigatorMode::Files);
@@ -9737,6 +9907,36 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     let (x, y) = mode_icon(&v, NavigatorMode::Tasks).centre();
     View::mouse_move(&mut v, x, y);
     assert_eq!(v.tooltip.label(), Some("Tasks"));
+}
+
+#[test]
+fn app_clicks_and_slot_shortcuts_preserve_the_explorer_docking_state() {
+    use crate::panes::explore::NavigatorMode;
+    for expanded in [false, true] {
+        let (mut view, mut workspace) = on_document();
+        view.sidebar.set_immediately(expanded);
+        view.relayout();
+        let content = view.content();
+        for mode in [
+            NavigatorMode::Files,
+            NavigatorMode::Tasks,
+            NavigatorMode::Chats,
+        ] {
+            let (x, y) = mode_icon(&view, mode).centre();
+            assert!(view.mouse_down(&mut workspace.ws, x, y, false));
+            view.mouse_up(&mut workspace.ws);
+            assert_eq!(view.explore.navigator_mode(), mode);
+            assert_eq!(view.sidebar.is_open(), expanded);
+            assert_eq!(view.content(), content);
+            assert_eq!(view.explore_preview, !expanded);
+        }
+        for slot in 0..3 {
+            assert!(view.show_rail_slot(slot));
+            assert_eq!(view.sidebar.is_open(), expanded);
+            assert_eq!(view.content(), content);
+            assert_eq!(view.explore_preview, !expanded);
+        }
+    }
 }
 
 /// **No tooltip while a rail view is carried** (the user's screenshot,
@@ -15052,10 +15252,21 @@ fn press_help(
     w: &mut Workspace,
 ) -> (koru_draw::geometry::Rect, koru_draw::geometry::Rect) {
     let rail = v.rail_area();
-    let help = v.explore.apps_rail_rects(rail).help;
+    let profile = v.explore.apps_rail_rects(rail).profile;
+    v.explore
+        .open_popover(crate::panes::explore::PopoverKind::Profiles);
+    let help = v
+        .explore
+        .with_page(v.explore_popover_area(), v.viewport, |frame| {
+            frame
+                .node(crate::panes::explore::popover_elements::profiles::MenuAction::Help.key())
+                .unwrap()
+                .rect
+        })
+        .unwrap();
     let (x, y) = help.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    (rail, help)
+    (rail, profile)
 }
 
 /// The element Help menu keeps its current release, fixed links and geometry
@@ -15084,7 +15295,7 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                 report.stage = koru_agent_wire::UpdateStage::Idle;
                 report.version.clear();
                 v.updates = crate::agent::UpdateFeed::for_test(report).0;
-                let (rail, help) = press_help(&mut v, &mut workspace);
+                let (rail, _) = press_help(&mut v, &mut workspace);
                 v.explore
                     .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
                 assert!(v.explore.popover_is(PopoverKind::Help));
@@ -15145,7 +15356,9 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                 assert!(panel.x >= rail.x + rail.w - 0.5, "{panel:?} / {rail:?}");
                 assert!(panel.x >= 0.0 && panel.y >= 0.0);
                 assert!(panel.x + panel.w <= width && panel.y + panel.h <= height);
-                assert!((panel.y + panel.h - (help.y + help.h)).abs() < 0.5);
+                let parent = v.explore.help_parent_panel(area, v.viewport).unwrap();
+                assert!(panel.x >= parent.x + parent.w);
+                assert!((panel.y + panel.h - parent.y - parent.h).abs() < 0.01);
                 assert!(
                     rows.iter()
                         .all(|(_, rect)| rect.y >= panel.y && rect.y + rect.h <= panel.y + panel.h)
@@ -15165,11 +15378,10 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                     "the divider precedes Send feedback"
                 );
                 assert!(!v.window_menu_open());
-                let content = v.content();
-                v.mouse_move(content.x + content.w * 0.5, content.y + content.h * 0.5);
+                v.mouse_move(width - 1.0, height * 0.5);
                 assert!(
-                    v.explore.popover_is(PopoverKind::Help),
-                    "pointer movement keeps Help open"
+                    v.explore.popover_is(PopoverKind::Profiles),
+                    "leaving both menus restores the Profile menu"
                 );
 
                 v.explore.close_popover();
@@ -15347,8 +15559,7 @@ fn a_press_on_the_rail_shuts_the_popover_and_still_acts() {
     let (sx, sy) = rects.profile.centre();
     v.mouse_down(&mut w.ws, sx, sy, false);
     assert!(v.explore.popover_open(), "the square opens its list");
-    let (hx, hy) = rects.help.centre();
-    v.mouse_down(&mut w.ws, hx, hy, false);
+    press_help(&mut v, &mut w);
     assert!(
         v.explore.popover_is(PopoverKind::Help),
         "Help replaces the Profiles list"

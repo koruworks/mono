@@ -1,33 +1,42 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The Profile menu: one-line identity rows and fixed navigation actions.
+//! Account menu: scrollable identities and fixed navigation actions.
 
 use koru_core::{ProfileId, ProfileSummary};
 use koru_draw::el::{
-    Action, Align, El, ElState, FrameCx, Key, Leaf, Role, col, icon, leaf, row, scroll_y, text,
+    Action, Align, El, ElState, FrameCx, Key, Leaf, Look, Role, StateRecipe, col, icon, leaf, row,
+    scroll_y, text,
 };
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::{self, IconSize, Ink, Radius, Space, alias, metrics, roles};
-use koru_i18n::{Key as Words, t};
-use vello::Scene;
-use vello::kurbo::Affine;
-use vello::peniko::ImageBrush;
+use koru_draw::theme::{self, IconSize, Ink, Radius, Space, Surface, alias, metrics, roles};
+use koru_i18n::{Key as Words, fill, t};
+use vello::{Scene, kurbo::Affine, peniko::ImageBrush};
 
-use super::{HEADING, MANAGE, PAGE, PRIMARY, SURFACE, TrailingAdapter, WORKSPACE_ROW_STATES};
+use super::{MANAGE, PAGE, PRIMARY, SURFACE, WORKSPACE_ROW_STATES};
 use crate::panes::Outcome;
-use crate::panes::explore::{ExploreView, PopoverKind, PopoverRow, label_fit};
+use crate::panes::explore::{ExploreView, label_fit};
 
 pub(crate) const ROW: &str = "Profile row";
 pub(crate) const LIST: &str = "Profile list";
 pub(crate) const NAME: &str = "Profile name";
 pub(crate) const MANAGE_PROFILES: Key = Key::surface(SURFACE, "manage-profiles");
 
+static PROFILE_STATES: StateRecipe = StateRecipe {
+    name: "profile identity",
+    selected: Look::bg(Surface::Hover),
+    selected_hover: Look::bg(Surface::Hover),
+    selected_pressed: Look::bg(Surface::Hover),
+    ..WORKSPACE_ROW_STATES
+};
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     New,
     Sync,
+    Settings,
+    Help,
 }
 
 impl MenuAction {
@@ -37,23 +46,29 @@ impl MenuAction {
             match self {
                 Self::New => "new-profile",
                 Self::Sync => "global-sync",
+                Self::Settings => "profile-settings",
+                Self::Help => "profile-help",
             },
         )
     }
     pub(crate) fn words(self) -> Words {
         match self {
             Self::New => Words::ProfileAddNew,
-            Self::Sync => Words::ProfileGlobalSync,
+            Self::Sync => Words::CloudTitle,
+            Self::Settings => Words::SettingsTab,
+            Self::Help => Words::ProfileHelpFeedback,
         }
     }
     pub(crate) fn outcome(self) -> Outcome {
         match self {
             Self::New => Outcome::NewProfile,
-            Self::Sync => Outcome::OpenSyncSettings,
+            Self::Sync => Outcome::ManageCloud,
+            Self::Settings => Outcome::OpenSettings,
+            Self::Help => Outcome::OpenHelp,
         }
     }
     pub(crate) fn from_key(key: Key) -> Option<Self> {
-        [Self::New, Self::Sync]
+        [Self::New, Self::Sync, Self::Settings, Self::Help]
             .into_iter()
             .find(|action| action.key() == key)
     }
@@ -63,28 +78,23 @@ pub(crate) fn primary(id: ProfileId) -> Key {
     Key::model(id.as_uuid().as_u128(), PRIMARY)
 }
 
+// Reuse the switcher's trailing-action lane; profile rows open a new window.
 pub(crate) fn manage(id: ProfileId) -> Key {
     Key::model(id.as_uuid().as_u128(), MANAGE)
 }
 
-/// A Profile's tile: its picture when it is the open Profile and one is
-/// decoded, the lettered tile otherwise.
 pub(crate) struct ProfileTileLeaf {
     pub icon: Option<String>,
     pub color: Option<String>,
     pub name: String,
-    pub email: String,
-    /// Only the open Profile has a decoded picture to hand; the others are
-    /// rows in an index whose blobs live in folders not opened here.
     pub avatar: Option<ImageBrush>,
 }
 
 impl Leaf for ProfileTileLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        let side = metrics::WORKSPACE_TILE.value;
+    fn measure(&self, _: Option<f32>) -> (f32, f32) {
+        let side = metrics::PROFILE_AVATAR.value;
         (side, side)
     }
-
     fn paint(
         &self,
         scene: &mut Scene,
@@ -92,99 +102,149 @@ impl Leaf for ProfileTileLeaf {
         engine: &mut TextEngine,
         at: Rect,
         cx: &FrameCx,
-        _state: ElState,
+        _: ElState,
     ) {
-        if self.avatar.is_some() && self.icon.is_none() {
-            koru_ui::profile_picker::draw_avatar(
-                scene,
-                root,
-                engine,
-                at,
-                self.avatar.as_ref(),
-                &self.name,
-                &self.email,
-                theme::role::row(),
-            );
-        } else {
-            koru_draw::tile::Tile {
+        koru_ui::profile_picker::draw_identity(
+            scene,
+            root,
+            engine,
+            at,
+            koru_ui::profile_picker::ProfileIdentity {
+                avatar: self.avatar.as_ref(),
+                name: &self.name,
                 icon: self.icon.as_deref(),
                 color: self.color.as_deref(),
-                name: &self.name,
-            }
-            .draw_in(scene, root, engine, at, cx.palette());
-        }
+            },
+            theme::role::row(),
+            cx.palette(),
+        );
     }
 }
 
 impl ExploreView {
     pub(crate) fn profile_description(&self, profile: &ProfileSummary) -> String {
-        if profile.email.trim().is_empty() {
-            t(crate::format::lang(), Words::OnThisComputer).to_owned()
+        let lang = crate::format::lang();
+        let identity = if profile.email.trim().is_empty() {
+            t(lang, Words::ProfileNoSignIn)
         } else {
-            profile.email.clone()
-        }
+            &profile.email
+        };
+        let rows = self
+            .catalog
+            .get(&profile.id)
+            .map(Vec::as_slice)
+            .or_else(|| {
+                (self.current_profile == Some(profile.id)).then_some(self.workspaces.as_slice())
+            });
+        let count = self
+            .profile_workspace_counts
+            .get(&profile.id)
+            .copied()
+            .or_else(|| rows.map(|rows| rows.iter().filter(|w| w.deleted_at.is_none()).count()));
+        let Some(count) = count else {
+            return identity.to_owned();
+        };
+        let words = if count == 1 {
+            Words::ProfileWorkspaceOne
+        } else {
+            Words::ProfileWorkspaceMany
+        };
+        format!(
+            "{identity} · {}",
+            fill(t(lang, words), &[&count.to_string()])
+        )
     }
 
     pub(crate) fn profiles_page(&self, scroll: f32, avatar: Option<&ImageBrush>) -> El {
-        let lang = crate::format::lang();
         col("Profiles page")
             .id(PAGE)
             .semantics(Role::Menu)
             .name(Words::TerminalSwitchProfile)
-            .pad_y(alias::PANEL_PAD)
-            .child(
-                col("Profile header spacing").pad_bottom(Space::S2).child(
-                    row("Profiles heading")
-                        .id(HEADING)
-                        .pad_x(alias::NAV_PAD)
-                        .min_h(metrics::ROW_MIN)
-                        .gap(Space::S2)
-                        .child(
-                            text(t(lang, Words::WorkspacesProfiles).to_uppercase())
-                                .id(Key::surface(SURFACE, "profiles-title"))
-                                .semantics(Role::Heading)
-                                .name(Words::WorkspacesProfiles)
-                                .role(roles::POPOVER_HEADING)
-                                .ink(Ink::Hint)
-                                .fill(),
-                        )
-                        .child(
-                            row("Manage profiles")
-                                .w(metrics::ROW_MIN)
-                                .min_h(metrics::ROW_MIN)
-                                .id(MANAGE_PROFILES)
-                                .semantics(Role::MenuItem)
-                                .name(Words::ProfileManageProfiles)
-                                .hit()
-                                .focusable()
-                                .action(Action::Click)
-                                .action(Action::Focus)
-                                .pad_x(Space::S1)
-                                .radius(Radius::M)
-                                .states(&WORKSPACE_ROW_STATES)
-                                .child(
-                                    icon(icons::FADERS, IconSize::L)
-                                        .decorative()
-                                        .ink(Ink::Secondary),
-                                ),
-                        ),
-                ),
-            )
+            .pad(alias::PANEL_PAD)
             .child(
                 scroll_y(LIST)
                     .fill()
-                    .gap(Space::S1)
+                    .gap(Space::S0_5)
                     .offset(scroll)
-                    .children(self.rows_for(PopoverKind::Profiles).iter().filter_map(
-                        |row| match row {
-                            PopoverRow::Profile(i) => self.profiles.get(*i).map(|profile| {
-                                let current = self.current_profile == Some(profile.id);
-                                self.profile_row(profile, current, avatar.filter(|_| current))
-                            }),
-                            _ => None,
-                        },
-                    )),
+                    .children(self.profiles.iter().map(|profile| {
+                        let current = self.current_profile == Some(profile.id);
+                        self.profile_row(profile, current, avatar.filter(|_| current))
+                    })),
             )
+            .child(self.profile_menu_action(MenuAction::New))
+            .child(crate::panes::explore::workspace_menu_elements::rule())
+            .child(self.profile_menu_action(MenuAction::Sync))
+            .child(self.profile_menu_action(MenuAction::Settings))
+            .child(self.profile_menu_action(MenuAction::Help))
+    }
+
+    fn profile_menu_action(&self, action: MenuAction) -> El {
+        let lang = crate::format::lang();
+        let glyph = match action {
+            MenuAction::New => icons::PLUS,
+            MenuAction::Sync => icons::CLOUD,
+            MenuAction::Settings => icons::FADERS,
+            MenuAction::Help => icons::QUESTION,
+        };
+        let mut labels = col("Account action labels").fill().gap(Space::S0_5).child(
+            text(t(lang, action.words()))
+                .role(roles::ROW)
+                .ink(Ink::Primary)
+                .truncate(),
+        );
+        if action == MenuAction::Sync {
+            let count = self.linked_count;
+            let key = if count == 1 {
+                Words::DevicesCountOne
+            } else {
+                Words::DevicesCountMany
+            };
+            let detail = format!(
+                "{} · {}",
+                t(lang, self.sync_status().key()),
+                fill(t(lang, key), &[&count.to_string()])
+            );
+            labels = labels.child(
+                text(detail)
+                    .role(roles::META)
+                    .ink(Ink::Secondary)
+                    .truncate(),
+            );
+        }
+        let mut action_row = super::menu_action_row("Account action")
+            .id(action.key())
+            .hit()
+            .focusable()
+            .action(Action::Click)
+            .action(Action::Focus)
+            .semantics(Role::MenuItem)
+            .name(action.words())
+            .child(
+                icon(glyph, koru_ui::menu::ActionRow::ICON)
+                    .decorative()
+                    .ink(Ink::Secondary)
+                    .align_self(Align::Centre),
+            )
+            .child(labels);
+        if action == MenuAction::Settings {
+            action_row = action_row.children(
+                koru_keys::show_hint(koru_keys::ShortcutId::Settings, koru_keys::Section::Menu)
+                    .map(|hint| {
+                        text(hint)
+                            .role(roles::HINT)
+                            .ink(Ink::Hint)
+                            .align_self(Align::Centre)
+                    }),
+            );
+        } else if action == MenuAction::Help {
+            action_row = action_row.child(
+                icon(icons::CARET_RIGHT, IconSize::M)
+                    .decorative()
+                    .ink(Ink::Secondary)
+                    .align_self(Align::Centre),
+            );
+        }
+        action_row
     }
 
     pub(crate) fn profile_row(
@@ -194,78 +254,91 @@ impl ExploreView {
         avatar: Option<&ImageBrush>,
     ) -> El {
         let primary = primary(profile.id);
-        let gear = manage(profile.id);
-        row(ROW)
-            .min_h(metrics::ROW_MIN)
-            .pad_x(alias::ROW_PLATE_INSET)
+        let trailing = manage(profile.id);
+        let description = self.profile_description(profile);
+        let mut plate = row(ROW)
             .hit_as(primary)
+            .min_h(metrics::PROFILE_ROW_MIN)
+            .pad_x(Space::S2)
+            .gap(Space::S2)
+            .radius(Radius::M)
+            .states(&PROFILE_STATES)
+            .selected(current)
+            .activity([primary, trailing])
             .child(
-                row("Profile plate")
+                row("Profile primary action")
                     .fill()
-                    .pad_x(alias::ROW_PLATE_INSET)
-                    .gap(Space::S1)
-                    .radius(Radius::Metric(metrics::WORKSPACE_GEAR_RADIUS))
-                    .states(&WORKSPACE_ROW_STATES)
-                    .activity([primary, gear])
+                    .pad_y(Space::S2)
+                    .gap(Space::S3)
+                    .id(primary)
+                    .focusable()
+                    .action(Action::Click)
+                    .action(Action::Focus)
+                    .semantics(Role::MenuItem)
+                    .name_text(&profile.name)
+                    .selected(current)
                     .child(
-                        row("Profile primary action")
-                            .fill()
-                            .pad_y(Space::S0_5)
-                            .id(primary)
-                            .focusable()
-                            .action(Action::Click)
-                            .action(Action::Focus)
-                            .semantics(Role::MenuItem)
-                            .name_text(&profile.name)
-                            .selected(current)
-                            .child(
-                                row("Profile identity")
-                                    .fill()
-                                    .min_h(metrics::ROW_MIN)
-                                    .gap(Space::S2)
-                                    .child(
-                                        leaf(
-                                            "Profile tile",
-                                            ProfileTileLeaf {
-                                                icon: profile.icon.clone(),
-                                                color: profile.color.clone(),
-                                                name: profile.name.clone(),
-                                                email: profile.email.clone(),
-                                                avatar: avatar.cloned(),
-                                            },
-                                        )
-                                        .decorative()
-                                        .align_self(Align::Centre),
-                                    )
-                                    .child(
-                                        text(label_fit(&profile.name))
-                                            .named(NAME)
-                                            .role(roles::ROW)
-                                            .ink(if current {
-                                                Ink::Primary
-                                            } else {
-                                                Ink::Secondary
-                                            })
-                                            .emphasis(current)
-                                            .fill()
-                                            .truncate()
-                                            .ink_centred(),
-                                    ),
-                            ),
+                        leaf(
+                            "Profile avatar",
+                            ProfileTileLeaf {
+                                icon: profile.icon.clone(),
+                                color: profile.color.clone(),
+                                name: profile.name.clone(),
+                                avatar: avatar.cloned(),
+                            },
+                        )
+                        .decorative()
+                        .align_self(Align::Centre),
                     )
                     .child(
-                        leaf(super::GEAR, TrailingAdapter { current, key: gear })
-                            .semantic()
-                            .w(metrics::TRAILING_LANE_W)
-                            .id(gear)
-                            .activity([primary])
-                            .hit()
-                            .focusable()
-                            .action(Action::Click)
-                            .action(Action::Focus)
-                            .semantics(Role::MenuItem)
-                            .name(Words::ManageProfile),
+                        col("Profile identity")
+                            .fill()
+                            .gap(Space::S0_5)
+                            .child(
+                                text(label_fit(&profile.name))
+                                    .named(NAME)
+                                    .role(roles::ROW)
+                                    .ink(Ink::Primary)
+                                    .truncate(),
+                            )
+                            .child(
+                                text(description)
+                                    .named("Profile detail")
+                                    .role(roles::META)
+                                    .ink(Ink::Secondary)
+                                    .truncate(),
+                            ),
                     ),
-            )
+            );
+        if current {
+            plate = plate.child(
+                icon(icons::CHECK, IconSize::M)
+                    .decorative()
+                    .w(metrics::ROW_MIN)
+                    .align_self(Align::Centre),
+            );
+        } else {
+            plate = plate.child(
+                row("Open profile in new window")
+                    .id(trailing)
+                    .hit()
+                    .focusable()
+                    .action(Action::Click)
+                    .action(Action::Focus)
+                    .semantics(Role::MenuItem)
+                    .name(Words::ProfileOpenNewWindow)
+                    .w(metrics::ROW_MIN)
+                    .min_h(metrics::ROW_MIN)
+                    .radius(Radius::M)
+                    .states(&WORKSPACE_ROW_STATES)
+                    .align_self(Align::Centre)
+                    .child(
+                        icon(icons::POP_OUT, IconSize::M)
+                            .decorative()
+                            .ink(Ink::Secondary),
+                    ),
+            );
+        }
+        plate
     }
 }

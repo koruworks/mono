@@ -263,6 +263,8 @@ const TOKEN_RECORDS: [Entry; 11] = [
                     literal("RAIL_GLYPH"),
                     literal("RAIL_RULE_W"),
                     literal("PROFILE_TILE"),
+                    literal("PROFILE_AVATAR"),
+                    literal("PROFILE_MENU_W"),
                     literal("TRAILING_LANE_W"),
                     literal("WORKSPACE_GEAR_PLATE"),
                     literal("WORKSPACE_GEAR_PLATE_W"),

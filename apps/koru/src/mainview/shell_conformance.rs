@@ -211,7 +211,7 @@ impl Surface for KoruSurface {
             // The leave `CursorLeft` never produced. Koru clears a hover on the
             // next move today, so there is nothing owed here yet — the seam is
             // what matters.
-            PointerEvent::Left => false,
+            PointerEvent::Left => self.view.preview_pointer(-1.0, -1.0),
         }
     }
 

@@ -2968,6 +2968,8 @@ pub enum PaneRequest {
     PurgeDocuments(Vec<koru_core::DocumentId>),
     /// Switch the requesting window to this Store profile in place.
     SwitchProfile(ProfileId),
+    /// Open this Profile separately, preserving the source window's context.
+    OpenProfileInNewWindow(ProfileId),
     /// A Store availability receipt may land only in its still-waiting window.
     LandIn {
         profile: ProfileId,
@@ -3298,6 +3300,7 @@ impl PaneRequest {
             Self::EmptyDocumentTrash => "request.empty_trash",
             Self::PurgeDocuments(..) => "request.purge_documents",
             Self::SwitchProfile(..) => "request.switch_profile",
+            Self::OpenProfileInNewWindow(..) => "request.open_profile_new_window",
             Self::LandIn { .. } => "request.land_in",
             Self::CancelProfileWait(..) => "request.cancel_profile_wait",
             Self::RetryProfileWait(..) => "request.retry_profile_wait",

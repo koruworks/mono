@@ -91,10 +91,10 @@ pub struct LaneRects {
     pub toggle: Rect,
 }
 
-/// A lane control is square and the band's height, like the caption's own
-/// toggles — one hover chip for every icon-only button in the row.
-pub fn square(band: Rect) -> f32 {
-    band.h.min(theme::CAPTION_H)
+/// A lane control keeps the caption's control width as the band grows taller.
+/// Each icon remains centered in its full-height target.
+pub fn square(_band: Rect) -> f32 {
+    theme::CAPTION_CONTROL_W
 }
 
 /// The leading slot's width for a mark.
@@ -115,6 +115,28 @@ pub fn leading_w(band: Rect, mark: Mark) -> f32 {
 /// the pane is put away and a pane that cannot be shut is a trap.
 pub fn solve(lane: Rect, leading: Leading) -> LaneRects {
     let s = square(lane);
+    if leading.mark == Mark::Mark {
+        let toggle = Rect::new(lane.x, lane.y, s.min(lane.w), lane.h);
+        let right = lane.x + lane.w;
+        let floor = toggle.x + toggle.w;
+        let new_w = if leading.new && right - floor >= s {
+            s
+        } else {
+            0.0
+        };
+        let new = Rect::new(right - new_w, lane.y, new_w, lane.h);
+        let search_w = if leading.search && new.x - floor >= s {
+            s
+        } else {
+            0.0
+        };
+        return LaneRects {
+            leading: Rect::new(lane.x, lane.y, 0.0, lane.h),
+            toggle,
+            new,
+            search: Rect::new(new.x - search_w, lane.y, search_w, lane.h),
+        };
+    }
     // **The mark sits over the rail.** In the lane its slot is the rail's
     // width, so the mark is centred on the column of app squares under it
     // (the review's note on artboard 11); in the caption's chain, which has no

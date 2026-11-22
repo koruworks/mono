@@ -145,6 +145,8 @@ impl PageId {
             Self::Appearance => &[
                 Key::SettingsTheme,
                 Key::SettingsIconStyle,
+                Key::SettingsScrollSpeed,
+                Key::SettingsScrollSpeedHint,
                 Key::SettingsDensity,
                 Key::SettingsPinnedTabs,
                 Key::SettingsAppFont,

@@ -895,6 +895,27 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_new_window_keeps_the_channel_root_but_not_the_source_workspace() {
+        let profile = koru_core::ProfileId::new();
+        let args = profile_new_window_args(
+            Path::new("local-profile"),
+            profile,
+            Some(Path::new("isolated-root")),
+        );
+        assert!(
+            args.windows(2)
+                .any(|p| p == ["--store-profile", &profile.to_storage()])
+        );
+        assert!(args.windows(2).any(|p| p == ["--root", "isolated-root"]));
+        assert_eq!(args.last().map(String::as_str), Some("--new-window"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| matches!(arg.as_str(), "--workspace" | "--open" | "--node"))
+        );
+    }
+
+    #[test]
     fn the_store_profile_marker_is_beside_the_install_registry() {
         if let Some(path) = store_profile_selection_path() {
             assert!(path.is_absolute(), "{path:?}");
@@ -1341,6 +1362,33 @@ pub fn launch_target_new_window(
             ));
         }
     }
+}
+
+/// A separate Profile window resolves its own remembered workspace at startup.
+/// Never inherit the source window's workspace or search target.
+pub fn launch_profile_new_window(dir: &Path, profile: koru_core::ProfileId) -> std::io::Result<()> {
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    let channel_root = cli::root_from_args();
+    cmd.args(profile_new_window_args(
+        dir,
+        profile,
+        channel_root.as_deref(),
+    ));
+    set_search_match_environment(&mut cmd, None);
+    suppress_console(&mut cmd);
+    let child = cmd.spawn()?;
+    allow_child_foreground(child.id());
+    Ok(())
+}
+
+fn profile_new_window_args(
+    dir: &Path,
+    profile: koru_core::ProfileId,
+    channel_root: Option<&Path>,
+) -> Vec<String> {
+    let mut args = store_profile_relaunch_args(dir, profile, channel_root);
+    args.push("--new-window".into());
+    args
 }
 
 /// A search result opens an application window, never a console alongside it.

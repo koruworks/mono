@@ -642,7 +642,8 @@ fn every_element_record_reads_what_the_contract_lists() {
                 .starts_with("apps/koru/src/panes/explore/popover_elements.rs:")
                 || record
                     .source
-                    .starts_with("apps/koru/src/panes/explore/workspace_menu_elements.rs:"),
+                    .starts_with("apps/koru/src/panes/explore/workspace_menu_elements.rs:")
+                || record.source.starts_with("crates/koru-ui/src/menu.rs:"),
             "{}: sourced where it was written, not where it painted: {}",
             record.name,
             record.source
@@ -893,57 +894,36 @@ fn profile_gear(id: ProfileId) -> Occurrence {
 /// Profile identities retain their gears and descriptions beside the fixed actions.
 #[test]
 fn the_profiles_page_puts_each_gear_beside_its_profile_and_lists_fixed_actions() {
-    let mut v = opened_profiles(3);
-    v.profiles[0].email.clear();
+    let v = opened_profiles(3);
     let a = area(dtheme::SIDEBAR_MIN_W);
     let cx = cx(a, Lang::En);
     let menu = v
         .with_page(a, VIEW, |frame| v.element_semantics(&cx, frame))
-        .expect("the page")
+        .unwrap()
         .pop()
-        .expect("its Menu");
+        .unwrap();
     assert_eq!(menu.role, AkRole::Menu);
-    assert_eq!(menu.label.as_deref(), Some("Switch profile"));
-    assert_eq!(
-        menu.size_of_set,
-        Some(7),
-        "Manage profiles, three Profiles, three gears"
-    );
-    assert_eq!(menu.children[0].role, AkRole::Heading);
-    assert_eq!(menu.children[0].label.as_deref(), Some("Profiles"));
-    assert_eq!(menu.children[1].role, AkRole::MenuItem);
-    assert_eq!(menu.children[1].label.as_deref(), Some("Manage profiles"));
-    assert_eq!(menu.children[1].occurrence.part.name(), "manage-profiles");
-    for (i, profile) in v.profiles.iter().enumerate() {
-        let primary = &menu.children[2 + i * 2];
-        let gear = &menu.children[3 + i * 2];
-        assert_eq!(primary.label.as_deref(), Some(profile.name.as_str()));
-        assert_eq!(primary.description, Some(v.profile_description(profile)));
-        assert_eq!(primary.selected, Some(i == 1), "the open Profile");
-        assert_eq!(gear.occurrence, profile_gear(profile.id));
-        assert_eq!(gear.label.as_deref(), Some("Manage profile"));
-    }
-    let actions: Vec<_> = menu.children[8..]
-        .iter()
-        .map(|node| (node.occurrence.part.name(), node.label.as_deref()))
-        .collect();
-    assert!(actions.is_empty());
-    for node in &menu.children[8..] {
-        assert_eq!(node.role, AkRole::MenuItem);
-        assert_eq!(node.actions, [AkAction::Click, AkAction::Focus]);
-    }
-    for profile in &v.profiles {
-        let rect = v
-            .with_page(a, VIEW, |frame| {
-                frame.node(profiles::primary(profile.id)).unwrap().rect
-            })
-            .unwrap();
-        let (x, y) = rect.centre();
-        assert_eq!(
-            v.menu_tooltip(a, VIEW, x, y).map(|(_, text, _)| text),
-            Some(v.profile_description(profile))
-        );
-    }
+    assert_eq!(menu.size_of_set, Some(9));
+    v.with_page(a, VIEW, |frame| {
+        for profile in &v.profiles {
+            assert!(frame.node(profiles::primary(profile.id)).is_some());
+            assert_eq!(
+                frame.node(profiles::manage(profile.id)).is_none(),
+                Some(profile.id) == v.current_profile
+            );
+        }
+        for action in [
+            profiles::MenuAction::New,
+            profiles::MenuAction::Sync,
+            profiles::MenuAction::Settings,
+            profiles::MenuAction::Help,
+        ] {
+            let node = frame.node(action.key()).unwrap();
+            let (x, y) = node.rect.centre();
+            assert_eq!(frame.hit_at(x, y), Some(action.key()));
+        }
+    })
+    .unwrap();
 }
 
 /// **A request for a Profile's gear acts on that gear**: Focus lights it
@@ -971,79 +951,53 @@ fn focus_lights_a_profiles_gear_and_click_opens_manage_on_it() {
     v.popover_key(&WKey::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.accessibility_action(a, profile_gear(target), AkAction::Click, VIEW),
-        Some(Outcome::ManageProfile(target))
+        Some(Outcome::OpenProfileInNewWindow(target))
     );
 }
 
 /// Every fixed action agrees across geometry, pointer, accessibility and keyboard.
 #[test]
-fn profile_menu_has_no_sync_footer_or_keyboard_target() {
-    let a = area(dtheme::SIDEBAR_MIN_W);
+fn profile_menu_cloud_action_opens_cloud_settings() {
     let v = opened_profiles(3);
     assert!(
-        v.popover_rects(a, VIEW)
-            .iter()
-            .all(|(row, _)| !matches!(row, PopoverRow::ProfileAction(_)))
+        v.popover_rows()
+            .contains(&PopoverRow::ProfileAction(profiles::MenuAction::Sync))
     );
-    v.with_page(a, VIEW, |frame| {
-        assert!(frame.node(profiles::MenuAction::Sync.key()).is_none())
-    })
-    .unwrap();
+    assert_eq!(profiles::MenuAction::Sync.outcome(), Outcome::ManageCloud);
 }
 
 #[test]
-fn manage_profiles_has_its_own_heading_target_and_opens_the_current_profile() {
+fn the_current_profile_has_a_check_instead_of_a_new_window_action() {
     use winit::keyboard::{Key as WKey, NamedKey};
-    let a = area(dtheme::SIDEBAR_MIN_W);
     let mut v = opened_profiles(3);
-    let current = v.current_profile.unwrap();
-    v.popover.as_mut().unwrap().hover = Some(0);
-    v.popover_part = Some(PopoverPart::Row);
+    let current = v.current_profile;
+    v.open_popover(PopoverKind::Profiles);
+    assert_eq!(v.popover_key(&WKey::Named(NamedKey::ArrowRight)), None);
     assert_eq!(
-        v.popover_interaction().hot,
-        None,
-        "the heading text does not highlight its config button"
+        v.popover_key(&WKey::Named(NamedKey::Enter)),
+        Some(Outcome::Consumed)
     );
-    v.popover_part = Some(PopoverPart::Gear);
-    assert_eq!(v.popover_interaction().hot, Some(profiles::MANAGE_PROFILES));
-    let rect = v
-        .with_page(a, VIEW, |frame| {
-            frame.node(profiles::MANAGE_PROFILES).unwrap().rect
-        })
-        .unwrap();
-    let (x, y) = rect.centre();
-    assert_eq!(
-        v.popover_part_at(a, VIEW, x, y)
-            .map(|(_, row, part)| (row, part)),
-        Some((PopoverRow::ProfilesHeading, PopoverPart::Gear))
-    );
-    assert_eq!(
-        v.mouse_down(a, VIEW, x, y, false),
-        Outcome::ManageProfile(current)
-    );
-    assert!(!v.popover_open());
-    for key in [NamedKey::Enter, NamedKey::Space] {
-        let mut v = opened_profiles(3);
-        v.popover_key(&WKey::Named(NamedKey::ArrowDown));
-        assert_eq!(v.popover_interaction().hot, Some(profiles::MANAGE_PROFILES));
-        assert_eq!(
-            v.popover_key(&WKey::Named(key)),
-            Some(Outcome::ManageProfile(current))
-        );
-        assert!(!v.popover_open());
-    }
+    assert_eq!(v.current_profile, current);
 }
 
 #[test]
-fn scrolling_profiles_does_not_add_a_sync_footer() {
+fn scrolling_profiles_keeps_fixed_actions_visible_and_clickable() {
     let a = area(dtheme::SIDEBAR_MIN_W);
     let mut v = opened_profiles(40);
+    let footer = |v: &ExploreView| {
+        v.with_page(a, VIEW, |frame| {
+            frame
+                .node(profiles::MenuAction::Settings.key())
+                .unwrap()
+                .rect
+        })
+        .unwrap()
+    };
+    let before = footer(&v);
     assert!(v.scroll_popover(a, VIEW, -400.0));
-    assert!(
-        v.popover_rects(a, VIEW)
-            .iter()
-            .all(|(row, _)| !matches!(row, PopoverRow::ProfileAction(_)))
-    );
+    assert_eq!(footer(&v), before);
+    let (x, y) = before.centre();
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::OpenSettings);
 }
 
 /// **A Profile row's record names its tokens**: its minimum, the plate's
@@ -1086,22 +1040,18 @@ fn a_profile_rows_record_names_its_tokens() {
         "{}",
         row.source
     );
-    assert_eq!(value(row, "min_h"), "metrics::ROW_MIN -> 26");
-    assert_eq!(
-        value(row, "pad_x"),
-        "alias::ROW_PLATE_INSET = Space::S1 -> 4"
-    );
+    assert_eq!(value(row, "min_h"), "metrics::PROFILE_ROW_MIN -> 44");
+    assert_eq!(value(row, "pad_x"), "Space::S2 -> 8");
     assert_eq!(
         value(find("Profile name"), "text mode"),
         "single line, elided"
     );
-    assert!(
-        !records
-            .iter()
-            .any(|record| record.name == "Profile detail" || record.name == "Profile lines")
-    );
+    assert!(records.iter().any(|record| record.name == "Profile detail"));
     assert_eq!(value(find("Profile name"), "lines"), "1");
-    assert_eq!(value(find("Manage gear"), "name"), "Key::ManageProfile");
+    assert_eq!(
+        value(find("Open profile in new window"), "name"),
+        "Key::ProfileOpenNewWindow"
+    );
 }
 
 // ------------------------------------------- recovery (root catalog Plan 1.3)

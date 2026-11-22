@@ -166,7 +166,7 @@ fn a_held_view_stays_on_the_run_of_views() {
         v.rail_drag_move(rail(), 5000.0);
         let (_, held) = v.rail_carried(&v.apps_rail_rects(rail())).unwrap();
         assert_eq!(held.y + held.h, last.y + last.h);
-        assert!(held.y + held.h <= rects.help.y, "never over the foot");
+        assert!(held.y + held.h <= rects.profile.y, "never over the foot");
         assert_eq!(*v.rail_modes().last().unwrap(), Tasks, "thrown to the end");
     });
 }

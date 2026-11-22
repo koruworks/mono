@@ -60,6 +60,19 @@ pub(crate) const MANAGE: &str = "manage";
 pub(crate) const PIN: &str = "pin";
 
 pub(crate) const PAGE: Key = Key::surface(SURFACE, "popover");
+
+/// The Profile menu and its Help submenu share the same action-row geometry.
+pub(super) fn menu_action_row(name: &'static str) -> El {
+    use koru_ui::menu::ActionRow;
+    row(name)
+        .min_h(metrics::ROW_MIN)
+        .pad_x(ActionRow::PAD)
+        .pad_y(ActionRow::PAD)
+        .gap(ActionRow::GAP)
+        .radius(ActionRow::RADIUS)
+        .states(&WORKSPACE_ROW_STATES)
+}
+
 pub(crate) const HEADING: Key = Key::surface(SURFACE, "heading");
 /// The quick switcher's search field.
 pub(crate) const WORKSPACE_FILTER: Key = Key::surface(SURFACE, "workspace-filter");
@@ -214,7 +227,7 @@ impl Leaf for TileLeaf {
 /// while the row is lit, the tick on the current row otherwise, nothing
 /// else; the gear's own plate when the gear itself is hot. Paint-only — the
 /// gear's node, name and actions are the element's, always there. A
-/// workspace row's and a Profile row's alike.
+/// workspace row's trailing control.
 pub(crate) struct TrailingAdapter {
     pub current: bool,
     /// The gear's own key, so the lane can tell the gear being lit from the
@@ -265,6 +278,17 @@ impl ExploreView {
         y: f32,
     ) -> Option<(Rect, String, Option<koru_keys::ShortcutId>)> {
         self.with_page(area, viewport, |frame| {
+            if let Some(rect) = self.profiles.iter().find_map(|profile| {
+                let rect = frame.node(profiles::manage(profile.id))?.rect;
+                rect.contains(x, y).then_some(rect)
+            }) {
+                return Some((
+                    rect,
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::ProfileOpenNewWindow)
+                        .to_owned(),
+                    None,
+                ));
+            }
             if let Some((rect, description)) = self.profiles.iter().find_map(|profile| {
                 let rect = frame.node(profiles::primary(profile.id))?.rect;
                 rect.contains(x, y)
@@ -683,7 +707,11 @@ impl ExploreView {
     ) -> Option<(El, Frame)> {
         let tree = self.page_tree(kind, scroll, avatar)?;
         let interaction = Interaction {
-            hot: self.lit_key(hover),
+            hot: if kind == PopoverKind::Profiles && self.help_parent.is_some() {
+                Some(profiles::MenuAction::Help.key())
+            } else {
+                self.lit_key(hover)
+            },
             ..Interaction::default()
         };
         let mut layout = self.page_layout.borrow_mut();

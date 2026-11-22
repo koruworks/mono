@@ -32,7 +32,7 @@ pub(crate) fn branch() -> Option<&'static str> {
 /// `option_env!` that decides what a build is stamped with in the first place.
 ///
 /// The historical function name is retained; the main window now places this
-/// read-only information below Feedback rather than reserving title-bar space.
+/// read-only information in the internal window-menu footer below All settings.
 pub(crate) fn caption_branch() -> Option<&'static str> {
     worth_naming(branch())
 }

@@ -736,6 +736,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/panes/explore/help.rs"),
     ),
     (
+        "apps/koru/src/panes/explore/help/flyout.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/help/flyout.rs"),
+    ),
+    (
         "apps/koru/src/panes/explore/home_nav.rs",
         include_str!("../../../../../../../apps/koru/src/panes/explore/home_nav.rs"),
     ),
@@ -1997,6 +2001,17 @@ pub(super) const ROOTS: &[Root] = &[
             ),
             ("popover_elements", Module::Records(&["C-EXPLORE-POPOVERS"])),
         ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/panes/explore/help.rs",
+        own: &["C-EXPLORE-POPOVERS"],
+        modules: &[(
+            "flyout",
+            Module::Excluded(
+                "support: retained Profile-menu state and Help submenu geometry; paints through existing pages",
+            ),
+        )],
     },
     Root {
         owner: "koru",

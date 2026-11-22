@@ -89,14 +89,14 @@ fn actions_route_and_only_import_keeps_the_parent_open() {
 
 /// Global sync has one target, including its decorative channel icons.
 #[test]
-fn profile_menu_does_not_publish_the_removed_sync_action() {
+fn profile_menu_publishes_the_cloud_settings_action() {
     let mut view = opened();
     view.toggle_profile_popover();
     view.with_page(area(), VIEWPORT, |frame| {
         assert!(
             frame
                 .node(popover_elements::profiles::MenuAction::Sync.key())
-                .is_none()
+                .is_some()
         );
         assert!(frame.named("Sync channels").next().is_none());
     })

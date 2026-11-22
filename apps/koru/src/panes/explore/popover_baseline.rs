@@ -1065,8 +1065,20 @@ fn the_gears_hit_region_is_the_whole_trailing_lane() {
                 }
                 let lane = if matches!(row, PopoverRow::Workspace(_)) {
                     v.workspace_row_parts(row, r).trailing
+                } else if let PopoverRow::Profile(i) = row {
+                    let Some(lane) = v
+                        .with_page(area, VIEW, |frame| {
+                            frame
+                                .node(super::popover_elements::profiles::manage(v.profiles[i].id))
+                                .map(|n| n.rect)
+                        })
+                        .flatten()
+                    else {
+                        continue;
+                    };
+                    lane
                 } else {
-                    trailing_lane(r)
+                    unreachable!()
                 };
                 let inset = 0.5;
                 for (x, y) in [

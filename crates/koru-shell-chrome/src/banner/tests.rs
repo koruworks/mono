@@ -221,8 +221,16 @@ fn settings_and_the_context_toggle_seat_side_by_side() {
     };
     let settings = settings_slot(caption, true, slots);
     let context = caption::context_toggle_with_banner(caption, true, true, slots);
-    assert_eq!(settings.w, theme::CAPTION_H, "Settings keeps its square");
-    assert_eq!(context.w, theme::CAPTION_H, "and the toggle gets one too");
+    assert_eq!(
+        settings.w,
+        theme::CAPTION_CONTROL_W,
+        "Settings keeps its width"
+    );
+    assert_eq!(
+        context.w,
+        theme::CAPTION_CONTROL_W,
+        "and the toggle gets one too"
+    );
     assert_eq!(
         context.x + context.w,
         settings.x,
@@ -285,7 +293,11 @@ fn the_pane_headers_identity_starts_at_the_bands_row_inset() {
     // avatar one pixel off their edge reads as a mistake (owner follow-up,
     // 2026-09-02).
     assert_eq!(profile.x, band.x + theme::NAV_PAD, "aligned with the rows");
-    assert_eq!(profile.w, theme::CAPTION_H, "a square, like the caption's");
+    assert_eq!(
+        profile.w,
+        theme::CAPTION_CONTROL_W,
+        "the caption control width"
+    );
     let workspace = pane_workspace_slot(band, slots);
     assert_eq!(
         workspace.x,
@@ -334,8 +346,8 @@ fn a_pane_header_name_fills_the_band_out_to_its_trailing_inset() {
     };
     assert_eq!(
         pane_workspace_slot(band, icon_only).w,
-        theme::CAPTION_H,
-        "still a square"
+        theme::CAPTION_CONTROL_W,
+        "retains the icon control width"
     );
 }
 
@@ -427,9 +439,9 @@ fn a_named_chip_wears_the_tabs_own_insets() {
     let band = a_band();
     let slot = pane_workspace_slot(band, full(90.0));
     let inner = named_chip_box(slot);
-    assert_eq!(inner.y - slot.y, theme::TAB_INSET_TOP);
+    assert_eq!(inner.y - slot.y, theme::CAPTION_INSET_TOP);
     assert_eq!(
         (slot.y + slot.h) - (inner.y + inner.h),
-        theme::TAB_INSET_BOTTOM
+        theme::CAPTION_INSET_BOTTOM
     );
 }

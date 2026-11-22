@@ -255,11 +255,7 @@ impl MainView {
 
     fn ordinary_semantics(&self, cx: &Shell, scope: Scope) -> Vec<SemanticNode> {
         let mut out = Vec::new();
-        if self.sidebar.is_open() {
-            out.push(self.explore.semantics(&self.explore_context(cx)));
-        } else {
-            out.extend(self.explore.popover_semantics(&self.explore_context(cx)));
-        }
+        out.push(self.explore.semantics(&self.explore_context(cx)));
         out.push(self.tabs_semantics(cx));
         out.extend(self.caption_semantics(cx));
         // **Before the content, because it belongs to the caption.** The chip
@@ -367,7 +363,7 @@ impl MainView {
         if self.ai_visible() && self.ai_focused {
             return Some(cx.surface(SHELL, parts::AI));
         }
-        if (self.sidebar.is_open() || self.explore.popover_open())
+        if (self.sidebar.is_open() || self.explore_preview || self.explore.popover_open())
             && let Some(occurrence) = self.explore.accessible_focus(&self.explore_context(&cx))
         {
             return Some(occurrence);
@@ -478,12 +474,9 @@ impl MainView {
         }
         rev.u64(self.profile_wait.revision);
         rev.bool(self.sidebar.is_open());
+        rev.bool(self.explore_preview);
         rev.bool(self.ai_visible()).bool(self.ai_focused);
-        if self.sidebar.is_open() {
-            self.explore.revise(rev);
-        } else {
-            self.explore.revise_popover(rev);
-        }
+        self.explore.revise(rev);
         rev.u64(self.tabs().len() as u64);
         rev.u64(self.tabs().active() as u64);
         for tab in self.tabs().iter() {
@@ -896,7 +889,7 @@ impl MainView {
         target: Occurrence,
         action: Action,
     ) -> bool {
-        if !self.sidebar.is_open() && !self.explore.popover_open() {
+        if self.rail_area().w <= 0.0 && !self.explore.popover_open() {
             return false;
         }
         let area = self.explore_area();

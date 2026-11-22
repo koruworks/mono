@@ -377,11 +377,8 @@ fn close_box(pill: Rect) -> Rect {
 
 /// The hover chip behind a caption icon button — the `+`, the pane's toggle.
 ///
-/// **The same rect a tab's pill occupies**, so a row of chips lines up with the
-/// tabs beside them instead of each control picking its own size. It is inset
-/// by the tab insets rather than filling the row, for the reason
-/// [`theme::TAB_INSET_BOTTOM`] exists: nothing in this strip may sit *on* the
-/// hairline under it. Square, and centred in whatever slot it is given.
+/// Uses the shared caption-control insets, independently of tab-pill padding.
+/// The chip stays clear of the caption hairline, square and centered in its slot.
 pub fn hover_chip(slot: Rect) -> Rect {
     koru_ui::icon_button::hover_chip(slot)
 }
@@ -707,7 +704,9 @@ fn draw_tab(
             p.text_dim
         };
         let close = Rect::new(t.close.x + tab.slide, t.close.y, t.close.w, t.close.h);
-        draw_icon(scene, root, engine, icons::WINDOW_CLOSE, close, colour);
+        let layout = engine.icon_layout(icons::WINDOW_CLOSE, 12.0);
+        let (x, y) = scene::centre_in(&layout, close);
+        scene::draw_layout(scene, root, &layout, x, y, Some(colour));
     }
 }
 

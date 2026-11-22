@@ -2050,7 +2050,7 @@ away, and nothing you do in it can touch your own writing.
 **If no Koru window was open when the update installed**, the notice waits. You
 will get the tab the next time you open Koru, however long that is.
 
-**Feedback in the overflow menu opens a Send feedback tab.** Pick general
+**Send feedback in the profile menu's Help submenu opens a feedback tab.** Pick general
 feedback (chosen when the tab opens), an idea, or something that isn't working, write a few words (Enter starts a new line),
 optionally paste or add screenshots — hover a thumbnail and press × to take
 it off — and optionally attach recent application logs as a zip. Send goes
@@ -3660,20 +3660,32 @@ the letters. All of these are yours only — documents never store them.
 
 ## The title bar menu
 
+The top-left sidebar button expands or collapses the explorer. Collapsing
+keeps the app rail visible. Hover an app to preview its explorer in a floating
+panel without resizing the document; move outside to fade it away, or press
+Escape to dismiss it. Clicking an app or pressing Alt+number selects its view
+without expanding the pane; use the sidebar toggle to dock it. The expanded
+explorer shares the rail's base color.
+An Alt+number preview waits two seconds for you to enter it with the mouse or
+use its keyboard navigation. Keyboard activity restarts that timeout while
+the mouse is outside. Enter opens the selected item and hides the floating
+pane; an expanded pane stays open.
+
 The top-right keeps direct **minimize**, **maximize/restore**, and **close**
 controls. The leftmost control is an overflow `…` menu. Move the pointer onto it
 or click it to open application destinations:
 
 | | |
 | --- | --- |
-| 📌 Always on Top | `Ctrl+Alt+A` |
-| Settings | `Ctrl+,` |
-| Zoom | placeholder |
-| Feedback | Send feedback tab (general, idea, or bug) |
-| Help / Keyboard shortcuts / Mobile | placeholders |
-| Updates | opens update management |
+| Always on top | Switch, or `Ctrl+Alt+A` |
+| Theme | System, Light or Dark |
+| Zoom | Minus, current percentage and plus; Reset appears away from 100% |
+| All settings | `Ctrl+,` |
 
-Pinned, the 📌 draws solid rather than outlined, so "on" is visible at a glance.
+The switch shows whether this window is pinned. Theme, zoom and the switch
+update immediately while the menu stays open. Internal builds show the branch
+and a `dev` label in a separate footer. Feedback is in the profile menu's
+**Help and feedback** submenu.
 Opening the menu never changes the overflow glyph into a close button; clicking
 it again dismisses the menu. Walk straight down into the panel to reach a row,
 or press `Esc` to close it.
@@ -3738,7 +3750,9 @@ the step Koru used before the setting existed. A trackpad that scrolls by
 pixels follows your fingers and is not changed by it.
 
 The Settings search filters the navigation and keeps only matching preference
-sections on the right. Matches in labels, explanations and choice values are
+sections on the right. Searching for **Scroll** finds **Appearance → Interface →
+Scroll speed**, also using its translated label in other languages.
+Matches in labels, explanations and choice values are
 highlighted in yellow. **Escape** clears the query and restores the page even
 after focus has left the search field. An open dropdown closes first.
 
@@ -6100,35 +6114,38 @@ as *Manage workspace* and names the pin action or its refusal reason.
 
 In a workspace window, click the **Profile tile** at the bottom of the rail,
 or press **`Ctrl+Alt+P`**, to open the Profile menu. The shortcut works with
-Explore folded and leaves it open or closed as you set it. The tile's hover
-hint shows only the shortcut. Each Profile is
-one line; hover its name to see its email, or *On this computer*. Screen
-readers receive the same description. Selecting a different Profile closes
-the menu and opens its usable workspace, or its waiting/recovery screen.
+the pane open or folded and leaves it as you set it. The rail shows a circular
+profile avatar without a status badge. Its background matches the profile's
+chosen color, or the default background shown in Settings. Each menu row shows its name, email
+or *No sign-in*, and workspace count when known. The current profile has a
+checkmark and a tinted background.
 
-Each profile's **Manage** control works as a workspace's does: point at the
-row to show it, or press `→` on the lit profile to move onto it and `←` to
-come back; `Enter` or `Space` opens **Settings** on that Profile. A
-screen reader announces it as *Manage profile*. The config icon at the right
-of the Profiles heading opens Settings on the current Profile. The matching
-icon in the Workspaces heading opens Manage workspaces.
+Choose another profile's name to switch this window to its usable workspace,
+or its waiting/recovery screen. Choose its **Open profile in a new window**
+icon to open a separate window while keeping this one unchanged. On the
+keyboard, `→` selects that icon and `←` returns to the name; `Enter` or
+`Space` activates it. The current profile's checkmark is not an action.
+
+Below the scrolling profile list are **New profile**, **Koru Cloud** with
+the current sync state and linked-device count, **Settings**, and **Help and
+feedback**. These actions stay visible while the identities scroll. Settings
+shows its registered shortcut. Help and Settings are reached here rather than
+through separate buttons at the bottom of the rail.
 
 Sync and Profile management live in **Settings**. Its navigation starts with
 **Account**: Cloud where available, Devices, Profiles and Workspaces, followed by
 **Preferences** and **Coding**. The Profiles page has profile buttons and a
 **+** button at the top. Choose a profile to see its sync and workspace details
-below; **+** opens the new-profile form. Profile gears open that profile in this
-same Settings tab. Selecting a profile button inspects it without switching
+below; **+** opens the new-profile form. Selecting a profile button inspects it without switching
 your open workspace.
 **Workspaces**, directly below Profiles, opens the workspace catalog for the
 profile being inspected. The Workspaces menu's settings button and
 `Ctrl+Shift+O` open it for your current profile. It includes New workspace,
 Import, the workspace menus, archived workspaces and trash.
-The compact Profile menu contains profile choices and their management gears.
-The heading's config button highlights only when the pointer reaches the
-button itself or the keyboard selects it.
-
-The rail's **Help (`?`)** opens directly onto the release timeline. The
+Hover **Help and feedback** to open its submenu beside the Profile menu. You
+can also click it or press `→` when it is selected. `Esc` or `←` returns to
+the Profile menu; moving to another profile-menu row closes the submenu.
+Help opens directly onto the release timeline. The
 nightly row shows the date of its latest completed release-file upload, in
 your date format, followed by the stable releases and their publication dates.
 Release subtitles truncate to fit the menu. If a date is unavailable, it is omitted.
