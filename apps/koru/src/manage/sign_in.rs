@@ -30,25 +30,21 @@ use super::*;
 use koru_draw::geometry::Rect;
 use koru_ui::button::{self, ActionButton, ActionStyle, ButtonRole};
 use koru_ui::card::{Card, CardRow};
-use koru_ui::toggle::Toggle;
 use koru_workspace_host::account_ui::{Action, Surface, SurfaceKind};
-use profiles::{LinkControl, SessionAction, SyncAvailability};
+use profiles::{LinkControl, SessionAction};
 
 /// Between text buttons in the actions strip.
 const STRIP_GAP: f32 = 8.0;
 
-const LOCAL_LABEL: &str = "On this computer only";
-const LOCAL_HINT: &str = "This profile lives on this computer and the devices linked to it.";
+const LOCAL_LABEL: &str = "Not connected to a Koru account";
+const LOCAL_HINT: &str =
+    "Linked devices can sync this profile using P2P. Sign in to use Koru Cloud.";
 const SIGNED_OUT_LABEL: &str = "Signed out";
 const SIGNED_OUT_HINT: &str = "Sign in to sync this profile with your Koru account.";
 const UNLINKED_LABEL: &str = "Not linked to this sign-in";
-const UNLINKED_HINT: &str =
-    "This profile is on this computer only. Connect it to sync it with your Koru account.";
+const UNLINKED_HINT: &str = "Connect this profile to sync it with your Koru account.";
 const CONNECTED_LABEL: &str = "Connected to a Koru account";
 const CONNECTED_HINT: &str = "Sign-in details will appear when this account is available.";
-const CLOUD_LABEL: &str = "Cloud sync";
-const CLOUD_HINT: &str = "Sync this profile's workspaces through Koru Cloud.";
-const SUBSCRIPTION_LABEL: &str = "Subscription";
 const RESUME_TITLE: &str = "Finish setting up your account";
 const RESUME_BODY: &str = "Koru is waiting for your answer about creating an account.";
 
@@ -114,6 +110,9 @@ impl ManageView {
         } else {
             self.lay_sign_in_rows(profile, column, &mut cy, &mut rows, controls);
         }
+        // The sync choices themselves are on the head (the Profile's) and in
+        // each Workspace's row; what stays here is the way to Koru Cloud.
+        self.lay_get_cloud(column, &mut cy, &mut rows, controls);
         Section {
             rect: Rect::new(column.x, y, column.w, cy - y),
             repair,
@@ -241,80 +240,11 @@ impl ManageView {
             strip.push((Control::SignOut, "Sign out…"));
             self.lay_strip(column, cy, rows, controls, &strip);
         }
-        self.lay_cloud_row(profile, column, cy, rows, controls);
-    }
-
-    /// The Cloud sync row: the shared switch and what it says, or *Get Koru
-    /// Cloud…* while the account has no subscription. None for a Profile
-    /// that is not a Cloud thing at all.
-    fn lay_cloud_row(
-        &mut self,
-        profile: &ProfileSummary,
-        column: Rect,
-        cy: &mut f32,
-        rows: &mut Vec<Row>,
-        controls: &mut Vec<Placed>,
-    ) {
-        let availability = self.c.cloud_sync_availability(profile);
-        if availability == SyncAvailability::Hidden {
-            return;
-        }
-        if self.c.cloud_status() == profiles::CloudStatus::Subscribe {
-            let label = "Get Koru Cloud…";
-            let w = button::button_width(&mut self.engine, label);
-            let look = Look::Button(ButtonRole::Secondary);
-            let get = (Control::GetCloud, label.to_owned(), look, w, button::H);
-            let hint = Some(CLOUD_HINT.to_owned());
-            self.lay_row(column, cy, rows, controls, CLOUD_LABEL, hint, Some(get));
-            return;
-        }
-        let toggle = Toggle::new(self.c.cloud_sync_on(profile.id))
-            .enabled(availability == SyncAvailability::Enabled)
-            .pending(self.c.cloud_sync_pending_for(profile.id).is_some());
-        let hint = self
-            .c
-            .cloud_sync_subtitle(profile)
-            .unwrap_or_else(|| CLOUD_HINT.to_owned());
-        let switch = (
-            Control::CloudSync,
-            CLOUD_LABEL.to_owned(),
-            Look::Toggle(toggle),
-            toggle.width(),
-            Toggle::H,
-        );
-        self.lay_row(
-            column,
-            cy,
-            rows,
-            controls,
-            CLOUD_LABEL,
-            Some(hint),
-            Some(switch),
-        );
-        if self.c.cloud_status() == profiles::CloudStatus::Manage {
-            let label = koru_i18n::t(
-                crate::format::lang(),
-                koru_i18n::Key::CloudManageSubscription,
-            );
-            let w = button::button_width(&mut self.engine, label);
-            let look = Look::Button(ButtonRole::Secondary);
-            let manage = (Control::CloudPrimary, label.to_owned(), look, w, button::H);
-            let kind = self.c.cloud_subscription_label().to_owned();
-            self.lay_row(
-                column,
-                cy,
-                rows,
-                controls,
-                SUBSCRIPTION_LABEL,
-                Some(kind),
-                Some(manage),
-            );
-        }
     }
 
     /// One row with its control against the right edge.
     #[allow(clippy::too_many_arguments)]
-    fn lay_row(
+    pub(super) fn lay_row(
         &mut self,
         column: Rect,
         cy: &mut f32,
@@ -438,6 +368,8 @@ impl ManageView {
                     self.paint_controls_in(canvas, root, row.rect, laid);
                 }
                 None => {
+                    // The only strip left in this card: the sync choices are
+                    // on the page's head and in the Workspaces' rows.
                     let s = row.rect;
                     let _strip = inspect::scope(
                         "Manage account actions",

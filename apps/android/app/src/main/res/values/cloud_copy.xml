@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_copy_title">Cloud copy</string>
+    <string name="cloud_copy_passive">This is the Cloud copy. File previews and reference navigation are unavailable here.</string>
+    <string name="cloud_copy_loading">Checking Cloud copy…</string>
+    <string name="cloud_copy_unavailable">The Cloud copy is unavailable.</string>
+    <string name="cloud_copy_changed">The Cloud copy changed. Reload it before making changes.</string>
+    <string name="cloud_copy_removing">Removing file item…</string>
+    <string name="cloud_copy_unknown">The outcome is unknown. Reload the Cloud copy before trying again.</string>
+    <string name="cloud_copy_acknowledged">Cloud confirmed the change. Refresh file usage to see the current count.</string>
+    <string name="cloud_copy_no_actions">No file items can be removed from this copy right now.</string>
+    <string name="cloud_copy_reload">Reload Cloud copy</string>
+    <string name="cloud_copy_remove">Remove file item</string>
+    <string name="cloud_copy_remove_question">Remove this file item from the Cloud copy?</string>
+    <string name="cloud_copy_remove_explanation">This removes the selected file item. An embedded target is not deleted. Other references may keep the file in Cloud storage.</string>
+    <string name="cloud_copy_block_reference">Block reference</string>
+    <string name="cloud_copy_preview_unavailable">File preview unavailable</string>
+    <string name="cloud_copy_remove_attachment">Remove attachment</string>
+    <string name="cloud_copy_remove_attachment_question">Remove this attachment from the Cloud copy?</string>
+    <string name="cloud_copy_remove_attachment_explanation">Only the attachment is removed. Text, other content and embedded targets stay. Other references may keep the file in Cloud storage.</string>
+</resources>

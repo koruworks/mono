@@ -41,6 +41,7 @@ pub use events::{
     CatalogChange, CatalogFlags, CatalogWatch, Cursor, EventsClient, Filter, Receipt, Subscription,
     catalog_change,
 };
+pub mod mini_app_pins;
 pub mod settings;
 pub use settings::link::{
     ConfirmedFailure, ConfirmedOutcome, ConfirmedWrite, GlobalLink, LINK_SCOPES, PatchReply,
@@ -115,10 +116,11 @@ pub use koru_store_client::{
     LocalProfileRestoration, ManifestRef, Navigation, NewDocument, NewProfile, NewWorkspace,
     OutlineHeading, ProfileAccountBindingOutcome, ProfileAccountClearOutcome, ProfileAppearance,
     ProfileDeletionBatch, ProfileDeletionPreview, ProfileLifecycleInventory,
-    ProfileLifecycleInventoryItem, ProfileRestoreOutcome, ProvisionAccountProfile, RecentQuery,
-    RenameProfile, RenameWorkspace, SearchFacets, SearchHit, SearchPage, SearchQuery,
-    SearchRequest, SearchResponse, Status, Stopping, UnassignedReason, UnassignedWorkspace,
-    WorkspaceAppearance, WorkspaceAuthority, WorkspaceAuthorityState, WorkspaceAvailabilityIssue,
+    ProfileLifecycleInventoryItem, ProfileRestoreOutcome, ProvisionAccountProfile, ReadRequestKind,
+    ReadRequested, ReadingAnswer, ReadingOffers, ReadingPage, RecentQuery, RenameProfile,
+    RenameWorkspace, SearchFacets, SearchHit, SearchPage, SearchQuery, SearchRequest,
+    SearchResponse, Status, Stopping, UnassignedReason, UnassignedWorkspace, WorkspaceAppearance,
+    WorkspaceAuthority, WorkspaceAuthorityState, WorkspaceAvailabilityIssue,
 };
 pub use koru_store_client::{debug, store_session_debug, sync, sync_debug};
 
@@ -535,6 +537,7 @@ impl Client {
                     updating_workspaces: response.page.updating_workspaces,
                     request_seq: response.page.request_seq,
                     corrected_query: response.page.corrected_query,
+                    reading: response.page.reading,
                 },
                 facets: response.facets,
                 recent_queries: response.recent_queries,
@@ -894,6 +897,16 @@ impl AiClient<'_> {
         )
     }
 
+    pub fn mini_app_tool(
+        &self,
+        request: &koru_ai_wire::MiniAppToolRequest,
+    ) -> AiResult<koru_ai_wire::MiniAppToolResponse> {
+        self.json(
+            reqwest::Method::POST,
+            "/v1/ai/tools/mini-app".into(),
+            Some(json_body(request)?),
+        )
+    }
     pub fn tool_list_chats(
         &self,
         request: &ListChatsToolRequest,
@@ -1392,6 +1405,8 @@ fn decode_ai_event(data: &str) -> AiResult<Option<StreamEvent>> {
     if !matches!(
         event_type,
         "started"
+            | "mini_app_created"
+            | "mini_app_updated"
             | "text_delta"
             | "usage"
             | "tool_activity"
@@ -1835,11 +1850,90 @@ mod tests {
         let unknown = r#"{"version":1,"sequence":2,"event":{"type":"future_signal"}}"#;
         assert!(decode_ai_event(unknown).unwrap().is_none());
 
-        let malformed = r#"{"version":1,"sequence":2,"event":{"type":"text_delta"}}"#;
-        assert_eq!(
-            decode_ai_event(malformed).unwrap_err().code,
-            "invalid_response"
+        for event_type in ["text_delta", "mini_app_created", "mini_app_updated"] {
+            let malformed =
+                format!(r#"{{"version":1,"sequence":2,"event":{{"type":"{event_type}"}}}}"#);
+            assert_eq!(
+                decode_ai_event(&malformed).unwrap_err().code,
+                "invalid_response"
+            );
+        }
+    }
+
+    #[test]
+    fn mini_app_offers_survive_sse_framing_before_completion_with_exact_host() {
+        use koru_ai_core::{ProfileId, Timestamp, mini_apps};
+        use koru_ai_wire::PublicAiEvent;
+        let attempt_id = InferenceAttemptId::new();
+        let chat_id = ChatId::new();
+        let profile_id = ProfileId::new();
+        let invocation_id = ToolInvocationId::new();
+        let host: mini_apps::HostContext = serde_json::from_value(serde_json::json!({
+            "renderer_id":"20000000-0000-4000-8000-000000000001",
+            "request_id":"20000000-0000-4000-8000-000000000002",
+            "workspace_id":"20000000-0000-4000-8000-000000000003",
+            "refinement":{"tab_id":7,"surface_id":"20000000-0000-4000-8000-000000000004","base_revision":11}
+        })).unwrap();
+        let declaration = mini_apps::Declaration::parse(mini_apps::FIXTURE.as_bytes()).unwrap();
+        let update = mini_apps::UpdateEnvelope::from_value(&serde_json::json!({
+            "version":"1.0","updateComponents":{"surfaceId":host.refinement.unwrap().surface_name(),"components":[{
+                "id":"root","component":"TaskDocument","children":["selector","tasks","search","document"],"arrangement":"document-first"
+            }]}
+        })).unwrap();
+        let events = [
+            PublicAiEvent::MiniAppCreated {
+                attempt_id,
+                chat_id,
+                profile_id,
+                invocation_id,
+                call_id: "create-call".into(),
+                host,
+                envelope: declaration.envelope,
+            },
+            PublicAiEvent::MiniAppUpdated {
+                attempt_id,
+                chat_id,
+                profile_id,
+                invocation_id,
+                call_id: "update-call".into(),
+                host,
+                envelope: update,
+            },
+            PublicAiEvent::Completed {
+                attempt_id,
+                stop_reason: None,
+                at: Timestamp::now(),
+            },
+        ];
+        let mut wire = String::from(
+            ": keep-alive\n\nevent: event\ndata: {\"version\":1,\"sequence\":0,\"event\":{\"type\":\"future_signal\"}}\n\n",
         );
+        let expected: Vec<_> = events
+            .into_iter()
+            .enumerate()
+            .map(|(index, event)| StreamEvent {
+                version: koru_ai_wire::AI_STREAM_VERSION,
+                sequence: index as u64 + 1,
+                event,
+            })
+            .collect();
+        for event in &expected {
+            wire.push_str(&format!(
+                "event: event\ndata: {}\n\n",
+                serde_json::to_string(event).unwrap()
+            ));
+        }
+        // These are the production frame reader and decoder used by
+        // AiEventStream; the in-memory reader opens no HTTP service.
+        let mut reader = std::io::Cursor::new(wire.as_bytes());
+        let mut received = Vec::new();
+        while let Some((name, data)) = read_sse_frame(&mut reader).unwrap() {
+            assert_eq!(name, "event");
+            if let Some(event) = decode_ai_event(&data).unwrap() {
+                received.push(event);
+            }
+        }
+        assert_eq!(received, expected);
     }
 
     #[test]

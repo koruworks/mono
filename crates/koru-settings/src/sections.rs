@@ -143,11 +143,17 @@ pub struct GlobalSettings {
     #[serde(default)]
     pub icon_pack: Option<IconPackChoice>,
     pub caret_color: CaretColorChoice,
+    /// Independent dark-theme caret color. The original key is the light choice.
+    #[serde(default)]
+    pub caret_color_dark: CaretColorChoice,
     pub caret_width: CaretWidthChoice,
     pub caret_height: CaretHeightChoice,
     pub ui_font: FontSetting,
     pub body_font: FontSetting,
     pub headings_font: FontSetting,
+    /// Document headings and titles, independent of body and UI weights.
+    #[serde(default = "crate::text_rendering::default_heading_weight")]
+    pub heading_weight: u16,
     pub code_font: FontSetting,
     /// **The typeface the AI chat is set in** — its messages and the box a
     /// person types in. `follow_default` follows the **app font** (`ui_font`),
@@ -158,6 +164,26 @@ pub struct GlobalSettings {
     /// build without it reads as following the app font.
     #[serde(default)]
     pub chat_font: FontSetting,
+    #[serde(default = "crate::text_rendering::default_hinting")]
+    pub text_hinting: bool,
+    #[serde(default)]
+    pub text_antialiasing: crate::TextAntialiasing,
+    #[serde(default = "crate::text_rendering::default_offset")]
+    pub text_offset: f32,
+    #[serde(default = "crate::text_rendering::default_gamma")]
+    pub text_gamma: f32,
+    #[serde(default = "crate::text_rendering::default_cutoff")]
+    pub text_cutoff: f32,
+    #[serde(default = "crate::text_rendering::default_hinting")]
+    pub text_hinting_dark: bool,
+    #[serde(default)]
+    pub text_antialiasing_dark: crate::TextAntialiasing,
+    #[serde(default)]
+    pub text_offset_dark: f32,
+    #[serde(default = "crate::text_rendering::default_dark_gamma")]
+    pub text_gamma_dark: f32,
+    #[serde(default = "crate::text_rendering::default_dark_cutoff")]
+    pub text_cutoff_dark: f32,
     /// The document body size. Follows the build's default until chosen.
     #[serde(default)]
     pub document_text_size: DocTextSizeSetting,
@@ -283,14 +309,26 @@ impl Default for GlobalSettings {
             theme: ThemeChoice::default(),
             icon_pack: None,
             caret_color: CaretColorChoice::default(),
+            caret_color_dark: CaretColorChoice::default(),
             caret_width: CaretWidthChoice::default(),
             caret_height: CaretHeightChoice::default(),
             ui_font: FontSetting::FollowDefault,
             body_font: FontSetting::FollowDefault,
             headings_font: FontSetting::FollowDefault,
+            heading_weight: crate::text_rendering::DEFAULT_HEADING_WEIGHT,
             code_font: FontSetting::FollowDefault,
             // The app font's, whatever it is.
             chat_font: FontSetting::FollowDefault,
+            text_hinting: crate::TextRendering::DEFAULT.hinting,
+            text_antialiasing: crate::TextRendering::DEFAULT.antialiasing,
+            text_offset: crate::TextRendering::DEFAULT.offset,
+            text_gamma: crate::TextRendering::DEFAULT.gamma,
+            text_cutoff: crate::TextRendering::DEFAULT.cutoff,
+            text_hinting_dark: crate::TextRendering::DARK_DEFAULT.hinting,
+            text_antialiasing_dark: crate::TextRendering::DARK_DEFAULT.antialiasing,
+            text_offset_dark: crate::TextRendering::DARK_DEFAULT.offset,
+            text_gamma_dark: crate::TextRendering::DARK_DEFAULT.gamma,
+            text_cutoff_dark: crate::TextRendering::DARK_DEFAULT.cutoff,
             document_text_size: DocTextSizeSetting::FollowDefault,
             base_color_light: None,
             base_color_dark: None,
@@ -357,6 +395,8 @@ pub struct GlobalPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caret_color: Option<CaretColorChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub caret_color_dark: Option<CaretColorChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub caret_width: Option<CaretWidthChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caret_height: Option<CaretHeightChoice>,
@@ -367,10 +407,32 @@ pub struct GlobalPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headings_font: Option<FontSetting>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading_weight: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub code_font: Option<FontSetting>,
     /// `follow_default` puts the chat back on the app font.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_font: Option<FontSetting>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_hinting: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_antialiasing: Option<crate::TextAntialiasing>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_offset: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_gamma: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_cutoff: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_hinting_dark: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_antialiasing_dark: Option<crate::TextAntialiasing>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_offset_dark: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_gamma_dark: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_cutoff_dark: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document_text_size: Option<DocTextSizeSetting>,
     /// `#rrggbb` sets the light theme's base color; `null` puts the theme's
@@ -477,13 +539,25 @@ impl GlobalPatch {
         self.theme.is_some()
             || self.icon_pack.is_some()
             || self.caret_color.is_some()
+            || self.caret_color_dark.is_some()
             || self.caret_width.is_some()
             || self.caret_height.is_some()
             || self.ui_font.is_some()
             || self.body_font.is_some()
             || self.headings_font.is_some()
+            || self.heading_weight.is_some()
             || self.code_font.is_some()
             || self.chat_font.is_some()
+            || self.text_hinting.is_some()
+            || self.text_antialiasing.is_some()
+            || self.text_offset.is_some()
+            || self.text_gamma.is_some()
+            || self.text_cutoff.is_some()
+            || self.text_hinting_dark.is_some()
+            || self.text_antialiasing_dark.is_some()
+            || self.text_offset_dark.is_some()
+            || self.text_gamma_dark.is_some()
+            || self.text_cutoff_dark.is_some()
             || self.document_text_size.is_some()
             || !self.base_color_light.is_unchanged()
             || !self.base_color_dark.is_unchanged()
@@ -534,6 +608,30 @@ impl GlobalPatch {
     /// Validation runs before a single byte is staged, so a rejected patch
     /// leaves the disk exactly as it was.
     pub fn validate(&self) -> Result<(), Invalid> {
+        if self
+            .heading_weight
+            .is_some_and(|value| ![500, 600].contains(&value))
+        {
+            return Err(Invalid::new(
+                "heading_weight",
+                "heading weight must be 500 or 600",
+            ));
+        }
+        for (field, value, min, max) in [
+            ("text_offset", self.text_offset, 0.0, 1.0),
+            ("text_gamma", self.text_gamma, 0.5, 3.0),
+            ("text_cutoff", self.text_cutoff, 0.0, 0.5),
+            ("text_offset_dark", self.text_offset_dark, 0.0, 1.0),
+            ("text_gamma_dark", self.text_gamma_dark, 0.5, 3.0),
+            ("text_cutoff_dark", self.text_cutoff_dark, 0.0, 0.5),
+        ] {
+            if value.is_some_and(|value| !value.is_finite() || !(min..=max).contains(&value)) {
+                return Err(Invalid::new(
+                    field,
+                    "text raster parameter is outside its supported range",
+                ));
+            }
+        }
         // An agent key is a profile key's shape — short, lowercase, ASCII —
         // and the list is bounded, so a hand-edit cannot grow the file.
         if let Some(agents) = &self.disabled_agents {
@@ -673,13 +771,25 @@ impl GlobalPatch {
         set!(
             theme,
             caret_color,
+            caret_color_dark,
             caret_width,
             caret_height,
             ui_font,
             body_font,
             headings_font,
+            heading_weight,
             code_font,
             chat_font,
+            text_hinting,
+            text_antialiasing,
+            text_offset,
+            text_gamma,
+            text_cutoff,
+            text_hinting_dark,
+            text_antialiasing_dark,
+            text_offset_dark,
+            text_gamma_dark,
+            text_cutoff_dark,
             document_text_size,
             density,
             scroll_speed,

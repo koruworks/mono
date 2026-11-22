@@ -109,6 +109,80 @@ fn capture(view: &mut ManageView) -> inspect::Snapshot {
     frame.finish()
 }
 
+#[test]
+fn storage_refresh_keeps_focus_control_and_exposes_the_drawn_status() {
+    use koru_agent_wire::{AccountOperationResult, CloudPlanPayload};
+    let mut view = subscribed();
+    let fixtures: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/koru-account-wire/src/cloud_plan.fixtures.json"
+    )))
+    .unwrap();
+    let mut value = fixtures["fixtures"][0]["response"].clone();
+    value["valid_until_millis"] = serde_json::Value::Null;
+    let payload = CloudPlanPayload::new(serde_json::to_string(&value).unwrap()).unwrap();
+    let mut answered_storage = false;
+    for _ in 0..6 {
+        let Some(command) = view.c.take_request() else {
+            break;
+        };
+        let result = match command {
+            AccountCommand::InspectCloudSubscription { request_id } => {
+                AccountOperationResult::CloudSubscription {
+                    request_id,
+                    current: Some(true),
+                    access: Some(true),
+                    subscription_kind: None,
+                }
+            }
+            AccountCommand::InspectCloudSync { request_id } => AccountOperationResult::CloudSync {
+                request_id,
+                profiles: Vec::new(),
+            },
+            AccountCommand::InspectCloudPlan { request_id } => {
+                answered_storage = true;
+                AccountOperationResult::CloudPlan {
+                    request_id,
+                    payload: Some(payload.clone()),
+                    request_elapsed_millis: 0,
+                }
+            }
+            _ => panic!("unexpected command {command:?}"),
+        };
+        assert!(view.c.complete_scoped(1, 1, result));
+        if answered_storage {
+            break;
+        }
+    }
+    assert!(answered_storage);
+    view.relayout();
+    let control = Control::CloudStorageRetry;
+    assert_eq!(
+        view.laid.placed(control).unwrap().label,
+        koru_i18n::t(crate::format::lang(), TextKey::CloudStorageRefresh)
+    );
+    view.page_focus = Some(control);
+    view.perform(Intent::CloudStorageRetry);
+    view.relayout();
+    assert_eq!(view.page_focus, Some(control));
+    assert!(view.laid.placed(control).is_some());
+    assert!(view.laid.disabled.contains(&control));
+    let cx = super::super::accessibility::Context {
+        window: WindowSlot::from_raw(1),
+        view: ViewSlot::from_raw(1),
+        area: Rect::new(0.0, 0.0, 1000.0, 2400.0),
+    };
+    let semantics = view.semantics(&cx);
+    fn contains(node: &SemanticNode, text: &str) -> bool {
+        node.label.as_deref() == Some(text)
+            || node.children.iter().any(|child| contains(child, text))
+    }
+    assert!(contains(
+        &semantics,
+        &cloud(&view).storage.as_ref().unwrap().body
+    ));
+}
+
 fn named(snapshot: &inspect::Snapshot, name: &str) -> usize {
     snapshot.records.iter().filter(|r| r.name == name).count()
 }
@@ -521,7 +595,7 @@ fn a_held_progress_row_opens_onto_its_waiting_documents() {
     );
 
     assert!(press(&mut view, Control::ProgressRow(photos_id)));
-    let lines = view.c.cloud_progress_lines().unwrap();
+    let lines = view.c.cloud_progress_lines(0).unwrap();
     assert_eq!(lines.rows[1].waiting, Some(Waiting::Reading));
     let laid = cloud(&view).rows[0].progress.clone().unwrap();
     assert!(laid.rows[1].open);

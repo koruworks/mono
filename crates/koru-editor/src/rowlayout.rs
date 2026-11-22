@@ -2607,7 +2607,7 @@ mod tests {
         let mut o = Body::new(&ws);
         reflow_all(&mut engine, &mut o, 900.0, 0.0);
 
-        let step = theme::type_step(Some(1));
+        let step = theme::type_step_at(Some(1), o.rows[0].metrics.scale);
         assert!(o.rows[0].height >= step.size * step.line_height - 0.5);
     }
 
@@ -2662,7 +2662,10 @@ mod tests {
         let (plain, headed) = (&o.rows[0], &o.rows[1]);
         assert_eq!(headed.kind, Kind::Code);
         assert_eq!(headed.type_step(), plain.type_step());
-        assert_eq!(headed.type_step(), theme::type_step(None));
+        assert_eq!(
+            headed.type_step(),
+            theme::type_step_at(None, headed.metrics.scale)
+        );
         assert!(
             (headed.height - plain.height).abs() < 0.01,
             "{} vs {}",
@@ -2680,7 +2683,10 @@ mod tests {
     #[test]
     fn a_heading_opens_space_above_itself_but_never_at_the_top_of_the_document() {
         let o = three_rows(Some(koru_core::Heading::H2));
-        assert_eq!(o.rows[1].space_above, theme::type_step(Some(2)).space_above);
+        assert_eq!(
+            o.rows[1].space_above,
+            theme::type_step_at(Some(2), o.rows[1].metrics.scale).space_above
+        );
         assert_eq!(o.rows[0].space_above, 0.0, "nothing above the first row");
         assert_eq!(o.rows[2].space_above, 0.0, "body text opens no space");
 
@@ -2771,9 +2777,9 @@ mod tests {
         let first = &o.rows[1];
         let gap = first.y - (title.y + title.height + theme::TASK_GAP);
         assert!(
-            (gap - theme::TITLE_GAP_BELOW).abs() < 0.01,
+            (gap - title.metrics.title_gap).abs() < 0.01,
             "the air below the title is the title's: {gap} vs {}",
-            theme::TITLE_GAP_BELOW
+            title.metrics.title_gap
         );
         // ...and no other pair of rows has it.
         assert!(o.rows.len() == 2, "the fixture is the title and one row");

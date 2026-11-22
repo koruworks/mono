@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The parent side: spawn a role of our own executable, prove it ready,
-//! watch it, and restart it inside a budget — with every decision taken by
-//! the pure [`crate::machine`] and every blocking wait on its own thread.
+//! The parent side: spawn a role of our own executable — or a sibling program
+//! shipped beside it — prove it ready, watch it, and restart it inside a
+//! budget, with every decision taken by the pure [`crate::machine`] and every
+//! blocking wait on its own thread.
+//!
+//! Which program runs is [`Program`]; an optional ceiling on the child tree's
+//! committed memory is [`WorkerSpec::memory_limit`]. Both are mechanism: the
+//! crate still knows nothing about what the program does.
 //!
 //! Ownership map, because five threads meet here:
 //!
@@ -25,6 +30,7 @@
 
 use std::ffi::OsString;
 use std::io::Write as _;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
@@ -58,7 +64,78 @@ pub type Probe<P> = Box<dyn Fn(&P) -> Result<(), String> + Send + Sync>;
 /// stop.
 type SharedProbe<P> = Arc<dyn Fn(&P) -> Result<(), String> + Send + Sync>;
 
-/// What one spawn needs: the argv after `--worker <role>`, the one-line
+/// Which executable a supervised child is.
+///
+/// **Chosen once per supervision, not per spawn.** Every generation of one
+/// supervision is the same program; what varies between them — arguments,
+/// bootstrap, payload — is the [`LaunchPlan`]. It lives on [`WorkerSpec`]
+/// rather than the plan for that reason, and because every role builds its
+/// plan as a struct literal that a new field would break.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Program {
+    /// This executable as `<current_exe> --worker <role> [plan args…]`: every
+    /// self-hosted role, and the default.
+    OwnRole,
+    /// A separately shipped executable, named by its **file name** and
+    /// resolved beside `current_exe()` — never through `PATH`, never a path a
+    /// caller supplies — and run as `<dir>/<name> [plan args…]`, with no
+    /// `--worker` in front: it is its own program, not a role of this one.
+    ///
+    /// The name is the platform's, suffix included (`koru_update::exe` is
+    /// where shipped names are spelled). Anything that is not a single plain
+    /// file name — a separator, `..`, a root — is refused at spawn.
+    Sibling(OsString),
+}
+
+/// How much of the machine a supervised child may take while a person is
+/// using it.
+///
+/// **Chosen once per supervision**, beside [`Program`], for the reason given
+/// there. Which work deserves to stay out of the way is the caller's
+/// knowledge; this only says how a child is launched.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Priority {
+    /// The parent's own priority, as every role has always had it.
+    #[default]
+    Normal,
+    /// Below the person's work: on Windows the child is created in
+    /// `BELOW_NORMAL_PRIORITY_CLASS`, so it is lowered from its first
+    /// instruction, before its bootstrap is written, and anything it starts
+    /// inherits the class. **Its I/O cannot be lowered from here**: Windows
+    /// lets a process enter background I/O mode only for itself, so a child
+    /// that links this crate calls [`crate::follow_launch_priority`], which
+    /// does it when it finds itself launched below normal. See
+    /// [`PRIORITY_LOWERED`] for the other platforms.
+    Background,
+}
+
+/// Whether [`Priority::Background`] lowers anything on this platform.
+///
+/// **Windows only, for now.** Elsewhere the child runs at its parent's
+/// priority, the supervision logs that once when it starts, and nothing
+/// pretends otherwise. What the catch-up needs: on Linux and macOS,
+/// `setpriority(PRIO_PROCESS, pid, 10)` on the spawned pid (a nice value
+/// inherited by the child's own children), and for I/O, Linux's
+/// `ioprio_set(IOPRIO_WHO_PROCESS, pid, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE,
+/// 0))` from the parent, or macOS's
+/// `setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_PROCESS, IOPOL_THROTTLE)`
+/// called by the child on itself in [`crate::follow_launch_priority`].
+pub const PRIORITY_LOWERED: bool = cfg!(windows);
+
+/// Whether [`WorkerSpec::memory_limit`] is enforced on this platform.
+///
+/// **Windows only.** There the child's Job Object carries the ceiling, and a
+/// tree that reaches it is ended and reported as
+/// [`WorkerEventKind::MemoryLimitReached`]. Elsewhere the crate's containment
+/// seam is the process group, which has no memory ceiling, and none is
+/// invented: the limit is accepted and **not applied** — the child runs
+/// unbounded, the supervision logs that once when it starts, and no
+/// `MemoryLimitReached` is ever reported. A caller that must not run an
+/// unbounded child checks this before starting one.
+pub const MEMORY_LIMIT_ENFORCED: bool = cfg!(windows);
+
+/// What one spawn needs: the argv after `--worker <role>` (or, for a
+/// [`Program::Sibling`], the sibling's whole argv), the one-line
 /// bootstrap, and the role's opaque handles for this child (endpoint,
 /// launch id, authorities — whatever the closures need to reach it).
 pub struct LaunchPlan<P> {
@@ -76,9 +153,18 @@ pub struct WorkerEvent {
     pub kind: WorkerEventKind,
 }
 
+/// What happened, for [`WorkerEvent`].
+///
+/// **`MemoryLimitReached`**: the child's tree reached
+/// [`WorkerSpec::memory_limit`] and the supervisor ended it. It is reported
+/// **before the `Exited` that follows**, so a role can tell an out-of-memory
+/// end from an ordinary crash; the machine treats the exit as a crash all the
+/// same (restart, budget). Never reported where [`MEMORY_LIMIT_ENFORCED`] is
+/// false.
 #[derive(Clone, Debug)]
 pub enum WorkerEventKind {
     Ready,
+    MemoryLimitReached { limit_bytes: u64 },
     Exited { code: Option<i32> },
     RestartScheduled { delay: Duration },
     SpawnFailed { error: String },
@@ -94,7 +180,18 @@ pub enum WorkerEventKind {
 /// the defaults that matter; the closures are the role's knowledge and the
 /// crate calls them without understanding them.
 pub struct WorkerSpec<P> {
+    /// The role's name: the `--worker` token for [`Program::OwnRole`], and
+    /// the label in thread names, logs and events for either program.
     pub role: &'static str,
+    /// Which executable each child is. [`Program::OwnRole`] by default.
+    pub program: Program,
+    /// A ceiling, in bytes, on the committed memory of each child's whole
+    /// tree; `None` (the default) is no ceiling. See [`MEMORY_LIMIT_ENFORCED`]
+    /// for where it applies. Zero is refused at spawn.
+    pub memory_limit: Option<u64>,
+    /// How each child is scheduled against the person's work.
+    /// [`Priority::Normal`] by default.
+    pub priority: Priority,
     /// Mint one child's launch: argv, bootstrap, and the payload the other
     /// closures will be handed. Called once per spawn, with the generation
     /// the child will carry.
@@ -122,6 +219,9 @@ impl<P> WorkerSpec<P> {
     ) -> Self {
         Self {
             role,
+            program: Program::OwnRole,
+            memory_limit: None,
+            priority: Priority::Normal,
             launch: Box::new(launch),
             readiness: Box::new(readiness),
             health: None,
@@ -509,6 +609,72 @@ impl<P> Drop for WorkerHandle<P> {
 /// what bounds the child and this only bounds the *report*.
 const STOP_ACKNOWLEDGEMENT: Duration = Duration::from_secs(30);
 
+/// How long a waiter holds a child's exit report back for its memory watch to
+/// say whether the job reached its limit first. The watch answers as soon as
+/// it reads the release, which is queued behind anything the job reported, so
+/// this only bounds a watch that has gone wrong.
+#[cfg(windows)]
+const MEMORY_WATCH_FLUSH: Duration = Duration::from_secs(2);
+
+/// The executable and argv one spawn runs. Pure, so the one rule that matters
+/// — **a sibling is a plain file name beside this executable, and gets no
+/// `--worker`** — is tested without a process.
+fn command_line(
+    program: &Program,
+    role: &str,
+    own_exe: &Path,
+    args: &[OsString],
+) -> Result<(PathBuf, Vec<OsString>), String> {
+    match program {
+        Program::OwnRole => {
+            let mut argv: Vec<OsString> = vec!["--worker".into(), role.into()];
+            argv.extend(args.iter().cloned());
+            Ok((own_exe.to_path_buf(), argv))
+        }
+        Program::Sibling(name) => {
+            let mut components = Path::new(name).components();
+            let plain = matches!(
+                (components.next(), components.next()),
+                (Some(Component::Normal(only)), None) if only == name.as_os_str()
+            );
+            if !plain {
+                return Err(format!(
+                    "a sibling program is named by a plain file name, not {}",
+                    Path::new(name).display()
+                ));
+            }
+            let directory = own_exe.parent().ok_or_else(|| {
+                format!(
+                    "{} has no directory to find a sibling program in",
+                    own_exe.display()
+                )
+            })?;
+            Ok((directory.join(name), args.to_vec()))
+        }
+    }
+}
+
+/// The process creation flags one Windows spawn carries: never a console
+/// window, and the priority class [`Priority`] asks for. Pure, so the class a
+/// background child is created in is tested without a process.
+#[cfg(windows)]
+fn creation_flags(priority: Priority) -> u32 {
+    use windows_sys::Win32::System::Threading::{BELOW_NORMAL_PRIORITY_CLASS, CREATE_NO_WINDOW};
+    match priority {
+        Priority::Normal => CREATE_NO_WINDOW,
+        Priority::Background => CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS,
+    }
+}
+
+/// A ceiling of zero bytes could never start a child, so it is a mistake in
+/// the spec rather than a limit; refused on every platform alike.
+fn check_memory_limit(limit: Option<u64>) -> Result<(), String> {
+    match limit {
+        Some(0) => Err("a worker memory limit of zero bytes can never be met".into()),
+        _ => Ok(()),
+    }
+}
+
 // ---------------------------------------------------------------- internals
 
 enum Msg {
@@ -526,6 +692,13 @@ enum Msg {
     Exited {
         generation: u64,
         code: Option<i32>,
+    },
+    /// The child's job reported its memory limit. Sent by the memory watch
+    /// **before** it lets the waiter report the exit, so it always arrives
+    /// ahead of that child's `Exited`. Only a Job Object sends it.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    MemoryLimit {
+        generation: u64,
     },
     BackoffElapsed {
         epoch: u64,
@@ -627,6 +800,25 @@ impl Drop for LiveChild {
 /// Start supervising one role. Returns immediately; the first spawn happens
 /// on the control thread.
 pub fn start<P: Send + Sync + 'static>(spec: WorkerSpec<P>) -> WorkerHandle<P> {
+    if let Some(limit_bytes) = spec.memory_limit
+        && !MEMORY_LIMIT_ENFORCED
+    {
+        // News, once per supervision rather than once per spawn: the caller
+        // asked for a ceiling this platform does not give.
+        tracing::warn!(
+            target: "koru::worker",
+            role = spec.role,
+            limit_bytes,
+            "this platform enforces no worker memory limit; the child runs unbounded"
+        );
+    }
+    if spec.priority == Priority::Background && !PRIORITY_LOWERED {
+        tracing::warn!(
+            target: "koru::worker",
+            role = spec.role,
+            "this platform does not lower a background worker's priority; it runs at the parent's"
+        );
+    }
     let (tx, rx) = channel::<Msg>();
     let shared = Arc::new(Shared {
         snapshot: Mutex::new(Snapshot {
@@ -759,6 +951,30 @@ impl<P: Send + Sync + 'static> Control<P> {
                 Msg::Exited { generation, code } if generation == self.generation => {
                     self.reap(code);
                     self.machine.on(Event::Exited, Instant::now())
+                }
+                Msg::MemoryLimit { generation } if generation == self.generation => {
+                    // Windows refused the commit that would have crossed the
+                    // ceiling; it did not end the process. End the tree here,
+                    // so a child that survives its refused allocation is not
+                    // left running at its limit. The exit that follows the
+                    // kill is an ordinary crash to the machine — the event
+                    // is what tells it apart.
+                    let limit_bytes = self.spec.memory_limit.unwrap_or(0);
+                    self.record_error(&format!(
+                        "child {generation} reached its memory limit of {limit_bytes} bytes and was ended"
+                    ));
+                    self.notify(WorkerEventKind::MemoryLimitReached { limit_bytes });
+                    tracing::warn!(
+                        target: "koru::worker",
+                        role = self.spec.role,
+                        generation,
+                        limit_bytes,
+                        "the worker reached its memory limit and was ended"
+                    );
+                    if let Some(live) = self.live.as_mut() {
+                        live.kill();
+                    }
+                    Action::None
                 }
                 Msg::BackoffElapsed { epoch } if epoch == self.backoff_epoch => {
                     self.machine.on(Event::BackoffElapsed, Instant::now())
@@ -978,14 +1194,21 @@ impl<P: Send + Sync + 'static> Control<P> {
     }
 
     fn try_spawn(&mut self, generation: Generation) -> Result<(), String> {
+        check_memory_limit(self.spec.memory_limit)?;
         let plan = (self.spec.launch)(generation)?;
         let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-        let mut command = Command::new(exe);
-        command
-            .arg("--worker")
-            .arg(self.spec.role)
-            .args(&plan.args)
-            .stdin(Stdio::piped());
+        let (program, argv) = command_line(&self.spec.program, self.spec.role, &exe, &plan.args)?;
+        if matches!(self.spec.program, Program::Sibling(_)) && !program.is_file() {
+            // Said plainly rather than left to the OS's "file not found",
+            // which would not say where it looked.
+            return Err(format!(
+                "the sibling program {} is not beside {}",
+                program.display(),
+                exe.display()
+            ));
+        }
+        let mut command = Command::new(program);
+        command.args(argv).stdin(Stdio::piped());
         // The worker leads a process group of its own, so its tree can be
         // killed as one — and it is told it may do the same on parent loss.
         #[cfg(unix)]
@@ -996,16 +1219,17 @@ impl<P: Send + Sync + 'static> Control<P> {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
+            command.creation_flags(creation_flags(self.spec.priority));
         }
         let mut child = command
             .spawn()
             .map_err(|error| format!("could not spawn worker: {error}"))?;
         let pid = child.id();
+        // The child is in its job — ceiling included — before the bootstrap is
+        // written, and a worker does nothing before it has read that line.
         #[cfg(windows)]
         let job = {
-            let job = crate::windows_job::Job::new()?;
+            let job = crate::windows_job::Job::new(self.spec.memory_limit)?;
             job.assign(&child)?;
             job
         };
@@ -1024,6 +1248,9 @@ impl<P: Send + Sync + 'static> Control<P> {
             })?;
 
         let payload = Arc::new(plan.payload);
+        // Taken before the job moves into the live child.
+        #[cfg(windows)]
+        let memory_watch = job.memory_watch();
         self.live = Some(LiveChild {
             stdin: Some(stdin),
             #[cfg(windows)]
@@ -1042,13 +1269,48 @@ impl<P: Send + Sync + 'static> Control<P> {
             });
         }
 
+        let raw_generation = self.generation;
+
+        // **The memory watch, when the job has a ceiling.** It blocks on the
+        // job's completion port; a limit reported there becomes a message to
+        // this thread, which ends the tree. It is released by the waiter once
+        // the child has exited, and only *then* acknowledges — so a limit the
+        // job queued before the exit is always reported before the exit.
+        #[cfg(windows)]
+        let flush = memory_watch.map(|watch| {
+            let (flushed, on_flushed) = sync_channel::<()>(1);
+            let releaser = watch.clone();
+            let tx = self.tx.clone();
+            std::thread::Builder::new()
+                .name("koru-worker memory".into())
+                .stack_size(64 * 1024)
+                .spawn(move || {
+                    if watch.wait() {
+                        let _ = tx.send(Msg::MemoryLimit {
+                            generation: raw_generation,
+                        });
+                        // Further reports for the same child say nothing new.
+                        while watch.wait() {}
+                    }
+                    let _ = flushed.send(());
+                })
+                .expect("spawn worker memory watch");
+            (releaser, on_flushed)
+        });
+
         // The waiter owns the Child; its message is the only death report.
         let tx = self.tx.clone();
-        let raw_generation = self.generation;
         std::thread::Builder::new()
             .name("koru-worker waiter".into())
             .spawn(move || {
                 let code = child.wait().ok().and_then(|status| status.code());
+                #[cfg(windows)]
+                if let Some((releaser, on_flushed)) = flush {
+                    releaser.release();
+                    // Bounded: a watch that cannot answer must not hold the
+                    // death report back for ever.
+                    let _ = on_flushed.recv_timeout(MEMORY_WATCH_FLUSH);
+                }
                 let _ = tx.send(Msg::Exited {
                     generation: raw_generation,
                     code,
@@ -1235,3 +1497,6 @@ impl<P: Send + Sync + 'static> Control<P> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

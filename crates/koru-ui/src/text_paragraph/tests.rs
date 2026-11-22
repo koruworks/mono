@@ -7,6 +7,18 @@ fn engine() -> TextEngine {
 }
 
 #[test]
+fn search_highlights_keep_original_unicode_boundaries() {
+    let text = "Ärger español português İ";
+    let matched: Vec<_> = highlight_ranges(text, "ÄRG ESPAÑ PORTUGUÊ İ")
+        .into_iter()
+        .map(|range| &text[range])
+        .collect();
+    assert_eq!(matched, ["Ärg", "españ", "portuguê", "İ"]);
+    assert_eq!(highlight_ranges("İ", "i"), vec![0..2]);
+    assert!(highlight_ranges(text, " ").is_empty());
+}
+
+#[test]
 fn measure_is_the_wrapped_layouts_height() {
     let mut engine = engine();
     let paragraph = KoruTextParagraph::new(

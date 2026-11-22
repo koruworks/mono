@@ -183,7 +183,6 @@ impl MainView {
                 TabView::Leaf(_) => "document",
                 TabView::Welcome(_) => "welcome",
                 TabView::Home(_) => "home",
-                TabView::Manage(_) => "manage",
                 TabView::Trash(_) => "trash",
                 TabView::Tasks(_) => "tasks",
                 TabView::Settings(_) => "settings",
@@ -194,8 +193,10 @@ impl MainView {
                 TabView::Session(_) => "session",
                 TabView::Run(_) => "run",
                 TabView::Result(_) => "result",
+                TabView::Ocr(_) => "ocr",
                 TabView::Canvas(_) => "canvas",
                 TabView::Reminders(_) => "reminders",
+                TabView::MiniApp(_) => "mini-app",
             },
             self.tabs().active_tab().is_pinned(),
         ));
@@ -215,7 +216,9 @@ impl MainView {
             Layer::Updates => self.updates_modal,
             Layer::UpdateNewer => self.update_newer_modal_open(),
             Layer::Confirm => {
-                self.confirm.is_some() || self.workspace_controller.borrow().is_confirming()
+                self.file_paste.is_some()
+                    || self.confirm.is_some()
+                    || self.workspace_controller.borrow().is_confirming()
             }
             Layer::NewDocument => self.new_document.is_some(),
             Layer::Snapshot => self.snapshot_prompt.is_some(),
@@ -227,7 +230,7 @@ impl MainView {
             Layer::Recording => self.recording_modal.is_some(),
             Layer::PlaceChooser => self.place_chooser.is_some(),
             Layer::Launcher => self.launcher.is_some(),
-            Layer::Menu => self.menu.is_some(),
+            Layer::Menu => self.menu.is_some() || self.mini_app_pins.menu.is_some(),
             Layer::ReminderOverlay => self.reminder_shell.overlay_live(),
             Layer::ReminderManagement => self.reminder_creation.is_management(),
             Layer::ReminderCreation => self.reminder_creation.is_creation(),
@@ -288,6 +291,7 @@ impl MainView {
         }
         match &self.tabs().active_tab().view {
             TabView::Leaf(leaf) => leaf.editable_target(TabId(self.tabs().active())),
+            TabView::MiniApp(app) => app.leaf().filter(|_| app.document_focused()).map(|leaf| leaf.editable_target(TabId(self.tabs().active()))).unwrap_or(EditableTarget::None),
             // The note above a Tasks page is a document body while it has
             // the keyboard; the capture row is not a dictation surface this
             // release, and a `None` merely declines a dictation.
@@ -297,7 +301,6 @@ impl MainView {
                 .unwrap_or(EditableTarget::None),
             TabView::Welcome(_)
             | TabView::Home(_)
-            | TabView::Manage(_)
             | TabView::Settings(_)
             | TabView::Trash(_)
             | TabView::Reminders(_)
@@ -310,7 +313,7 @@ impl MainView {
             // remark about how a run went rather than a dictation surface. A
             // result tab has no field at all: it reads a version.
             | TabView::Run(_)
-            | TabView::Result(_)
+            | TabView::Result(_) | TabView::Ocr(_)
             // The placeholder's one field is its name prompt, which is not a
             // dictation surface; the canvas surface decides for its cards.
             | TabView::Canvas(_) => EditableTarget::None,
@@ -396,7 +399,12 @@ impl MainView {
         if chat_tab {
             return self.dictate_chat_tab(tab, action);
         }
-        self.deliver_to(ws, target, tab, action)
+        let before = ws.version();
+        let handled = self.deliver_to(ws, target, tab, action);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
     }
 
     /// **Whether this target may be dictated into at all.**

@@ -1,0 +1,561 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Proposed bounded Koru native mini-app creation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "createSurface"
+  ],
+  "properties": {
+    "version": {
+      "const": "1.0"
+    },
+    "createSurface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "surfaceId",
+        "catalogId",
+        "sendDataModel",
+        "components"
+      ],
+      "properties": {
+        "surfaceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[A-Za-z0-9_:-]+$"
+        },
+        "catalogId": {
+          "enum": [
+            "koru:task-document:0.1-proposal1",
+            "koru:composition:0.1-proposal1"
+          ]
+        },
+        "sendDataModel": {
+          "const": false
+        },
+        "components": {}
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "catalogId": {
+              "const": "koru:task-document:0.1-proposal1"
+            },
+            "components": {
+              "type": "array",
+              "minItems": 5,
+              "maxItems": 5,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component",
+                      "children",
+                      "arrangement"
+                    ],
+                    "properties": {
+                      "id": {
+                        "const": "root"
+                      },
+                      "component": {
+                        "const": "TaskDocument"
+                      },
+                      "children": {
+                        "const": [
+                          "selector",
+                          "tasks",
+                          "search",
+                          "document"
+                        ]
+                      },
+                      "arrangement": {
+                        "enum": [
+                          "tasks-first",
+                          "document-first"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component"
+                    ],
+                    "properties": {
+                      "id": {
+                        "const": "selector"
+                      },
+                      "component": {
+                        "const": "TaskListSelector"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component"
+                    ],
+                    "properties": {
+                      "id": {
+                        "const": "tasks"
+                      },
+                      "component": {
+                        "const": "TaskCollection"
+                      },
+                      "bucket": {
+                        "enum": [
+                          "today",
+                          "next",
+                          "upcoming",
+                          "later",
+                          "completed"
+                        ]
+                      },
+                      "list": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "workspace",
+                          "listId"
+                        ],
+                        "properties": {
+                          "workspace": {
+                            "const": "current"
+                          },
+                          "listId": {
+                            "type": "string",
+                            "format": "uuid"
+                          }
+                        }
+                      }
+                    },
+                    "oneOf": [
+                      {
+                        "required": [
+                          "bucket"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "list"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component"
+                    ],
+                    "properties": {
+                      "id": {
+                        "const": "search"
+                      },
+                      "component": {
+                        "const": "DocumentSearch"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component"
+                    ],
+                    "properties": {
+                      "id": {
+                        "const": "document"
+                      },
+                      "component": {
+                        "const": "DocumentHost"
+                      },
+                      "document": {
+                        "$ref": "#/$defs/doc"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "catalogId": {
+              "const": "koru:composition:0.1-proposal1"
+            },
+            "components": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component",
+                      "children"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "component": {
+                        "enum": [
+                          "Row",
+                          "Column"
+                        ]
+                      },
+                      "layout": {
+                        "$ref": "#/$defs/layout"
+                      },
+                      "children": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 32,
+                        "items": {
+                          "$ref": "#/$defs/id"
+                        }
+                      },
+                      "decoration": {
+                        "$ref": "#/$defs/decoration"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component",
+                      "children"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "component": {
+                        "const": "Box"
+                      },
+                      "layout": {
+                        "allOf": [
+                          {
+                            "$ref": "#/$defs/layout"
+                          },
+                          {
+                            "not": {
+                              "required": [
+                                "gap"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "children": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 1,
+                        "items": {
+                          "$ref": "#/$defs/id"
+                        }
+                      },
+                      "decoration": {
+                        "$ref": "#/$defs/decoration"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component",
+                      "text"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "component": {
+                        "const": "Text"
+                      },
+                      "layout": {
+                        "$ref": "#/$defs/size"
+                      },
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "role": {
+                        "enum": [
+                          "Ui",
+                          "Row",
+                          "Hint",
+                          "Meta",
+                          "PopoverHeading"
+                        ]
+                      },
+                      "ink": {
+                        "enum": [
+                          "Primary",
+                          "Secondary",
+                          "Hint",
+                          "Accent"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component",
+                      "space"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "component": {
+                        "const": "Spacer"
+                      },
+                      "layout": {
+                        "$ref": "#/$defs/size"
+                      },
+                      "space": {
+                        "$ref": "#/$defs/space"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "component": {
+                        "const": "Divider"
+                      },
+                      "layout": {
+                        "$ref": "#/$defs/size"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component",
+                      "text",
+                      "action"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "component": {
+                        "const": "Button"
+                      },
+                      "layout": {
+                        "$ref": "#/$defs/size"
+                      },
+                      "text": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256
+                      },
+                      "action": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "type",
+                          "target",
+                          "document"
+                        ],
+                        "properties": {
+                          "type": {
+                            "const": "SelectDocument"
+                          },
+                          "target": {
+                            "$ref": "#/$defs/id"
+                          },
+                          "document": {
+                            "$ref": "#/$defs/doc"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "component",
+                      "document"
+                    ],
+                    "properties": {
+                      "id": {
+                        "$ref": "#/$defs/id"
+                      },
+                      "component": {
+                        "const": "DocumentHost"
+                      },
+                      "layout": {
+                        "$ref": "#/$defs/size"
+                      },
+                      "document": {
+                        "$ref": "#/$defs/doc"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "doc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace",
+        "documentId"
+      ],
+      "properties": {
+        "workspace": {
+          "const": "current"
+        },
+        "documentId": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_:-]+$"
+    },
+    "space": {
+      "enum": [
+        "S0",
+        "S0_5",
+        "S1",
+        "S1_5",
+        "S2",
+        "S2_5",
+        "S3",
+        "S3_5",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+        "S8",
+        "S10",
+        "S12"
+      ]
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "enum": [
+            "Hug",
+            "Fill"
+          ]
+        },
+        "height": {
+          "enum": [
+            "Hug",
+            "Fill"
+          ]
+        }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "enum": [
+            "Hug",
+            "Fill"
+          ]
+        },
+        "height": {
+          "enum": [
+            "Hug",
+            "Fill"
+          ]
+        },
+        "gap": {
+          "$ref": "#/$defs/space"
+        },
+        "padding": {
+          "$ref": "#/$defs/space"
+        },
+        "align": {
+          "enum": [
+            "Start",
+            "Center",
+            "End",
+            "Stretch"
+          ]
+        }
+      }
+    },
+    "decoration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "surface": {
+          "enum": [
+            "Ground",
+            "Raised",
+            "Chip"
+          ]
+        },
+        "radius": {
+          "enum": [
+            "None",
+            "S",
+            "M",
+            "L",
+            "XL",
+            "XXL",
+            "Full"
+          ]
+        }
+      }
+    }
+  }
+}

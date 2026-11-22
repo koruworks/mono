@@ -30,6 +30,7 @@ impl WorkspaceLinks {
                 flags,
                 ended: std::cell::Cell::new(false),
                 awaiting: RefCell::default(),
+                busy: Arc::default(),
                 _inert_orders: None,
                 _inert_answers: None,
             }),

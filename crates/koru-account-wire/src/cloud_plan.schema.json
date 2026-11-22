@@ -1,0 +1,1037 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:koru:cloud-plan-v1:review-rev2",
+  "title": "Proposed Cloud plan/account Workspace usage reads",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/plan"
+    },
+    {
+      "$ref": "#/$defs/page"
+    }
+  ],
+  "$defs": {
+    "allowance": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "finite"
+            },
+            "base_bytes": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            "effective_bytes": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            }
+          },
+          "required": [
+            "state",
+            "base_bytes",
+            "effective_bytes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "unbounded"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "const": "policy_unavailable"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "purchase": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "known"
+            },
+            "reason": {
+              "const": null
+            },
+            "manageable": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "incomplete",
+                    "incomplete_expired",
+                    "trialing",
+                    "active",
+                    "past_due",
+                    "canceled",
+                    "unpaid",
+                    "paused"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "interval": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "month",
+                    "year"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "available_intervals": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "month",
+                  "year"
+                ]
+              },
+              "uniqueItems": true,
+              "maxItems": 2
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "manageable",
+            "status",
+            "interval",
+            "available_intervals"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "const": "purchase_unavailable"
+            },
+            "manageable": {
+              "const": null
+            },
+            "status": {
+              "const": null
+            },
+            "interval": {
+              "const": null
+            },
+            "available_intervals": {
+              "const": null
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "manageable",
+            "status",
+            "interval",
+            "available_intervals"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "access": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "read_write",
+            "read_only",
+            "none",
+            "unavailable"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "plus_active",
+            "trial_active",
+            "complimentary_active",
+            "free_active",
+            "unbilled",
+            "cloud_not_enabled",
+            "entitlement_inactive",
+            "policy_unavailable"
+          ]
+        },
+        "download_until_millis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "removal_at_millis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "download_until_millis",
+        "removal_at_millis"
+      ],
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "tier": {
+          "enum": [
+            "local",
+            "free",
+            "plus",
+            "unbilled",
+            "unknown"
+          ]
+        },
+        "allowance": {
+          "$ref": "#/$defs/allowance"
+        },
+        "access": {
+          "$ref": "#/$defs/access"
+        },
+        "mcp_allowed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "purchase": {
+          "$ref": "#/$defs/purchase"
+        }
+      },
+      "required": [
+        "tier",
+        "allowance",
+        "access",
+        "mcp_allowed",
+        "purchase"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "allowance": {
+                "properties": {
+                  "state": {
+                    "const": "unavailable"
+                  }
+                }
+              },
+              "access": {
+                "properties": {
+                  "state": {
+                    "const": "unavailable"
+                  },
+                  "reason": {
+                    "const": "policy_unavailable"
+                  }
+                }
+              },
+              "mcp_allowed": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "mcp_allowed": {
+                "type": "boolean"
+              },
+              "allowance": {
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "finite",
+                      "unbounded"
+                    ]
+                  }
+                }
+              },
+              "access": {
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "read_write",
+                      "read_only",
+                      "none"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "const": "unbilled"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "allowance": {
+                "properties": {
+                  "state": {
+                    "const": "unbounded"
+                  }
+                }
+              },
+              "mcp_allowed": {
+                "const": true
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "const": "local"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "allowance": {
+                "properties": {
+                  "state": {
+                    "const": "finite"
+                  },
+                  "base_bytes": {
+                    "const": "0"
+                  },
+                  "effective_bytes": {
+                    "const": "0"
+                  }
+                }
+              },
+              "access": {
+                "properties": {
+                  "state": {
+                    "const": "none"
+                  }
+                }
+              },
+              "mcp_allowed": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "const": "free"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "allowance": {
+                "properties": {
+                  "state": {
+                    "const": "finite"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tier": {
+                "const": "plus"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "allowance": {
+                "properties": {
+                  "state": {
+                    "const": "finite"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "known",
+            "unknown",
+            "building"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "usage_unknown",
+                "cloud_schema_update_required"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "algorithm": {
+          "const": "files-plain-v0"
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "used_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "available_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reserved_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upload_headroom_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "algorithm",
+        "generation",
+        "used_bytes",
+        "files_bytes",
+        "total_bytes",
+        "available_bytes",
+        "reserved_bytes",
+        "upload_headroom_bytes"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "known"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": null
+              },
+              "generation": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "used_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "maxLength": 19
+              },
+              "files_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "maxLength": 19
+              },
+              "reserved_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "maxLength": 19
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "building"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": null
+              },
+              "generation": {
+                "const": null
+              },
+              "used_bytes": {
+                "const": null
+              },
+              "files_bytes": {
+                "const": null
+              },
+              "available_bytes": {
+                "const": null
+              },
+              "upload_headroom_bytes": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "enum": [
+                  "usage_unknown",
+                  "cloud_schema_update_required"
+                ]
+              },
+              "generation": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+              },
+              "used_bytes": {
+                "const": null
+              },
+              "files_bytes": {
+                "const": null
+              },
+              "available_bytes": {
+                "const": null
+              },
+              "upload_headroom_bytes": {
+                "const": null
+              },
+              "reserved_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "maxLength": 19
+              }
+            }
+          }
+        }
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "cloud-plan-v1"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "policy_revision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "evaluated_at_millis": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "valid_until_millis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy": {
+          "$ref": "#/$defs/policy"
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        },
+        "free_availability": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "not_implemented"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false
+        },
+        "feedback": {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "not_implemented"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "contract",
+        "revision",
+        "policy_revision",
+        "evaluated_at_millis",
+        "valid_until_millis",
+        "policy",
+        "usage",
+        "free_availability",
+        "feedback"
+      ],
+      "additionalProperties": false
+    },
+    "stale": {
+      "type": "object",
+      "properties": {
+        "files_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "captured_at_millis": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "stale": {
+          "const": true
+        }
+      },
+      "required": [
+        "files_bytes",
+        "revision",
+        "captured_at_millis",
+        "stale"
+      ],
+      "additionalProperties": false
+    },
+    "workspace_usage": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "known",
+            "unknown",
+            "building"
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "usage_unknown",
+                "cloud_schema_update_required"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "maxLength": 19
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_known": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/stale"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "state",
+        "reason",
+        "files_bytes",
+        "last_known"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "known"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": null
+              },
+              "files_bytes": {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "maxLength": 19
+              },
+              "last_known": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "enum": [
+                  "usage_unknown",
+                  "cloud_schema_update_required"
+                ]
+              },
+              "files_bytes": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "building"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": null
+              },
+              "files_bytes": {
+                "const": null
+              },
+              "last_known": {
+                "const": null
+              }
+            }
+          }
+        }
+      ]
+    },
+    "placement": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "assigned"
+            },
+            "profile_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "state",
+            "profile_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "unassigned",
+                "unknown"
+              ]
+            },
+            "profile_id": {
+              "const": null
+            }
+          },
+          "required": [
+            "state",
+            "profile_id"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "workspace": {
+      "type": "object",
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "incarnation_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        },
+        "source_revision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "display_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "usage": {
+          "$ref": "#/$defs/workspace_usage"
+        },
+        "placement": {
+          "$ref": "#/$defs/placement"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "incarnation_id",
+        "source_revision",
+        "display_name",
+        "usage",
+        "placement"
+      ],
+      "additionalProperties": false
+    },
+    "page": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "cloud-usage-workspaces-v1"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 19
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "catalog_revision_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workspace"
+          },
+          "maxItems": 100
+        },
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "revision",
+        "generation",
+        "catalog_revision_digest",
+        "items",
+        "next_cursor"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$comment": "All integer strings must additionally fit signed SQL BIGINT. Cross-field arithmetic, policy/source truth, revisions, time bounds and cursor binding are semantic invariants in M1.TECHNICAL.rev2.md; schema validation alone cannot establish them."
+}

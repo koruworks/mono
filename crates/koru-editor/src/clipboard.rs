@@ -1351,6 +1351,7 @@ pub fn cut<E: Editing + ?Sized>(e: &mut E, ws: &mut WorkspaceDoc) -> bool {
             ws.checkpoint();
             let _ = ws.delete_text(id, range.clone());
             e.body_mut().refresh(ws, id);
+            e.body_mut().settle_local(ws);
             e.place_caret(range.start);
             e.settle();
             true
@@ -2044,6 +2045,7 @@ fn paste_inline<E: Editing + ?Sized>(
     // event the commands already answer for (ADR-273).
     e.body_mut().note_text_edit(ws, id);
     e.body_mut().refresh(ws, id);
+    e.body_mut().settle_local(ws);
     // Offsets shifted if URLs shrank to anchors; land at the end of the node.
     let caret = if linked {
         ws.read(id)
@@ -2863,7 +2865,7 @@ mod tests {
         );
     }
 
-    /// A pasted URL becomes a link, the way a typed one does — no `Ctrl+K`
+    /// A pasted URL becomes a link, the way a typed one does — no `Ctrl+Shift+L`
     /// needed. This is the path external text takes (`paste_plain_text`), so it
     /// does not touch the process-global clipboard and needs no lock.
     #[test]

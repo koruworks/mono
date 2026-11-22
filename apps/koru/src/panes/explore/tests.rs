@@ -280,7 +280,7 @@ fn documents_actions_menu_opens_and_routes_every_action() {
 }
 
 #[test]
-fn files_has_the_same_import_entry_point_for_multi_file_picker() {
+fn files_heading_opens_the_shell_menu_with_import_and_ocr_actions() {
     let mut v = with_rows(3);
     v.show_files();
     let a = area();
@@ -290,19 +290,15 @@ fn files_has_the_same_import_entry_point_for_multi_file_picker() {
     let (x, y) = button.centre();
     assert!(v.mouse_move(a, VIEW, x, y));
     assert_eq!(v.cursor_icon(), koru_ui::cursor::PRESS);
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
     assert_eq!(
-        v.popover_rows(),
-        vec![PopoverRow::LibraryAction(actions::Action::Import)]
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::LibraryMenu {
+            at: (button.x, button.y + button.h),
+        }
     );
     assert!(
-        v.popover_list_band(a, VIEW).is_none(),
-        "the one-command menu has no footer divider"
-    );
-    let import = v.popover_rects(a, VIEW)[0].1.centre();
-    assert_eq!(
-        v.mouse_down(a, VIEW, import.0, import.1, false),
-        Outcome::ImportFiles
+        v.popover.is_none(),
+        "the shell owns the complete Files menu"
     );
 }
 
@@ -1027,7 +1023,7 @@ fn a_long_switcher_caps_at_its_max_and_scrolls_only_its_list() {
     let new = find(&after, PopoverRow::WorkspaceAction(MenuAction::New));
     assert_eq!(
         new.y - (band.y + band.h),
-        theme::Space::S1.px(theme::Profile::Desktop) * 2.0 + theme::BORDER_W as f32
+        theme::Space::S1.px(theme::Profile::Desktop)
     );
 }
 
@@ -1053,12 +1049,9 @@ fn a_profile_row_is_one_line_and_the_linked_count_is_set_from_outside() {
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
     assert_eq!(
         h(PopoverRow::Profile(0)),
-        Some(theme::metrics::ROW_MIN.value)
+        Some(theme::metrics::ROW_MIN.value + 4.0)
     );
-    assert_eq!(
-        h(PopoverRow::Profile(0)),
-        h(PopoverRow::ProfileAction(ProfileAction::New))
-    );
+    assert_eq!(h(PopoverRow::Profile(0)), h(PopoverRow::Profile(1)));
     assert!(v.set_linked_count(2), "a new count is a change");
     assert!(!v.set_linked_count(2), "the same count is not");
 }
@@ -1364,10 +1357,7 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     assert_eq!(rows[0], PopoverRow::ProfilesHeading);
     assert!(rows[0].selectable(), "the heading offers Manage profiles");
     assert!(rows.contains(&PopoverRow::Profile(0)));
-    assert_eq!(
-        rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
-    );
+    assert_eq!(rows.last(), Some(&PopoverRow::Profile(2)));
     // The square shuts it.
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
     assert!(!v.popover_open());
@@ -1597,7 +1587,7 @@ fn the_pieces_of_a_workspace_row_do_not_overlap() {
 #[test]
 fn workspace_rows_keep_the_shared_trailing_lane_and_use_the_approved_tile() {
     let (v, _, _) = with_context(1);
-    let row = Rect::new(20.0, 40.0, 300.0, theme::ROW_H);
+    let row = Rect::new(20.0, 40.0, 300.0, theme::ROW_H + 4.0);
     let workspace = v.workspace_row_parts(PopoverRow::Workspace(0), row);
     let picker = koru_ui::profile_picker::row_parts(row);
     assert_eq!(picker.chip.x, workspace.chip.x);
@@ -1605,7 +1595,7 @@ fn workspace_rows_keep_the_shared_trailing_lane_and_use_the_approved_tile() {
     assert_eq!(workspace.chip.centre().1, row.centre().1);
     assert!(workspace.name.x >= workspace.chip.x + workspace.chip.w);
     assert!(workspace.name.x + workspace.name.w <= workspace.trailing.x);
-    assert_eq!(picker.trailing, workspace.pin);
+    assert_eq!(trailing_lane(row), workspace.pin);
     assert_eq!(workspace.trailing.w, workspace.pin.w);
     assert!(workspace.trailing.x + workspace.trailing.w <= workspace.pin.x);
     assert_eq!(koru_ui::profile_picker::ROW_H, theme::ROW_H);
@@ -1723,31 +1713,14 @@ fn the_popover_rows_run_top_to_bottom_inside_the_panel() {
         let panel = v.popover_panel(a, VIEW).expect("open");
         let rects = v.popover_rects(a, VIEW);
         for pair in rects.windows(2) {
-            use workspace_menu_elements::MenuAction;
-            if pair[0].0 == PopoverRow::WorkspaceAction(MenuAction::Sync)
-                && pair[1].0 == PopoverRow::ProfileAction(ProfileAction::Sync)
-            {
-                assert_eq!(pair[0].1.y, pair[1].1.y, "channel and label share a row");
-                assert_eq!(pair[0].1.h, pair[1].1.h);
-                assert!(
-                    (pair[0].1.x + pair[0].1.w + theme::Space::S2.px(theme::Profile::Desktop)
-                        - pair[1].1.x)
-                        .abs()
-                        < 0.01,
-                    "channel and label have separate targets with the row gap"
-                );
-                continue;
-            }
-            let divider = pair[0].0 == PopoverRow::WorkspaceAction(MenuAction::Sync)
-                || pair[0].0 == PopoverRow::ProfileAction(ProfileAction::New)
-                || matches!(
-                    pair[1].0,
-                    PopoverRow::WorkspaceAction(MenuAction::New | MenuAction::Trash)
-                );
+            let divider = pair[0].0 == PopoverRow::WorkspacesHeading
+                || pair[1].0 == PopoverRow::ProfileAction(ProfileAction::Sync);
             let gap = if divider {
                 theme::Space::S1.px(theme::Profile::Desktop) * 2.0 + theme::BORDER_W as f32
+            } else if pair[0].0 == PopoverRow::ProfilesHeading {
+                theme::Space::S2.px(theme::Profile::Desktop)
             } else {
-                0.0
+                theme::Space::S1.px(theme::Profile::Desktop)
             };
             assert!(
                 (pair[0].1.y + pair[0].1.h + gap - pair[1].1.y).abs() < 0.01,
@@ -1920,13 +1893,13 @@ fn the_arrows_walk_the_profiles_and_fixed_actions() {
     v.popover_key(&Key::Named(NamedKey::ArrowUp));
     assert_eq!(
         v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfileAction(ProfileAction::Sync)),
-        "wraps from Manage profiles to Global sync"
+        Some(PopoverRow::Profile(2)),
+        "wraps from Manage profiles to the last profile"
     );
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSyncSettings),
-        "Enter activates Global sync"
+        Some(Outcome::SwitchProfile(profiles[2].id)),
+        "Enter activates the last profile"
     );
     assert!(!v.popover_open(), "the fixed action closes the menu");
     v.advance_popover(Instant::now() + Duration::from_secs(1));
@@ -1941,33 +1914,20 @@ fn the_arrows_walk_the_profiles_and_fixed_actions() {
     assert!(!v.popover_open(), "switching closes the list");
 }
 
-/// Fixed Profile menu actions retain their destination regardless of Cloud state.
+/// Sync is reached through Settings, never through a stale footer hit.
 #[test]
-fn the_profile_actions_offer_creation_and_global_sync() {
-    let a = area();
+fn the_profile_menu_has_no_sync_action_in_either_cloud_state() {
     for cloud in [false, true] {
-        for (action, outcome) in [
-            (ProfileAction::New, Outcome::NewProfile),
-            (ProfileAction::Sync, Outcome::OpenSyncSettings),
-        ] {
-            let (mut v, profiles, _) = with_context(0);
-            if cloud {
-                v.set_account_state(&syncing(&profiles[1]));
-            }
-            v.toggle_profile_popover();
-            let (_, rect) = v
-                .popover_rects(a, VIEW)
-                .into_iter()
-                .find(|(row, _)| *row == PopoverRow::ProfileAction(action))
-                .expect("the fixed action");
-            let (x, y) = rect.centre();
-            assert_eq!(
-                v.mouse_down(a, VIEW, x, y, false),
-                outcome,
-                "{action:?}, cloud={cloud}"
-            );
-            assert!(!v.popover_open());
+        let (mut v, profiles, _) = with_context(0);
+        if cloud {
+            v.set_account_state(&syncing(&profiles[1]));
         }
+        v.toggle_profile_popover();
+        assert!(
+            v.popover_rects(area(), VIEW)
+                .iter()
+                .all(|(row, _)| !matches!(row, PopoverRow::ProfileAction(_)))
+        );
     }
 }
 
@@ -2089,26 +2049,6 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
         Some(Outcome::ManageProfile(id))
-    );
-
-    v.toggle_profile_popover();
-    if !v.popover_open() {
-        v.toggle_profile_popover();
-    }
-    let action = v
-        .popover_rows()
-        .iter()
-        .position(|row| *row == PopoverRow::ProfileAction(ProfileAction::New))
-        .expect("Add new Profile");
-    v.popover.as_mut().expect("open").hover = Some(action);
-    v.popover_part = None;
-    assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
-    assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowRight)), None);
-    assert!(v.popover_open(), "and neither dismissed it");
-    assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::NewProfile),
-        "Enter activates Add new Profile"
     );
 }
 
@@ -2233,20 +2173,17 @@ fn choosing_a_workspace_reports_it_and_closes_the_popover() {
     assert!(!v.popover_open(), "and it shut behind itself");
 }
 
-/// Add new Profile reports creation and closes the menu.
+/// Profile creation belongs to Manage; the compact menu offers Sync only.
 #[test]
-fn the_profile_creation_row_reports_new_profile() {
+fn the_profile_menu_has_no_creation_row() {
     let a = area();
     let (mut v, _, _) = with_context(0);
     v.toggle_popover(PopoverKind::Profiles);
-    let (_, action) = v
-        .popover_rects(a, VIEW)
-        .into_iter()
-        .find(|(row, _)| *row == PopoverRow::ProfileAction(ProfileAction::New))
-        .expect("Add new Profile");
-    let (x, y) = action.centre();
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::NewProfile);
-    assert!(!v.popover_open());
+    assert!(
+        v.popover_rects(a, VIEW)
+            .into_iter()
+            .all(|(row, _)| row != PopoverRow::ProfileAction(ProfileAction::New))
+    );
 }
 
 /// Each page's rows, in the order the artboard lists them.
@@ -2261,11 +2198,8 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::Profile(0),
             PopoverRow::Profile(1),
             PopoverRow::Profile(2),
-            PopoverRow::ProfileAction(ProfileAction::New),
-            PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Sync),
-            PopoverRow::ProfileAction(ProfileAction::Sync),
         ],
-        "PROFILES, every Profile, Add new Profile, device control, Global sync"
+        "PROFILES, every Profile"
     );
     // The `…`'s page: the heading, the workspaces, New and Import — no
     // sync control and no Trash.
@@ -2452,17 +2386,14 @@ fn a_chip_colour_follows_the_email_and_not_the_name() {
 
 // ---------------------------------------------------- folder-profile rows
 
-/// The Profile menu exposes exactly its two fixed navigation rows. App
+/// The Profile menu exposes only Sync below the profiles. App
 /// settings is the rail's square, not a row here.
 #[test]
 fn the_profiles_page_offers_no_folder_actions() {
     let (mut v, _, _) = with_context(4);
     v.toggle_popover(PopoverKind::Profiles);
     let rows = v.popover_rows();
-    assert_eq!(
-        rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
-    );
+    assert_eq!(rows.last(), Some(&PopoverRow::Profile(2)));
     let actions: Vec<_> = rows
         .into_iter()
         .filter_map(|row| match row {
@@ -2470,7 +2401,7 @@ fn the_profiles_page_offers_no_folder_actions() {
             _ => None,
         })
         .collect();
-    assert_eq!(actions, [ProfileAction::New, ProfileAction::Sync]);
+    assert!(actions.is_empty());
 }
 
 // ------------------------------------------------------------------ the fade
@@ -3046,7 +2977,7 @@ fn relocate_moves_a_root_before_the_target() {
         carried_order: vec![ids[2]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Before, &carried, Instant::now());
     let order: Vec<NodeId> = v.rows.iter().map(|r| r.node).collect();
@@ -3115,7 +3046,7 @@ fn relocate_nests_and_rebases_depth() {
         carried_order: vec![a_id],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Nest, &carried, Instant::now());
     let order: Vec<(NodeId, u16)> = v.rows.iter().map(|r| (r.node, r.depth)).collect();
@@ -3263,6 +3194,30 @@ fn clicking_an_already_selected_row_without_dragging_collapses_to_that_row() {
     v.mouse_down(a, VIEW, on_label(a), row_centre(&v, a, 2), false);
     assert_eq!(v.mouse_up(), Outcome::OpenNode(ids[2]));
     assert_eq!(v.selection, HashSet::from([ids[2]]));
+}
+
+#[test]
+fn files_selection_can_replace_and_clear_a_revealed_row() {
+    let (mut view, ids) = flat_rows(2);
+    view.mode = NavigatorMode::Files;
+    for row in &mut view.rows {
+        row.kind = Kind::File;
+    }
+    // A stale active-file marker must not behave as a second selection.
+    view.set_selected(Some(ids[0]));
+    view.select_only(ids[0]);
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Card);
+    let a = area();
+    view.mouse_down(a, VIEW, on_label(a), row_centre(&view, a, 1), false);
+    assert_eq!(view.mouse_up(), Outcome::Consumed);
+    assert_eq!(view.selection_nodes(), vec![ids[1]]);
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Idle);
+    assert_eq!(view.row_treatment(&view.rows[1], 1), RowTreatment::Card);
+    view.mouse_down(a, VIEW, on_label(a), row_centre(&view, a, 1), true);
+    assert_eq!(view.mouse_up(), Outcome::Consumed);
+    assert!(view.selection_nodes().is_empty());
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Idle);
+    assert_eq!(view.row_treatment(&view.rows[1], 1), RowTreatment::Idle);
 }
 
 /// The row cache is pre-order, so an inclusive Shift range contains nested
@@ -3429,7 +3384,7 @@ fn drag_auto_scroll_moves_toward_the_edge_the_pointer_is_in() {
             carried_order: vec![ids[0]],
             item_count: 1,
             last: None,
-            spring: None,
+            spring: Default::default(),
         });
         v.drag_tick = None;
     };
@@ -3484,7 +3439,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
         carried_order: vec![ids[1]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.update_drop(Instant::now());
     let d = v.drag.as_ref().unwrap();
@@ -3495,7 +3450,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
             zone: DropZone::Nest
         })
     );
-    assert_eq!(d.spring.map(|(n, _)| n), Some(ids[0]));
+    assert_eq!(d.spring.pending(), Some(ids[0]));
 }
 
 /// Dropping past the end of the list lands at the top level, however deep the
@@ -3937,6 +3892,26 @@ fn a_press_on_the_dots_does_not_seed_a_drag() {
 /// button. Empty library space offers import, while pinned chrome is swallowed
 /// rather than falling through to the view underneath.
 #[test]
+fn files_ocr_heading_and_background_use_the_same_menu_route() {
+    let mut view = with_rows(2);
+    view.show_files();
+    let a = area();
+    let button = view.actions_button(a);
+    let (x, y) = button.centre();
+    assert_eq!(
+        view.mouse_down(a, VIEW, x, y, false),
+        Outcome::LibraryMenu {
+            at: (button.x, button.y + button.h),
+        }
+    );
+    assert!(view.popover.is_none());
+    assert!(matches!(
+        view.context_menu(a, a.x + a.w * 0.5, a.y + a.h - 2.0),
+        Outcome::LibraryMenu { .. }
+    ));
+}
+
+#[test]
 fn right_clicking_a_row_reports_its_menu_at_the_cursor() {
     let mut v = with_rows(2);
     let a = area();
@@ -4311,13 +4286,8 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
     let mut view = ExploreView::new();
     view.show_tasks();
     let list = koru_core::ids::ListId::new();
-    view.rail_mut().set_lists(vec![rail::RailList {
-        id: list,
-        name: "Bike".to_owned(),
-        color: None,
-        count: 0,
-        overdue: 0,
-    }]);
+    view.rail_mut()
+        .set_lists(vec![rail::RailList::flat(list, "Bike", None, 0, 0)]);
     let a = area();
     let top = view.rail_top(a);
     let alt = PressMods {
@@ -4362,10 +4332,20 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
         }),
         "Ctrl's press"
     );
-    let (x, y) = at(rail::RailRow::NewList);
+    // The heading's `+` names no page, so Alt on it keeps its meaning.
+    let (_, heading) = rows
+        .iter()
+        .find(|(row, _)| *row == rail::RailRow::ListsHeading)
+        .copied()
+        .expect("the rail has the Lists heading");
+    let (x, y) = view
+        .rail()
+        .row_parts(rail::RailRow::ListsHeading, heading)
+        .trailing
+        .centre();
     assert_eq!(
         view.mouse_down_with(a, (1200.0, 800.0), x, y, alt),
-        Outcome::Tasks(rail::TasksRailRequest::BeginNewList),
+        Outcome::Tasks(rail::TasksRailRequest::BeginNewList { parent: None }),
         "a row that names no page keeps its meaning"
     );
 }
@@ -4392,31 +4372,31 @@ fn drawing_the_rail_leaves_the_scene_balanced() {
         completed: 122,
     });
     v.rail_mut().set_lists(vec![
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Wedding".into(),
-            color: Some("pink".into()),
-            count: 14,
-            overdue: 0,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Bike Project".into(),
-            color: Some("blue".into()),
-            count: 6,
-            overdue: 1,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "A list with no colour at all".into(),
-            color: None,
-            count: 0,
-            overdue: 0,
-        },
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Wedding",
+            Some("pink"),
+            14,
+            0,
+        ),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Bike Project",
+            Some("blue"),
+            6,
+            1,
+        ),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "A list with no colour at all",
+            None,
+            0,
+            0,
+        ),
     ]);
     let a = area();
     draw_once(&mut v, a);
-    v.rail_mut().begin_new_list();
+    v.rail_mut().begin_new_list(None);
     draw_once(&mut v, a);
     // A collapsed column draws nothing and must not panic doing it.
     draw_once(&mut v, Rect::new(0.0, theme::CAPTION_H, 0.0, 600.0));
@@ -7179,4 +7159,189 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
             assert_eq!(view.mode, NavigatorMode::Documents, "{hidden:?}");
         }
     });
+}
+
+// ------------------------------------------------------------ quick filter
+
+fn typed(view: &mut ExploreView, text: &str) -> bool {
+    use winit::keyboard::{Key, ModifiersState};
+    let mut engine = TextEngine::new();
+    text.chars().all(|ch| {
+        let s = ch.to_string();
+        view.quick_filter_key(
+            &mut engine,
+            &Key::Character(s.as_str().into()),
+            Some(&s),
+            ModifiersState::empty(),
+        )
+    })
+}
+
+fn pressed(
+    view: &mut ExploreView,
+    key: winit::keyboard::NamedKey,
+    mods: winit::keyboard::ModifiersState,
+) -> bool {
+    let mut engine = TextEngine::new();
+    view.quick_filter_key(&mut engine, &winit::keyboard::Key::Named(key), None, mods)
+}
+
+/// Typing in the sidebar narrows the tree to the names that hold it, keeps
+/// the rows a match is inside (even shut ones), and clearing shows the tree
+/// as it was.
+#[test]
+fn typing_in_the_sidebar_filters_the_tree_and_escape_restores_it() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let rows = entries(&[
+        ("Notes", None),
+        ("Design system", Some(0)),
+        ("Old", Some(1)),
+        ("Roadmap", None),
+        ("Sidebar redesign", None),
+    ]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    // Shut *Notes*: the match inside it must still be found.
+    let notes = view.rows[0].node;
+    view.collapsed.insert(notes);
+    view.rebuild_from_entries(&rows);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+
+    // Not armed: the letters are somebody else's.
+    view.focus = Some(notes);
+    assert!(!typed(&mut view, "d"));
+    assert_eq!(view.quick_filter(), None);
+
+    view.arm_quick_filter(true);
+    assert!(view.quick_filter_armed());
+    assert!(typed(&mut view, "DESIGN"));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(
+        labels(&view),
+        ["Notes", "Design system", "Sidebar redesign"]
+    );
+    assert_eq!(view.quick_match_count(), 2);
+    assert!(
+        view.quick_dim.contains(&notes),
+        "kept for what is inside it"
+    );
+    assert_eq!(
+        view.focus,
+        Some(view.rows[1].node),
+        "the keyboard is on the first match"
+    );
+    // The rows start below the field.
+    assert!(
+        view.rows_top(area()) > {
+            let mut plain = ExploreView::new();
+            plain.rebuild_from_entries(&rows);
+            plain.rows_top(area())
+        }
+    );
+
+    // Nothing matches: no rows, and a count of none.
+    assert!(typed(&mut view, "zz"));
+    assert!(labels(&view).is_empty());
+    assert_eq!(view.quick_match_count(), 0);
+    let none = ModifiersState::empty();
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The field edits as any field does: Ctrl+Backspace takes a word.
+    assert!(typed(&mut view, " sys"));
+    assert_eq!(view.quick_filter(), Some("DESIGN sys"));
+    assert!(pressed(
+        &mut view,
+        NamedKey::Backspace,
+        ModifiersState::CONTROL
+    ));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The answers are a ring: Down from the last is the first.
+    let last = view.rows.last().unwrap().node;
+    view.focus = Some(last);
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowDown));
+    assert_eq!(view.focus, Some(view.rows[0].node));
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowUp));
+    assert_eq!(view.focus, Some(last));
+
+    // Escape puts it away, and the fold is where it was.
+    assert!(pressed(&mut view, NamedKey::Escape, none));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+    assert!(view.collapsed.contains(&notes));
+    // And Escape again is not the filter's.
+    assert!(!pressed(&mut view, NamedKey::Escape, none));
+}
+
+/// The filter stays after the keyboard has gone back to the page. Activating
+/// the pane — a press on its empty ground, which is all a filter with no
+/// matches has — gives Escape the filter again, armed or not.
+#[test]
+fn activating_the_pane_while_it_is_filtered_lets_escape_clear_it() {
+    use winit::keyboard::ModifiersState;
+    let rows = entries(&[("Design", None), ("Roadmap", None)]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+    assert!(typed(&mut view, "zzzz"));
+    assert!(labels(&view).is_empty());
+    // The page took the keyboard. The filter is still showing.
+    view.clear_focus();
+    view.arm_quick_filter(false);
+    assert!(!view.has_focus());
+    let a = area();
+    view.mouse_down(a, (1200.0, 1200.0), a.x + 16.0, a.y + a.h * 0.5, false);
+    assert!(view.has_focus(), "a press in the pane takes the keyboard");
+    assert!(pressed(
+        &mut view,
+        NamedKey::Escape,
+        ModifiersState::empty()
+    ));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(labels(&view), ["Design", "Roadmap"]);
+
+    // The same press on the Tasks rail, whose answers are not these rows.
+    view.show_tasks();
+    view.arm_quick_filter(true);
+    assert!(view.focus_tree(a));
+    assert!(typed(&mut view, "Story"));
+    assert_eq!(view.quick_filter(), Some("Story"));
+    assert_eq!(view.quick_match_count(), 0);
+    view.clear_focus();
+    assert!(!view.has_focus());
+    view.mouse_down(a, (1200.0, 1200.0), a.x + 16.0, a.y + a.h * 0.5, false);
+    assert!(view.has_focus(), "the tasks pane takes the keyboard too");
+    assert!(pressed(
+        &mut view,
+        NamedKey::Escape,
+        ModifiersState::empty()
+    ));
+    assert_eq!(view.quick_filter(), None);
+}
+
+/// A chord is never filter text, and another view starts unfiltered.
+#[test]
+fn a_chord_is_not_filter_text_and_the_filter_is_the_views_own() {
+    use winit::keyboard::{Key, ModifiersState};
+    let rows = entries(&[("Design", None), ("Roadmap", None)]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+    assert!(!view.quick_filter_key(
+        &mut TextEngine::new(),
+        &Key::Character("d".into()),
+        Some("d"),
+        ModifiersState::CONTROL
+    ));
+    assert!(typed(&mut view, "road"));
+    assert_eq!(labels(&view), ["Roadmap"]);
+    view.show_files();
+    assert_eq!(view.quick_filter(), None);
+    view.show_documents();
+    assert_eq!(labels(&view), ["Design", "Roadmap"]);
 }

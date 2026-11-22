@@ -26,6 +26,7 @@ mod detached;
 mod details;
 mod hierarchy;
 mod history;
+pub mod hosted;
 mod placement;
 mod scrolling;
 mod spacing;

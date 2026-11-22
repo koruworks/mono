@@ -11,7 +11,7 @@
 # assets\fonts\*.ttf follows through koru.bat fonts.
 #
 #   scripts\setup\fetch-voice-runtime.ps1            this host's target
-#   scripts\setup\fetch-voice-runtime.ps1 -All       all three shipped targets
+#   scripts\setup\fetch-voice-runtime.ps1 -All       every pinned target
 #   scripts\setup\fetch-voice-runtime.ps1 -Verify    check what is already here
 #
 # Then, for a benchmark or a release build:
@@ -40,12 +40,18 @@ $Base = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$Version"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Dest = Join-Path $Root "third-party\sherpa-onnx\$Version"
 
-# The same three columns as koru_voice_sherpa::artifacts::NAMES, and a test
-# there fails if the file names drift from what sherpa-onnx-sys looks for.
+# The first three rows are the same three columns as
+# koru_voice_sherpa::artifacts::NAMES, and a test there fails if the file names
+# drift from what sherpa-onnx-sys looks for. The Linux row is the reader's
+# alone until Linux voice lands (docs/features/linux/TECHNICAL.final.md, D4),
+# pinned in koru_read_paddle::artifacts::READER_ARCHIVES, and a test there
+# fails if this copy drifts. It is placed only with -All: this script runs on
+# Windows.
 #
-# All three are upstream's TTS-free ("no-tts") archives: no espeak-ng, ucd or
+# All four are upstream's TTS-free ("no-tts") archives: no espeak-ng, ucd or
 # piper_phonemize, so no GPL-3.0 eSpeak NG in what links them
-# (third-party/patches/sherpa-onnx.md).
+# (third-party/patches/sherpa-onnx.md; the Linux one verified 2026-11-17,
+# licensing/THIRD-PARTY.md).
 $Artifacts = @(
     [pscustomobject]@{
         Name = "sherpa-onnx-v$Version-win-x64-static-MT-Release-no-tts-lib.tar.bz2"
@@ -64,6 +70,12 @@ $Artifacts = @(
         Sha  = 'adcc1de32d99410416a98d4f880ee2e2ef4343fad8b627e58d1cd1a5bd6d16b8'
         Size = 18413779
         Host = 'macos-x86_64'
+    },
+    [pscustomobject]@{
+        Name = "sherpa-onnx-v$Version-linux-x64-static-no-tts-lib.tar.bz2"
+        Sha  = 'b6d61f8836ea247cf529ea411e12c9fc35314f0217278a3d61195672a4778e6a'
+        Size = 21170001
+        Host = 'linux-x86_64'
     }
 )
 
@@ -161,16 +173,117 @@ function Place-Artifact {
     return $true
 }
 
+# **The ONNX Runtime static library the read worker links**, taken out of the
+# archive above once that has verified, and verified itself. ort-sys links a
+# static ONNX Runtime only from the directory ORT_LIB_PATH names, so the one
+# library is extracted beside the archive, in the archive's own layout, and the
+# launchers point ORT_LIB_PATH at its lib\. One ONNX Runtime in the tree, from
+# one pinned archive. The same row as koru_read_paddle::artifacts::ONNXRUNTIME,
+# and a test there fails if they drift. Apple silicon's comes from the archive
+# Mac voice links (its objects are built for macOS 13.4, the Mac release's
+# minimum); Intel Macs ship no build, and Windows on ARM and Linux aarch64 have
+# no TTS-free archive.
+$OrtLibraries = @(
+    [pscustomobject]@{
+        Archive = "sherpa-onnx-v$Version-win-x64-static-MT-Release-no-tts-lib"
+        File    = 'onnxruntime.lib'
+        Sha     = 'fc1f5722dd17cbe8c2131cad2b9da6e004392d45bbe71560ff5e54c9dee26f24'
+        Size    = 916804662
+        Host    = 'windows-x86_64'
+    },
+    [pscustomobject]@{
+        Archive = "sherpa-onnx-v$Version-linux-x64-static-no-tts-lib"
+        File    = 'libonnxruntime.a'
+        Sha     = '9dbbd7bff1db5698d04ae6710a28e995a33d0409adc362f8ff2bb0bf7e8fc2ea'
+        Size    = 109507520
+        Host    = 'linux-x86_64'
+    },
+    [pscustomobject]@{
+        Archive = "sherpa-onnx-v$Version-osx-arm64-static-no-tts-lib"
+        File    = 'libonnxruntime.a'
+        Sha     = '93850f85f3778a52d93f873da67d88c743cc9b43495af3e87e2b8df9b5a3998e'
+        Size    = 69439552
+        Host    = 'macos-aarch64'
+    }
+)
+
+function Place-OrtLibrary {
+    param([object]$Library)
+
+    $libDir = Join-Path $Dest "$($Library.Archive)\lib"
+    $final = Join-Path $libDir $Library.File
+
+    if (Test-Path -LiteralPath $final) {
+        $item = Get-Item -LiteralPath $final
+        $have = (Get-FileHash -Algorithm SHA256 -LiteralPath $final).Hash.ToLowerInvariant()
+        if (($item.Length -eq $Library.Size) -and ($have -eq $Library.Sha)) {
+            Write-Host "[read] $($Library.File) is already extracted and verified"
+            return $true
+        }
+        Write-Host "[read] $final does NOT match the pinned hash"
+        Write-Host "[read]   want $($Library.Sha)"
+        Write-Host "[read]   have $have"
+        Write-Host "[read] refusing to use it; delete it to extract it again"
+        return $false
+    }
+    if ($Verify) {
+        Write-Host "[read] $($Library.File) is not extracted"
+        return $false
+    }
+
+    # Extracted into a directory of its own beside the archive, verified, and
+    # only then moved into place: an interrupted extraction must not leave a
+    # library the build will happily link.
+    $archive = Join-Path $Dest "$($Library.Archive).tar.bz2"
+    $part = Join-Path $Dest "$($Library.Archive).part"
+    if (Test-Path -LiteralPath $part) { Remove-Item -Recurse -Force -LiteralPath $part }
+    New-Item -ItemType Directory -Force -Path $part | Out-Null
+    Write-Host "[read] extracting $($Library.File) from $($Library.Archive).tar.bz2"
+    # Windows' own bsdtar, which reads bzip2; Git's tar on PATH may not.
+    & "$env:SystemRoot\System32\tar.exe" -xjf $archive -C $part "$($Library.Archive)/lib/$($Library.File)"
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -Recurse -Force -LiteralPath $part
+        Write-Host "[read] tar could not extract $($Library.File)"
+        return $false
+    }
+    $extracted = Join-Path $part "$($Library.Archive)\lib\$($Library.File)"
+    $size = (Get-Item -LiteralPath $extracted).Length
+    $have = (Get-FileHash -Algorithm SHA256 -LiteralPath $extracted).Hash.ToLowerInvariant()
+    if (($size -ne $Library.Size) -or ($have -ne $Library.Sha)) {
+        Remove-Item -Recurse -Force -LiteralPath $part
+        Write-Host "[read] the extracted $($Library.File) does not match its pin"
+        Write-Host "[read]   want $($Library.Sha), $($Library.Size) bytes"
+        Write-Host "[read]   have $have, $size bytes"
+        return $false
+    }
+    New-Item -ItemType Directory -Force -Path $libDir | Out-Null
+    Move-Item -Force -LiteralPath $extracted -Destination $final
+    Remove-Item -Recurse -Force -LiteralPath $part
+    Write-Host "[read] placed $final"
+    return $true
+}
+
 $wanted = 'windows-x86_64'
 $ok = $true
 foreach ($artifact in $Artifacts) {
     if ((-not $All) -and ($artifact.Host -ne $wanted)) { continue }
     if (-not (Place-Artifact -Artifact $artifact)) { $ok = $false }
 }
+$ortLibDir = $null
+if ($ok) {
+    foreach ($library in $OrtLibraries) {
+        if ((-not $All) -and ($library.Host -ne $wanted)) { continue }
+        if (-not (Place-OrtLibrary -Library $library)) { $ok = $false }
+        if ($library.Host -eq $wanted) { $ortLibDir = Join-Path $Dest "$($library.Archive)\lib" }
+    }
+}
 
 if ($ok) {
     Write-Host ''
     Write-Host "[voice] now:  `$env:SHERPA_ONNX_ARCHIVE_DIR = `"$Dest`""
+    if ($ortLibDir) {
+        Write-Host "[read]  and:  `$env:ORT_LIB_PATH = `"$ortLibDir`""
+    }
     exit 0
 }
 exit 1

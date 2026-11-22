@@ -1,0 +1,1035 @@
+{
+  "status": "proposed_not_registered",
+  "schema": "cloud-usage-documents-v1.schema.json",
+  "fixtures": [
+    {
+      "name": "mixed_retained_census",
+      "http_status": 200,
+      "note": "Same 17-byte blob referenced by three content units; account/Workspace total stays 17, not 51. Includes structural known zero, inherited Trash, unfiled, empty content and null authorized label. Structural row is not a user document.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000001",
+            "document_id": "00000000-0000-0000-0000-0000000003e9",
+            "unit_role": "structure",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+            "display_name": null,
+            "membership": {
+              "state": "structural",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000002",
+            "document_id": "00000000-0000-0000-0000-0000000003ea",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+            "display_name": "A file",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000003",
+            "document_id": "00000000-0000-0000-0000-0000000003eb",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+            "display_name": "Trashed parent or descendant",
+            "membership": {
+              "state": "trash",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000004",
+            "document_id": "00000000-0000-0000-0000-0000000003ec",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+            "display_name": null,
+            "membership": {
+              "state": "unfiled",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000005",
+            "document_id": "00000000-0000-0000-0000-0000000003ed",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+            "display_name": null,
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "proven_empty_replica",
+      "http_status": 200,
+      "note": "A proven current owned replica has no durable units. This is not the response for a missing/inconsistent replica identity.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "unknown",
+          "reason": "manifest_unavailable",
+          "source_head_digest": null,
+          "proof_digest": null
+        },
+        "items": [],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "before_active_generation",
+      "http_status": 200,
+      "note": "The authoritative current census and strict membership are available before an accounting generation; no guessed zero.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": null,
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000001",
+            "document_id": "00000000-0000-0000-0000-0000000003e9",
+            "unit_role": "structure",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+            "display_name": null,
+            "membership": {
+              "state": "structural",
+              "reason": null
+            },
+            "usage": {
+              "state": "building",
+              "reason": null,
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000002",
+            "document_id": "00000000-0000-0000-0000-0000000003ea",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+            "display_name": "A file",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "building",
+              "reason": null,
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000003",
+            "document_id": "00000000-0000-0000-0000-0000000003eb",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+            "display_name": "Trashed parent or descendant",
+            "membership": {
+              "state": "trash",
+              "reason": null
+            },
+            "usage": {
+              "state": "building",
+              "reason": null,
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000004",
+            "document_id": "00000000-0000-0000-0000-0000000003ec",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+            "display_name": null,
+            "membership": {
+              "state": "unfiled",
+              "reason": null
+            },
+            "usage": {
+              "state": "building",
+              "reason": null,
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000005",
+            "document_id": "00000000-0000-0000-0000-0000000003ed",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+            "display_name": null,
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "building",
+              "reason": null,
+              "files_bytes": null
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "manifest_refusal_usage_known",
+      "http_status": 200,
+      "note": "Missing segment, traversal/resource bound, malformed/ambiguous graph, or helper refusal leaves every content unit visible with unknown membership; independent known usage remains factual.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "unknown",
+          "reason": "manifest_unavailable",
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": null
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000001",
+            "document_id": "00000000-0000-0000-0000-0000000003e9",
+            "unit_role": "structure",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+            "display_name": null,
+            "membership": {
+              "state": "structural",
+              "reason": null
+            },
+            "usage": {
+              "state": "unknown",
+              "reason": "usage_unknown",
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000002",
+            "document_id": "00000000-0000-0000-0000-0000000003ea",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "manifest_unavailable"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000003",
+            "document_id": "00000000-0000-0000-0000-0000000003eb",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "manifest_unavailable"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000004",
+            "document_id": "00000000-0000-0000-0000-0000000003ec",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "manifest_unavailable"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000005",
+            "document_id": "00000000-0000-0000-0000-0000000003ed",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "manifest_unavailable"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "newer_manifest_schema",
+      "http_status": 200,
+      "note": "No unfiled inference or label from a newer manifest schema.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "unknown",
+          "reason": "cloud_schema_update_required",
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": null
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000001",
+            "document_id": "00000000-0000-0000-0000-0000000003e9",
+            "unit_role": "structure",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+            "display_name": null,
+            "membership": {
+              "state": "structural",
+              "reason": null
+            },
+            "usage": {
+              "state": "unknown",
+              "reason": "cloud_schema_update_required",
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000002",
+            "document_id": "00000000-0000-0000-0000-0000000003ea",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "cloud_schema_update_required"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000003",
+            "document_id": "00000000-0000-0000-0000-0000000003eb",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "cloud_schema_update_required"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000004",
+            "document_id": "00000000-0000-0000-0000-0000000003ec",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "cloud_schema_update_required"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000005",
+            "document_id": "00000000-0000-0000-0000-0000000003ed",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "cloud_schema_update_required"
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "unavailable_or_unsupported_units",
+      "http_status": 200,
+      "note": "Unavailable/deleting unit, invalid existing mapping or stale source is unknown; a newer content schema is explicit. Proven absent durable mappings contribute zero instead. Membership is independently current and can still be listed/Trash.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000001",
+            "document_id": "00000000-0000-0000-0000-0000000003e9",
+            "unit_role": "structure",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+            "display_name": null,
+            "membership": {
+              "state": "structural",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000002",
+            "document_id": "00000000-0000-0000-0000-0000000003ea",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+            "display_name": "A file",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "unknown",
+              "reason": "usage_unknown",
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000003",
+            "document_id": "00000000-0000-0000-0000-0000000003eb",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+            "display_name": "Trashed parent or descendant",
+            "membership": {
+              "state": "trash",
+              "reason": null
+            },
+            "usage": {
+              "state": "unknown",
+              "reason": "cloud_schema_update_required",
+              "files_bytes": null
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000004",
+            "document_id": "00000000-0000-0000-0000-0000000003ec",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+            "display_name": null,
+            "membership": {
+              "state": "unfiled",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000005",
+            "document_id": "00000000-0000-0000-0000-0000000003ed",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+            "display_name": null,
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "unrecognized_unit_identity",
+      "http_status": 200,
+      "note": "A future/inconsistent authoritative unit remains in the census without coercing its identity to a content document or structural zero.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000007",
+            "document_id": null,
+            "unit_role": "unknown",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000007",
+            "display_name": null,
+            "membership": {
+              "state": "unknown",
+              "reason": "unit_identity_unknown"
+            },
+            "usage": {
+              "state": "unknown",
+              "reason": "cloud_schema_update_required",
+              "files_bytes": null
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "exact_above_javascript_safe_integer",
+      "http_status": 200,
+      "note": "Exact decimal bytes and revisions; no Number conversion.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000008",
+            "document_id": "00000000-0000-0000-0000-0000000003f0",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000008",
+            "display_name": "Document",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "9007199254740993"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "reference_before_durable_mapping",
+      "http_status": 200,
+      "note": "Valid content reference, proven absent durable blob mapping: known zero contribution, not unknown.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000008",
+            "document_id": "00000000-0000-0000-0000-0000000003f0",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000008",
+            "display_name": "Document",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "same_head_after_durable_upload",
+      "http_status": 200,
+      "note": "Same document head, newly durable 17-byte mapping; accounting revision changes and row becomes 17.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740994",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000008",
+            "document_id": "00000000-0000-0000-0000-0000000003f0",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000008",
+            "display_name": "Document",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "same_head_after_mapping_revocation",
+      "http_status": 200,
+      "note": "Same document head, association logically revoked; account revision changes and contribution returns to known zero.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740995",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000008",
+            "document_id": "00000000-0000-0000-0000-0000000003f0",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000008",
+            "display_name": "Document",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "same_id_transferred_source",
+      "http_status": 200,
+      "note": "The source retains this exact unit/head while the same DocumentId may be listed in another Workspace. No global locate/adoption is authorized by this response.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000009",
+            "document_id": "00000000-0000-0000-0000-0000000003f1",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000009",
+            "display_name": null,
+            "membership": {
+              "state": "unfiled",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "page_one",
+      "http_status": 200,
+      "note": "limit=2; exact canonical cursor below binds all epochs and the last unit key.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000001",
+            "document_id": "00000000-0000-0000-0000-0000000003e9",
+            "unit_role": "structure",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+            "display_name": null,
+            "membership": {
+              "state": "structural",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000002",
+            "document_id": "00000000-0000-0000-0000-0000000003ea",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000002",
+            "display_name": "A file",
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          }
+        ],
+        "next_cursor": "eyJ2IjoxLCJhY2NvdW50X2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDQ2Iiwid29ya3NwYWNlX2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDUwIiwiaW5jYXJuYXRpb25faWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwNTEiLCJnZW5lcmF0aW9uIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDVhIiwicmV2aXNpb24iOiI5MDA3MTk5MjU0NzQwOTkzIiwic291cmNlX3JldmlzaW9uIjoiMTIiLCJpbnZlbnRvcnlfZGlnZXN0IjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDFmNCIsIm1hbmlmZXN0X2Vwb2NoX2RpZ2VzdCI6IjgyYmUxMmNhYmQxNWYzN2RjMmJmNDgxYWY4OGY0ZGEzMjk5MDg3NjU0NGE4ODIyNTZlMzJiZmM1ZGY2ZTJhOTgiLCJsaW1pdCI6MiwibGFzdF9jbG91ZF91bml0X2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAyIn0"
+      }
+    },
+    {
+      "name": "page_two",
+      "http_status": 200,
+      "note": "Same account/source/manifest epochs; no concatenation with any differing token.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000003",
+            "document_id": "00000000-0000-0000-0000-0000000003eb",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000003",
+            "display_name": "Trashed parent or descendant",
+            "membership": {
+              "state": "trash",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          },
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000004",
+            "document_id": "00000000-0000-0000-0000-0000000003ec",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000004",
+            "display_name": null,
+            "membership": {
+              "state": "unfiled",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "17"
+            }
+          }
+        ],
+        "next_cursor": "eyJ2IjoxLCJhY2NvdW50X2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDQ2Iiwid29ya3NwYWNlX2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDUwIiwiaW5jYXJuYXRpb25faWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwNTEiLCJnZW5lcmF0aW9uIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDVhIiwicmV2aXNpb24iOiI5MDA3MTk5MjU0NzQwOTkzIiwic291cmNlX3JldmlzaW9uIjoiMTIiLCJpbnZlbnRvcnlfZGlnZXN0IjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDFmNCIsIm1hbmlmZXN0X2Vwb2NoX2RpZ2VzdCI6IjgyYmUxMmNhYmQxNWYzN2RjMmJmNDgxYWY4OGY0ZGEzMjk5MDg3NjU0NGE4ODIyNTZlMzJiZmM1ZGY2ZTJhOTgiLCJsaW1pdCI6MiwibGFzdF9jbG91ZF91bml0X2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDA0In0"
+      }
+    },
+    {
+      "name": "page_last",
+      "http_status": 200,
+      "note": "Final page has next_cursor null; row counts must not be summed into an account total.",
+      "response": {
+        "contract": "cloud-usage-documents-v1",
+        "algorithm": "files-plain-v0",
+        "row_totals": "non_additive",
+        "revision": "9007199254740993",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "evaluated_at_millis": "1794528000000",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest": {
+          "state": "verified",
+          "reason": null,
+          "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000001",
+          "proof_digest": "00000000000000000000000000000000000000000000000000000000000001f5"
+        },
+        "items": [
+          {
+            "cloud_unit_id": "00000000-0000-0000-0000-000000000005",
+            "document_id": "00000000-0000-0000-0000-0000000003ed",
+            "unit_role": "content",
+            "source_head_digest": "0000000000000000000000000000000000000000000000000000000000000005",
+            "display_name": null,
+            "membership": {
+              "state": "listed",
+              "reason": null
+            },
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "0"
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    },
+    {
+      "name": "invalid_usage_cursor",
+      "http_status": 400,
+      "note": "Malformed/noncanonical/foreign binding",
+      "response": {
+        "code": "invalid_usage_cursor",
+        "message": "invalid_usage_cursor"
+      }
+    },
+    {
+      "name": "unauthenticated",
+      "http_status": 401,
+      "note": "Rejected account session or MCP purpose",
+      "response": {
+        "code": "unauthenticated",
+        "message": "unauthenticated"
+      }
+    },
+    {
+      "name": "workspace_not_found",
+      "http_status": 404,
+      "note": "Missing/foreign/nonretained scope",
+      "response": {
+        "code": "workspace_not_found",
+        "message": "workspace_not_found"
+      }
+    },
+    {
+      "name": "usage_revision_changed",
+      "http_status": 409,
+      "note": "Owned incarnation or proof epoch changed",
+      "response": {
+        "code": "usage_revision_changed",
+        "message": "usage_revision_changed"
+      }
+    },
+    {
+      "name": "server_unavailable",
+      "http_status": 503,
+      "note": "Read gate off, DB/census/request unavailable",
+      "response": {
+        "code": "server_unavailable",
+        "message": "server_unavailable"
+      }
+    }
+  ],
+  "canonical_cursor_examples": [
+    {
+      "encoded": "eyJ2IjoxLCJhY2NvdW50X2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDQ2Iiwid29ya3NwYWNlX2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDUwIiwiaW5jYXJuYXRpb25faWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwNTEiLCJnZW5lcmF0aW9uIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDVhIiwicmV2aXNpb24iOiI5MDA3MTk5MjU0NzQwOTkzIiwic291cmNlX3JldmlzaW9uIjoiMTIiLCJpbnZlbnRvcnlfZGlnZXN0IjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDFmNCIsIm1hbmlmZXN0X2Vwb2NoX2RpZ2VzdCI6IjgyYmUxMmNhYmQxNWYzN2RjMmJmNDgxYWY4OGY0ZGEzMjk5MDg3NjU0NGE4ODIyNTZlMzJiZmM1ZGY2ZTJhOTgiLCJsaW1pdCI6MiwibGFzdF9jbG91ZF91bml0X2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAyIn0",
+      "decoded": {
+        "v": 1,
+        "account_id": "00000000-0000-0000-0000-000000000046",
+        "workspace_id": "00000000-0000-0000-0000-000000000050",
+        "incarnation_id": "00000000-0000-0000-0000-000000000051",
+        "generation": "00000000-0000-0000-0000-00000000005a",
+        "revision": "9007199254740993",
+        "source_revision": "12",
+        "inventory_digest": "00000000000000000000000000000000000000000000000000000000000001f4",
+        "manifest_epoch_digest": "82be12cabd15f37dc2bf481af88f4da32990876544a882256e32bfc5df6e2a98",
+        "limit": 2,
+        "last_cloud_unit_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "encoded_ascii_length": 695
+    }
+  ]
+}

@@ -11,6 +11,17 @@ setup, and launching a development build. Rust is pinned in
 [`rust-toolchain.toml`](../../rust-toolchain.toml); the workspace's minimum Rust
 version is declared in [`Cargo.toml`](../../Cargo.toml).
 
+On Windows, `koru.bat root` builds and starts an isolated development root at
+`.dev-data\root-mode`. Rebuilding stops this checkout's debug windows and services
+across all roots so Windows can replace the shared executables. To run a second
+root alongside it, use `koru.bat root-open .dev-data\root-b`: this uses the built
+binaries and leaves other roots running. An explicit path may be supplied to
+either command. `koru.bat root-stop <path>` stops only that root's services.
+
+`koru.bat font-test` launches the standalone font comparison editor, using the
+monorepo's fonts and rendering dependencies. Its [controls and implementation](../../apps/koru-font-test/README.md)
+include exact pixel magnification and live rendering experiments.
+
 Setup's `--agent-skills` option installs coding agent skills.
 Windows `--defender-exclusions` enables the documented
 antivirus exclusions for a trusted development checkout. Neither is needed to
@@ -68,6 +79,26 @@ does not apply gets an `ignore` entry in `deny.toml` with the reason.
 Some primers retain ADR and plan identifiers as provenance for past experiments.
 Maintainers keep those original records in the private documentation repository;
 the implementation guidance is included in the public pages.
+
+### Diagnosing unavailable mini-app tools
+
+The Store's rotating `logs/koru-api-gateway.log` records
+`ai.mini_apps.bridge_probe` and `ai.mini_apps.startup`: whether the desktop MCP
+bridge is installed beside the worker executable, whether a session host was
+supplied, and whether managed mini-app tools passed that startup gate.
+`logs/koru-session-host.log` records `chat.bridge.ready` or
+`chat.bridge.missing` for the bridge launch the session host configures.
+These checks are cached at process startup; restart the gateway and session
+host after installing or rebuilding a missing sibling bridge.
+
+Enable `RUST_LOG=warn,koru=info,koru_ai_server=debug,koru_ai_provider_agent=info,koru_session_host=info`
+before starting the processes for per-attempt `ai.mini_apps.tools` decisions.
+They report provider registration, host admission or its categorical rejection
+reason, configured and admitted tool counts, and refinement availability.
+`ai.mini_apps.withheld` warns when a requested host is rejected;
+`ai.mini_apps.provider_unavailable` warns when the provider later reports that
+native tools are unavailable. Correlate them by attempt ID. These diagnostics
+contain no prompts, tool payloads, capability tokens, or filesystem paths.
 
 ## Documentation changes
 

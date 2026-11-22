@@ -80,6 +80,21 @@ impl<'a> Card<'a> {
         dividers: &[f32],
         alpha: f32,
     ) -> inspect::Scope {
+        self.draw_highlighted(canvas, root, engine, rect, dividers, alpha, "")
+    }
+
+    /// Draw the card with search matches highlighted in its title and aside.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_highlighted(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        dividers: &[f32],
+        alpha: f32,
+        query: &str,
+    ) -> inspect::Scope {
         let scope = inspect::scope(
             "KoruCard",
             "component",
@@ -100,6 +115,9 @@ impl<'a> Card<'a> {
         let style = theme::role::meta();
         if let Some(title) = self.title {
             let layout = engine.simple_layout(title, style);
+            crate::text_paragraph::highlight_layout(
+                canvas, root, &layout, title, query, rect.x, rect.y,
+            );
             crate::typography::line(
                 "Card title",
                 canvas,
@@ -114,6 +132,15 @@ impl<'a> Card<'a> {
         }
         if let Some(aside) = self.aside {
             let layout = engine.simple_layout(aside, style);
+            crate::text_paragraph::highlight_layout(
+                canvas,
+                root,
+                &layout,
+                aside,
+                query,
+                rect.x + rect.w - layout.width(),
+                rect.y,
+            );
             crate::typography::line(
                 "Card aside",
                 canvas,
@@ -342,6 +369,21 @@ impl<'a> CardRow<'a> {
         text_w: f32,
         alpha: f32,
     ) -> inspect::Scope {
+        self.draw_highlighted(canvas, root, engine, row, text_w, alpha, "")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[track_caller]
+    pub fn draw_highlighted(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        row: Rect,
+        text_w: f32,
+        alpha: f32,
+        query: &str,
+    ) -> inspect::Scope {
         let scope = inspect::scope(
             "KoruCardRow",
             "component",
@@ -361,13 +403,19 @@ impl<'a> CardRow<'a> {
         let label_h = self.label_h(engine, text_w);
         let label_w = self.label_w(engine, text_w);
         let x = row.x + Self::PAD_X;
-        let y = self.text_top(engine, row, text_w);
+        let y = if self.hint.is_none() && self.link.is_none() {
+            let label = engine.simple_layout_wrapped(self.label, Self::label_style(), label_w);
+            scene::centre_y_in(&label, row)
+        } else {
+            self.text_top(engine, row, text_w)
+        };
         let drawn_h = KoruTextParagraph::new(
             self.label,
             Self::label_style(),
             "theme::role::ui()",
             p.text.multiply_alpha(alpha),
         )
+        .highlight(query)
         .draw(canvas, root, engine, Rect::new(x, y, label_w, 0.0));
         if let Some(chip) = self.chip {
             let first_line = Self::label_style().metrics.line_height.min(drawn_h);
@@ -413,6 +461,7 @@ impl<'a> CardRow<'a> {
                 "theme::role::meta()",
                 p.text_dim.multiply_alpha(alpha),
             )
+            .highlight(query)
             .draw(
                 canvas,
                 root,

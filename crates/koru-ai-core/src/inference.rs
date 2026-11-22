@@ -291,6 +291,10 @@ fn tool_protocol_error(message: &'static str) -> AiError {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AiRequestOptions {
+    /// Exact live desktop-host permission. Runtime only: never chat continuity.
+    #[serde(skip)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    pub mini_app: Option<crate::mini_apps::RuntimeContext>,
     pub stream: bool,
     pub capture_usage: bool,
     pub provider_storage: bool,
@@ -338,6 +342,7 @@ pub struct AiRequestOptions {
 impl Default for AiRequestOptions {
     fn default() -> Self {
         Self {
+            mini_app: None,
             stream: true,
             capture_usage: true,
             provider_storage: false,

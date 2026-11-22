@@ -1,7 +1,7 @@
 <p align="center">
   <a href="https://koru.do"><img src="assets/logo.png" alt="Koru logo" height="80"></a>
 </p>
-<p align="center"><strong>A free notes app that works with your AI subscription.</strong></p>
+<p align="center"><strong>A free and fast app for your notes, documents, files and tasks that works offline and with the AI you choose.</strong></p>
 <p align="center">
   <a href="https://koru.do"><img src="https://img.shields.io/badge/%E2%9C%A8-Website-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Website"></a>
   <a href="https://koru.do/#download"><img src="https://img.shields.io/badge/%E2%9C%A8-Download-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Download Koru"></a>
@@ -12,16 +12,14 @@
 </p>
 
 <p align="center">
-  <img src=".github/readme/koru-workspace.webp" alt="Koru on Windows: a travel-planning note with a photo and a checklist, next to the AI Chat tab" width="100%">
+  <img src=".github/readme/koru-workspace.png" alt="Koru customer-interview notes in light mode beside an AI conversation in dark mode" width="100%">
 </p>
 
-# Koru is a free notes app that works with your AI subscription
+# Koru
 
-Koru is an open-source, local-first workspace for thinking, writing and working
-with AI. Documents, files and terminal sessions, including your shells and AI
-coding agents, open as tabs in one native window. Your work stays on your own
-devices, works offline, and syncs directly between them, with no cloud server
-holding your data.
+A free and fast app for your notes, documents, files and tasks that works offline
+and with the AI you choose. Built in Rust, no account required. Bring your notes
+from Notion, Evernote and Google Docs.
 
 ## What can you do with Koru?
 
@@ -38,6 +36,10 @@ holding your data.
   never leaves it.
 - **Keep it yours**: free, no account required, and open source under the
   [MPL-2.0](LICENSE).
+
+<p align="center">
+  <img src=".github/readme/koru-ai.png" alt="Claude Code running in a terminal beside Koru's AI chat" width="100%">
+</p>
 
 ## What is Koru an alternative to?
 
@@ -102,7 +104,7 @@ experimental features.
 | Platform | Status |
 | --- | --- |
 | **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as an installer, or a zip to run without installing; either updates itself. They are not code-signed yet, so SmartScreen asks before the first run and reminders show no notifications |
-| **macOS** (Apple silicon, macOS 12+) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as signed and notarized disk images that update themselves, and it builds and runs from source |
+| **macOS** (Apple silicon, macOS 13.4+) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as signed and notarized disk images that update themselves, and it builds and runs from source |
 | **Android** | Not released yet. The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
 | **iOS** | Held. The project in `apps/ios` is not released yet; the first release waits for it to be built and verified on a Mac |
 | **Linux** (x86-64) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as tarballs for glibc 2.35 or newer that update themselves; 0.1.4 is the first stable Linux release. Koru runs as an X11 app (XWayland on Wayland desktops), and text may look soft at fractional scaling; voice input is not available on Linux yet |
@@ -135,6 +137,9 @@ koru.bat run
 
 `./koru.sh setup` and `./koru.sh run` are the same on macOS.
 
+`koru.bat font-test` opens the [font comparison editor](apps/koru-font-test/README.md)
+with Koru's fonts, live rendering controls and exact pixel zoom.
+
 `setup` installs sccache; sets its cache directory, cache size and the cargo job
 count for this machine (user environment variables on Windows, a marked block in
 your shell profile elsewhere); and fetches fonts and third-party code. What is
@@ -158,6 +163,23 @@ Two setup options are available separately:
 
 Ordinary build, test, and run commands do not install agent tooling or change
 Git hooks. Both optional flags can be combined on Windows.
+
+On Windows, `koru.bat root [path]` builds Koru, Agent and the sibling MCP bridge,
+then opens an isolated development stack. The root defaults to `KORU_ROOT`, or
+`.dev-data\root-mode` in this checkout. Add `--mcp` to also register that bridge
+with the agent CLIs on PATH for the same root:
+
+```bat
+koru.bat root --mcp
+koru.bat root "D:\Koru test" --mcp
+koru.bat root-open "D:\Koru test"
+koru.bat root-stop "D:\Koru test"
+```
+
+`--mcp` can precede the path. Registrations use `koru_<branch>` with punctuation
+replaced by underscores, so `sliechti/a2ui` becomes `koru_sliechti_a2ui`.
+See the [MCP guide](guide/user/CLAUDE_MCP.md#isolated-windows-development-stacks)
+for client reconnection and removal.
 
 `run` downloads the bundled fonts on first use (`koru.bat fonts` does just that
 step; the faces are pinned by hash in `scripts/setup/fonts.manifest`), compiles, and

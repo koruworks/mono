@@ -483,6 +483,11 @@ pub fn run(
                     .with_responder_session(Arc::clone(responder_session));
             }
             service = service.with_directory_namespace(entry.namespace());
+            if let Some(control) = lifecycle_sync.clone() {
+                service = service.with_cloud_document_port(Arc::new(
+                    crate::cloud_host::DesktopCloudDocumentPort::new(control),
+                ));
+            }
             // The Cloud coordinator, composed only when this machine has
             // everything it needs to dial a worker: a regional credential
             // policy naming the region and issuer the sync credential is
@@ -496,6 +501,7 @@ pub fn run(
                 lifecycle_identity.as_ref().map(|(_, secret)| *secret),
                 sync_identity.map(|(_, endpoint)| endpoint),
                 cloud_profiles,
+                Some(paths_for_producers.cloud_refused_units()),
                 waker.clone(),
             );
             if let Some(cloud) = &cloud {
@@ -578,37 +584,69 @@ pub fn run(
                 control.set_enrollment_control(enrollment);
                 control.set_responder_session_gate(responder_session);
             }
+            let cloud_for_watch = cloud.clone();
             if let Some(cloud) = cloud {
                 let driver: Arc<dyn koru_account_runtime::cloud::Driver> = cloud;
                 control.set_cloud_control(driver);
             }
-            Ok::<_, &'static str>(control)
+            Ok::<_, &'static str>((control, cloud_for_watch))
         })();
         match account {
-            Ok(control) => {
+            Ok((control, cloud)) => {
                 if let Ok(mut agent) = agent.lock() {
                     agent.set_account_control(control);
                 }
                 // A Workspace created after Cloud sync was switched on must
                 // reach the Cloud without anyone reopening the switch, so the
-                // remembered choice is re-applied on the same cadence the
-                // Cloud coordinator already runs at. It cannot ride the
-                // coordinator's own heartbeat because that thread is composed
-                // before the account worker exists, and it holds only a weak
-                // reference so it ends with the Agent.
+                // remembered choice is re-applied **when the Store's catalog
+                // moves** — not on a timer (`cloud_reconcile`). The loop
+                // holds only a weak reference, so it ends with the Agent.
                 let reconcile = Arc::downgrade(&agent);
+                let (changes, changed) = std::sync::mpsc::channel();
+                let watch_root = paths_for_producers
+                    .explicit_root()
+                    .map(std::path::Path::to_path_buf);
+                // A local catalog change is also the account's to hear about
+                // now: the Cloud coordinator checks it at once rather than at
+                // its next few-minute check.
+                let on_change = move || {
+                    if let Some(cloud) = &cloud {
+                        cloud.wake();
+                    }
+                };
+                let watching = std::thread::Builder::new()
+                    .name("koru-agent cloud sync catalog watch".into())
+                    .spawn(move || {
+                        crate::cloud_reconcile::follow_catalog(watch_root, changes, on_change)
+                    })
+                    .is_ok();
+                if !watching {
+                    tracing::warn!(
+                        "cloud sync: no catalog watch; the reconcile runs on its safety net alone"
+                    );
+                }
                 if std::thread::Builder::new()
                     .name("koru-agent cloud sync reconcile".into())
                     .spawn(move || {
-                        loop {
-                            std::thread::sleep(crate::cloud_host::HEARTBEAT);
-                            let Some(agent) = reconcile.upgrade() else {
-                                return;
-                            };
-                            if let Ok(agent) = agent.lock() {
-                                agent.reconcile_cloud_sync();
-                            }
-                        }
+                        crate::cloud_reconcile::run(
+                            &changed,
+                            crate::cloud_reconcile::Timing::PRODUCTION,
+                            || {
+                                let Some(agent) = reconcile.upgrade() else {
+                                    return crate::cloud_reconcile::Attempt::Gone;
+                                };
+                                let ran = agent
+                                    .lock()
+                                    .map(|agent| agent.reconcile_cloud_sync())
+                                    .unwrap_or(false);
+                                if ran {
+                                    crate::cloud_reconcile::Attempt::Ran
+                                } else {
+                                    crate::cloud_reconcile::Attempt::Deferred
+                                }
+                            },
+                            std::thread::sleep,
+                        );
                     })
                     .is_err()
                 {

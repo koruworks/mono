@@ -3,13 +3,13 @@
 //! Bounded Cloud discovery and Profile selection ports.
 //!
 //! A native device enumerates the Workspaces its current session may sync (a
-//! page of eligibility pairs, never names or routes) and selects one exact
-//! Profile/Workspace pair. Selection *is* the admission: it writes the existing
-//! `provisioned` device/Profile binding and invalidates the Profile's authority
-//! in the same transaction. No provisioning token, receipt or worker
-//! availability check exists at this boundary. Every identifier a repository
-//! trusts arrives from the verified native session, never from the request
-//! body.
+//! page of eligibility pairs, never names or routes) and selects one Profile
+//! this device holds. Selection *is* the admission: the owner session writes
+//! the existing `provisioned` device/Profile binding and invalidates the
+//! Profile's authority in the same transaction. No provisioning token, receipt
+//! or worker availability check exists at this boundary. Every identifier a
+//! repository trusts arrives from the verified native session, never from the
+//! request body.
 
 use uuid::Uuid;
 
@@ -66,6 +66,8 @@ pub struct SelectProfileCloud {
     pub session_id: AccountSessionId,
     pub device_id: DeviceId,
     pub profile_id: ProfileId,
+    /// Carried for older clients. Selection does not read it: the live owner
+    /// session is the grant, whether or not this Workspace is already a member.
     pub workspace_id: WorkspaceId,
     /// Sampled before any lock. The repository re-samples through its clock
     /// after the locks are held and validates expiry against that later time.

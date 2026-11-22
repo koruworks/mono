@@ -49,9 +49,15 @@ use koru_store_core::service::JoinUnit;
 /// as an opaque decode error on one request. Bumping makes the same mismatch
 /// surface at the greeting, which is where it was designed to surface and
 /// where it says what it is.
-pub const CONTROL_PROTOCOL_VERSION: u32 = 8;
+/// 9 adds bounded detached Cloud inspection Start/Poll/Cancel. It changes
+/// only this machine's control contract, never a Cloud or peer protocol.
+/// 10 adds `ReconcileCloudAccountLive` (trash-recovery PLAN.final P2): a
+/// request of its own, because what it carries is new and a stale gateway
+/// should refuse the pair at the greeting rather than one request later.
+pub const CONTROL_PROTOCOL_VERSION: u32 = 10;
 pub const CONTROL_FRAME_VERSION: u8 = 1;
 pub mod cloud;
+pub mod inspection;
 pub const CONTROL_SERVICE: &str = "koru-store-sync";
 
 /// The peer-to-peer protocol number — the fourth schema version in the tree,
@@ -309,6 +315,22 @@ fn is_zero(value: &u32) -> bool {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlRequest {
+    StartCloudInspection {
+        control_session_id: ControlSessionId,
+        owner: inspection::InspectionOwner,
+        token: Uuid,
+        request: Box<inspection::InspectionRequest>,
+    },
+    PollCloudInspection {
+        control_session_id: ControlSessionId,
+        owner: inspection::InspectionOwner,
+        token: Uuid,
+    },
+    CancelCloudInspection {
+        control_session_id: ControlSessionId,
+        owner: inspection::InspectionOwner,
+        token: Uuid,
+    },
     ProvisionEndpoint {
         secret: EndpointSecretBytes,
     },
@@ -449,6 +471,20 @@ pub enum ControlRequest {
         account_id: CloudId,
         dataset: CloudReplicaPrincipalV1,
     },
+    /// `Store::reconcile_account_live`: every Workspace the account lists
+    /// **live** under a Profile on this device, sent once after a complete
+    /// discovery and before anything is admitted. The Store answers with
+    /// the ones that are in the Trash here, which the Agent then admits for
+    /// nothing, and records those whose deletion cannot leave this device
+    /// (trash-recovery PLAN.final P2). The whole list each time: the Store
+    /// replaces its set from it. At most
+    /// [`cloud::MAX_CLOUD_ROOT_INVENTORY`] entries, and for that reason not
+    /// one of the 64 KiB Cloud frames (see [`is_cloud_request`]).
+    ReconcileCloudAccountLive {
+        control_session_id: ControlSessionId,
+        account_id: CloudId,
+        workspaces: Vec<cloud::CloudAccountLiveWorkspace>,
+    },
     /// `Store::bind_account_scope` with the service's verified binding. A
     /// device bound to another account answers `catalog_binding_conflict`
     /// and nothing is written.
@@ -515,6 +551,10 @@ pub enum ControlRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ControlResponse {
+    CloudInspectionStarted {
+        token: Uuid,
+    },
+    CloudInspection(inspection::InspectionPoll),
     Ok,
     AuthorizationApplied {
         session_id: ControlSessionId,
@@ -591,6 +631,11 @@ pub enum ControlResponse {
     CloudRootFrontier {
         control_session_id: ControlSessionId,
         frontier: Option<Vec<u8>>,
+    },
+    /// The listed Workspaces that are in the Trash on this device.
+    CloudAccountLiveTrashed {
+        control_session_id: ControlSessionId,
+        trashed: Vec<CloudId>,
     },
     CloudRootUnitExport {
         control_session_id: ControlSessionId,
@@ -895,6 +940,42 @@ impl ControlHost {
             return rejected(HostError::StaleSession);
         }
         match request {
+            ControlRequest::StartCloudInspection {
+                control_session_id,
+                owner,
+                token,
+                request,
+            } => {
+                if control_session_id != session_id
+                    || !owner.validate()
+                    || !request.validate()
+                    || token.get_version_num() != 4
+                    || request.selection.account_id != owner.account_id.to_string()
+                {
+                    return rejected(HostError::CloudPermitMismatch);
+                }
+                // The daemon resolves the exact live ordinary session and
+                // queues the bounded selector after releasing this lock.
+                ControlResponse::Ok
+            }
+            ControlRequest::PollCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            }
+            | ControlRequest::CancelCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            } => {
+                if control_session_id != session_id
+                    || !owner.validate()
+                    || token.get_version_num() != 4
+                {
+                    return rejected(HostError::CloudPermitMismatch);
+                }
+                ControlResponse::Ok
+            }
             ControlRequest::ProvisionEndpoint { secret } => {
                 let endpoint =
                     koru_device::ReplicationEndpointSecret::from_secret_bytes(*secret.expose())
@@ -1140,6 +1221,29 @@ impl ControlHost {
                     control_session_id: session_id,
                     manifest_document_id: None,
                     allows_cloud: None,
+                }
+            }
+            ControlRequest::ReconcileCloudAccountLive {
+                control_session_id,
+                account_id,
+                workspaces,
+            } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                if !account_id.is_v4()
+                    || workspaces.len() > cloud::MAX_CLOUD_ROOT_INVENTORY
+                    || workspaces
+                        .iter()
+                        .any(|listed| !listed.workspace_id.is_v4() || !listed.profile_id.is_v4())
+                {
+                    return rejected(HostError::InvalidCloudRequest);
+                }
+                // A placeholder, as the root requests below are: only the
+                // Store knows what is in its Trash.
+                ControlResponse::CloudAccountLiveTrashed {
+                    control_session_id: session_id,
+                    trashed: Vec::new(),
                 }
             }
             // The Store half of the account path (root-catalog Plan 3.2).
@@ -1983,11 +2087,18 @@ impl HostError {
 /// decoded request. The root-unit join (`JoinCloudRootUnit`) is deliberately
 /// not under it: its body is the frames the account API answered, bounded
 /// by that API's response cap and by the socket's own frame cap, and a
-/// personal unit's history is not a permit page.
+/// personal unit's history is not a permit page. `ReconcileCloudAccountLive`
+/// is not under it either, for the same kind of reason: it names every
+/// Workspace the account lists live under a Profile here, up to
+/// [`cloud::MAX_CLOUD_ROOT_INVENTORY`] of them, which is past 64 KiB at about
+/// six hundred. Its structural bound keeps it well inside the socket's cap.
 pub fn is_cloud_request(request: &ControlRequest) -> bool {
     matches!(
         request,
         ControlRequest::ReplaceCloudContext { .. }
+            | ControlRequest::StartCloudInspection { .. }
+            | ControlRequest::PollCloudInspection { .. }
+            | ControlRequest::CancelCloudInspection { .. }
             | ControlRequest::InstallCloudSession { .. }
             | ControlRequest::FenceCloud { .. }
             | ControlRequest::CloudStatus { .. }

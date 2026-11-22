@@ -70,6 +70,56 @@ use super::{ManageView, Page};
 
 const PAGE: &str = "manage";
 
+fn inventory_node(cx: &Context, scroll: f32, node: &koru_draw::el::SemNode) -> SemanticNode {
+    use koru_draw::el;
+    let key = node.key.expect("inventory semantic identity");
+    let part = ControlPart::new(key.part);
+    let occurrence = match key.object {
+        el::Object::Model(id) => {
+            Occurrence::model(cx.window, cx.view, uuid::Uuid::from_u128(id), part)
+        }
+        el::Object::Surface(_) => cx.surface(part),
+    };
+    let role = match node.role {
+        el::Role::Button => Role::Button,
+        el::Role::Heading => Role::Heading,
+        el::Role::List => Role::List,
+        el::Role::ListItem => Role::ListItem,
+        _ => Role::Group,
+    };
+    let mut result = SemanticNode::new(occurrence, role).with_bounds(cx.place(Rect::new(
+        node.bounds.x,
+        node.bounds.y - scroll,
+        node.bounds.w,
+        node.bounds.h,
+    )));
+    result = match &node.name {
+        Some(el::Name::Key(key)) => result.with_label(koru_i18n::t(crate::format::lang(), *key)),
+        Some(el::Name::Text(text)) => result.with_label(text.clone()),
+        None => result,
+    };
+    result.disabled = node.disabled;
+    if key.part == "inventory-status" || key.part == "inventory-restarted" {
+        result = result.with_live(accesskit::Live::Polite);
+    }
+    result
+        .with_actions(
+            node.actions
+                .iter()
+                .filter(|a| !node.disabled || **a == el::Action::Focus)
+                .map(|a| match a {
+                    el::Action::Click => Action::Click,
+                    el::Action::Focus => Action::Focus,
+                }),
+        )
+        .with_children(
+            node.children
+                .iter()
+                .map(|n| inventory_node(cx, scroll, n))
+                .collect(),
+        )
+}
+
 pub(crate) mod parts {
     use koru_workspace_host::accessibility::ControlPart;
 
@@ -83,6 +133,8 @@ pub(crate) mod parts {
     pub const NEW_PROFILE: ControlPart = ControlPart::new("new-profile");
     pub const DEVICES: ControlPart = ControlPart::new("devices");
     pub const CLOUD: ControlPart = ControlPart::new("cloud");
+    pub const STORAGE_HEADING: ControlPart = ControlPart::new("cloud-storage-heading");
+    pub const STORAGE_STATUS: ControlPart = ControlPart::new("cloud-storage-status");
     pub const DIALOG: ControlPart = ControlPart::new("dialog");
     /// The Workspaces section's list of rows.
     pub const WORKSPACES: ControlPart = ControlPart::new("workspaces");
@@ -93,11 +145,15 @@ pub(crate) mod parts {
 /// A Profile page control's part name. The two indexed kinds are instances
 /// of their own, numbered by position, which is what they are.
 fn control_part(control: Control) -> ControlPart {
+    if let Some(key) = super::cloud::inventory::control_key(control) {
+        return ControlPart::new(key.part);
+    }
     ControlPart::new(match control {
         Control::Tile => "change-icon",
         Control::Name => "rename",
         Control::Switch => "switch-profile",
         Control::CloudPointer => "cloud-pointer",
+        Control::CloudSettings => "cloud-settings",
         Control::Attention(answer) => match answer {
             Attention::RetryDelete => "retry-delete",
             Attention::RemoveAfterFailure => "remove-after-failure",
@@ -116,7 +172,11 @@ fn control_part(control: Control) -> ControlPart {
         Control::AddGoogle => "add-google",
         Control::MakeOffline => "make-offline",
         Control::SignOut => "sign-out",
-        Control::CloudSync => "cloud-sync",
+        Control::SyncMode(_, mode) => match mode {
+            koru_store_core::TransportMode::LocalOnly => "sync-off",
+            koru_store_core::TransportMode::P2p => "sync-p2p",
+            koru_store_core::TransportMode::Cloud => "sync-cloud",
+        },
         Control::GetCloud => "get-cloud",
         Control::Delete => "delete-profile",
         Control::RemoveFromDevice => "remove-from-device",
@@ -135,6 +195,8 @@ fn control_part(control: Control) -> ControlPart {
         Control::UnassignedMore(_) => "unassigned-more",
         Control::RestoreUnassignedProfile(_) => "unassigned-restore",
         Control::RestoreDeletedProfile(_) => "restore-deleted",
+        Control::TrashedInAccountRow(_) => "trashed-in-account-row",
+        Control::RestoreTrashedTo(_) => "trashed-in-account-restore",
         Control::LinkDevice => "link-device",
         Control::CloseCreation => "close-creation",
         Control::ThisDevice => "this-computer",
@@ -149,6 +211,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::DifferentCreate => "different-create",
         Control::DifferentSignIn => "different-sign-in",
         Control::DifferentOffline => "different-offline",
+        Control::CloudStorageRetry => "cloud-storage-retry",
         Control::CloudPrimary => "cloud-primary",
         Control::CloudLearnMore => "learn-more",
         Control::ProfileSync(_) => "manage-sync",
@@ -156,6 +219,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::ProfileSignIn(_) => "manage-sign-in",
         Control::Progress(_) => "manage-progress",
         Control::ProgressRow(_) => "manage-progress-row",
+        _ => unreachable!("inventory controls have stable element parts"),
     })
 }
 
@@ -184,6 +248,8 @@ impl Context {
 
     fn occurrence(&self, entry: Entry) -> Occurrence {
         match entry {
+            Entry::Profiles => self.surface(ControlPart::new("profiles")),
+            Entry::Workspaces => self.surface(ControlPart::new("workspaces-page")),
             Entry::Profile(id) => self.profile(id, parts::PROFILE),
             Entry::Hidden => self.surface(parts::HIDDEN),
             Entry::NewProfile => self.surface(parts::NEW_PROFILE),
@@ -195,6 +261,13 @@ impl Context {
     fn control(&self, control: Control) -> Occurrence {
         let part = control_part(control);
         match control {
+            Control::CloudInventoryWorkspace(id, _)
+            | Control::CloudInventoryDetails(id)
+            | Control::CloudInventoryDocument(id)
+            | Control::CloudCopyRemove(id)
+            | Control::CloudInventoryProfileDetails(id) => {
+                Occurrence::model(self.window, self.view, id, part)
+            }
             Control::Unlink(index) => {
                 Occurrence::instance(self.window, self.view, "manage-unlink", index as u64, part)
             }
@@ -239,12 +312,15 @@ impl Context {
             // A workspace's row and its trailing control are about that
             // workspace, wherever it moves in the list.
             Control::WorkspaceRow(id)
+            | Control::SyncMode(Some(id), _)
             | Control::WorkspaceMore(id)
             | Control::Unarchive(id)
             | Control::RestoreWorkspace(id)
             | Control::UnassignedRow(id)
             | Control::UnassignedMore(id)
-            | Control::RestoreUnassignedProfile(id) => {
+            | Control::RestoreUnassignedProfile(id)
+            | Control::TrashedInAccountRow(id)
+            | Control::RestoreTrashedTo(id) => {
                 Occurrence::model(self.window, self.view, id.as_uuid(), part)
             }
             // A deleted Profile's *Restore* is about that Profile.
@@ -270,9 +346,19 @@ impl ManageView {
                     .with_actions([Action::Click, Action::Focus])
             })
             .collect();
+        let nav_bounds = laid.rows.iter().fold(self.sidebar(), |bounds, (_, rect)| {
+            let x = bounds.x.min(rect.x);
+            let y = bounds.y.min(rect.y);
+            Rect::new(
+                x,
+                y,
+                (bounds.x + bounds.w).max(rect.x + rect.w) - x,
+                (bounds.y + bounds.h).max(rect.y + rect.h) - y,
+            )
+        });
         let nav = SemanticNode::new(cx.surface(parts::NAV), Role::ListBox)
             .with_label("Manage")
-            .with_bounds(cx.place(self.sidebar()))
+            .with_bounds(cx.place(nav_bounds))
             .with_size_of_set(options.len())
             .with_children(options);
         let heading = SemanticNode::new(cx.surface(parts::HEADING), Role::Heading)
@@ -285,11 +371,24 @@ impl ManageView {
             let node = match placed.look {
                 Look::Toggle(_) => SemanticNode::new(cx.control(placed.control), Role::Switch)
                     .with_toggled(self.toggled(placed.control)),
+                Look::Action(style) if matches!(placed.control, Control::SyncMode(..)) => {
+                    SemanticNode::new(cx.control(placed.control), Role::Button)
+                        .with_toggled(style == koru_ui::button::ActionStyle::Primary)
+                }
                 _ => SemanticNode::new(cx.control(placed.control), Role::Button),
             };
-            node.with_label(self.control_name(placed))
+            let mut node = node
+                .with_label(self.control_name(placed))
+                .disabled(self.laid.disabled.contains(&placed.control))
                 .with_bounds(scrolled(placed.rect))
-                .with_actions([Action::Click, Action::Focus])
+                .with_actions([Action::Click, Action::Focus]);
+            if placed.control == Control::CloudStorageRetry
+                && self.laid.disabled.contains(&placed.control)
+            {
+                node.disabled = true;
+                node.actions = vec![Action::Focus];
+            }
+            node
         };
         let in_list = |control: Control| {
             matches!(
@@ -305,6 +404,11 @@ impl ManageView {
         let mut listed = false;
         let mut devices_listed = false;
         for placed in &self.laid.controls {
+            if self.laid.inventory.is_some()
+                && super::cloud::inventory::control_key(placed.control).is_some()
+            {
+                continue;
+            }
             if in_devices(placed.control) {
                 if !devices_listed {
                     devices_listed = true;
@@ -323,6 +427,36 @@ impl ManageView {
                 listed = true;
                 children.push(self.workspaces_list(cx, &button));
             }
+        }
+        if let Some(inventory) = &self.laid.inventory {
+            children.extend(
+                inventory
+                    .frame
+                    .borrow()
+                    .semantics()
+                    .iter()
+                    .filter(|node| node.key.is_none_or(|key| key.part != "inventory-title"))
+                    .map(|node| inventory_node(cx, self.page_scroll, node)),
+            );
+        }
+        if let Some(storage) = self
+            .laid
+            .cloud
+            .as_ref()
+            .and_then(|cloud| cloud.storage.as_ref())
+        {
+            children.push(
+                SemanticNode::new(cx.surface(parts::STORAGE_HEADING), Role::Heading)
+                    .with_label(storage.title.clone())
+                    .with_level(2)
+                    .with_bounds(scrolled(storage.title_at)),
+            );
+            children.push(
+                SemanticNode::new(cx.surface(parts::STORAGE_STATUS), Role::Label)
+                    .with_label(storage.body.clone())
+                    .with_bounds(scrolled(storage.body_at))
+                    .with_live(accesskit::Live::Polite),
+            );
         }
         if self.content_page_open() {
             let form = self.form_rect();
@@ -482,6 +616,20 @@ impl ManageView {
                 .map_or_else(|| "Profile".to_owned(), |row| row.name.clone())
         };
         match placed.control {
+            Control::SyncMode(workspace, _) => {
+                let name = workspace
+                    .and_then(|id| {
+                        self.c
+                            .sync_settings()?
+                            .workspaces
+                            .iter()
+                            .find(|row| row.id == id.to_storage())
+                            .map(|row| row.name.clone())
+                    })
+                    .or_else(|| self.laid.profile.map(profile_name))
+                    .unwrap_or_default();
+                format!("{}: {name}", placed.label)
+            }
             Control::ProfileSignIn(id) if placed.label == super::cloud::CONNECT => {
                 format!("Connect {}\u{2026}", profile_name(id))
             }
@@ -553,6 +701,8 @@ impl ManageView {
                 .map(|row| row.name.clone())
         };
         match entry {
+            Entry::Profiles => "Profiles".to_owned(),
+            Entry::Workspaces => "Workspaces".to_owned(),
             Entry::Profile(id) => {
                 let name = profile_name(id).unwrap_or_else(|| "Profile".into());
                 let mut said = name;
@@ -579,6 +729,9 @@ impl ManageView {
             rev.u64(form.semantics_revision());
         }
         match self.page {
+            Some(Page::Workspaces(id)) => {
+                rev.byte(5).uuid(id.as_uuid());
+            }
             Some(Page::Profile(id)) => {
                 rev.byte(1).uuid(id.as_uuid());
             }
@@ -601,6 +754,14 @@ impl ManageView {
             rev.str(&self.entry_name(*entry));
         }
         rev.str(&self.page_title());
+        if let Some(inventory) = &self.laid.inventory {
+            for node in &inventory.frame.borrow().nodes {
+                if let Some(koru_draw::el::Name::Text(text)) = &node.label {
+                    rev.str(text);
+                }
+                rev.bool(node.disabled).f32(node.rect.y).f32(node.rect.h);
+            }
+        }
         rev.u64(self.laid.controls.len() as u64);
         for placed in &self.laid.controls {
             rev.str(&placed.label);
@@ -610,6 +771,9 @@ impl ManageView {
         rev.bool(self.switcher.open)
             .opt_uuid(self.disclosed.map(|id| id.as_uuid()));
         if let Some(laid) = &self.laid.cloud {
+            if let Some(storage) = &laid.storage {
+                rev.str(&storage.title).str(&storage.body);
+            }
             for row in &laid.rows {
                 rev.str(&row.sub_text)
                     .bool(self.c.cloud_sync_on(row.profile));

@@ -837,7 +837,7 @@ async fn run_versions(
 
 type Service = Arc<dyn ArtifactDomain>;
 
-fn admitted(
+pub(crate) fn admitted(
     state: &GatewayState,
     principal: GatewayPrincipal,
     required: ArtifactScope,

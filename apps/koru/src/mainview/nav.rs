@@ -16,6 +16,12 @@ use super::tab::TabView;
 use super::tab_rules::KoruTabs;
 use koru_editor::Editing;
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+pub(super) enum UtilitySpot {
+    Welcome,
+    Settings(koru_settings_ui::PageId),
+}
+
 /// One place in the workspace, as back and forward understand it.
 ///
 /// Node ids, not indexes: a tab index moves when a tab left of it closes, and a
@@ -23,6 +29,7 @@ use koru_editor::Editing;
 /// something else by the time you pressed back.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) struct Spot {
+    pub utility: Option<UtilitySpot>,
     /// Route to the workspace that owns this place. History crosses workspace
     /// swaps, so the document id alone is not enough to reopen it.
     pub profile: Option<koru_core::ProfileId>,
@@ -95,9 +102,7 @@ const HISTORY_CAP: usize = 50;
 impl MainView {
     /// Where the window is standing right now, if that is a place at all.
     ///
-    /// `None` over a welcome tab or a draft: neither is somewhere you can be
-    /// sent back to, and recording one would make Back a press that appears to
-    /// do nothing.
+    /// Drafts have no durable destination; Welcome and Settings do.
     pub(super) fn here(&self) -> Option<Spot> {
         self.here_for_tab(self.tabs().active())
     }
@@ -114,6 +119,30 @@ impl MainView {
         if tab.draft.is_some() {
             return None;
         }
+        // Utility pages have no document root, but are real destinations.
+        let utility = match &tab.view {
+            TabView::Welcome(_) => Some(UtilitySpot::Welcome),
+            TabView::Settings(view) => Some(UtilitySpot::Settings(view.page())),
+            _ => None,
+        };
+        if let Some(utility) = utility {
+            let stand_in = NodeId::from_uuid(uuid::Uuid::from_u64_pair(0, tab.id));
+            return Some(Spot {
+                utility: Some(utility),
+                profile: route.map(|r| r.0),
+                workspace: route.map(|r| r.1),
+                document: None,
+                tab: tab.id,
+                tasks: None,
+                run: None,
+                chat: None,
+                doc: stand_in,
+                row: stand_in,
+                caret: 0,
+                selection: None,
+                scroll: tab.view.scroll(),
+            });
+        }
         // **A Tasks page is a place, and its identity is its target.** Taken
         // before `root()`, which a Tasks tab has none of — that `?` is exactly
         // where the queue you were reading used to be forgotten.
@@ -125,6 +154,7 @@ impl MainView {
             // being two places.
             let stand_in = NodeId::from_uuid(uuid::Uuid::from_u64_pair(0, tab.id));
             return Some(Spot {
+                utility: None,
                 profile: route.map(|route| route.0),
                 workspace: route.map(|route| route.1),
                 document: None,
@@ -148,6 +178,7 @@ impl MainView {
             let run = view.run()?;
             let stand_in = NodeId::from_uuid(uuid::Uuid::from_u64_pair(0, tab.id));
             return Some(Spot {
+                utility: None,
                 profile: route.map(|route| route.0),
                 workspace: route.map(|route| route.1),
                 document: None,
@@ -167,6 +198,7 @@ impl MainView {
         if matches!(tab.view, TabView::Reminders(_)) {
             let stand_in = NodeId::from_uuid(uuid::Uuid::from_u64_pair(0, tab.id));
             return Some(Spot {
+                utility: None,
                 profile: route.map(|route| route.0),
                 workspace: route.map(|route| route.1),
                 document: None,
@@ -188,6 +220,7 @@ impl MainView {
             let chat = view.chat_id()?;
             let stand_in = NodeId::from_uuid(uuid::Uuid::from_u64_pair(0, tab.id));
             return Some(Spot {
+                utility: None,
                 profile: route.map(|route| route.0),
                 workspace: route.map(|route| route.1),
                 document: None,
@@ -217,6 +250,7 @@ impl MainView {
         // a workspace other than the one showing; a stop labelled with the
         // window's would send Back to the wrong place.
         Some(Spot {
+            utility: None,
             profile: route.map(|route| route.0),
             workspace: tab.home.or(route.map(|route| route.1)),
             document: tab.document,
@@ -275,6 +309,44 @@ impl MainView {
     /// would walk Back into the bin; `step_history` already skips rather than
     /// stops, so refusing here is all it takes.
     pub(super) fn restore_spot(&mut self, ws: &WorkspaceDoc, spot: Spot) -> bool {
+        if let Some(utility) = spot.utility {
+            self.restoring = true;
+            let found = self.panes.iter_groups().find_map(|(path, group)| {
+                group
+                    .tabs()
+                    .iter()
+                    .position(|tab| {
+                        tab.id == spot.tab
+                            && matches!(
+                                (utility, &tab.view),
+                                (UtilitySpot::Welcome, TabView::Welcome(_))
+                                    | (UtilitySpot::Settings(_), TabView::Settings(_))
+                            )
+                    })
+                    .map(|index| (path, index))
+            });
+            if let Some((path, index)) = found {
+                self.panes.set_focus(path);
+                self.select(index);
+            } else {
+                match utility {
+                    UtilitySpot::Welcome => {
+                        self.open_welcome_tab();
+                    }
+                    UtilitySpot::Settings(_) => {
+                        self.open_settings_tab();
+                    }
+                }
+            }
+            if let (UtilitySpot::Settings(page), TabView::Settings(view)) =
+                (utility, &mut self.tabs_mut().active_mut().view)
+            {
+                view.show_page(page);
+            }
+            self.tabs_mut().active_view().set_scroll(spot.scroll);
+            self.restoring = false;
+            return true;
+        }
         // **A Tasks stop is answered here and goes no further.** Everything
         // below is about finding a document and revealing a row in it, and a
         // queue has neither. `open_tasks_tab` is the one door: it re-points the
@@ -626,6 +698,55 @@ mod tests {
     fn here_for_tab_matches_here_on_the_active_tab() {
         let (v, _w) = on_document();
         assert_eq!(v.here(), v.here_for_tab(v.tabs().active()));
+    }
+
+    #[test]
+    fn welcome_reader_settings_round_trip_restores_the_tab_and_scroll() {
+        let (mut view, workspace) = on_document();
+        view.open_welcome_tab();
+        let welcome = view.tabs().active_tab().id;
+        view.tabs_mut().active_view().set_scroll(120.0);
+        let before = view.here().expect("Welcome is a history destination");
+        view.open_reader_settings();
+        let settings = view.tabs().active_tab().id;
+        assert_ne!(welcome, settings);
+        assert!(view.step_history(&workspace.ws, -1));
+        assert_eq!(view.tabs().active_tab().id, welcome);
+        assert_eq!(view.here(), Some(before));
+        assert!(view.step_history(&workspace.ws, 1));
+        assert_eq!(view.tabs().active_tab().id, settings);
+        let TabView::Settings(page) = &view.tabs().active_tab().view else {
+            panic!("Settings")
+        };
+        assert_eq!(page.page(), koru_settings_ui::PageId::Editor);
+        assert!(view.step_history(&workspace.ws, -1));
+        view.open_reader_settings(); // Reusing the existing Settings tab must also record Welcome.
+        assert_eq!(view.tabs().active_tab().id, settings);
+        assert!(view.step_history(&workspace.ws, -1));
+        assert_eq!(view.tabs().active_tab().id, welcome);
+    }
+
+    #[test]
+    fn back_reopens_settings_after_its_tab_is_closed() {
+        let (mut view, mut workspace) = on_document();
+        view.open_reader_settings();
+        let settings = view.tabs().active_tab().id;
+        let next = a_document(&mut workspace.ws, "Next");
+        view.open_node(&workspace.ws, next);
+        let index = view
+            .tabs()
+            .iter()
+            .position(|tab| tab.id == settings)
+            .unwrap();
+        assert!(view.close(index));
+        assert!(view.tabs().iter().all(|tab| tab.id != settings));
+        assert!(view.step_history(&workspace.ws, -1));
+        let TabView::Settings(page) = &view.tabs().active_tab().view else {
+            panic!("Back reopens Settings after its tab was closed")
+        };
+        assert_eq!(page.page(), koru_settings_ui::PageId::Editor);
+        assert!(view.step_history(&workspace.ws, 1));
+        assert_eq!(view.document_root(), Some(next));
     }
 
     #[test]

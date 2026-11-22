@@ -287,7 +287,7 @@ impl NavList {
                 root,
                 &layout,
                 right,
-                row.y + (row.h - scene::first_line_height(&layout)) * 0.5,
+                scene::centre_y_in(&layout, row),
                 role,
                 "theme::role::meta()",
                 p.text_dim,
@@ -340,7 +340,6 @@ impl NavList {
         // the marks that say something about it.
         let text = engine.elided(item.label, role, (right - label_x).max(0.0));
         let label = engine.simple_layout(&text, role);
-        let line_h = scene::first_line_height(&label);
         let color = match item.leading {
             Some(NavLeading::Add) if !state.hovered => p.text_dim,
             _ if state.here || state.hovered => p.text,
@@ -352,7 +351,7 @@ impl NavList {
             root,
             &label,
             label_x,
-            row.y + (row.h - line_h) * 0.5,
+            scene::centre_y_in(&label, row),
             role,
             "theme::role::row()",
             color,

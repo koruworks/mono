@@ -41,6 +41,8 @@ fn safe_api_code(code: &ErrorCode) -> &'static str {
     // vocabulary may enter logs, even if a server puts a secret in a valid token.
     match code.as_str() {
         ErrorCode::INVALID_REQUEST => ErrorCode::INVALID_REQUEST,
+        ErrorCode::INVALID_USAGE_CURSOR => ErrorCode::INVALID_USAGE_CURSOR,
+        ErrorCode::USAGE_REVISION_CHANGED => ErrorCode::USAGE_REVISION_CHANGED,
         ErrorCode::UNAUTHENTICATED => ErrorCode::UNAUTHENTICATED,
         ErrorCode::PERMISSION_DENIED => ErrorCode::PERMISSION_DENIED,
         ErrorCode::PROFILE_OFFLINE_ONLY_CONFIRMATION_REQUIRED => {
@@ -64,8 +66,42 @@ fn safe_api_code(code: &ErrorCode) -> &'static str {
         ErrorCode::CONFLICT => ErrorCode::CONFLICT,
         ErrorCode::NOT_FOUND => ErrorCode::NOT_FOUND,
         ErrorCode::SERVER_UNAVAILABLE => ErrorCode::SERVER_UNAVAILABLE,
-        other => sync_issuance_code(other).unwrap_or("unknown_api_error"),
+        other => sync_issuance_code(other)
+            .or_else(|| root_admission_code(other))
+            .unwrap_or("unknown_api_error"),
     }
+}
+
+/// Why the account would not take a root catalog unit. A closed vocabulary
+/// as well, and the device already handles each one by name (a unit refused
+/// for good, kept by id), so the log should say which — it read
+/// `unknown_api_error` on every start for a unit placed under a deleted
+/// Profile (2026-11-14 to 17).
+fn root_admission_code(code: &str) -> Option<&'static str> {
+    use koru_account_core::root_catalog::AdmissionRefusal;
+    use koru_account_core::{ProfileId, WorkspaceId};
+    [
+        AdmissionRefusal::UnitInvalid {
+            detail: String::new(),
+        },
+        AdmissionRefusal::FormatTooNew {
+            found: 0,
+            understood: 0,
+        },
+        AdmissionRefusal::PlacementForeign {
+            profile: ProfileId::new(),
+        },
+        AdmissionRefusal::WorkspaceUnitRequired {
+            workspace: WorkspaceId::new(),
+        },
+        AdmissionRefusal::ExportRefused {
+            detail: String::new(),
+        },
+        AdmissionRefusal::AddressNotCanonical,
+    ]
+    .iter()
+    .map(AdmissionRefusal::code)
+    .find(|known| *known == code)
 }
 
 /// Why a Cloud sync credential was refused. These are a closed vocabulary

@@ -24,6 +24,7 @@ enum Row {
     },
     /// A row that is nothing but `n` buttons — the social strip.
     Strip(usize),
+    Segments,
 }
 
 impl MenuItem for Row {
@@ -33,12 +34,15 @@ impl MenuItem for Row {
                 (*label).into()
             }
             Row::Card { title, .. } => (*title).into(),
-            Row::Rule | Row::Strip(_) => "".into(),
+            Row::Rule | Row::Strip(_) | Row::Segments => "".into(),
         }
     }
 
     fn selectable(&self) -> bool {
-        !matches!(self, Row::Rule | Row::Stepper { .. } | Row::Strip(_))
+        !matches!(
+            self,
+            Row::Rule | Row::Stepper { .. } | Row::Strip(_) | Row::Segments
+        )
     }
 
     fn card(&self) -> Option<MenuCard> {
@@ -56,6 +60,14 @@ impl MenuItem for Row {
 
     fn controls(&self) -> Vec<Control> {
         match self {
+            Row::Segments => ["System", "Light", "Dark"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, label)| Control::Segment {
+                    label: label.to_owned(),
+                    selected: index == 1,
+                })
+                .collect(),
             Row::Stepper { value, floor, .. } => vec![
                 Control::Button {
                     glyph: '-',
@@ -92,6 +104,23 @@ impl MenuItem for Row {
             Row::Toggle(_, set) => Some(*set),
             _ => None,
         }
+    }
+}
+
+#[test]
+fn segmented_menu_paint_and_pointer_share_measured_geometry() {
+    let mut engine = TextEngine::new();
+    let menu = Menu::new(&mut engine, (100.0, 100.0), vec![Row::Segments]);
+    let viewport = (1280.0, 720.0);
+    let segmented = menu.segmented(viewport, 0).unwrap();
+    let panel = menu.panel(viewport);
+    assert!(segmented.bounds.x >= panel.x);
+    assert!(segmented.bounds.x + segmented.bounds.w <= panel.x + panel.w);
+    for (index, rect) in segmented.segments.iter().enumerate() {
+        assert_eq!(menu.control_rect(viewport, 0, index), Some(*rect));
+        let (x, y) = rect.centre();
+        assert_eq!(menu.control_at(viewport, x, y), Some((0, index)));
+        assert_eq!(menu.pressable_control_at(viewport, x, y), Some((0, index)));
     }
 }
 

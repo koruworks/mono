@@ -101,7 +101,7 @@ impl std::fmt::Display for SettingsError {
 
 impl std::error::Error for SettingsError {}
 
-fn map_public(error: koru_store_client::http::PublicError) -> SettingsError {
+pub(crate) fn map_public(error: koru_store_client::http::PublicError) -> SettingsError {
     match error {
         koru_store_client::http::PublicError::Transport(error) => SettingsError::Transport(error),
         koru_store_client::http::PublicError::Failure(failure) => {

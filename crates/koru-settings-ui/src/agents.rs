@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **Coding → Agent providers**: which coding agents Koru shows, whether
+//! **Coding → Agent runtimes**: which coding agents Koru shows, whether
 //! their CLIs are ready, and where a new chat starts.
 //!
 //! The *Default agent* card first — *Auto* and one chip per agent that is on,

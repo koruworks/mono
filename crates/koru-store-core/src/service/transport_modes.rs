@@ -52,6 +52,66 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.catalog.transport_mode_group(owner)
     }
 
+    /// Admission before requesting the inventory needed to provision a new
+    /// replica. An absent Workspace has no local choice yet; a held placement
+    /// still respects its Profile's choice. Content operations after
+    /// provisioning must use `admit_transport` normally.
+    pub fn admit_peer_inventory_request(&self, workspace: WorkspaceId) -> Result<()> {
+        match self.catalog.workspace(workspace)? {
+            Some(_) => self
+                .admit_transport(TransportSubject::Workspace(workspace), TransportPath::Peer)
+                .map(|_| ()),
+            None => match self.current_placement_profile(workspace)? {
+                Some(owner) => self
+                    .admit_transport(TransportSubject::Profile(owner), TransportPath::Peer)
+                    .map(|_| ()),
+                None => Ok(()),
+            },
+        }
+    }
+
+    /// Linking is consent for peer sync, including content created before the
+    /// link. Retain defaults as defaults so explicit choices always win. Repeat
+    /// on scope binding to repair roots linked by builds predating this rule.
+    pub(super) fn enable_linked_defaults(&mut self) -> Result<()> {
+        for profile in self.catalog.profiles_including_removed()? {
+            if profile.is_holder() {
+                continue;
+            }
+            self.initialize_profile_transport_mode(profile.id, TransportMode::P2p)?;
+        }
+        Ok(())
+    }
+
+    /// Apply a linked-device or verified Cloud default without changing any
+    /// explicit choice. Commit the Profile and children together, respecting
+    /// the Profile ceiling and never repeatedly writing a capped child.
+    pub fn initialize_profile_transport_mode(
+        &mut self,
+        owner: ProfileId,
+        mode: TransportMode,
+    ) -> Result<Vec<TransportModeCommit>> {
+        let group = self.catalog.transport_mode_group(owner)?;
+        let ceiling = if group.profile.explicit_choice {
+            group.profile.mode
+        } else {
+            group.profile.mode.max(mode)
+        };
+        let requests: Vec<_> = std::iter::once(&group.profile)
+            .chain(group.children.iter())
+            .filter(|row| !row.explicit_choice && row.mode < mode.min(ceiling))
+            .map(|row| InitializeTransportMode {
+                subject: row.subject,
+                expected_revision: row.revision,
+                mode: mode.min(ceiling),
+            })
+            .collect();
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.initialize_transport_modes(&requests)
+    }
+
     /// The live policy generation. A callback holding an older one has been
     /// invalidated and must ask again; it is a session fence, never the
     /// persisted revision.
@@ -88,7 +148,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.admission_of(state, owner)
     }
 
-    fn admission_of(
+    /// The effective answer for a row as given, filed under `owner`. Taking
+    /// the row lets a caller ask about one it is about to write
+    /// (`restore_workspace_to` decides a Workspace's mode before it plans
+    /// where the restore goes).
+    pub(super) fn admission_of(
         &self,
         state: TransportModeState,
         owner: ProfileId,
@@ -300,11 +364,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         include_workspaces: bool,
     ) -> Result<TransportModeChoice> {
         let group = self.catalog.transport_mode_group(owner)?;
-        let mut requests = vec![SetTransportMode {
+        let mut requests = vec![TransportModeRequest::Set(SetTransportMode {
             subject: group.profile.subject,
             expected_revision: group.profile.revision,
             mode,
-        }];
+        })];
         let mut left_alone = 0u32;
         for child in &group.children {
             // A child this Profile is about to cap has to be in the group
@@ -317,13 +381,23 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 left_alone = left_alone.saturating_add(1);
                 continue;
             }
-            requests.push(SetTransportMode {
-                subject: child.subject,
-                expected_revision: child.revision,
-                mode,
+            requests.push(if child.explicit_choice {
+                TransportModeRequest::Set(SetTransportMode {
+                    subject: child.subject,
+                    expected_revision: child.revision,
+                    mode,
+                })
+            } else {
+                // Following the Profile is inheritance, not an independent
+                // Workspace choice. Keep it so off -> on can follow again.
+                TransportModeRequest::Initialize(InitializeTransportMode {
+                    subject: child.subject,
+                    expected_revision: child.revision,
+                    mode,
+                })
             });
         }
-        let outcomes = self.set_transport_modes(&requests)?;
+        let outcomes = self.commit_transport_modes(&requests)?;
         let profile = outcomes
             .first()
             .copied()

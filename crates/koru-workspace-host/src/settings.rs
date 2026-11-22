@@ -928,6 +928,7 @@ pub struct Settings {
     pub theme: ThemePreference,
     /// Editor caret colour (named swatch). Chrome only — not stored in documents.
     pub caret_color: CaretColor,
+    pub caret_color_dark: CaretColor,
     /// The chosen icon pack, or `None` to follow the build's default.
     pub icon_pack: Option<koru_draw::icons::IconPack>,
     /// Editor caret stroke width (Thin…8×). Chrome only — not stored in documents.
@@ -949,6 +950,8 @@ pub struct Settings {
     /// Following the default means following [`font`](Self::font), the
     /// app font, live.
     pub chat_font: FontSetting,
+    pub text_rendering: koru_settings::TextRenderingPreferences,
+    pub heading_weight: u16,
     /// The document body size the person chose, in px, or `None` while it
     /// follows the default. Documents only; the app's own text has density.
     pub doc_text_size: Option<u8>,
@@ -964,7 +967,7 @@ pub struct Settings {
     /// Display density — Compact, Normal or Comfortable. Shifts the UI and
     /// document-body type roles.
     pub density: Density,
-    /// How many steps one mouse-wheel notch moves a pane, 1 to 4.
+    /// How many steps one mouse-wheel notch moves a pane: 1, 2, 3, 4, 8 or 16.
     pub scroll_speed: u8,
     /// **How the dictation gesture works.** `false` is push-to-talk, which is
     /// the default; `true` is a toggle — press once to start, press again to
@@ -1117,12 +1120,24 @@ pub struct Settings {
     /// Filtered against the live tree on the way out rather than trusted on the
     /// way in, so a node collapsed and then deleted does not sit here forever.
     pub collapsed: Vec<(WorkspaceId, Vec<NodeId>)>,
+    /// The task lists whose rows are shut in the Tasks rail, per workspace
+    /// (nested-lists D9). The document tree's [`collapsed`](Self::collapsed)
+    /// one registry along, and per device for its reason: which rows you
+    /// have open is how you are looking at the workspace, not part of it.
+    pub collapsed_lists: Vec<(WorkspaceId, Vec<koru_core::ids::ListId>)>,
     /// Whether the workspace manager is showing archived workspaces. One flag
     /// for the window rather than one per workspace: it is about how you are
     /// looking at the list, not about anything in it.
     pub show_archived: bool,
-    /// How wide the explore pane is, per workspace. Absent means the default.
+    /// How wide the explore pane was, per workspace. **No longer written**:
+    /// the width is one for the window now ([`sidebar_width`](Self::sidebar_width)).
+    /// Still read, so a width set before that carries over the first time.
     pub sidebar_w: Vec<(WorkspaceId, f32)>,
+    /// **How wide the explore pane is, in every workspace.** It was kept per
+    /// workspace, so the pane changed width as you switched (owner,
+    /// 2026-11-16): the width is how you have arranged the window, not part
+    /// of a workspace. Absent means nobody has dragged it since.
+    pub sidebar_width: Option<f32>,
     /// When this machine last opened each workspace, unix milliseconds.
     pub opened: Vec<(WorkspaceId, i64)>,
     /// The global default document view mode and page background, in Roaming.
@@ -1208,6 +1223,7 @@ pub(crate) struct PreIdentitySettings {
 pub(crate) struct PreIdentityPreferences {
     pub(crate) theme: ThemePreference,
     pub(crate) caret_color: CaretColor,
+    pub(crate) caret_color_dark: CaretColor,
     pub(crate) icon_pack: Option<koru_draw::icons::IconPack>,
     pub(crate) caret_width: CaretWidth,
     pub(crate) caret_height: CaretHeight,
@@ -1216,6 +1232,8 @@ pub(crate) struct PreIdentityPreferences {
     pub(crate) headings_font: FontSetting,
     pub(crate) code_font: FontSetting,
     pub(crate) chat_font: FontSetting,
+    pub(crate) text_rendering: koru_settings::TextRenderingPreferences,
+    pub(crate) heading_weight: u16,
     pub(crate) doc_text_size: Option<u8>,
     pub(crate) base_color_light: Option<u32>,
     pub(crate) base_color_dark: Option<u32>,
@@ -1258,6 +1276,7 @@ impl PreIdentitySettings {
         PreIdentityPreferences {
             theme: self.values.theme,
             caret_color: self.values.caret_color,
+            caret_color_dark: self.values.caret_color_dark,
             icon_pack: self.values.icon_pack,
             caret_width: self.values.caret_width,
             caret_height: self.values.caret_height,
@@ -1266,6 +1285,8 @@ impl PreIdentitySettings {
             headings_font: self.values.headings_font.clone(),
             code_font: self.values.code_font.clone(),
             chat_font: self.values.chat_font.clone(),
+            text_rendering: self.values.text_rendering,
+            heading_weight: self.values.heading_weight,
             doc_text_size: self.values.doc_text_size,
             base_color_light: self.values.base_color_light,
             base_color_dark: self.values.base_color_dark,
@@ -1437,6 +1458,7 @@ impl Default for Settings {
             maximized: false,
             theme: ThemePreference::System,
             caret_color: CaretColor::Default,
+            caret_color_dark: CaretColor::Default,
             icon_pack: None,
             caret_width: CaretWidth::Medium,
             caret_height: CaretHeight::Medium,
@@ -1449,6 +1471,8 @@ impl Default for Settings {
             code_font: FontSetting::FollowDefault,
             // The app font, whatever it is.
             chat_font: FontSetting::FollowDefault,
+            text_rendering: koru_settings::TextRenderingPreferences::default(),
+            heading_weight: koru_settings::text_rendering::DEFAULT_HEADING_WEIGHT,
             doc_text_size: None,
             base_color_light: None,
             base_color_dark: None,
@@ -1482,8 +1506,10 @@ impl Default for Settings {
             tabs_per_workspace: false,
             terminal_looks: std::collections::BTreeMap::new(),
             collapsed: Vec::new(),
+            collapsed_lists: Vec::new(),
             show_archived: false,
             sidebar_w: Vec::new(),
+            sidebar_width: None,
             opened: Vec::new(),
             // Narrow, the registry's default (`ViewModeChoice`), not the
             // draw enum's Full, which is the outline's only mode.
@@ -1542,6 +1568,8 @@ fn config_path(profile_dir: &Path, peer: &str) -> PathBuf {
 /// uuid follows, so two workspaces cannot collide and a workspace that is gone
 /// simply has a row nothing reads.
 const COLLAPSED_PREFIX: &str = "collapsed.";
+/// The key each workspace's shut task lists are filed under, the same shape.
+const COLLAPSED_LISTS_PREFIX: &str = "collapsed_lists.";
 
 /// The key each workspace's tab strip is filed under, the same shape as
 /// [`COLLAPSED_PREFIX`] and for the same reason.
@@ -1908,6 +1936,8 @@ impl Settings {
         }
         self.sessions.retain(|(id, _, _)| remaining.contains(id));
         self.collapsed.retain(|(id, _)| remaining.contains(id));
+        self.collapsed_lists
+            .retain(|(id, _)| remaining.contains(id));
         self.sidebar_w.retain(|(id, _)| remaining.contains(id));
         self.opened.retain(|(id, _)| remaining.contains(id));
         self.doc_view_prefs.retain(|(id, _)| remaining.contains(id));
@@ -1969,6 +1999,32 @@ impl Settings {
         match self.collapsed.iter_mut().find(|(id, _)| *id == workspace) {
             Some(slot) => slot.1 = nodes,
             None => self.collapsed.push((workspace, nodes)),
+        }
+    }
+
+    /// The task lists shut in `workspace`'s rail.
+    pub fn collapsed_lists_in(&self, workspace: WorkspaceId) -> &[koru_core::ids::ListId] {
+        self.collapsed_lists
+            .iter()
+            .find(|(id, _)| *id == workspace)
+            .map_or(&[], |(_, lists)| lists.as_slice())
+    }
+
+    /// Record which task lists are shut in `workspace`, leaving every other
+    /// workspace's set alone — [`set_collapsed_in`](Self::set_collapsed_in)'s
+    /// rule.
+    pub fn set_collapsed_lists_in(
+        &mut self,
+        workspace: WorkspaceId,
+        lists: Vec<koru_core::ids::ListId>,
+    ) {
+        match self
+            .collapsed_lists
+            .iter_mut()
+            .find(|(id, _)| *id == workspace)
+        {
+            Some(slot) => slot.1 = lists,
+            None => self.collapsed_lists.push((workspace, lists)),
         }
     }
 
@@ -2079,6 +2135,7 @@ impl Settings {
     /// grain above it.
     pub fn prune_collapsed(&mut self, live: &[WorkspaceId]) {
         self.collapsed.retain(|(id, _)| live.contains(id));
+        self.collapsed_lists.retain(|(id, _)| live.contains(id));
         // Every per-workspace list is pruned here, not just the collapsed one —
         // otherwise each grows a row for every workspace this profile has ever
         // had. **An archived workspace counts as live**, or archiving would
@@ -2138,6 +2195,14 @@ impl Settings {
 
     /// Record the pane's width in `workspace`, leaving every other alone — the
     /// same rule `set_collapsed_in` exists for.
+    /// The explore pane's width: the shared one, or — until somebody has
+    /// dragged it under this build — the width `workspace` had before widths
+    /// were shared.
+    pub fn sidebar_width_for(&self, workspace: Option<WorkspaceId>) -> Option<f32> {
+        self.sidebar_width
+            .or_else(|| workspace.and_then(|id| self.sidebar_w_in(id)))
+    }
+
     pub fn set_sidebar_w_in(&mut self, workspace: WorkspaceId, w: f32) {
         match self.sidebar_w.iter_mut().find(|(id, _)| *id == workspace) {
             Some(slot) => slot.1 = w,
@@ -2354,6 +2419,15 @@ impl Settings {
                 // whose key does not parse is dropped rather than folded into
                 // somebody else's set: the ids in it are meaningless anywhere
                 // but the workspace they came from.
+                k if k.starts_with(COLLAPSED_LISTS_PREFIX) => {
+                    if let Some(id) = WorkspaceId::parse(&k[COLLAPSED_LISTS_PREFIX.len()..]) {
+                        let ids: Vec<koru_core::ids::ListId> = value
+                            .split(',')
+                            .filter_map(|e| koru_core::ids::ListId::parse(e.trim()))
+                            .collect();
+                        s.collapsed_lists.push((id, ids));
+                    }
+                }
                 k if k.starts_with(COLLAPSED_PREFIX) => {
                     if let Some(id) = WorkspaceId::parse(&k[COLLAPSED_PREFIX.len()..]) {
                         let ids: Vec<NodeId> = value
@@ -2382,6 +2456,12 @@ impl Settings {
                     {
                         s.opened.push((id, t));
                     }
+                }
+                "sidebar_width" => {
+                    s.sidebar_width = value
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|w| SIDEBAR_W_RANGE.contains(w));
                 }
                 k if k.starts_with(SIDEBAR_W_PREFIX) => {
                     if let Some(id) = WorkspaceId::parse(&k[SIDEBAR_W_PREFIX.len()..])
@@ -2641,6 +2721,18 @@ impl Settings {
                 ids.join(",")
             ));
         }
+        for (workspace, lists) in &self.collapsed_lists {
+            if lists.is_empty() {
+                continue;
+            }
+            let ids: Vec<String> = lists.iter().map(|id| id.to_storage()).collect();
+            out.push_str(&format!(
+                "{COLLAPSED_LISTS_PREFIX}{}={}
+",
+                workspace.to_storage(),
+                ids.join(",")
+            ));
+        }
         if self.show_archived {
             out.push_str(
                 "show_archived=true
@@ -2655,7 +2747,15 @@ impl Settings {
                 workspace.to_storage()
             ));
         }
-        // The pane's width, one line per workspace that has moved it.
+        if let Some(w) = self.sidebar_width {
+            out.push_str(&format!(
+                "sidebar_width={}
+",
+                w.round()
+            ));
+        }
+        // The per-workspace widths of an earlier build, kept as they were so
+        // an older build opening this profile still finds its own.
         for (workspace, w) in &self.sidebar_w {
             out.push_str(&format!(
                 "{SIDEBAR_W_PREFIX}{}={}

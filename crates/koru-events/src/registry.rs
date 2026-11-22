@@ -446,6 +446,18 @@ pub const AREAS: &[&str] = &[
     // service, and the distinct id its batches carry is a keyed hash of an
     // app connection, never an installation's.
     "mcp",
+    // What the Store's read model now answers, when that moved. Its own area
+    // rather than a row under `task`: ADR-273 holds `task` to the twelve
+    // facts a command on this device states, and these are a different kind
+    // of thing — derived as the read model is written, whichever device or
+    // window made the change, and content-free. `due` and `entity` are older
+    // wakes of the same kind, named before there was a second one to group.
+    "projection",
+    // Reading the words out of pictures and PDFs (OCR TECHNICAL §10): the
+    // reader's download installed and removed. Its own area rather than a
+    // corner of `search`, whose one event is deliberately `search.opened`;
+    // the emitter is the Store's reader installer, not a search surface.
+    "reading",
 ];
 
 /// Which speech runtime ran — `voice.dictation.completed`'s and
@@ -623,6 +635,25 @@ pub const REGISTRY: &[EventSpec] = &[
             doc: "The removed node id, meaningful with the document subject.",
         }],
         doc: "A previously projected entity disappeared from a current document projection. This observed transition is a cleanup wake, never permission to infer deletion from a cold projection.",
+    },
+    EventSpec {
+        name: "projection.tasks.changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "A workspace's tasks changed, as the Store's task read model now \
+              answers them: a task appeared or went, was completed or reopened, \
+              dated, prioritised, renamed, reordered in its list or moved to \
+              another. Derived from the read model as it is written, so it \
+              fires for a change made on this device and for one that arrived \
+              from a peer or the Cloud alike; subject = the workspace. \
+              COALESCED: at most one per workspace per projector tick, however \
+              many documents changed in it. Content-free — no task, document \
+              or node is named — so a consumer asks `POST /v1/tasks/query` \
+              again. A trigger, never truth: a consumer that missed one is \
+              only as stale as its own next read. The `task.*` rows say \
+              what a command on this device did; this says the answer moved.",
     },
     EventSpec {
         name: "document.created",
@@ -2020,6 +2051,20 @@ pub const REGISTRY: &[EventSpec] = &[
               (`PUT /v1/profiles/{id}/workspace-order`). There is no workspace \
               subject because every workspace the profile owns may have moved.",
     },
+    EventSpec {
+        name: "workspace.catalog.trashed_in_account_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The list of workspaces that are in this device's trash while \
+              the signed-in account still holds them live changed \
+              (`GET /v1/workspaces/trashed-in-account`): one was first seen \
+              after a sync pass, is no longer listed, or was acknowledged. \
+              There is no subject because the list is replaced as a set; a \
+              surface reads it back. A restore out of it is the ordinary \
+              `workspace.catalog.restored`.",
+    },
     // ---------------------------------------- the settings authority's facts
     //
     // **One producer, and it is the only writer of the settings files.** The
@@ -2038,6 +2083,14 @@ pub const REGISTRY: &[EventSpec] = &[
     // about one section can filter by name — the `workspace.*` precedent — and
     // the attr carries the same token so a handler that wants all three can
     // read it uniformly.
+    EventSpec {
+        name: "settings.mini_app_pins_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The device-local mini-app pin authority committed an ordered-reference mutation. No content or identity is carried; visible clients invalidate and refetch their authorized current scope.",
+    },
     EventSpec {
         name: "settings.global_changed",
         version: 1,
@@ -2496,6 +2549,37 @@ pub const REGISTRY: &[EventSpec] = &[
               third-party entries, so a closed vocabulary for it does not \
               exist and inventing one would freeze a list that lives on a \
               server.",
+    },
+    EventSpec {
+        name: "reading.reader.installed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[bucket_attr(
+            "size_mb_bucket",
+            "The installed download's size in megabytes, bucketed — never \
+             a path, and never the model cache's directory.",
+        )],
+        doc: "The reader that finds words in pictures and scanned PDFs \
+              finished downloading, verifying and installing on this \
+              computer, after a person agreed (OCR TECHNICAL §10). Emitted \
+              once per successful install by the Store's reader installer, \
+              where it logs the same news. A failed or stopped download says \
+              nothing here. No model id (an open remote vocabulary, as \
+              voice.model.installed explains) and nothing about any file. \
+              Local only: exporting it is a decision for the ADR-166 review.",
+    },
+    EventSpec {
+        name: "reading.reader.removed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The reader's download was removed from this computer — Turn \
+              off or Remove in Settings. Readings already made stay: they \
+              are workspace documents. Emitted once per removal by the \
+              Store's reader installer, where it logs the same news. Local \
+              only, like reading.reader.installed.",
     },
     EventSpec {
         name: "account.operation.completed",

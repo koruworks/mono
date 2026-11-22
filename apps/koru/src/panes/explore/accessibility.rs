@@ -151,6 +151,7 @@ impl ExploreView {
             children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
         } else if self.showing_tasks() {
             children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
+            children.push(self.rail.lists_semantics(cx, self.rows_top(cx.area)));
         } else if self.showing_chats() {
             // The Chats view replaces the tree, on the rail's model: a list
             // of rows that are chats, each with Open and Delete.
@@ -177,8 +178,15 @@ impl ExploreView {
     /// reader asks for a rectangle when it wants one rather than being told;
     /// rebuilding the tree for it is the per-frame cost §7.3 forbids.
     pub(crate) fn revise(&self, rev: &mut Revision) {
+        rev.bool(self.pins_menu_needed);
         let rail = self.rail_model();
-        for item in rail.workspaces.iter().chain(&rail.views).chain(&rail.foot) {
+        for item in rail
+            .workspaces
+            .iter()
+            .chain(&rail.views)
+            .chain(&rail.pins)
+            .chain(&rail.foot)
+        {
             let key = crate::panes::sidebar::rail_elements::key(item.hit);
             match key.object {
                 koru_draw::el::Object::Model(id) => {
@@ -455,7 +463,7 @@ impl ExploreView {
                 // everywhere would leave a client unable to open *any* row.
                 // The one row that does carry it is the one already open,
                 // which is the one nothing needs to open.
-                if self.selected == Some(row.node) {
+                if row.kind != koru_core::Kind::File && self.selected == Some(row.node) {
                     node = node.with_selected(true);
                 }
                 if row.has_children {
@@ -569,6 +577,10 @@ impl ExploreView {
             ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             ExploreChromeFocus::RailOverflow => cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
             ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
+            ExploreChromeFocus::Pin(id) => {
+                cx.model(uuid::Uuid::from_u128(id.0), ControlPart::new("rail-pin"))
+            }
+            ExploreChromeFocus::PinOverflow => cx.surface("rail", ControlPart::new("pin-overflow")),
         })
     }
 
@@ -649,6 +661,20 @@ impl ExploreView {
                 }
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
+            PopoverRow::TrashedInAccount(i) | PopoverRow::TrashedRestoreTo(i) => {
+                match self.trashed_in_account_rows().get(i) {
+                    Some(w) => {
+                        let part = match row {
+                            PopoverRow::TrashedInAccount(_) => {
+                                super::workspace_menu_elements::TRASHED
+                            }
+                            _ => super::workspace_menu_elements::TRASHED_RESTORE,
+                        };
+                        cx.model(w.id.as_uuid(), ControlPart::new(part))
+                    }
+                    None => cx.surface(POPOVER, parts::POPOVER),
+                }
+            }
             PopoverRow::Workspace(i) => match self.workspaces.get(i) {
                 Some(w) => cx.model(w.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
@@ -700,6 +726,20 @@ impl ExploreView {
                 .unwrap_or_default(),
             PopoverRow::UnassignedMove(_) => t(lang, Key::WorkspacesMoveTo).to_string(),
             PopoverRow::UnassignedRestore(_) => t(lang, Key::WorkspacesRestoreProfile).to_string(),
+            PopoverRow::TrashedInAccount(i) => self
+                .trashed_in_account_rows()
+                .get(i)
+                .map(|w| w.name.clone())
+                .unwrap_or_default(),
+            PopoverRow::TrashedRestoreTo(i) => {
+                let profile = self
+                    .trashed_in_account_rows()
+                    .get(i)
+                    .zip(self.workspace_controller.as_ref())
+                    .map(|(w, controller)| controller.borrow().profile_name(w.profile))
+                    .unwrap_or_default();
+                koru_i18n::fill(t(lang, Key::WorkspacesRestoreTo), &[&profile])
+            }
             PopoverRow::ProfilesHeading => t(lang, Key::ProfileManageProfiles).to_string(),
             PopoverRow::ProfileAction(action) => t(lang, action.words()).to_string(),
             PopoverRow::Help(action) => self.help.action_label(action),
@@ -792,6 +832,15 @@ impl ExploreView {
                     target.object == object_of(w.id.as_uuid()) && target.part.name() == part
                 })
             }
+            PopoverRow::TrashedInAccount(i) | PopoverRow::TrashedRestoreTo(i) => {
+                let part = match row {
+                    PopoverRow::TrashedInAccount(_) => super::workspace_menu_elements::TRASHED,
+                    _ => super::workspace_menu_elements::TRASHED_RESTORE,
+                };
+                self.trashed_in_account_rows().get(i).is_some_and(|w| {
+                    target.object == object_of(w.id.as_uuid()) && target.part.name() == part
+                })
+            }
             PopoverRow::Workspace(i) => self
                 .workspaces
                 .get(i)
@@ -827,6 +876,16 @@ impl ExploreView {
         if action != Action::Click {
             return None;
         }
+        if target.part.name() == "rail-pin"
+            && let koru_workspace_host::accessibility::ObjectKey::Model(id) = target.object
+        {
+            let id = koru_settings::pins::PinId(id.as_u128());
+            return self
+                .mini_app_pins
+                .iter()
+                .any(|p| p.id == id)
+                .then_some(Outcome::OpenMiniAppPin(id));
+        }
         if target.part.name() == "rail"
             && let koru_workspace_host::accessibility::ObjectKey::Model(id) = target.object
         {
@@ -847,6 +906,7 @@ impl ExploreView {
             _ => return None,
         };
         match surface {
+            "rail" if target.part.name() == "pin-overflow" => Some(Outcome::OpenMiniAppPins),
             "rail" if target.part.name() == "waiting-workspace" => {
                 self.toggle_workspace_menu();
                 Some(Outcome::Consumed)
@@ -883,10 +943,7 @@ impl ExploreView {
                     self.toggle_profile_popover();
                     Some(Outcome::Consumed)
                 }
-                p if p == parts::ACTIONS => {
-                    self.toggle_popover(PopoverKind::LibraryActions);
-                    Some(Outcome::Consumed)
-                }
+                p if p == parts::ACTIONS => Some(self.open_heading_actions(area)),
                 p if p == parts::TRASH => Some(Outcome::OpenTrash),
                 p if p == parts::EMPTY_ACTION => Some(self.empty_state().2),
                 _ => None,

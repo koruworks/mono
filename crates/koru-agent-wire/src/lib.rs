@@ -53,6 +53,17 @@
 //! arrival order is wrong the first time somebody presses the hotkey during a
 //! workspace switch.
 
+mod cloud_document;
+mod cloud_inventory;
+pub use cloud_document::{
+    CloudDocumentInspectionPayload, CloudDocumentSelectionPayload, CloudInspectionFailure,
+};
+mod cloud_plan;
+pub use cloud_inventory::{
+    CloudInventoryFailure, CloudInventoryPayload, MAX_CLOUD_INVENTORY_BYTES,
+};
+pub use cloud_plan::{CloudPlanPayload, MAX_CLOUD_PLAN_BYTES};
+
 use serde::{Deserialize, Serialize};
 
 /// What these messages mean. Bump when a shape changes in a way an older peer
@@ -234,12 +245,17 @@ use serde::{Deserialize, Serialize};
 /// this device's settings, blocked by a ceiling mismatch, or held by the
 /// peer for privacy — read from the daemon's receipts and admissions. Ids
 /// and states only; the window words it.
-/// 47 lets `AccountCommand::CreateProfile` carry no owner name; the agent
-/// then does not update the account's display name (welcome step 1, Q-G: a
-/// Profile created from Manage never renames the account). A 46 agent cannot
-/// read a `CreateProfile` without `owner_display_name`; the handshake refuses
-/// it.
-pub const PROTOCOL_VERSION: u32 = 47;
+/// 47 adds the account-owned, bounded Cloud plan read and monotonic request duration.
+/// 48 adds bounded retained Workspace/document inventory reads with exact selectors.
+/// 49 adds exact-scoped detached Cloud inspection and explicit attachment removal.
+/// 50 adds [`Target::kind`] and [`Target::list`], so a search result can open a
+/// task or a task list in Tasks. A 49 shell would read a task target, by its
+/// missing kind, as a document or a workspace; the handshake refuses it.
+/// 51 lets `AccountCommand::CreateProfile` carry no owner name (welcome step 1,
+/// Q-G: a Profile created from Manage never renames the account) and adds
+/// browser email sign-in, Cloud access / checkout handoff, and subscription
+/// kind labels. A 50 agent cannot read those commands; the handshake refuses it.
+pub const PROTOCOL_VERSION: u32 = 51;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -1289,6 +1305,33 @@ pub enum AccountCommand {
         plan: String,
         locale: String,
     },
+    InspectCloudPlan {
+        request_id: u64,
+    },
+    InspectCloudUsageWorkspaces {
+        request_id: u64,
+        #[serde(default, deserialize_with = "cloud_inventory::deserialize_cursor")]
+        cursor: Option<String>,
+    },
+    InspectCloudUsageDocuments {
+        request_id: u64,
+        #[serde(deserialize_with = "cloud_inventory::deserialize_id")]
+        workspace_id: String,
+        #[serde(deserialize_with = "cloud_inventory::deserialize_id")]
+        incarnation_id: String,
+        #[serde(default, deserialize_with = "cloud_inventory::deserialize_cursor")]
+        cursor: Option<String>,
+    },
+    InspectCloudDocument {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+    },
+    RemoveCloudFile {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+        #[serde(deserialize_with = "cloud_inventory::deserialize_id")]
+        node_id: String,
+    },
     /// Turn Koru Cloud on or off for every Workspace this device holds for
     /// one Profile of the current account, and remember the choice for
     /// Workspaces created later. Answered by `CloudSync` for the same id.
@@ -1396,6 +1439,13 @@ impl std::fmt::Debug for AccountCommand {
             Self::RetryEnrollment { .. } => "AccountCommand::RetryEnrollment(<redacted>)",
             Self::CancelEnrollment => "AccountCommand::CancelEnrollment",
             Self::InspectAccountSession => "AccountCommand::InspectAccountSession",
+            Self::InspectCloudPlan { .. } => "AccountCommand::InspectCloudPlan",
+            Self::InspectCloudUsageWorkspaces { .. } => {
+                "AccountCommand::InspectCloudUsageWorkspaces"
+            }
+            Self::InspectCloudUsageDocuments { .. } => "AccountCommand::InspectCloudUsageDocuments",
+            Self::InspectCloudDocument { .. } => "AccountCommand::InspectCloudDocument",
+            Self::RemoveCloudFile { .. } => "AccountCommand::RemoveCloudFile",
             Self::InspectCloudSubscription { .. } => "AccountCommand::InspectCloudSubscription",
             Self::InspectCloudAccess { .. } => "AccountCommand::InspectCloudAccess",
             Self::StartCheckout { .. } => "AccountCommand::StartCheckout(<redacted>)",
@@ -1781,10 +1831,45 @@ pub enum CloudSubscriptionKind {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AccountOperationResult {
+    /// Canonical approved HTTP DTO; None means failed read, never zero usage.
+    CloudPlan {
+        request_id: u64,
+        payload: Option<CloudPlanPayload>,
+        request_elapsed_millis: u64,
+    },
+    CloudUsageWorkspaces {
+        request_id: u64,
+        payload: Option<CloudInventoryPayload>,
+        failure: Option<CloudInventoryFailure>,
+    },
+    CloudUsageDocuments {
+        request_id: u64,
+        workspace_id: String,
+        incarnation_id: String,
+        payload: Option<CloudInventoryPayload>,
+        failure: Option<CloudInventoryFailure>,
+    },
+    CloudDocumentInspection {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+        payload: Option<CloudDocumentInspectionPayload>,
+        failure: Option<CloudInspectionFailure>,
+    },
+    CloudFileRemoval {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+        node_id: String,
+        removed: bool,
+        failure: Option<CloudInspectionFailure>,
+    },
     /// Card-only decision. No Stripe identifier, email, credential or URL.
     CloudSubscription {
         request_id: u64,
         current: Option<bool>,
+        /// Current Cloud entitlement, independent of paid purchase history.
+        /// Older Agents omit this; clients then retain the legacy decision.
+        #[serde(default)]
+        access: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         subscription_kind: Option<CloudSubscriptionKind>,
     },
@@ -1875,6 +1960,11 @@ pub enum AccountOperationResult {
 impl std::fmt::Debug for AccountOperationResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match self {
+            Self::CloudPlan { .. } => "CloudPlan(<redacted>)",
+            Self::CloudUsageWorkspaces { .. } => "CloudUsageWorkspaces(<redacted>)",
+            Self::CloudUsageDocuments { .. } => "CloudUsageDocuments(<redacted>)",
+            Self::CloudDocumentInspection { .. } => "CloudDocumentInspection(<redacted>)",
+            Self::CloudFileRemoval { .. } => "CloudFileRemoval(<redacted>)",
             Self::CloudSubscription { .. } => "CloudSubscription(<redacted>)",
             Self::CloudAccess { .. } => "CloudAccess(<redacted>)",
             Self::CheckoutFinished { .. } => "CheckoutFinished(<redacted>)",
@@ -2023,6 +2113,17 @@ impl std::fmt::Debug for PairingView {
 /// Field-for-field `koru_search_ui::Target`, with the ids as strings — see the
 /// module note. The conversion is at the edges, and a host that cannot parse an
 /// id refuses the navigation rather than guessing.
+///
+/// What a target must carry depends on its [`kind`](Self::kind):
+///
+/// | `kind` | Must have | Means |
+/// | --- | --- | --- |
+/// | `document` | — | exactly what a target meant before 50: `document: None` is the workspace |
+/// | `task` | `document` and `node` | open Tasks on that task |
+/// | `task_list` | `list`, and no `document` | open Tasks on that list |
+///
+/// A target that breaks its row is refused by the receiver and **opens
+/// nothing** — never the workspace or the document instead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     pub profile: String,
@@ -2040,6 +2141,40 @@ pub struct Target {
     /// to find anything.
     pub match_text: Option<String>,
     pub new_window: bool,
+    // The serde defaults on the two fields below are for fixtures and logs
+    // written before 50, **not for mixed-version peers**: a 49 peer is refused
+    // at the handshake, so it is never sent a target whose kind it cannot read.
+    /// What to open. Absent reads as [`TargetKind::Document`].
+    #[serde(default)]
+    pub kind: TargetKind,
+    /// The task list's id in storage form; only a `task_list` carries one.
+    #[serde(default)]
+    pub list: Option<String>,
+}
+
+/// What a [`Target`] opens. See the table on [`Target`] for what each kind
+/// must carry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetKind {
+    /// A document, a node in one, or (with no document) the workspace.
+    #[default]
+    Document,
+    /// A task, opened in Tasks.
+    Task,
+    /// A task list, opened as its page in Tasks.
+    TaskList,
+}
+
+impl TargetKind {
+    /// The wire word, for a log line that names the kind and nothing else.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Task => "task",
+            Self::TaskList => "task_list",
+        }
+    }
 }
 
 // ------------------------------------------------------------------ updating

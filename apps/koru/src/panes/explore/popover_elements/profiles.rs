@@ -133,54 +133,57 @@ impl ExploreView {
             .name(Words::TerminalSwitchProfile)
             .pad_y(alias::PANEL_PAD)
             .child(
-                row("Profiles heading")
-                    .id(HEADING)
-                    .pad_x(alias::NAV_PAD)
-                    .min_h(metrics::ROW_MIN)
-                    .gap(Space::S2)
-                    .child(
-                        text(t(lang, Words::WorkspacesProfiles).to_uppercase())
-                            .id(Key::surface(SURFACE, "profiles-title"))
-                            .semantics(Role::Heading)
-                            .name(Words::WorkspacesProfiles)
-                            .role(roles::POPOVER_HEADING)
-                            .ink(Ink::Hint)
-                            .fill(),
-                    )
-                    .child(
-                        text(t(lang, Words::ProfileManageProfiles))
-                            .role(roles::HINT)
-                            .ink(Ink::Secondary)
-                            .id(MANAGE_PROFILES)
-                            .semantics(Role::MenuItem)
-                            .name(Words::ProfileManageProfiles)
-                            .hit()
-                            .focusable()
-                            .action(Action::Click)
-                            .action(Action::Focus)
-                            .pad_x(Space::S1)
-                            .radius(Radius::M)
-                            .states(&WORKSPACE_ROW_STATES),
-                    ),
+                col("Profile header spacing").pad_bottom(Space::S2).child(
+                    row("Profiles heading")
+                        .id(HEADING)
+                        .pad_x(alias::NAV_PAD)
+                        .min_h(metrics::ROW_MIN)
+                        .gap(Space::S2)
+                        .child(
+                            text(t(lang, Words::WorkspacesProfiles).to_uppercase())
+                                .id(Key::surface(SURFACE, "profiles-title"))
+                                .semantics(Role::Heading)
+                                .name(Words::WorkspacesProfiles)
+                                .role(roles::POPOVER_HEADING)
+                                .ink(Ink::Hint)
+                                .fill(),
+                        )
+                        .child(
+                            row("Manage profiles")
+                                .w(metrics::ROW_MIN)
+                                .min_h(metrics::ROW_MIN)
+                                .id(MANAGE_PROFILES)
+                                .semantics(Role::MenuItem)
+                                .name(Words::ProfileManageProfiles)
+                                .hit()
+                                .focusable()
+                                .action(Action::Click)
+                                .action(Action::Focus)
+                                .pad_x(Space::S1)
+                                .radius(Radius::M)
+                                .states(&WORKSPACE_ROW_STATES)
+                                .child(
+                                    icon(icons::FADERS, IconSize::L)
+                                        .decorative()
+                                        .ink(Ink::Secondary),
+                                ),
+                        ),
+                ),
             )
             .child(
-                scroll_y(LIST).fill().offset(scroll).children(
-                    self.rows_for(PopoverKind::Profiles)
-                        .iter()
-                        .filter_map(|row| match row {
+                scroll_y(LIST)
+                    .fill()
+                    .gap(Space::S1)
+                    .offset(scroll)
+                    .children(self.rows_for(PopoverKind::Profiles).iter().filter_map(
+                        |row| match row {
                             PopoverRow::Profile(i) => self.profiles.get(*i).map(|profile| {
                                 let current = self.current_profile == Some(profile.id);
                                 self.profile_row(profile, current, avatar.filter(|_| current))
                             }),
                             _ => None,
-                        }),
-                ),
-            )
-            .child(
-                col("Profile menu actions")
-                    .child(self.profile_menu_action(MenuAction::New))
-                    .child(super::super::workspace_menu_elements::rule())
-                    .child(self.profile_menu_action(MenuAction::Sync)),
+                        },
+                    )),
             )
     }
 
@@ -207,7 +210,7 @@ impl ExploreView {
                     .child(
                         row("Profile primary action")
                             .fill()
-                            .gap(Space::S2)
+                            .pad_y(Space::S0_5)
                             .id(primary)
                             .focusable()
                             .action(Action::Click)
@@ -216,32 +219,38 @@ impl ExploreView {
                             .name_text(&profile.name)
                             .selected(current)
                             .child(
-                                leaf(
-                                    "Profile tile",
-                                    ProfileTileLeaf {
-                                        icon: profile.icon.clone(),
-                                        color: profile.color.clone(),
-                                        name: profile.name.clone(),
-                                        email: profile.email.clone(),
-                                        avatar: avatar.cloned(),
-                                    },
-                                )
-                                .decorative()
-                                .align_self(Align::Centre),
-                            )
-                            .child(
-                                text(label_fit(&profile.name))
-                                    .named(NAME)
-                                    .role(roles::ROW)
-                                    .ink(if current {
-                                        Ink::Primary
-                                    } else {
-                                        Ink::Secondary
-                                    })
-                                    .emphasis(current)
+                                row("Profile identity")
                                     .fill()
-                                    .truncate()
-                                    .ink_centred(),
+                                    .min_h(metrics::ROW_MIN)
+                                    .gap(Space::S2)
+                                    .child(
+                                        leaf(
+                                            "Profile tile",
+                                            ProfileTileLeaf {
+                                                icon: profile.icon.clone(),
+                                                color: profile.color.clone(),
+                                                name: profile.name.clone(),
+                                                email: profile.email.clone(),
+                                                avatar: avatar.cloned(),
+                                            },
+                                        )
+                                        .decorative()
+                                        .align_self(Align::Centre),
+                                    )
+                                    .child(
+                                        text(label_fit(&profile.name))
+                                            .named(NAME)
+                                            .role(roles::ROW)
+                                            .ink(if current {
+                                                Ink::Primary
+                                            } else {
+                                                Ink::Secondary
+                                            })
+                                            .emphasis(current)
+                                            .fill()
+                                            .truncate()
+                                            .ink_centred(),
+                                    ),
                             ),
                     )
                     .child(
@@ -258,57 +267,5 @@ impl ExploreView {
                             .name(Words::ManageProfile),
                     ),
             )
-    }
-
-    fn profile_menu_action(&self, action: MenuAction) -> El {
-        if action == MenuAction::Sync {
-            return row("Profile menu sync")
-                .min_h(metrics::ROW_MIN)
-                .pad_x(alias::NAV_PAD)
-                .gap(Space::S2)
-                .child(self.sync_channel_controls())
-                .child(
-                    row("Profile menu action")
-                        .id(action.key())
-                        .fill()
-                        .min_h(metrics::ROW_MIN)
-                        .hit()
-                        .focusable()
-                        .action(Action::Click)
-                        .action(Action::Focus)
-                        .semantics(Role::MenuItem)
-                        .name(action.words())
-                        .radius(Radius::M)
-                        .states(&WORKSPACE_ROW_STATES)
-                        .child(
-                            text(t(crate::format::lang(), action.words()))
-                                .role(roles::ROW)
-                                .fill(),
-                        ),
-                );
-        }
-        let mut item = row("Profile menu action")
-            .id(action.key())
-            .min_h(metrics::ROW_MIN)
-            .pad_x(alias::NAV_PAD)
-            .gap(Space::S2)
-            .hit()
-            .focusable()
-            .action(Action::Click)
-            .action(Action::Focus)
-            .semantics(Role::MenuItem)
-            .name(action.words())
-            .radius(Radius::M)
-            .states(&WORKSPACE_ROW_STATES);
-        item = item.child(
-            icon(icons::PLUS, IconSize::L)
-                .decorative()
-                .ink(Ink::Secondary),
-        );
-        item.child(
-            text(t(crate::format::lang(), action.words()))
-                .role(roles::ROW)
-                .fill(),
-        )
     }
 }

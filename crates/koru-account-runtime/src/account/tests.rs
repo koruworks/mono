@@ -2,6 +2,7 @@
 
 use super::*;
 mod cloud;
+mod cloud_document;
 mod cloud_sync;
 
 #[test]

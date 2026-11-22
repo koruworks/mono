@@ -91,6 +91,7 @@ pub(crate) fn install(
     rooms: Arc<koru_store_api::rooms::Rooms>,
     activity: Arc<Mutex<CloudActivity>>,
     blobs: BlobEngineSlot,
+    inspections: Arc<crate::cloud_inspection_host::InspectionHub>,
 ) {
     // One ledger for the whole gateway, minted here rather than inside a
     // session: a bound on consecutive refusals only means something if it
@@ -105,9 +106,18 @@ pub(crate) fn install(
         let deferrals = Arc::clone(&deferrals);
         let blobs = Arc::clone(&blobs);
         let budget = budget.clone();
+        let inspections = inspections.clone();
         tokio::spawn(async move {
             run_session(
-                session, host, store, rooms, activity, deferrals, blobs, budget,
+                session,
+                host,
+                store,
+                rooms,
+                activity,
+                deferrals,
+                blobs,
+                budget,
+                inspections,
             )
             .await;
         });
@@ -269,6 +279,7 @@ async fn run_session(
     deferrals: cloud_sync::DeferralLedger,
     blobs: BlobEngineSlot,
     budget: MemoryBudget,
+    inspections: Arc<crate::cloud_inspection_host::InspectionHub>,
 ) {
     let Some(principal) = session.principal.cloud().copied() else {
         session.reset(1);
@@ -330,6 +341,28 @@ async fn run_session(
         set_stage(&host, permit_id, CloudStage::Unavailable, Some(code));
         session.reset(1);
         return;
+    }
+    if let (Some(workspace), Some(incarnation), Some(blobs)) =
+        (blob_workspace, blob_incarnation, blobs.get())
+    {
+        let holds = deferrals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .admissions
+            .entry(workspace)
+            .or_default()
+            .clone();
+        let live = host.clone();
+        blobs.bind_admission(
+            &tokio::runtime::Handle::current(),
+            &permit,
+            holds,
+            Arc::new(move |_| {
+                lock(&live)
+                    .cloud_permit_live(permit_id, generation)
+                    .then_some(incarnation)
+            }),
+        );
     }
     set_stage(&host, permit_id, CloudStage::Reconciling, None);
 
@@ -571,13 +604,46 @@ async fn run_session(
             },
         },
     );
+    let inspection_host = host.clone();
+    let inspection_expiry = principal
+        .expires_at_seconds
+        .min(permit.expires_at_seconds)
+        .checked_mul(1000)
+        .and_then(|v| v.checked_sub(now_millis()))
+        .unwrap_or(0)
+        .max(0);
+    let inspection_deadline = Instant::now()
+        .checked_add(std::time::Duration::from_millis(inspection_expiry as u64))
+        .unwrap_or_else(Instant::now);
+    let _inspection_registration = inspections.register(
+        crate::cloud_inspection_host::Session {
+            control_session: principal.control_session_id,
+            account: permit.account_id,
+            account_generation: permit.account_generation,
+            scope,
+        },
+        &driver,
+        Arc::new(move || {
+            Instant::now() < inspection_deadline
+                && lock(&inspection_host)
+                    .installed_cloud_permit(&principal)
+                    .is_ok()
+        }),
+    );
     let outcome = tokio::select! {
         result = driver.join() => result,
         () = blob_work => unreachable!("file follower stays alive with the stream"),
     };
 
+    if let Some(registration) = &_inspection_registration {
+        registration.finish_delivery().await;
+    }
     if let Err(error) = outcome {
         let code = error.code();
+        if ended_with_its_permit(code, lock(&host).cloud_permit_live(permit_id, generation)) {
+            tracing::debug!(code, "cloud session: ended with its permit");
+            return;
+        }
         tracing::warn!(code, "cloud session: pass ended with a refusal");
         let touched = started_documents
             .lock()
@@ -623,18 +689,37 @@ fn report_pass(
     } else {
         CloudStage::Settled
     };
-    tracing::info!(
-        %dataset,
-        %permit_id,
-        settled = outcome.settled.len(),
-        uploaded = uploaded,
-        downloaded = downloaded,
-        deferred = outcome.deferred.len(),
-        refused = outcome.refused.len(),
-        unavailable = outcome.unavailable.len(),
-        remote_hint = outcome.remote_hint,
-        "cloud session: pass finished"
-    );
+    // News, not activity: a pass that moved something, was held back, or
+    // was told to look again is worth a line; one of the twenty-odd quiet
+    // passes a healthy device runs every minute is not (it was 6 MB of log a
+    // day on one device, 2026-11-17). Per-dataset presence is in the Store's
+    // Cloud activity (`…/cloud-sync`), not in this file.
+    let quiet = uploaded == 0
+        && downloaded == 0
+        && outcome.deferred.is_empty()
+        && outcome.refused.is_empty()
+        && outcome.unavailable.is_empty()
+        && !outcome.remote_hint;
+    if quiet {
+        tracing::debug!(
+            %dataset,
+            settled = outcome.settled.len(),
+            "cloud session: pass finished, nothing moved"
+        );
+    } else {
+        tracing::info!(
+            %dataset,
+            %permit_id,
+            settled = outcome.settled.len(),
+            uploaded = uploaded,
+            downloaded = downloaded,
+            deferred = outcome.deferred.len(),
+            refused = outcome.refused.len(),
+            unavailable = outcome.unavailable.len(),
+            remote_hint = outcome.remote_hint,
+            "cloud session: pass finished"
+        );
+    }
     let counts = PassCounts {
         settled: outcome.settled.len().try_into().unwrap_or(u32::MAX),
         uploaded: uploaded.try_into().unwrap_or(u32::MAX),
@@ -894,6 +979,24 @@ pub(crate) async fn seed_root_placement(
         })
         .await
         .map_err(|_| "store_worker_unavailable")?
+}
+
+/// **A session that outlived its permit ended as designed, and was refused
+/// by nobody.**
+///
+/// The Agent replaces every permit when credentials rotate — about every
+/// eight minutes — and on any fence. The old permit's session then asks
+/// `authorize` for its next unit, is answered `replica_fenced` because the
+/// permit is no longer the live one, and stops; the new permit's session
+/// carries the dataset on. That is not a refused pass. It was logged as a
+/// warning and recorded as one, which marked every workspace *held* and its
+/// documents refused until the next pass finished, once per rotation
+/// (found 2026-11-17: 22 warnings every eight minutes on a healthy device).
+///
+/// `replica_fenced` while the permit **is** still live is the other thing —
+/// the service's own answer — and stays a refusal.
+fn ended_with_its_permit(code: &str, permit_live: bool) -> bool {
+    code == Refusal::ReplicaFenced.code() && !permit_live
 }
 
 #[cfg(test)]

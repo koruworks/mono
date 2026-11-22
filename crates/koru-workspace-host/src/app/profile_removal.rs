@@ -301,6 +301,26 @@ const CLEANUP_BOUNDARIES: [koru_agent_wire::ProfileCleanupStage; 4] = [
     koru_agent_wire::ProfileCleanupStage::NavigationSettled,
 ];
 
+/// A Profile the catalog has already dropped is settled. The destroy grant
+/// is only for a Profile that is still here.
+///
+/// Checking the grant first left a finished peer deletion at
+/// `hosted_committed` whenever this window was not vouched. The journal
+/// never reached `navigation_settled`, so every launch announced the same
+/// deletion and told the person to quit and reopen.
+fn settled_without_destroy(
+    already_removed: bool,
+    may_destroy: bool,
+) -> Result<Option<CascadeReady>, CascadeFailure> {
+    if already_removed {
+        return Ok(Some(CascadeReady::AlreadyRemoved));
+    }
+    if !may_destroy {
+        return Err(CascadeFailure::NotPermitted);
+    }
+    Ok(None)
+}
+
 /// Move every active Workspace owned by one Profile to recoverable Trash.
 ///
 /// The error's detail is not kept: no caller showed it, and the code is what
@@ -311,11 +331,17 @@ fn cascade_profile_workspaces(
     kind: RemovalKind,
 ) -> Result<CascadeReady, CascadeFailure> {
     let client = cascade_client(root)?;
-    // Checked before Begin, so a permission refusal persists no mark.
-    if !client.catalog().may_destroy() {
-        return Err(CascadeFailure::NotPermitted);
-    }
     let store_profile = koru_store_core::ids::ProfileId::from_uuid(profile.as_uuid());
+    let already_removed = verify_removed(&client, store_profile).is_ok();
+    // The grant is not asked once the catalog has already dropped the Profile.
+    let may_destroy = if already_removed {
+        false
+    } else {
+        client.catalog().may_destroy()
+    };
+    if let Some(ready) = settled_without_destroy(already_removed, may_destroy)? {
+        return Ok(ready);
+    }
     let mark = match client.catalog().begin_profile_removal(store_profile, kind) {
         Ok(mark) => mark,
         Err(koru_api_client::WorkspaceError::Api(failure))

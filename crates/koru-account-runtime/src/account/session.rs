@@ -1017,6 +1017,11 @@ fn hosted_command(command: &AccountCommand) -> bool {
             | AccountCommand::InspectCloudSubscription { .. }
             | AccountCommand::InspectCloudAccess { .. }
             | AccountCommand::StartCheckout { .. }
+            | AccountCommand::InspectCloudPlan { .. }
+            | AccountCommand::InspectCloudUsageWorkspaces { .. }
+            | AccountCommand::InspectCloudUsageDocuments { .. }
+            | AccountCommand::InspectCloudDocument { .. }
+            | AccountCommand::RemoveCloudFile { .. }
             | AccountCommand::SetProfileCloudSync { .. }
             | AccountCommand::InspectCloudSync { .. }
             | AccountCommand::ListProfiles

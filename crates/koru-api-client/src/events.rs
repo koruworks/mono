@@ -239,7 +239,19 @@ impl EventsClient<'_> {
         &self,
         from: Option<Cursor>,
         filter: Filter,
+        handler: impl FnMut(StoredEvent) + Send + 'static,
+    ) -> Result<Subscription> {
+        self.on_with_reconnect(from, filter, handler, || {})
+    }
+
+    /// As `on`, with one content-free invalidation after a failed stream
+    /// reconnects. Quiet, healthy stream renewals do not invoke it.
+    pub fn on_with_reconnect(
+        &self,
+        from: Option<Cursor>,
+        filter: Filter,
         mut handler: impl FnMut(StoredEvent) + Send + 'static,
+        mut reconnected: impl FnMut() + Send + 'static,
     ) -> Result<Subscription> {
         let start = match from {
             Some(cursor) => cursor,
@@ -253,8 +265,29 @@ impl EventsClient<'_> {
             .spawn(move || {
                 let mut cursor = start;
                 let mut backoff = std::time::Duration::from_millis(250);
+                let mut interrupted = false;
                 while !thread_stop.load(Ordering::Relaxed) {
-                    match tail_once(&store, &filter, cursor, &thread_stop, &mut handler) {
+                    if interrupted
+                        && let Ok(status) =
+                            store.get_public_json::<EventsStatus>("/v1/events/status")
+                    {
+                        if status.last_seq < cursor {
+                            cursor = status.last_seq;
+                        }
+                    }
+                    match tail_once(
+                        &store,
+                        &filter,
+                        cursor,
+                        &thread_stop,
+                        &mut handler,
+                        &mut || {
+                            if interrupted {
+                                reconnected();
+                                interrupted = false;
+                            }
+                        },
+                    ) {
                         Ok(reached) => {
                             cursor = reached;
                             // A stream that ended at its deadline is routine;
@@ -263,6 +296,7 @@ impl EventsClient<'_> {
                         }
                         Err(_) if thread_stop.load(Ordering::Relaxed) => break,
                         Err(_) => {
+                            interrupted = true;
                             // The send_with_retry engine already renewed what
                             // it could; what is left is a store restarting.
                             std::thread::sleep(backoff);
@@ -428,6 +462,7 @@ fn tail_once(
     from: Cursor,
     stop: &AtomicBool,
     handler: &mut (impl FnMut(StoredEvent) + Send),
+    connected: &mut impl FnMut(),
 ) -> Result<Cursor> {
     // The deadline outlives the worker's 20 s keep-alive comfortably, so a
     // quiet-but-healthy stream is cut and resumed rather than misread as
@@ -437,6 +472,7 @@ fn tail_once(
         .query(from, 256)
         .replace("/v1/events?", "/v1/events/stream?");
     let body = store.get_streaming(&path, "text/event-stream", STREAM_DEADLINE)?;
+    connected();
     let mut reader = BufReader::new(body);
     let mut cursor = from;
     let mut line = String::new();

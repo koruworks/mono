@@ -5,7 +5,7 @@ use koru_core::{Heading, ListStyle, Mark};
 use koru_workspace_host::{RichListSpec, RichTextKind};
 
 #[test]
-fn github_release_links_match_published_tags_and_local_builds_use_the_list() {
+fn site_release_links_match_published_tags_and_local_builds_use_the_list() {
     use koru_channel::ReleaseChannel;
     for (channel, version, expected) in [
         (
@@ -29,7 +29,12 @@ fn github_release_links_match_published_tags_and_local_builds_use_the_list() {
             "https://github.com/koruworks/mono/releases",
         ),
     ] {
-        assert_eq!(release_url(version, channel), expected);
+        let link = release_link(version, channel);
+        let tag = expected.strip_prefix(&format!("{RELEASES_URL}/tag/"));
+        assert_eq!(
+            link,
+            app_link(if tag.is_some() { "release" } else { "releases" }, tag)
+        );
     }
 }
 
@@ -174,7 +179,12 @@ fn headlines_are_the_second_level_sections_in_order() {
 fn published_releases_put_the_nightly_first_then_stable_newest_first() {
     let body = r#"[
       {"tag_name":"v0.1.5","html_url":"https://github.com/koruworks/mono/releases/tag/v0.1.5","draft":false,"prerelease":false,"published_at":"2026-11-07T23:56:17Z"},
-      {"tag_name":"nightly","html_url":"https://github.com/koruworks/mono/releases/tag/nightly","draft":false,"prerelease":true,"published_at":"2026-10-25T21:30:32Z"},
+      {"tag_name":"nightly","html_url":"https://github.com/koruworks/mono/releases/tag/nightly","draft":false,"prerelease":true,"published_at":"2026-10-25T21:30:32Z","assets":[
+        {"state":"uploaded","created_at":"2026-11-13T02:30:00Z"},
+        {"state":"uploaded","created_at":"2026-11-12T23:30:00Z"},
+        {"state":"starter","created_at":"2026-11-14T02:30:00Z"},
+        {"state":"uploaded","created_at":null}
+      ]},
       {"tag_name":"v0.1.4","html_url":"https://github.com/koruworks/mono/releases/tag/v0.1.4","draft":false,"prerelease":false,"published_at":"2026-10-31T00:53:40Z"},
       {"tag_name":"v0.1.6","html_url":"https://github.com/koruworks/mono/releases/tag/v0.1.6","draft":true,"prerelease":false,"published_at":null},
       {"tag_name":"v0.2.0-rc1","html_url":"https://github.com/koruworks/mono/releases/tag/v0.2.0-rc1","draft":false,"prerelease":true,"published_at":"2026-11-08T00:00:00Z"},
@@ -184,8 +194,9 @@ fn published_releases_put_the_nightly_first_then_stable_newest_first() {
     let versions: Vec<_> = releases.iter().map(|r| r.version.as_deref()).collect();
     assert_eq!(versions, [None, Some("0.1.5"), Some("0.1.4")]);
     assert_eq!(
-        releases[0].published, None,
-        "the nightly's date is not its build's"
+        releases[0].published,
+        Some((2026, 11, 13)),
+        "use the newest completed upload, not the release object's original date"
     );
     assert_eq!(releases[1].published, Some((2026, 11, 7)));
     assert!(releases.iter().all(|r| r.url.starts_with(RELEASES_URL)));
@@ -193,6 +204,43 @@ fn published_releases_put_the_nightly_first_then_stable_newest_first() {
         parse_releases(r#"{"message":"API rate limit exceeded"}"#),
         None
     );
+}
+
+#[test]
+fn nightly_without_completed_assets_does_not_show_the_original_release_date() {
+    for assets in [
+        "[]",
+        r#"[{"state":"starter","created_at":"2026-11-13T02:30:00Z"}]"#,
+    ] {
+        let body = format!(
+            r#"[{{"tag_name":"nightly","html_url":"https://github.com/koruworks/mono/releases/tag/nightly","published_at":"2026-10-25T21:30:32Z","assets":{assets}}}]"#
+        );
+        assert_eq!(parse_releases(&body).unwrap()[0].published, None);
+    }
+}
+
+#[test]
+fn public_feed_restores_nightly_and_stable_rows_without_using_edit_dates_for_stable() {
+    let feed = r#"<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+      <entry><updated>2026-11-14T00:59:09Z</updated><link href="https://github.com/koruworks/mono/releases/tag/v0.1.4"/></entry>
+      <entry><updated>2026-11-14T00:59:09Z</updated><link href="https://github.com/koruworks/mono/releases/tag/nightly"/></entry>
+      <entry><link href="https://github.com/koruworks/mono/releases/tag/v0.1.5"/><content type="html">&lt;a href="https://example.com"&gt;notes&lt;/a&gt;</content></entry>
+      <entry><link href="https://example.com/releases/tag/v9.9.9"/></entry>
+      <entry><link href="https://github.com/koruworks/mono/releases/tag/v0.2.0-beta.1"/></entry>
+    </feed>"#;
+    let releases = parse_releases_feed(feed).unwrap();
+    assert_eq!(
+        releases
+            .iter()
+            .map(|r| r.version.as_deref())
+            .collect::<Vec<_>>(),
+        [None, Some("0.1.5"), Some("0.1.4")]
+    );
+    assert_eq!(releases[0].published, Some((2026, 11, 14)));
+    assert_eq!(releases[1].published, None);
+    assert_eq!(releases[2].published, None);
+    assert!(parse_releases_feed("<feed><entry>").is_none());
+    assert!(parse_releases_feed("<html>Rate limited</html>").is_none());
 }
 
 /// Four stable releases show the newest three; the rest are on the list.
@@ -219,5 +267,24 @@ fn only_the_three_newest_stable_releases_follow_the_nightly() {
         versions,
         ["0.1.10", "0.1.9", "0.1.2"],
         "by version, not by text"
+    );
+}
+
+#[test]
+fn help_site_links_have_only_build_dimensions_and_a_safely_encoded_tag() {
+    let raw = super::app_link("release", Some("v0.1.8"));
+    let link = url::Url::parse(&raw).unwrap();
+    assert_eq!(link.host_str(), Some("www.koru.do"));
+    assert_eq!(link.path(), "/go/release");
+    let pairs: std::collections::BTreeMap<_, _> = link.query_pairs().collect();
+    assert_eq!(pairs.len(), 4);
+    assert_eq!(pairs.get("tag").unwrap(), "v0.1.8");
+    assert!(pairs.contains_key("v") && pairs.contains_key("ch") && pairs.contains_key("os"));
+    assert!(
+        super::release_link("0.1.8", koru_channel::ReleaseChannel::Stable).contains("tag=v0.1.8")
+    );
+    assert!(
+        super::release_link("anything", koru_channel::ReleaseChannel::Nightly)
+            .contains("tag=nightly")
     );
 }

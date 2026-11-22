@@ -178,6 +178,12 @@ pub fn draw_document(
             let on_row = hover.and_then(Hover::row) == Some(i);
             let dragging = image_resize.is_some_and(|n| n == row.id);
             draw_image_row(scene, root, row, images, engine, vw, oy, selected, dragging);
+            if search_flash
+                .as_ref()
+                .is_some_and(|(node, _)| *node == row.id)
+            {
+                draw_image_flash(scene, root, row, vw, oy);
+            }
             if selected || on_row {
                 let grip_active = matches!(hover, Some(Hover::Grip(h)) if h == i);
                 if drag_grip {
@@ -583,6 +589,7 @@ pub fn draw_document(
         if focused
             && active
             && caret_on
+            && !row.ime_caret_hidden
             && selected_pill.is_none()
             && !row.selected
             && row.selection.is_collapsed()
@@ -808,7 +815,7 @@ pub(crate) fn reminder_flow_anchor(
 ) -> Option<koru_draw::geometry::Rect> {
     const GAP: f32 = koru_draw::chip::CHIP_GAP;
     const H: f32 = 24.0;
-    if row.height < H {
+    if row.height <= 0.0 {
         return None;
     }
     let (line_top, line_h, offset, advance) =
@@ -830,12 +837,14 @@ pub(crate) fn reminder_flow_anchor(
             chip.rect.x + chip.rect.w + GAP
         })
         .min(rowlayout::text_right(row, layout_w));
-    let y = y + line_top + (line_h - H) * 0.5;
+    // Small document text can be shorter than a pill. Keep its top inside
+    // the row; reserve_reminder_space extends the bottom for paint and hits.
+    let y = y + line_top + ((line_h - H) * 0.5).max(0.0);
     Some(koru_draw::geometry::Rect::new(x, y, 1.0, H))
 }
 
 /// Whether the caret sits in italic (run mark or armed pending italic).
-fn italic_at_caret(row: &Paragraph) -> bool {
+pub(crate) fn italic_at_caret(row: &Paragraph) -> bool {
     if let (Some(marks), _) = row.armed() {
         if marks.has(Mark::Italic) {
             return true;
@@ -929,6 +938,61 @@ pub fn root_scale(root: Affine) -> f64 {
     let [a, b, c, d, _, _] = root.as_coeffs();
     a.hypot(b).max(c.hypot(d))
 }
+
+/// **The landing cue on a picture a search result opened** (OCR EXPERIENCE
+/// §3: "flashes an outline on its frame for about a second, the way a matched
+/// sentence is briefly lit today").
+///
+/// The same flash as a matched sentence's — the same `SearchFlash`, the same
+/// deadline, the same `highlights[0]` color the sentence is lit in — drawn as
+/// an outline because a picture has no text to light. It sits just outside
+/// the frame, so it does not cover the selection border `draw_image_row`
+/// draws on the frame itself. Geometry is `image_display_box`'s, the one the
+/// picture and its hit-testing use.
+pub fn draw_image_flash(scene: &mut Scene, root: Affine, row: &Paragraph, vw: f32, oy: f32) {
+    let Some(img) = row.image.as_ref() else {
+        return;
+    };
+    let (x, dw, dh) = rowlayout::image_display_box(img, row.align, vw);
+    let outset = IMAGE_FLASH_OUTSET;
+    let width = theme::BORDER_W * 2.0;
+    let _inspection = koru_draw::inspect::scope(
+        "Search landing outline",
+        "part",
+        root,
+        rect(
+            x - outset,
+            oy - outset,
+            dw + outset * 2.0,
+            dh + outset * 2.0,
+        ),
+        |record| {
+            record.property(
+                "color",
+                "highlights[0]",
+                "theme::p().highlights[0].1, the matched sentence's flash",
+            );
+            record.property("width", width, "theme::BORDER_W × 2");
+            record.property("outset", outset, "IMAGE_FLASH_OUTSET");
+        },
+    );
+    stroke(
+        scene,
+        root,
+        theme::p().highlights[0].1,
+        width,
+        &rrect(
+            x - outset,
+            oy - outset,
+            dw + outset * 2.0,
+            dh + outset * 2.0,
+            6.0 + outset,
+        ),
+    );
+}
+
+/// How far outside a picture's frame its landing outline sits.
+const IMAGE_FLASH_OUTSET: f32 = 3.0;
 
 /// Paint an image row: the decoded picture scaled to its display size, or a
 /// muted placeholder when its bytes have not been decoded here yet — a remote
@@ -1797,8 +1861,8 @@ pub fn draw_scrollbar(scene: &mut Scene, root: Affine, body: &Body, view: &ViewS
 /// What every view of a list of paragraphs draws, in the order it has to happen.
 ///
 /// The order is the one thing no single layer can know, which is why it is here
-/// rather than repeated in each view: background, rows, drag feedback, the
-/// placeholder, then whatever chrome this view wears, then the status bar and
+/// rather than repeated in each view: background, placeholders, rows and their
+/// carets, drag feedback, then whatever chrome this view wears, then the status bar and
 /// the things that float over everything.
 ///
 /// `chrome` is a callback rather than a parameter because it draws *between* two
@@ -1923,6 +1987,46 @@ pub fn frame(
         stroke(scene, root, theme::p().panel_border, 1.0, &sheet);
     }
 
+    // Hints sit behind the rows' carets: painting the first placeholder glyph
+    // afterward can cover the person's chosen caret color and width. This also
+    // applies to an empty embedded composer, which uses this same renderer.
+    // Keep the row's family, step, weight and strut so the first keystroke does
+    // not change the text geometry advertised by the hint.
+    if let Some((x, y)) = body.placeholder_at() {
+        let row = &body.rows[body.first_body_row()];
+        let hint = view.engine.placeholder_layout(
+            f.placeholder,
+            row.type_step(),
+            row.font_choice().stack(),
+            row.weight(),
+        );
+        draw_layout(
+            scene,
+            content_root,
+            &hint,
+            x,
+            y - view.scroll,
+            Some(theme::p().placeholder),
+        );
+    }
+    if let Some((x, y)) = body.title_placeholder_at() {
+        let row = &body.rows[0];
+        let hint = view.engine.placeholder_layout(
+            f.title_placeholder,
+            row.type_step(),
+            row.font_choice().stack(),
+            row.weight(),
+        );
+        draw_layout(
+            scene,
+            content_root,
+            &hint,
+            x,
+            y - view.scroll,
+            Some(theme::p().placeholder),
+        );
+    }
+
     let entity_query = match &view.overlay {
         crate::components::Overlay::Entity(picker) => body
             .row(picker.trigger.node)
@@ -1984,45 +2088,6 @@ pub fn frame(
         view.reduced_motion,
     );
 
-    // Both hints are set exactly the way the row they stand in for is set —
-    // the row's family, its step on the ramp, its weight, and the same strut
-    // geometry body rows use — or an empty document would advertise itself in
-    // the chrome's font, visibly off from the text the first keystroke produces.
-    if let Some((x, y)) = body.placeholder_at() {
-        let y = y - view.scroll;
-        let row = &body.rows[body.first_body_row()];
-        let hint = view.engine.placeholder_layout(
-            f.placeholder,
-            row.type_step(),
-            row.font_choice().stack(),
-            row.weight(),
-        );
-        draw_layout(
-            scene,
-            content_root,
-            &hint,
-            x,
-            y,
-            Some(theme::p().placeholder),
-        );
-    }
-    if let Some((x, y)) = body.title_placeholder_at() {
-        let row = &body.rows[0];
-        let hint = view.engine.placeholder_layout(
-            f.title_placeholder,
-            row.type_step(),
-            row.font_choice().stack(),
-            row.weight(),
-        );
-        draw_layout(
-            scene,
-            content_root,
-            &hint,
-            x,
-            y - view.scroll,
-            Some(theme::p().placeholder),
-        );
-    }
     // A display title, where the title row would be: a document whose name
     // is resolved rather than written shows it in the title's own step and
     // face, in the text ink — a name, not a prompt — and scrolls with the
@@ -2726,6 +2791,48 @@ mod tests {
     use super::*;
 
     use koru_i18n::Lang;
+
+    /// **The landing outline frames the picture from just outside it**, in
+    /// the matched sentence's flash color, as one part in the F12 tree (OCR
+    /// Plan 2.5) — and a row that is not a picture draws none.
+    #[test]
+    fn a_flashed_picture_is_outlined_just_outside_its_frame() {
+        use koru_core::node::{BlobHash, Node};
+        let node =
+            Node::image(BlobHash("b3:aa".into()), "image/png", Some(400), Some(300)).unwrap();
+        let row = Paragraph::from_node(&node, 0, Vec::new(), HashMap::new(), None, 0);
+        let (x, w, h) = rowlayout::image_display_box(row.image.as_ref().unwrap(), row.align, 600.0);
+        let root = Affine::IDENTITY;
+        let capture = koru_draw::inspect::Frame::begin(1, root, rect(0.0, 0.0, 600.0, 400.0));
+        draw_image_flash(&mut Scene::new(), root, &row, 600.0, 20.0);
+        let text = Paragraph::from_node(
+            &Node::paragraph("words").unwrap(),
+            0,
+            Vec::new(),
+            HashMap::new(),
+            None,
+            0,
+        );
+        draw_image_flash(&mut Scene::new(), root, &text, 600.0, 20.0);
+        let records = capture.finish().records;
+        let outlines: Vec<_> = records
+            .iter()
+            .filter(|record| record.name == "Search landing outline")
+            .collect();
+        assert_eq!(outlines.len(), 1, "one outline, for the picture only");
+        let frame = outlines[0].rect();
+        assert!(frame.x0 < f64::from(x) && frame.y0 < 20.0, "{frame:?}");
+        assert!(
+            frame.x1 > f64::from(x + w) && frame.y1 > f64::from(20.0 + h),
+            "{frame:?}"
+        );
+        assert!(
+            outlines[0]
+                .properties
+                .iter()
+                .any(|p| p.name == "color" && p.value == "highlights[0]")
+        );
+    }
 
     /// **A long address is cut in the middle to 30 graphemes**, keeping its
     /// start and its end; a short one, or one exactly 30 long, is unchanged.

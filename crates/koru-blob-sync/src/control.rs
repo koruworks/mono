@@ -128,6 +128,36 @@ impl HttpControlPlane {
             .map_err(|_| TransferError::Local(Code::InvalidRequest))
     }
 
+    pub(crate) async fn account_read<T: serde::de::DeserializeOwned>(
+        &self,
+        access: &CloudAccessFacts,
+        path: &str,
+    ) -> Result<T, TransferError> {
+        let mut response = self
+            .client
+            .get(Self::url(access, path)?)
+            .bearer_auth(&access.bearer)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(|_| TransferError::Unreachable)?;
+        if !response.status().is_success() {
+            return Err(TransferError::Unreachable);
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| TransferError::Unreachable)?
+        {
+            if body.len().saturating_add(chunk.len()) > koru_account_wire::MAX_RESPONSE_BODY_BYTES {
+                return Err(TransferError::Unreachable);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&body).map_err(|_| TransferError::Unreachable)
+    }
+
     async fn send<T: serde::de::DeserializeOwned>(
         &self,
         request: reqwest::RequestBuilder,

@@ -109,16 +109,20 @@ mod agents;
 mod approval_modes;
 mod attachments;
 mod chat_status;
+mod mini_apps;
+pub use mini_apps::{MiniAppCreation, MiniAppRefinement};
 mod chats;
 mod composer;
 mod composer_band;
 mod composer_plus;
 mod composer_shell;
 mod context_window;
+mod diagrams;
 mod dictation;
 mod doc_links;
 mod effort;
 mod file_citations;
+mod footer;
 mod layout_cache;
 mod link_card;
 mod live_markdown;
@@ -298,6 +302,7 @@ impl Drop for OpenAiCredentialRequest {
 enum Focus {
     None,
     Composer,
+    DismissNotice,
     /// The send half of an agent chat's split button.
     SendArrow,
     /// The send button's independently enabled approval-mode menu target.
@@ -428,6 +433,7 @@ struct ResponseTextHit {
 /// A message sent and not yet accepted: everything the composer held —
 /// its text with its chips, quotes and undo, and its attachments.
 struct SentMessage {
+    mini_app_target: mini_apps::QueuedTarget,
     chat: ChatId,
     composer: composer::Draft,
     attachments: Vec<attachments::Draft>,
@@ -474,6 +480,7 @@ struct GrantKey {
 /// One AI conversation surface, usable as a window body or in Koru's context
 /// column. Constructing it in tests starts no service client.
 pub struct ChatSurface {
+    native_apps: mini_apps::NativeApps,
     viewport: Rect,
     engine: TextEngine,
     root: Option<PathBuf>,
@@ -735,6 +742,7 @@ pub struct ChatSurface {
     /// Pictures by where they come from: a reply's web address, or the
     /// resolved path of a picture a call read (D38).
     images: HashMap<String, ImageLoad>,
+    diagrams: diagrams::Diagrams,
     pending_model_prefetch: Option<AiProviderId>,
     retry_link: Option<Rect>,
     ollama_search_link: Option<Rect>,
@@ -744,6 +752,7 @@ pub struct ChatSurface {
     stored_document: Option<(String, DocumentId)>,
     /// *Open* where it was last drawn, for the press.
     stored_open_link: Option<Rect>,
+    footer: footer::Footer,
     staged_embedded_send: Option<SendTurnRequest>,
     durable_observations: u8,
     destinations: Vec<DestinationOption>,
@@ -989,6 +998,7 @@ impl ChatSurface {
         let system_prompt = TextArea::new(&mut engine, role::ui());
         let picker = model_picker::PickerState::new(&mut engine);
         Self {
+            native_apps: Default::default(),
             viewport: Rect::new(0.0, 0.0, 460.0, 680.0),
             engine,
             root,
@@ -1140,11 +1150,13 @@ impl ChatSurface {
             response_selection: None,
             response_menu: None,
             images: HashMap::new(),
+            diagrams: Default::default(),
             pending_model_prefetch: None,
             retry_link: None,
             ollama_search_link: None,
             stored_document: None,
             stored_open_link: None,
+            footer: Default::default(),
             staged_embedded_send: None,
             durable_observations: 0,
             destinations: Vec::new(),
@@ -1230,6 +1242,7 @@ impl ChatSurface {
     /// Start a brand-new chat, suppressing the active document context for this
     /// chat so it begins empty (workspace context still applies).
     pub fn start_new_chat(&mut self) -> bool {
+        self.native_apps.clear();
         self.suppress_next_document_context = true;
         self.fresh_chat_wanted = true;
         // Before the boot has answered there is no provider to create under:
@@ -1244,6 +1257,7 @@ impl ChatSurface {
     /// Open a durable chat link. Calling this before activation makes the
     /// first read target the link directly; calling it later queues a read.
     pub fn open_link(&mut self, chat: ChatId, block: Option<MessageBlockId>) -> bool {
+        self.native_apps.clear();
         self.fresh_chat_wanted = false;
         self.pending_link_chat = Some(chat);
         self.highlight = block.map(|block| (block, Instant::now()));
@@ -1303,6 +1317,7 @@ impl ChatSurface {
             return false;
         }
         self.context_workspace = workspace;
+        self.native_apps.clear();
         self.prioritize_context_workspace();
         true
     }
@@ -1867,6 +1882,9 @@ impl ChatSurface {
         if let Some(handled) = self.approval_modes_key(key, mods) {
             return handled;
         }
+        if let Some(handled) = self.footer_key(key, mods) {
+            return handled;
+        }
         if matches!(self.focus, Focus::SendArrow | Focus::ModeChevron) {
             if self.approval_mode_button().is_none() {
                 self.focus = Focus::Composer;
@@ -2076,7 +2094,14 @@ impl ChatSurface {
                 koru_i18n::Key::AiPressEscAgainToStop,
             ));
         }
-        self.status.as_deref()
+        self.status.as_deref().filter(|line| {
+            self.footer
+                .dismissed
+                .as_ref()
+                .is_none_or(|(chat, dismissed)| {
+                    *chat != self.current_chat_id() || dismissed != line
+                })
+        })
     }
 
     /// The document *Open* opens (D78): the one just stored, while the
@@ -2108,7 +2133,8 @@ impl ChatSurface {
         });
         let room = open
             .as_ref()
-            .map_or(0.0, |open| open.width() + STORED_OPEN_GAP);
+            .map_or(0.0, |open| open.width() + STORED_OPEN_GAP)
+            + self.footer_dismiss_room();
         let words = self
             .engine
             .simple_layout_wrapped(&line, role::meta(), (width - room).max(1.0));
@@ -2404,6 +2430,12 @@ impl ChatSurface {
             return self.open_stored_document();
         }
         if self
+            .footer_dismiss_rect()
+            .is_some_and(|rect| rect.contains(x, y))
+        {
+            return self.dismiss_footer();
+        }
+        if self
             .jump_button()
             .is_some_and(|button| button.contains(x, y))
         {
@@ -2602,6 +2634,9 @@ impl ChatSurface {
         }
         if let Some(url) = self.user_link_at(x, y) {
             return self.follow_link(&url);
+        }
+        if self.open_chat_diagram_at(x, y) {
+            return true;
         }
         if let Some(hit) = self.response_text_hit(x, y) {
             self.focus = Focus::None;
@@ -3210,6 +3245,12 @@ impl ChatSurface {
     }
 
     pub fn draw(&mut self, canvas: &mut Scene, root: Affine) {
+        self.draw_with_caret_phase(canvas, root, true);
+    }
+
+    /// Use the host window's document caret clock. The host owns wakeups and
+    /// resets the phase on input; drawing a blink never changes editor focus.
+    pub fn draw_with_caret_phase(&mut self, canvas: &mut Scene, root: Affine, caret_on: bool) {
         let p = theme::p();
         scene::fill(
             canvas,
@@ -3225,7 +3266,7 @@ impl ChatSurface {
         if self.showing_setup() {
             self.draw_setup(canvas, root);
         } else {
-            self.draw_chat(canvas, root);
+            self.draw_chat(canvas, root, caret_on);
         }
         if let Some(confirm) = &self.confirm {
             confirm.draw(
@@ -3274,6 +3315,12 @@ impl ChatSurface {
     /// Hand a command to the reader, and say truthfully whether it was
     /// queued; a full or gone queue says so on the status line.
     fn queue_command(&mut self, command: Command) -> bool {
+        if matches!(command, Command::Send(_) | Command::Retry(..)) {
+            self.footer.dismissed = None;
+        }
+        if matches!(command, Command::Cancel(_)) {
+            self.interrupt_mini_app();
+        }
         let Some(command) = self.apply_to_unmade_chat(command) else {
             return true;
         };
@@ -3559,6 +3606,9 @@ impl ChatSurface {
                     .transcript
                     .as_ref()
                     .is_none_or(|current| current.chat.id != transcript.chat.id);
+                if changed_chat {
+                    self.native_apps.clear();
+                }
                 if changed_chat || self.scroll_loaded_chat_to_bottom {
                     self.pending_question_anchor = None;
                     self.scroll_to_pending_question = false;
@@ -3909,6 +3959,9 @@ impl ChatSurface {
                     self.create_chat();
                 }
             }
+            Update::MiniAppAccepted(accepted, host) => {
+                self.accept_mini_app_attempt(&accepted, host)
+            }
             Update::Accepted(accepted) => {
                 if let Some(chat) = self.current_chat_id() {
                     self.context_window_usage.remove(&chat);
@@ -3932,6 +3985,9 @@ impl ChatSurface {
             Update::Event(event) => {
                 let terminal = event.event.is_terminal();
                 match &event.event {
+                    PublicAiEvent::MiniAppCreated { .. } | PublicAiEvent::MiniAppUpdated { .. } => {
+                        self.receive_mini_app(&event.event)
+                    }
                     PublicAiEvent::TextDelta { text, .. } => {
                         self.pulse = None;
                         self.draft.push_str(text);
@@ -3968,8 +4024,23 @@ impl ChatSurface {
                             self.sync_skill_list();
                         }
                     }
-                    PublicAiEvent::Notice { notice, .. } => {
+                    PublicAiEvent::Notice {
+                        notice, attempt_id, ..
+                    } if self.attempt == Some(*attempt_id)
+                        && (!matches!(
+                            notice,
+                            koru_ai_core::AttemptNotice::NativeToolsUnavailable
+                        ) || self.owns_mini_app_outcome(*attempt_id)) =>
+                    {
                         self.status = Some(match notice {
+                            koru_ai_core::AttemptNotice::NativeToolsUnavailable => {
+                                if self.mini_app_attempt_matches(event.event.attempt_id()) {
+                                    self.interrupt_mini_app();
+                                }
+                                self.native_apps.unavailable = true;
+                                koru_i18n::t(self.lang, koru_i18n::Key::MiniAppToolsUnavailable)
+                                    .into()
+                            }
                             koru_ai_core::AttemptNotice::FreshStart => {
                                 koru_i18n::t(self.lang, koru_i18n::Key::AiAgentStartedFresh)
                                     .to_owned()
@@ -4016,6 +4087,13 @@ impl ChatSurface {
                 }
                 if terminal {
                     if let Some(chat) = self.shown_chat_id() {
+                        if self.mini_app_attempt_matches(event.event.attempt_id()) {
+                            if matches!(event.event, PublicAiEvent::Completed { .. }) {
+                                self.complete_mini_app_attempt();
+                            } else {
+                                self.interrupt_mini_app();
+                            }
+                        }
                         let end = match &event.event {
                             PublicAiEvent::Completed { .. } => queue::ReplyEnd::Completed,
                             PublicAiEvent::Cancelled { .. } => queue::ReplyEnd::Stopped,
@@ -4041,6 +4119,9 @@ impl ChatSurface {
                 }
             }
             Update::RecoveryStarted(attempt) => {
+                if self.mini_app_attempt_matches(attempt) {
+                    self.interrupt_mini_app();
+                }
                 if self.attempt == Some(attempt) {
                     self.waiting = true;
                     self.status =
@@ -4087,6 +4168,7 @@ impl ChatSurface {
                         Some("Connection interrupted. Recovering this response...".into())
                     }
                 };
+                self.refresh_mini_app_status();
                 return changed;
             }
             Update::RecoveryFailed { attempt, message } => {
@@ -4403,6 +4485,7 @@ impl ChatSurface {
                 self.status = Some(message);
             }
         }
+        self.refresh_mini_app_status();
         true
     }
 
@@ -5150,6 +5233,7 @@ impl ChatSurface {
             markdown: markdown.clone(),
             documents: !chips.is_empty() || !message.skills.is_empty(),
             from_queue: self.sending_queued,
+            mini_app_target: self.queued_mini_app_target(),
             recalled_from,
         });
         self.forget_input_walk();
@@ -5168,7 +5252,10 @@ impl ChatSurface {
             attachments: history_attachments,
         });
         self.messages_dirty = true;
+        let mini_app_host = self.begin_mini_app_request(chat_id);
         let request = SendTurnRequest {
+            mini_app_refinement: self.mini_app_request_refinement(mini_app_host),
+            mini_app_host,
             operation_id: uuid::Uuid::new_v4(),
             chat_id,
             surface: SURFACE,
@@ -5207,6 +5294,10 @@ impl ChatSurface {
         // After the send, which clears the status line on success.
         if overflowed {
             self.too_many_documents();
+        }
+        if self.native_apps.enabled && !self.mini_app_available() {
+            self.status =
+                Some(koru_i18n::t(self.lang, koru_i18n::Key::MiniAppProviderUnsupported).into());
         }
         true
     }
@@ -5259,6 +5350,7 @@ impl ChatSurface {
             self.requeue_refused(
                 sent.chat,
                 queue::Queued {
+                    mini_app_target: sent.mini_app_target,
                     composer: sent.composer,
                     attachments: sent.attachments,
                     markdown: sent.markdown,
@@ -5936,7 +6028,7 @@ impl ChatSurface {
         let content = self.content_rect();
         let footer_h = self
             .footer_layouts(content.w)
-            .map_or(0.0, |(words, _)| words.height() + 5.0);
+            .map_or(0.0, |(words, _)| self.footer_height(words.height()) + 5.0);
         let top = self.chat_top();
         let rect = Rect::new(
             content.x,
@@ -6756,6 +6848,12 @@ impl ChatSurface {
             None
         } else {
             if self
+                .footer_dismiss_rect()
+                .is_some_and(|rect| rect.contains(x, y))
+            {
+                return Some((19, 0));
+            }
+            if self
                 .jump_button()
                 .is_some_and(|button| button.contains(x, y))
             {
@@ -6875,20 +6973,22 @@ impl ChatSurface {
             rect.y,
             rect.w,
             rect.h,
-            &scene::Panel::popover(18.0).border(if self.focus == Focus::Composer {
-                p.focus_ring
-            } else {
-                p.panel_border
-            }),
+            &scene::Panel::popover(18.0).shadow_alpha(0.25).border(
+                if self.focus == Focus::Composer {
+                    p.focus_ring
+                } else {
+                    p.panel_border
+                },
+            ),
         );
     }
 
-    fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine) {
+    fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine, caret_on: bool) {
         let focused = self.focus == Focus::Composer;
         let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
         self.composer.set_focused(focused);
         self.composer
-            .draw(canvas, root, focused, self.pointer, placeholder);
+            .draw(canvas, root, focused && caret_on, self.pointer, placeholder);
     }
 
     fn composer_placeholder_key(&self) -> koru_i18n::Key {
@@ -7154,8 +7254,7 @@ impl ChatSurface {
         );
     }
 
-    fn draw_chat(&mut self, canvas: &mut Scene, root: Affine) {
-        let p = theme::p();
+    fn draw_chat(&mut self, canvas: &mut Scene, root: Affine, caret_on: bool) {
         // **No title row.** A chat's name is its tab's in a workspace and
         // its row's in the Chats list; the surface itself starts with the
         // conversation.
@@ -7165,28 +7264,7 @@ impl ChatSurface {
         let composer = self.composer_rect();
         self.draw_greeting(canvas, root);
         self.draw_queue(canvas, root);
-        self.stored_open_link = None;
-        let content = self.content_rect();
-        if let Some((layout, open)) = self.footer_layouts(content.w) {
-            let y = composer.y - COMPOSER_GAP - self.queue_band_h() - layout.height();
-            scene::draw_layout(canvas, root, &layout, content.x, y, Some(p.text_dim));
-            // *Open* after a stored reply (D78): a link in the accent, as
-            // the chat's other links are, lit under the pointer.
-            if let Some((open, dx, dy)) = open {
-                let (x, top) = (content.x + dx, y + dy);
-                let hit = Rect::new(x - 3.0, top - 2.0, open.width() + 6.0, open.height() + 4.0);
-                if hit.contains(self.pointer.0, self.pointer.1) {
-                    scene::fill(
-                        canvas,
-                        root,
-                        p.hover_tint,
-                        &scene::rrect(hit.x, hit.y, hit.w, hit.h, 4.0),
-                    );
-                }
-                scene::draw_layout_first_line(canvas, root, &open, x, top, Some(p.accent));
-                self.stored_open_link = Some(hit);
-            }
-        }
+        self.draw_footer(canvas, root, composer);
         // The shell frame resolves the box, band, editor and toolbar from
         // current state. Its ancestry stays open while each mutable host part
         // paints, so F12 sees the editor and every control under KoruComposer.
@@ -7203,7 +7281,7 @@ impl ChatSurface {
                 match node.name {
                     "ComposerBox" => self.paint_composer_box(canvas, root, node.rect),
                     "ComposerContextBand" => self.draw_strip(canvas, root, node.rect),
-                    "ComposerText" => self.paint_composer_text(canvas, root),
+                    "ComposerText" => self.paint_composer_text(canvas, root, caret_on),
                     "ComposerToolbar" => {
                         recording = self.paint_composer_toolbar_content(
                             canvas,
@@ -7792,6 +7870,7 @@ impl ChatSurface {
                 tile.measure_chip(&mut self.engine, message.wrap_width);
             }
         }
+        self.diagrams.sync(&mut messages);
         self.message_layouts = messages;
         self.position_conversation_items();
         self.message_width = width;
@@ -8162,7 +8241,20 @@ impl ChatSurface {
                             .iter()
                             .position(|candidate| candidate.id == block.id)
                             .unwrap_or(0);
-                        if let Some(table) = &block.table {
+                        if let Some(diagram) =
+                            block.diagram.as_ref().filter(|d| d.prepared.is_some())
+                        {
+                            koru_draw::diagram::paint(
+                                diagram.prepared.as_ref().unwrap(),
+                                p,
+                                root * Affine::translate((
+                                    f64::from(card.x + PAD),
+                                    f64::from(block_y),
+                                )) * Affine::scale(diagram.scale(block.wrap_width)),
+                                diagram.scale(block.wrap_width),
+                                canvas,
+                            );
+                        } else if let Some(table) = &block.table {
                             koru_markdown::table::draw_grid(
                                 canvas,
                                 root,
@@ -8784,7 +8876,7 @@ impl ChatSurface {
                                 });
                             }
                         }
-                        if block.table.is_none() && rect.contains(x, y) {
+                        if block.table.is_none() && !block.diagram_drawn() && rect.contains(x, y) {
                             let selection =
                                 Selection::from_point(&block.layout, x - origin.0, y - origin.1);
                             let link = block
@@ -8932,7 +9024,8 @@ impl ChatSurface {
         match block {
             None if message.blocks.is_empty() => Some(&message.markdown),
             Some(index) => message.blocks.get(index).and_then(|block| {
-                (block.table.is_none() && block.image.is_none()).then_some(block.text.as_str())
+                (block.table.is_none() && block.image.is_none() && !block.diagram_drawn())
+                    .then_some(block.text.as_str())
             }),
             None => None,
         }
@@ -8952,7 +9045,9 @@ impl ChatSurface {
                         .blocks
                         .iter()
                         .enumerate()
-                        .filter(|(_, block)| block.table.is_none() && block.image.is_none())
+                        .filter(|(_, block)| {
+                            block.table.is_none() && block.image.is_none() && !block.diagram_drawn()
+                        })
                         .map(|(index, _)| (message_index, Some(index))),
                 );
             }
@@ -9327,10 +9422,16 @@ impl ChatSurface {
                 true
             }
             ResponseAction::Retry(message) => {
+                if !self.can_retry_mini_app_request(chat.id, message) {
+                    return true;
+                }
                 let (explicit_refs, _) = self.turn_refs(&[]);
+                let mini_app_host = self.retry_mini_app_request(chat.id, message);
                 self.send_command(Command::Retry(
                     chat.id,
                     RetryTurnRequest {
+                        mini_app_refinement: self.mini_app_request_refinement(mini_app_host),
+                        mini_app_host,
                         operation_id: uuid::Uuid::new_v4(),
                         message_id: message,
                         surface: SURFACE,
@@ -10162,12 +10263,26 @@ fn render_chat_block(
             links: Vec::new(),
             table: None,
             image: Some(image),
+            diagram: None,
         };
     }
     // A bare `https://…` in a reply is a link (D95): the chat follows
     // what it draws as one.
     let styles = koru_markdown::Styles::chat().with_bare_links();
-    match koru_markdown::render_block(engine, shown_markdown, max_w, &styles) {
+    let parsed = koru_import_markdown::parse(shown_markdown)
+        .into_iter()
+        .next();
+    let diagram = match &parsed {
+        Some(koru_import_markdown::Block::Text(block)) if matches!(&block.kind, koru_import_markdown::TextKind::Code { language: Some(language) } if language == koru_editor::diagram::LANGUAGE) => {
+            Some(diagrams::Diagram::new(&block.text))
+        }
+        _ => None,
+    };
+    let rendered = match parsed {
+        Some(block) => koru_markdown::render_parsed(engine, block, max_w, &styles),
+        None => koru_markdown::render_block(engine, "", max_w, &styles),
+    };
+    match rendered {
         koru_markdown::Rendered::Text {
             text,
             layout,
@@ -10181,6 +10296,7 @@ fn render_chat_block(
             links,
             table: None,
             image: None,
+            diagram,
         },
         koru_markdown::Rendered::Table(table) => BlockLayout {
             id,
@@ -10191,6 +10307,7 @@ fn render_chat_block(
             links: Vec::new(),
             table: Some(table),
             image: None,
+            diagram: None,
         },
         koru_markdown::Rendered::Image { url, alt } => BlockLayout {
             id,
@@ -10201,6 +10318,7 @@ fn render_chat_block(
             links: Vec::new(),
             table: None,
             image: Some(ImageSpec { url, alt }),
+            diagram: None,
         },
         koru_markdown::Rendered::Rule => {
             let text = "\u{2500}".repeat(12);
@@ -10213,6 +10331,7 @@ fn render_chat_block(
                 links: Vec::new(),
                 table: None,
                 image: None,
+                diagram: None,
             }
         }
     }
@@ -14164,7 +14283,7 @@ mod tests {
             .unwrap()
             .chat
             .agent_working_folder = Some("D:/work/koru".into());
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
         assert_eq!(
             surface
                 .transcript
@@ -15201,7 +15320,7 @@ mod tests {
         chat.messages.push(user_message(&chat, "hello"));
         surface.transcript = Some(chat);
         surface.validated_ready = true;
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
         let top = surface.viewport.y + 7.0 + BUTTON_H * 0.5;
         // Where the title's words were, and where the header's *Chats* was.
         for x in [
@@ -15233,7 +15352,7 @@ mod tests {
         surface.transcript = Some(transcript);
         surface.validated_ready = true;
 
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
         assert_eq!(surface.privacy_button(), None);
         let toolbar = surface.composer_toolbar_rect();
         let plus = surface.plus_button();
@@ -15554,7 +15673,7 @@ mod tests {
     /// The composer as a person sees it: laid out at the window's width,
     /// so a long message wraps.
     fn drawn(surface: &mut ChatSurface) {
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
     }
 
     /// A surface on a chat that has been sent `asked`, in a narrow window.
@@ -15935,7 +16054,7 @@ mod tests {
         surface.validated_ready = true;
         let line = surface.greeting().expect("a chat being made greets");
         for _ in 0..4 {
-            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, true);
             assert_eq!(surface.greeting(), Some(line), "the line holds still");
         }
         surface.transcript = Some(transcript());

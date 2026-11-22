@@ -51,6 +51,16 @@ pub trait MenuItem {
     fn swatch(&self) -> Option<Option<&str>> {
         None
     }
+    /// Levels a nested row is indented, so a list's tree shape reads in the
+    /// flat rows of a menu. `0` for a top-level row.
+    fn indent(&self) -> usize {
+        0
+    }
+    /// The letter underlined in the label and chosen by a plain key while the
+    /// menu is open. `None` for a row without one.
+    fn mnemonic(&self) -> Option<char> {
+        None
+    }
     /// A product's mark drawn as vector path data — for a row naming a
     /// third-party product whose logo the icon font cannot carry (a launch
     /// profile's row). When set it takes the leading slot and
@@ -169,6 +179,9 @@ pub enum Control {
     /// What the buttons move. Fixed width (see [`READOUT_W`]) so `100%`
     /// becoming `90%` does not slide the `+` out from under the pointer.
     Readout(String),
+    /// One choice in a full-row segmented control. All cells in the row must
+    /// be segments; labels are measured once when the menu opens.
+    Segment { label: String, selected: bool },
 }
 
 impl Control {
@@ -179,11 +192,15 @@ impl Control {
         match self {
             Self::Button { .. } => CONTROL_W,
             Self::Readout(_) => READOUT_W,
+            Self::Segment { .. } => crate::Segmented::MIN_W,
         }
     }
 
     const fn pressable(&self) -> bool {
-        matches!(self, Self::Button { enabled: true, .. })
+        matches!(
+            self,
+            Self::Button { enabled: true, .. } | Self::Segment { .. }
+        )
     }
 }
 
@@ -203,6 +220,8 @@ pub const ROW_PAD_X: f32 = 10.0;
 const SHORTCUT_GAP: f32 = 28.0;
 /// The colour square a row may lead with — the rail's, at a row's scale.
 const SWATCH: f32 = 12.0;
+/// How far each nesting level indents a row's leading slot and label.
+const INDENT: f32 = 16.0;
 /// A stepper button's square. Wider than the glyph inside it on purpose: this
 /// is a target pressed repeatedly, so it is sized for the finger rather than
 /// for the mark.
@@ -299,6 +318,10 @@ pub fn measure_width<T: MenuItem>(engine: &mut TextEngine, items: &[T]) -> f32 {
         // as a bare label would leave the panel too narrow for the very cells
         // that make it a stepper.
         let controls = item.controls();
+        if let Some(labels) = segment_labels(&controls) {
+            widest = widest.max(ROW_PAD_X * 2.0 + crate::Segmented::width(engine, &labels));
+            continue;
+        }
         if !controls.is_empty() {
             w += SHORTCUT_GAP + controls_width(&controls);
         }
@@ -354,10 +377,24 @@ fn label_layout<T: MenuItem>(engine: &mut TextEngine, item: &T) -> parley::Layou
 /// its button's width. Measured once, when the menu opens, by the constructors
 /// that have a `TextEngine`; every other row is `item.height()`, so the
 /// arithmetic below stays arithmetic.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 struct RowMetrics {
     height: f32,
     button_w: f32,
+    segments: Option<crate::Segmented>,
+}
+
+fn segment_labels(controls: &[Control]) -> Option<Vec<&str>> {
+    if controls.is_empty() {
+        return None;
+    }
+    controls
+        .iter()
+        .map(|control| match control {
+            Control::Segment { label, .. } => Some(label.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn measure_rows<T: MenuItem>(engine: &mut TextEngine, items: &[T], width: f32) -> Vec<RowMetrics> {
@@ -367,13 +404,15 @@ fn measure_rows<T: MenuItem>(engine: &mut TextEngine, items: &[T], width: f32) -
             Some(card) => {
                 let glyph = item.controls().first().and_then(|c| match c {
                     Control::Button { glyph, .. } => Some(*glyph),
-                    Control::Readout(_) => None,
+                    Control::Readout(_) | Control::Segment { .. } => None,
                 });
                 measure_card(engine, &card, glyph, width)
             }
             None => RowMetrics {
                 height: item.height(),
                 button_w: 0.0,
+                segments: segment_labels(&item.controls())
+                    .map(|labels| crate::Segmented::layout(engine, &labels, 0.0, 0.0)),
             },
         })
         .collect()
@@ -389,11 +428,13 @@ fn fallback_rows<T: MenuItem>(items: &[T]) -> Vec<RowMetrics> {
                 RowMetrics {
                     height: CARD_FALLBACK_H,
                     button_w: CARD_BUTTON_MIN_W,
+                    segments: None,
                 }
             } else {
                 RowMetrics {
                     height: item.height(),
                     button_w: 0.0,
+                    segments: None,
                 }
             }
         })
@@ -438,6 +479,7 @@ fn measure_card(
     RowMetrics {
         height: h,
         button_w,
+        segments: None,
     }
 }
 
@@ -685,6 +727,9 @@ impl<T: MenuItem> Menu<T> {
                 .flatten();
         }
         let r = self.item_rect(viewport, item);
+        if let Some(segments) = self.segmented(viewport, item) {
+            return segments.segments.get(control).copied();
+        }
         // A row that is nothing but its controls — a strip of buttons — spreads
         // them across its width, each in a cell of its own, rather than
         // packing them into the chord column.
@@ -703,6 +748,38 @@ impl<T: MenuItem> Menu<T> {
             x += earlier.width();
         }
         Some(Rect::new(x, r.y, controls[control].width(), r.h))
+    }
+
+    fn segmented(&self, viewport: (f32, f32), item: usize) -> Option<crate::Segmented> {
+        let controls = self.items.get(item)?.controls();
+        let labels = segment_labels(&controls)?;
+        let r = self.item_rect(viewport, item);
+        let mut layout = self.rows.get(item)?.segments.clone().unwrap_or_else(|| {
+            let w = (r.w - ROW_PAD_X * 2.0).max(1.0);
+            let cell = (w - crate::Segmented::INSET * 2.0) / labels.len() as f32;
+            crate::Segmented {
+                bounds: Rect::new(0.0, 0.0, w, crate::Segmented::H),
+                segments: (0..labels.len())
+                    .map(|i| {
+                        Rect::new(
+                            crate::Segmented::INSET + cell * i as f32,
+                            crate::Segmented::INSET,
+                            cell,
+                            crate::Segmented::H - crate::Segmented::INSET * 2.0,
+                        )
+                    })
+                    .collect(),
+            }
+        });
+        let x = r.x + (r.w - layout.bounds.w) * 0.5;
+        let y = r.y + (r.h - layout.bounds.h) * 0.5;
+        layout.bounds.x += x;
+        layout.bounds.y += y;
+        for cell in &mut layout.segments {
+            cell.x += x;
+            cell.y += y;
+        }
+        Some(layout)
     }
 
     /// Which control of which row sits under `(x, y)`.
@@ -833,6 +910,19 @@ impl<T: MenuItem> Menu<T> {
         viewport: (f32, f32),
         item: usize,
     ) {
+        if let Some(segmented) = self.segmented(viewport, item) {
+            let controls = self.items[item].controls();
+            let labels = segment_labels(&controls).expect("segmented row");
+            let selected = controls
+                .iter()
+                .position(|control| matches!(control, Control::Segment { selected: true, .. }));
+            let hovered = self
+                .control_hover
+                .filter(|(row, _)| *row == item)
+                .map(|(_, cell)| cell);
+            segmented.draw(scene, root, engine, &labels, selected, hovered, 1.0);
+            return;
+        }
         let pal = theme::p();
         for (c, control) in self.items[item].controls().iter().enumerate() {
             let Some(cell) = self.control_rect(viewport, item, c) else {
@@ -876,19 +966,19 @@ impl<T: MenuItem> Menu<T> {
                 }
                 Control::Readout(value) => {
                     let label = engine.simple_layout(value, theme::role::row());
-                    let line_h = scene::first_line_height(&label);
                     crate::typography::line(
                         "Control value",
                         scene,
                         root,
                         &label,
                         cell.x + (cell.w - label.width()) * 0.5,
-                        cell.y + (cell.h - line_h) * 0.5,
+                        scene::centre_y_in(&label, cell),
                         theme::role::row(),
                         "theme::role::row()",
                         pal.text,
                     );
                 }
+                Control::Segment { .. } => {}
             }
         }
     }
@@ -996,7 +1086,7 @@ impl<T: MenuItem> Menu<T> {
         };
         let glyph = self.items[i].controls().first().and_then(|c| match c {
             Control::Button { glyph, .. } => Some(*glyph),
-            Control::Readout(_) => None,
+            Control::Readout(_) | Control::Segment { .. } => None,
         });
         let lit = *enabled && self.control_hover == Some((i, 0));
         let _button = inspection::control(
@@ -1140,18 +1230,15 @@ impl<T: MenuItem> Menu<T> {
                 );
             }
             let label = label_layout(engine, item);
-            let line_h = label
-                .lines()
-                .next()
-                .map_or(0.0, |l| l.metrics().line_height);
             let colour = match (on, item.destructive()) {
                 (false, _) => pal.text_dim,
                 (true, true) => pal.close_hover,
                 (true, false) => pal.text,
             };
             // A row with a leading slot — its own icon — draws it first, then
-            // the label indented past it.
-            let mut text_x = p.x + ROW_PAD_X;
+            // the label indented past it. A nested row indents its whole
+            // leading edge one [`INDENT`] per level.
+            let mut text_x = p.x + ROW_PAD_X + item.indent() as f32 * INDENT;
             if leading(item).is_none()
                 && let Some(token) = item.swatch()
             {
@@ -1230,17 +1317,42 @@ impl<T: MenuItem> Menu<T> {
             } else {
                 label
             };
+            let label_y = scene::centre_y_in(&label, r);
             crate::typography::line(
                 "Menu label",
                 scene,
                 root,
                 &label,
                 text_x,
-                r.y + (r.h - line_h) * 0.5,
+                label_y,
                 theme::role::row(),
                 "theme::role::row()",
                 colour,
             );
+            // Underline the letter a plain key chooses, so the mnemonic is
+            // visible where the label is. Only for rows short enough that the
+            // letter survives — a mnemonic row's label always is.
+            if let Some(mnemonic) = item.mnemonic()
+                && let Some(needle) = mnemonic.to_lowercase().next()
+                && let Some(idx) = item.label().to_lowercase().find(needle)
+            {
+                let text = item.label();
+                let prefix_w = engine
+                    .simple_layout(&text[..idx], theme::role::row())
+                    .width();
+                let letter = text[idx..].chars().next().unwrap_or(' ');
+                let letter_w = engine
+                    .simple_layout(&letter.to_string(), theme::role::row())
+                    .width();
+                let baseline = label.lines().next().map_or(0.0, |l| l.metrics().baseline);
+                let underline_y = label_y + baseline + 1.5;
+                scene::fill(
+                    scene,
+                    root,
+                    colour,
+                    &scene::rect(text_x + prefix_w, underline_y, letter_w, 1.0),
+                );
+            }
             // **A toggle's check, at the far right** — drawn only while set,
             // in a lane reserved either way, so toggling moves nothing. A
             // chord, `›` or trailing glyph the row also has sits just left
@@ -1273,14 +1385,13 @@ impl<T: MenuItem> Menu<T> {
                 );
             } else if let Some(chord) = item.shortcut() {
                 let hint = engine.simple_layout(&chord, theme::role::hint());
-                let hint_h = scene::first_line_height(&hint);
                 crate::typography::line(
                     "Menu shortcut",
                     scene,
                     root,
                     &hint,
                     end - hint.width(),
-                    r.y + (r.h - hint_h) * 0.5,
+                    scene::centre_y_in(&hint, r),
                     theme::role::hint(),
                     "theme::role::hint()",
                     pal.text_dim,

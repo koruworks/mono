@@ -8,6 +8,8 @@
 
 mod attributes;
 mod cli;
+pub mod cloud_inspection;
+pub mod cloud_inspection_host;
 mod console;
 mod daemon;
 mod derived;
@@ -15,6 +17,7 @@ mod events_feed;
 pub mod host;
 pub mod log;
 mod projection;
+mod readings;
 mod replication;
 mod root_inspection;
 mod search;

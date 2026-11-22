@@ -30,6 +30,7 @@ fn fragment(document: &str, node: &str, field: &str, text: &str) -> Fragment {
         kind: "paragraph".to_owned(),
         field: field.to_owned(),
         text: text.to_owned(),
+        page: None,
     }
 }
 
@@ -579,6 +580,74 @@ fn version_two_without_mime_is_rebuilt_with_the_current_listing_shape() {
 
     assert_eq!(version, SEARCH_SCHEMA_VERSION);
     assert!(columns.iter().any(|column| column == "mime"));
+}
+
+/// **Version 5 has no `page` column**, and `CREATE TABLE IF NOT EXISTS` would
+/// keep its `fragments` table as it is — every insert would then fail on the
+/// column it does not have. Version 6 rebuilds, so the column exists and the
+/// old rows, with no reading among them, are gone for the reconcile to refill.
+#[test]
+fn version_five_without_a_page_column_is_rebuilt_with_one() {
+    let connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE fragments (
+                id           INTEGER PRIMARY KEY,
+                stable_key   TEXT NOT NULL UNIQUE,
+                workspace_id TEXT NOT NULL,
+                document_id  TEXT,
+                node_id      TEXT,
+                seq          INTEGER NOT NULL,
+                kind         TEXT NOT NULL,
+                field        TEXT NOT NULL,
+                text         TEXT NOT NULL,
+                normalized   TEXT NOT NULL
+             );
+             INSERT INTO fragments (stable_key, workspace_id, document_id, node_id, seq, kind,
+                                    field, text, normalized)
+             VALUES ('node:d:n:primary', 'w', 'd', 'n', 1, 'paragraph', 'body', 'old', 'old');
+             PRAGMA user_version = 5;",
+        )
+        .unwrap();
+
+    let mut index = SearchIndex::over(connection, crate::fuzzy::SharedVocabulary::ready()).unwrap();
+
+    let version: i64 = index
+        .connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, SEARCH_SCHEMA_VERSION);
+    assert_eq!(SEARCH_SCHEMA_VERSION, 6);
+    let has_page: bool = index
+        .connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('fragments') WHERE name = 'page')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(has_page);
+    assert_eq!(index.fragment_count().unwrap(), 0, "the old rows survived");
+
+    // And a page round-trips through the new column onto a hit.
+    let document = DocumentId::new();
+    let id = document.to_storage();
+    index
+        .set_listing("w", "Acme", b"d1", &[listed(&document, "manual.pdf")])
+        .unwrap();
+    let read = Fragment {
+        key: format!("node:{id}:n1:read:12"),
+        page: Some(12),
+        ..fragment(&id, "n1", field::READ, "torque the flange bolts")
+    };
+    index
+        .replace_document("w", &id, &[read], &[], b"r1", 1)
+        .unwrap();
+    index.warm_fuzzy_vocabulary().unwrap();
+    let hits = find(&index, "flange");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].page, Some(12));
+    assert_eq!(hits[0].field, field::READ);
 }
 
 /// **A schema bump is a rebuild, not a migration.** What comes back is an empty

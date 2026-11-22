@@ -2,7 +2,66 @@
 
 use super::*;
 
+#[test]
+fn heading_weight_round_trips_without_overwriting_raster_choices() {
+    let section = GlobalSettings::default();
+    let settings = Settings {
+        heading_weight: 500,
+        ..Default::default()
+    };
+    let sent = patch(&section, &settings);
+    assert_eq!(sent.heading_weight, Some(500));
+    assert!(sent.text_gamma.is_none());
+    let mut changed = section;
+    sent.apply(&mut changed);
+    let mut other = Settings::default();
+    assert!(adopt(&changed, &mut other));
+    assert_eq!(other.heading_weight, 500);
+    assert!(patch(&changed, &other).is_empty());
+}
+
 use koru_settings::{DensityChoice, FamilyName, FontFamily, TerminalCursorWidth};
+
+#[test]
+fn text_rendering_adopts_and_patches_only_the_changed_parameter() {
+    let section = GlobalSettings::default();
+    let mut settings = Settings::default();
+    settings.text_rendering.light.gamma = 1.25;
+    let sent = patch(&section, &settings);
+    assert_eq!(sent.text_gamma, Some(1.25));
+    assert!(sent.text_offset.is_none());
+    assert!(sent.text_hinting.is_none());
+    assert!(sent.text_antialiasing.is_none());
+    assert!(sent.text_cutoff.is_none());
+    let mut stored = section.clone();
+    sent.apply(&mut stored);
+    let mut other_window = Settings::default();
+    assert!(adopt(&stored, &mut other_window));
+    assert_eq!(other_window.text_rendering, settings.text_rendering);
+    assert!(patch(&stored, &other_window).is_empty());
+    assert!(adopt(&section, &mut other_window));
+    assert_eq!(
+        other_window.text_rendering,
+        koru_settings::TextRenderingPreferences::default()
+    );
+}
+
+#[test]
+fn dark_rendering_patch_does_not_write_light_values() {
+    let section = GlobalSettings::default();
+    let mut settings = Settings::default();
+    settings.text_rendering.dark.gamma = 2.5;
+    let sent = patch(&section, &settings);
+    assert_eq!(sent.text_gamma_dark, Some(2.5));
+    assert!(sent.text_gamma.is_none());
+    assert!(sent.text_offset_dark.is_none());
+    let mut stored = section;
+    sent.apply(&mut stored);
+    let mut other = Settings::default();
+    adopt(&stored, &mut other);
+    assert_eq!(other.text_rendering, settings.text_rendering);
+    assert!(patch(&stored, &other).is_empty());
+}
 
 /// **What a window shows before it has heard anything.**
 ///
@@ -59,6 +118,7 @@ fn every_preference_round_trips_through_the_section() {
         icon_pack: Some(koru_draw::icons::IconPack::Lucide),
         theme: ThemePreference::Light,
         caret_color: CaretColor::Violet,
+        caret_color_dark: CaretColor::Amber,
         caret_width: CaretWidth::Thick,
         caret_height: CaretHeight::Tall,
         font: FontSetting::Chosen(FontFamily::Poppins),
@@ -454,10 +514,7 @@ fn the_base_colors_are_applied_captured_and_saved_like_any_preference() {
     );
     assert!(source.contains("settings.base_color_light = theme::base_color(false)"));
     assert!(source.contains("settings.base_color_dark = theme::base_color(true)"));
-    assert!(
-        source.contains("self.choices != before.choices || self.base != before.base"),
-        "a swatch click has to count as a choice, or the press never patches"
-    );
+    // Choice detection is exercised behaviorally with AppearanceShown in app.rs.
 }
 
 /// The Chat font takes the same road: pushed into the theme by both

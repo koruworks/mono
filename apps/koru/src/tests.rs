@@ -45,7 +45,7 @@ fn ch(c: &str) -> Key {
     Key::Character(c.into())
 }
 
-use koru_keys::{NONE, PRIMARY, SHIFT};
+use koru_keys::{NONE, PRIMARY, PRIMARY_SHIFT, SHIFT};
 
 /// The theme is a process-wide atomic (see `theme::p`), so any test that
 /// flips it has to be serialised against the others — cargo runs tests
@@ -307,14 +307,14 @@ fn marked(e: &Harness, mark: Mark) -> String {
 }
 
 #[test]
-fn ctrl_k_opens_the_link_prompt_in_either_encoding() {
-    for key in [ch("k"), ch("\u{0b}")] {
+fn ctrl_shift_l_opens_the_link_prompt_in_either_encoding() {
+    for key in [ch("l"), ch("\u{0c}")] {
         let mut e = outline();
         assert!(!e.view().overlay.is_open());
-        assert!(e.key(&key, None, PRIMARY));
+        assert!(e.key(&key, None, PRIMARY_SHIFT));
         assert!(
             matches!(e.view().overlay, Overlay::Link(_)),
-            "Ctrl+K should open the link prompt for {key:?}"
+            "Ctrl+Shift+L should open the link prompt for {key:?}"
         );
     }
 }
@@ -388,7 +388,7 @@ fn typing_inserts_and_slash_arms_the_command_menu() {
 #[test]
 fn escape_closes_an_open_overlay() {
     let mut e = outline();
-    e.key(&ch("k"), None, PRIMARY);
+    e.key(&ch("l"), None, PRIMARY_SHIFT);
     assert!(e.view().overlay.is_open());
     e.key(&named(NamedKey::Escape), None, NONE);
     assert!(!e.view().overlay.is_open(), "Escape dismisses the prompt");
@@ -1984,9 +1984,9 @@ fn double_clicking_the_title_renames_the_document() {
 /// a row.
 #[test]
 fn no_overlay_can_open_with_nowhere_to_draw() {
-    // Ctrl+K, on an ordinary row.
+    // Ctrl+Shift+L, on an ordinary row.
     let mut e = one_row("a line");
-    e.key(&ch("k"), None, PRIMARY);
+    e.key(&ch("l"), None, PRIMARY_SHIFT);
     assert!(e.view().overlay.is_open());
     assert!(
         e.editor.overlay_panel_rect().is_some(),
@@ -2547,9 +2547,10 @@ fn a_four_space_indent_pastes_one_level_deep() {
 
 // ------------------------------------------------------------ pills and gaps
 
-/// Type a link through the real prompt: `Ctrl+K`, a caption, Tab, a URL, Enter.
+/// Type a link through the real prompt: `Ctrl+Shift+L`, a caption, Tab, a URL,
+/// Enter.
 fn commit_a_link(h: &mut Harness, caption: &str, url: &str) {
-    h.key(&ch("k"), None, PRIMARY);
+    h.key(&ch("l"), None, PRIMARY_SHIFT);
     for c in caption.chars() {
         h.key(&ch(&c.to_string()), Some(&c.to_string()), NONE);
     }
@@ -2583,7 +2584,7 @@ fn field_point(h: &Harness, which: link_prompt::Field) -> (f32, f32) {
 #[test]
 fn dragging_inside_a_prompt_does_not_select_the_rows_underneath() {
     let mut h = outline();
-    h.key(&ch("k"), None, PRIMARY);
+    h.key(&ch("l"), None, PRIMARY_SHIFT);
     let (x, y) = field_point(&h, link_prompt::Field::Url);
 
     h.mouse_down(x, y, false);
@@ -2603,7 +2604,7 @@ fn dragging_inside_a_prompt_does_not_select_the_rows_underneath() {
 #[test]
 fn double_clicking_in_a_prompt_does_not_word_select_a_row() {
     let mut h = outline();
-    h.key(&ch("k"), None, PRIMARY);
+    h.key(&ch("l"), None, PRIMARY_SHIFT);
     let (x, y) = field_point(&h, link_prompt::Field::Name);
     let before = h.body().focus;
 
@@ -2617,7 +2618,7 @@ fn double_clicking_in_a_prompt_does_not_word_select_a_row() {
 #[test]
 fn hovering_a_prompt_field_shows_the_text_cursor() {
     let mut h = outline();
-    h.key(&ch("k"), None, PRIMARY);
+    h.key(&ch("l"), None, PRIMARY_SHIFT);
     let (x, y) = field_point(&h, link_prompt::Field::Url);
 
     h.mouse_move(x, y);
@@ -2640,7 +2641,7 @@ fn ctrl_z_in_a_prompt_does_not_undo_the_document() {
     }
     assert_eq!(text_of(&h), "a task more");
 
-    h.key(&ch("k"), None, PRIMARY);
+    h.key(&ch("l"), None, PRIMARY_SHIFT);
     for c in "Terms".chars() {
         h.key(&ch(&c.to_string()), Some(&c.to_string()), NONE);
     }
@@ -2658,7 +2659,7 @@ fn ctrl_z_in_a_prompt_does_not_undo_the_document() {
 fn ctrl_left_in_a_prompt_does_not_reach_the_row() {
     let mut h = one_row("one two three");
     h.key(&named(NamedKey::End), None, NONE);
-    h.key(&ch("k"), None, PRIMARY);
+    h.key(&ch("l"), None, PRIMARY_SHIFT);
     let caret = h.body().focused().unwrap().caret();
 
     h.key(&named(NamedKey::ArrowLeft), None, PRIMARY);
@@ -2670,15 +2671,15 @@ fn ctrl_left_in_a_prompt_does_not_reach_the_row() {
     );
 }
 
-/// Selecting a URL and pressing `Ctrl+K` fills the URL in and leaves you
+/// Selecting a URL and pressing `Ctrl+Shift+L` fills the URL in and leaves you
 /// typing the caption — the half still to be answered.
 #[test]
-fn ctrl_k_on_a_selected_url_prefills_it_and_focuses_the_name() {
+fn ctrl_shift_l_on_a_selected_url_prefills_it_and_focuses_the_name() {
     let mut e = with_selection("see https://www.domain.tld now", 4..26);
-    assert!(e.key(&ch("k"), None, PRIMARY));
+    assert!(e.key(&ch("l"), None, PRIMARY_SHIFT));
 
     let Overlay::Link(prompt) = &e.view().overlay else {
-        panic!("Ctrl+K should open the link prompt");
+        panic!("Ctrl+Shift+L should open the link prompt");
     };
     assert_eq!(prompt.url_text(), "https://www.domain.tld");
     assert!(prompt.name_text().is_empty());
@@ -2687,12 +2688,12 @@ fn ctrl_k_on_a_selected_url_prefills_it_and_focuses_the_name() {
 
 /// And selecting a word fills the caption in, leaving you typing the link.
 #[test]
-fn ctrl_k_on_a_selected_word_prefills_the_name_and_focuses_the_url() {
+fn ctrl_shift_l_on_a_selected_word_prefills_the_name_and_focuses_the_url() {
     let mut e = with_selection("read the terms today", 9..14);
-    assert!(e.key(&ch("k"), None, PRIMARY));
+    assert!(e.key(&ch("l"), None, PRIMARY_SHIFT));
 
     let Overlay::Link(prompt) = &e.view().overlay else {
-        panic!("Ctrl+K should open the link prompt");
+        panic!("Ctrl+Shift+L should open the link prompt");
     };
     assert_eq!(prompt.name_text(), "terms");
     assert!(prompt.url_text().is_empty());
@@ -2703,7 +2704,7 @@ fn ctrl_k_on_a_selected_word_prefills_the_name_and_focuses_the_url() {
 #[test]
 fn committing_a_link_replaces_what_was_selected() {
     let mut e = with_selection("read the terms today", 9..14);
-    e.key(&ch("k"), None, PRIMARY);
+    e.key(&ch("l"), None, PRIMARY_SHIFT);
     // The caption came from the selection; type the URL and commit.
     for c in "example.com".chars() {
         e.key(&ch(&c.to_string()), Some(&c.to_string()), NONE);
@@ -2722,13 +2723,13 @@ fn committing_a_link_replaces_what_was_selected() {
 
 /// With nothing selected it still just inserts at the caret.
 #[test]
-fn ctrl_k_with_no_selection_opens_an_empty_prompt() {
+fn ctrl_shift_l_with_no_selection_opens_an_empty_prompt() {
     let mut e = one_row("plain");
     e.key(&named(NamedKey::End), None, NONE);
-    assert!(e.key(&ch("k"), None, PRIMARY));
+    assert!(e.key(&ch("l"), None, PRIMARY_SHIFT));
 
     let Overlay::Link(prompt) = &e.view().overlay else {
-        panic!("Ctrl+K should open the link prompt");
+        panic!("Ctrl+Shift+L should open the link prompt");
     };
     assert!(prompt.name_text().is_empty() && prompt.url_text().is_empty());
     assert_eq!(prompt.field, link_prompt::Field::Name);

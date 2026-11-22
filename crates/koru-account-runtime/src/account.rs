@@ -2,6 +2,8 @@
 
 //! Bounded account worker and its hosted-account service.
 
+pub mod cloud_document;
+mod cloud_inventory;
 mod cloud_status;
 pub mod cloud_sync;
 mod creation;
@@ -809,10 +811,55 @@ fn publish_cancelled(
 /// remembered state could not be read.
 fn command_failure(command: &AccountCommand, code: &str) -> AccountOperationResult {
     match command {
+        AccountCommand::InspectCloudUsageWorkspaces { request_id, .. } => {
+            AccountOperationResult::CloudUsageWorkspaces {
+                request_id: *request_id,
+                payload: None,
+                failure: Some(koru_agent_wire::CloudInventoryFailure::Unavailable),
+            }
+        }
+        AccountCommand::InspectCloudUsageDocuments {
+            request_id,
+            workspace_id,
+            incarnation_id,
+            ..
+        } => AccountOperationResult::CloudUsageDocuments {
+            request_id: *request_id,
+            workspace_id: workspace_id.clone(),
+            incarnation_id: incarnation_id.clone(),
+            payload: None,
+            failure: Some(koru_agent_wire::CloudInventoryFailure::Unavailable),
+        },
+        AccountCommand::InspectCloudDocument {
+            request_id,
+            selection,
+        } => AccountOperationResult::CloudDocumentInspection {
+            request_id: *request_id,
+            selection: selection.clone(),
+            payload: None,
+            failure: Some(koru_agent_wire::CloudInspectionFailure::Unavailable),
+        },
+        AccountCommand::RemoveCloudFile {
+            request_id,
+            selection,
+            node_id,
+        } => AccountOperationResult::CloudFileRemoval {
+            request_id: *request_id,
+            selection: selection.clone(),
+            node_id: node_id.clone(),
+            removed: false,
+            failure: Some(koru_agent_wire::CloudInspectionFailure::Unavailable),
+        },
+        AccountCommand::InspectCloudPlan { request_id } => AccountOperationResult::CloudPlan {
+            request_id: *request_id,
+            payload: None,
+            request_elapsed_millis: 0,
+        },
         AccountCommand::InspectCloudSubscription { request_id } => {
             AccountOperationResult::CloudSubscription {
                 request_id: *request_id,
                 current: None,
+                access: None,
                 subscription_kind: None,
             }
         }
@@ -933,10 +980,12 @@ pub struct ProductionAccountService {
     responder_session: Option<Arc<crate::enrollment::ResponderSessionGate>>,
     local_profiles: Arc<dyn lifecycle::LocalProfileInventory>,
     cloud_sync: Option<Arc<dyn cloud_sync::CloudSyncPort>>,
+    cloud_document: Option<Arc<dyn cloud_document::CloudDocumentPort>>,
+    cloud_document_page: Option<cloud_document::InventoryPage>,
     /// Whether an account has Koru Cloud, as last answered. Memory only, and
     /// read by one thing: a Profile waiting to start syncing
-    /// (`cloud_sync::cloud_subscription_known`).
-    cloud_subscribed: Option<(KoruIdentityId, bool)>,
+    /// (`cloud_sync::cloud_access_known`).
+    cloud_access: Option<(KoruIdentityId, bool)>,
     /// When the service last accepted this sign-in: set with every token
     /// pair it answers, published as `AccountState::session_checked_at_millis`.
     session_checked_at_millis: Option<i64>,
@@ -1028,7 +1077,9 @@ impl ProductionAccountService {
             responder_session: None,
             local_profiles: ports.local_profiles,
             cloud_sync: ports.cloud_sync,
-            cloud_subscribed: None,
+            cloud_document: None,
+            cloud_document_page: None,
+            cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: Arc::new(Mutex::new(ports.lifecycle_repository)),
@@ -1058,6 +1109,15 @@ impl ProductionAccountService {
     /// the same moments, so the two can never disagree about who is signed in.
     pub fn with_cloud(mut self, cloud: Arc<dyn crate::cloud::Driver>) -> Self {
         self.cloud = Some(cloud);
+        self
+    }
+
+    /// Attach the host's exact-scoped detached Cloud inspection carrier.
+    pub fn with_cloud_document_port(
+        mut self,
+        port: Arc<dyn cloud_document::CloudDocumentPort>,
+    ) -> Self {
+        self.cloud_document = Some(port);
         self
     }
 
@@ -2086,7 +2146,7 @@ impl ProductionAccountService {
             }
         }
         if let Some(owner) = self.durable_owner {
-            self.cloud_subscribed = Some((owner.account, active));
+            self.cloud_access = Some((owner.account, active));
         }
         Ok(ServiceOutcome {
             state: self.state(generation, AccountStage::SignedIn),
@@ -2481,7 +2541,9 @@ impl AccountService for ProductionAccountService {
             responder_session: self.responder_session.clone(),
             local_profiles: self.local_profiles.clone(),
             cloud_sync: self.cloud_sync.clone(),
-            cloud_subscribed: None,
+            cloud_document: self.cloud_document.clone(),
+            cloud_document_page: None,
+            cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
             lifecycle_repository: self.lifecycle_repository.clone(),
@@ -2625,6 +2687,11 @@ impl AccountService for ProductionAccountService {
                 | AccountCommand::InspectCloudSubscription { .. }
                 | AccountCommand::InspectCloudAccess { .. }
                 | AccountCommand::StartCheckout { .. }
+                | AccountCommand::InspectCloudPlan { .. }
+                | AccountCommand::InspectCloudUsageWorkspaces { .. }
+                | AccountCommand::InspectCloudUsageDocuments { .. }
+                | AccountCommand::InspectCloudDocument { .. }
+                | AccountCommand::RemoveCloudFile { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
         ) && restored.is_none()
@@ -2637,6 +2704,11 @@ impl AccountService for ProductionAccountService {
                 | AccountCommand::InspectCloudSubscription { .. }
                 | AccountCommand::InspectCloudAccess { .. }
                 | AccountCommand::StartCheckout { .. }
+                | AccountCommand::InspectCloudPlan { .. }
+                | AccountCommand::InspectCloudUsageWorkspaces { .. }
+                | AccountCommand::InspectCloudUsageDocuments { .. }
+                | AccountCommand::InspectCloudDocument { .. }
+                | AccountCommand::RemoveCloudFile { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
                 | AccountCommand::ListProfiles
@@ -2684,13 +2756,64 @@ impl AccountService for ProductionAccountService {
                     }),
                 }
             }
-            AccountCommand::InspectCloudSubscription { request_id } => {
-                let summary = self
+            AccountCommand::InspectCloudUsageWorkspaces { request_id, cursor } => {
+                self.workspace_inventory(generation, request_id, cursor, cancel)
+            }
+            AccountCommand::InspectCloudUsageDocuments {
+                request_id,
+                workspace_id,
+                incarnation_id,
+                cursor,
+            } => self.document_inventory(
+                generation,
+                request_id,
+                workspace_id,
+                incarnation_id,
+                cursor,
+                cancel,
+            ),
+            AccountCommand::InspectCloudDocument {
+                request_id,
+                selection,
+            } => self.cloud_document_command(generation, request_id, selection, None, cancel),
+            AccountCommand::RemoveCloudFile {
+                request_id,
+                selection,
+                node_id,
+            } => self.cloud_document_command(
+                generation,
+                request_id,
+                selection,
+                Some(node_id),
+                cancel,
+            ),
+            AccountCommand::InspectCloudPlan { request_id } => {
+                let started = self.clock.monotonic();
+                let payload = self
                     .client
-                    .cloud_subscription_summary(&self.authorization()?, &|| cancel.cancelled())
+                    .cloud_plan_cancelable(&self.authorization()?, &|| cancel.cancelled())
+                    .ok()
+                    .and_then(|plan| serde_json::to_string(&plan).ok())
+                    .and_then(|json| koru_agent_wire::CloudPlanPayload::new(json).ok());
+                let elapsed = self.clock.monotonic().saturating_duration_since(started);
+                Ok(ServiceOutcome {
+                    state: self.state(generation, AccountStage::SignedIn),
+                    credential: CredentialChange::Keep,
+                    result: AccountOperationResult::CloudPlan {
+                        request_id,
+                        payload,
+                        request_elapsed_millis: u64::try_from(elapsed.as_millis())
+                            .unwrap_or(u64::MAX),
+                    },
+                    follow_up: None,
+                })
+            }
+            AccountCommand::InspectCloudSubscription { request_id } => {
+                let subscription = self
+                    .client
+                    .cloud_subscription_status(&self.authorization()?, &|| cancel.cancelled())
                     .ok();
-                let current = summary.map(|s| s.has_subscription);
-                let kind = summary.and_then(|s| {
+                let kind = subscription.and_then(|s| {
                     s.kind.map(|k| match k {
                         koru_account_client::SubscriptionKind::Trialing => {
                             koru_agent_wire::CloudSubscriptionKind::Trialing
@@ -2716,16 +2839,17 @@ impl AccountService for ProductionAccountService {
                     })
                 });
                 // Remembered for a Profile waiting to start syncing: this is
-                // the moment a new subscription is first seen.
-                if let (Some(current), Some(owner)) = (current, self.durable_owner) {
-                    self.cloud_subscribed = Some((owner.account, current));
+                // the moment paid or complimentary access is first seen.
+                if let (Some(subscription), Some(owner)) = (subscription, self.durable_owner) {
+                    self.cloud_access = Some((owner.account, subscription.cloud_access));
                 }
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
                     credential: CredentialChange::Keep,
                     result: AccountOperationResult::CloudSubscription {
                         request_id,
-                        current,
+                        current: subscription.map(|status| status.current),
+                        access: subscription.map(|status| status.cloud_access),
                         subscription_kind: kind,
                     },
                     follow_up: None,
@@ -2737,7 +2861,7 @@ impl AccountService for ProductionAccountService {
                     .cloud_subscription_access(&self.authorization()?, &|| cancel.cancelled())
                     .ok();
                 if let (Some(active), Some(owner)) = (active, self.durable_owner) {
-                    self.cloud_subscribed = Some((owner.account, active));
+                    self.cloud_access = Some((owner.account, active));
                 }
                 Ok(ServiceOutcome {
                     state: self.state(generation, AccountStage::SignedIn),
@@ -3683,6 +3807,28 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
             }
             validate_locale(locale)
         }
+        AccountCommand::InspectCloudDocument { selection, .. }
+        | AccountCommand::RemoveCloudFile { selection, .. } => {
+            koru_store_wire::cloud_document::CloudDocumentSelection::from_json(selection.as_str())
+                .map_err(|_| ServiceError::terminal("invalid_request"))?;
+            if let AccountCommand::RemoveCloudFile { node_id, .. } = command {
+                cloud_inventory::read_uuid(node_id)?;
+            }
+            Ok(())
+        }
+        AccountCommand::InspectCloudUsageWorkspaces { cursor, .. } => {
+            cloud_inventory::validate_cursor(cursor)
+        }
+        AccountCommand::InspectCloudUsageDocuments {
+            workspace_id,
+            incarnation_id,
+            cursor,
+            ..
+        } => {
+            cloud_inventory::read_uuid(workspace_id)?;
+            cloud_inventory::read_uuid(incarnation_id)?;
+            cloud_inventory::validate_cursor(cursor)
+        }
         AccountCommand::Status
         | AccountCommand::Cancel { .. }
         // Carries nothing, so there is nothing to validate; the flow it
@@ -3693,6 +3839,7 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
         | AccountCommand::InspectAccountSession
         | AccountCommand::InspectCloudSubscription { .. }
         | AccountCommand::InspectCloudAccess { .. }
+        | AccountCommand::InspectCloudPlan { .. }
         | AccountCommand::InspectCloudSync { .. }
         | AccountCommand::ListProfiles
         | AccountCommand::ListProfileChoices

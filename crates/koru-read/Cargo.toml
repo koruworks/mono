@@ -1,0 +1,38 @@
+[package]
+rust-version.workspace = true
+name = "koru-read"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "What a reader is asked and what it answers, the shape of the synced reading document and how two devices' writes to it converge, and the messages the reading worker speaks. It links no inference runtime, no PDF library, no image decoder, no socket and no node model."
+
+# **A leaf, and the deps are the whole argument** — `koru-voice`'s charter, one
+# feature over. Four components name these declarations: the reader adapter
+# (`koru-read-paddle`), the worker that drives it (`apps/koru-read`), the Store
+# daemon's coordinator and mirror, and the bench. A renamed field breaks every
+# build rather than arriving as a silent `None`.
+#
+# `loro` is here because the reading document's shape *is* a Loro shape, and
+# the convergence rules (mergeable maps, pages keyed by number, one pages map
+# per generation) are only true if one crate writes them. It is the
+# workspace's exact pin. `serde` is what puts a message on a wire this crate
+# deliberately cannot open.
+#
+# Not here, on purpose: `koru-store-core` (the coordinator holds a `BlobHash`
+# and hands its string form; the worker, which never sees a hash, should not
+# compile the store to name a message), `koru-core` (the reading document is
+# not a node tree), `koru-ipc` (frames are the worker's business), `image`,
+# `hayro`, `ort`.
+[dependencies]
+loro = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+# The wire shapes are asserted as JSON, because that is what crosses the pipe.
+serde_json = { workspace = true }
+# Tests only: the eight-language fixture every text path in the tree is held
+# to, and the real `BlobHash`, so this crate's check of a hash's shape is
+# proved against the type that mints them rather than against a second
+# opinion.
+koru-store-core = { path = "../koru-store-core" }

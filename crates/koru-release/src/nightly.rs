@@ -77,7 +77,6 @@ const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "**Android** nightlies (the `-android-aarch64.apk` below, when it is listed) install as their own \
      app, *Koru Nightly*, beside Koru, and offer the next nightly in the app; installing it is your \
      choice, on the system's own screen.",
-    "No Koru Cloud in the nightly yet.",
 ];
 
 /// The same for a stable release (STABLE.md), which is built with Koru Cloud
@@ -582,14 +581,75 @@ fn infer_version(
             )
         })
     };
+    let stable = newer(read(ReleaseChannel::Stable)?, github_latest_stable()?);
     version::suggest_version(
         channel,
-        read(ReleaseChannel::Stable)?.as_ref(),
+        stable.as_ref(),
         read(ReleaseChannel::Beta)?.as_ref(),
         read(ReleaseChannel::Nightly)?.as_ref(),
         &released.format("%Y%m%d").to_string(),
         short_commit,
     )
+}
+
+/// **The newest stable is on GitHub.** Stable releases are published there
+/// (`stable.yml`), and installed stable builds read the release marked latest;
+/// the update origin's stable channel stopped at 0.1.4 when they moved. Read
+/// from the origin alone, every nightly after that was named
+/// `0.1.4-nightly…`, below the stable it came after. A failure is an error,
+/// as the origin's is; a 404 means GitHub has no stable yet.
+fn github_latest_stable() -> Result<Option<UpdateManifest>, String> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(90))
+        .user_agent("koru-release")
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut newest = None;
+    for target in crate::PUBLISHED_TARGETS {
+        let url = format!(
+            "{}/releases/latest/download/stable-{target}.json",
+            source::REPOSITORY
+        );
+        let response = client
+            .get(&url)
+            .send()
+            .map_err(|error| format!("GET {url}: {error}"))?;
+        if response.status().as_u16() == 404 {
+            continue;
+        }
+        if !response.status().is_success() {
+            return Err(format!("GET {url} returned {}", response.status()));
+        }
+        let bytes = response.bytes().map_err(|error| error.to_string())?;
+        let (platform, architecture) = split_target(target);
+        let target = UpdateTarget {
+            channel: ReleaseChannel::Stable,
+            platform,
+            architecture,
+        };
+        let manifest = UpdateManifest::parse_and_validate(&bytes, &target)
+            .map_err(|error| format!("{url}: {error}"))?;
+        newest = newer(newest, Some(manifest));
+    }
+    Ok(newest)
+}
+
+/// The later of two published releases by build number, the order every
+/// installed Koru compares in.
+pub(crate) fn newer(
+    a: Option<UpdateManifest>,
+    b: Option<UpdateManifest>,
+) -> Option<UpdateManifest> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(if b.build_number > a.build_number {
+            b
+        } else {
+            a
+        }),
+        (a, None) => a,
+        (None, b) => b,
+    }
 }
 
 /// The release key from a file CI provides, and its public half.

@@ -40,12 +40,21 @@ use koru_store_wire::tasks::{
     PROJECTION_QUIET_MILLIS, RevisionRequirement, TaskQuery, TaskQueryResponse, TaskRow, TaskSort,
 };
 
-/// How often the page is asked for again while the tab is on screen.
+/// How often the page is asked for again while the tab is on screen **and
+/// nothing is telling it when to**.
 ///
-/// The rail's interval, and for the rail's reason: a list is context, not a
-/// live readout. A mutation from this window refreshes it immediately through
-/// [`TaskListPanel::invalidate`].
+/// A mutation from this window refreshes it immediately through
+/// [`TaskListPanel::invalidate`], and so does the Store's own
+/// `projection.tasks.changed` — a change from another device or another
+/// window (`mainview::task_events`). This interval is what is left for a
+/// Store that publishes no events.
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
+
+/// The same, while the Store's events are being heard: the net under an
+/// event that was missed, not the way the page learns anything. Polling is
+/// work in proportion to open windows; an event is work in proportion to
+/// change.
+pub(crate) const REFRESH_WHEN_TOLD: Duration = Duration::from_secs(5 * 60);
 
 /// What "due within the week" means for the Next bucket (SPEC §7), and what
 /// "within the month" means for Upcoming.
@@ -961,6 +970,9 @@ pub struct TaskListPanel {
     /// because the controls are the view's and the query is this panel's.
     filters: Filters,
     visible: bool,
+    /// Whether the Store's task events are being heard, which is what makes
+    /// the timer a safety net rather than the source of news.
+    told: bool,
     generation: u64,
     receiver: Option<Receiver<Stamped>>,
     next_refresh: Option<Instant>,
@@ -987,8 +999,18 @@ pub struct TaskListPanel {
 impl TaskListPanel {
     /// Cache the store client supplied during drawing. **No request is made
     /// here** — a view with no client (every unit test) makes none at all.
+    ///
+    /// **A client arriving makes the page due at once.** It reaches a page
+    /// while the window is drawn, and a page opened from outside a frame — a
+    /// list chosen in search — is maintained once before its first draw:
+    /// that maintain asked nobody and put the next ask a whole interval away,
+    /// so the list opened empty and stayed empty (owner, 2026-11-16).
     pub fn set_client(&mut self, client: Option<koru_api_client::Client>) {
+        let arrived = self.client.is_none() && client.is_some();
         self.client = client;
+        if arrived && self.next_refresh.is_some() {
+            self.next_refresh = Some(Instant::now());
+        }
     }
 
     pub fn rows(&self) -> &[TaskEntry] {
@@ -1053,6 +1075,28 @@ impl TaskListPanel {
     /// How many open tasks the page holds — the header's count.
     pub fn open_count(&self) -> usize {
         self.rows.iter().filter(|row| !row.completed).count()
+    }
+
+    /// Say whether the Store's task events are being heard. While they are,
+    /// the timer runs at [`REFRESH_WHEN_TOLD`]; a tail that stops puts it
+    /// back, and the first slow deadline already set is pulled in so the
+    /// change of pace is not itself a five-minute wait.
+    pub fn set_event_driven(&mut self, told: bool) {
+        if self.told == told {
+            return;
+        }
+        self.told = told;
+        if !told && let Some(due) = self.next_refresh {
+            self.next_refresh = Some(due.min(Instant::now() + REFRESH_EVERY));
+        }
+    }
+
+    fn refresh_every(&self) -> Duration {
+        if self.told {
+            REFRESH_WHEN_TOLD
+        } else {
+            REFRESH_EVERY
+        }
     }
 
     /// Ask again on the next maintenance turn — what a mutation in this window
@@ -1166,7 +1210,7 @@ impl TaskListPanel {
             && self.receiver.is_none()
             && self.next_refresh.is_some_and(|due| due <= now)
         {
-            self.next_refresh = Some(now + REFRESH_EVERY);
+            self.next_refresh = Some(now + self.refresh_every());
             changed |= self.start();
         }
         changed

@@ -29,6 +29,10 @@ pub enum Placement {
     /// under it would cover the next rows of — the anchor is then the row's
     /// height across the whole list, so the tooltip clears the list.
     Beside,
+    /// Centred over the anchor. For a control at the foot of its surface,
+    /// where a tooltip under it has no room and would be pushed back up over
+    /// the control it describes.
+    Above,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,6 +69,12 @@ impl TooltipContent {
     /// Stand beside the anchor rather than under it ([`Placement::Beside`]).
     pub fn beside(mut self) -> Self {
         self.placement = Placement::Beside;
+        self
+    }
+
+    /// Stand over the anchor rather than under it ([`Placement::Above`]).
+    pub fn above(mut self) -> Self {
+        self.placement = Placement::Above;
         self
     }
 
@@ -524,6 +534,10 @@ fn arrange(
             anchor.x + anchor.w * 0.5 - width * 0.5,
             (anchor.y + anchor.h + GAP).min(bottom_edge),
         ),
+        Placement::Above => (
+            anchor.x + anchor.w * 0.5 - width * 0.5,
+            (anchor.y - GAP - height).max(viewport.y + PAD),
+        ),
         Placement::Beside => {
             let right = anchor.x + anchor.w + GAP;
             let left = anchor.x - GAP - width;
@@ -575,7 +589,7 @@ fn draw_tooltip(
             root,
             &label_layout,
             rect.x + PAD,
-            rect.y + PAD_Y,
+            scene::centre_y_in(&label_layout, rect),
             ink,
         );
     }
@@ -585,7 +599,7 @@ fn draw_tooltip(
             root,
             &layout,
             rect.x + rect.w - layout.width() - 8.0,
-            rect.y + 6.0,
+            scene::centre_y_in(&layout, rect),
             Some(theme::p().bubble_dim.multiply_alpha(alpha)),
         );
     }

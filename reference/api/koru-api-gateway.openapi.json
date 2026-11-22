@@ -1,6 +1,33 @@
 {
   "components": {
     "schemas": {
+      "Action": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "document": {
+                "$ref": "#/components/schemas/DocumentReference"
+              },
+              "target": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "SelectDocument"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "target",
+              "document"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ActionId": {
         "format": "uuid",
         "type": "string"
@@ -1160,6 +1187,15 @@
         ],
         "type": "object"
       },
+      "Align": {
+        "enum": [
+          "Start",
+          "Center",
+          "End",
+          "Stretch"
+        ],
+        "type": "string"
+      },
       "AmendmentRevision": {
         "description": "The monotonic amendment revision of a usage fact. A retry repeats it; a\ncorrection raises it.",
         "format": "uint32",
@@ -1660,6 +1696,13 @@
       "AttemptNotice": {
         "description": "A fact about the attempt the surface shows as one line and nothing\nstores.",
         "oneOf": [
+          {
+            "description": "This live reply continues as chat after its native tools were refused.",
+            "enum": [
+              "native_tools_unavailable"
+            ],
+            "type": "string"
+          },
           {
             "description": "The agent could not be reattached and a replacement was started with\nthe conversation so far.",
             "enum": [
@@ -3571,6 +3614,164 @@
           }
         ]
       },
+      "Component": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Action"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "arrangement": {
+            "nullable": true,
+            "type": "string"
+          },
+          "bucket": {
+            "nullable": true,
+            "type": "string"
+          },
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "component": {
+            "type": "string"
+          },
+          "decoration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Decoration"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "document": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentReference"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "ink": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ink"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "layout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Layout"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "list": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListReference"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextRole"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "space": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Space"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "text": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "component"
+        ],
+        "type": "object"
+      },
+      "ComponentUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/Component"
+            },
+            "type": "array"
+          },
+          "surfaceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "surfaceId",
+          "components"
+        ],
+        "type": "object"
+      },
       "ContentEncoding": {
         "description": "How `read` spells the bytes it returns.",
         "oneOf": [
@@ -4115,6 +4316,38 @@
             "default": null,
             "nullable": true,
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Decoration": {
+        "additionalProperties": false,
+        "properties": {
+          "radius": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Radius"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "surface": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Surface"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
           }
         },
         "type": "object"
@@ -4734,6 +4967,22 @@
           "document",
           "headings",
           "projected"
+        ],
+        "type": "object"
+      },
+      "DocumentReference": {
+        "additionalProperties": false,
+        "properties": {
+          "documentId": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "documentId"
         ],
         "type": "object"
       },
@@ -5638,6 +5887,20 @@
             "nullable": true,
             "type": "string"
           },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingCounts"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**How far reading the pictures and files in this query's workspaces\nhas got, and whether to offer the reader** — the Store page's\n[`koru_store_wire::search::SearchPage::reading`], carried through the\ngateway unchanged (OCR Plan 2.4). `None` from a Store that predates\nreading or counts nothing, which a surface reads as \"say nothing\".\nAdditive: absent on the wire when `None`, so an older client parses a\nnewer answer and a newer client an older one."
+          },
           "request_seq": {
             "format": "uint64",
             "minimum": 0,
@@ -5692,6 +5955,11 @@
           },
           "include_facets": {
             "default": false,
+            "type": "boolean"
+          },
+          "include_lists": {
+            "default": false,
+            "description": "Answer with task lists too: a list whose name matches is a hit of its\nown, ahead of every other result in every sort. **Off by default**, and\nwith it off no list is a candidate and no list's name changes a typo\ncorrection: the answer is what it was before lists were indexed.",
             "type": "boolean"
           },
           "kinds": {
@@ -5766,6 +6034,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "task_results": {
+            "default": false,
+            "description": "Answer with tasks as tasks: a hit on a task carries\n[`SearchHit::task`], a task's own text ranks like a title, and text\nread from pictures and files keeps one result per task rather than one\nper document. **Off by default**; with it off hits, scores, order and\npage membership are unchanged.",
+            "type": "boolean"
           },
           "text": {
             "type": "string"
@@ -6192,6 +6465,19 @@
               }
             ]
           },
+          "caret_color_dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaretColorChoice"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
           "caret_height": {
             "anyOf": [
               {
@@ -6456,6 +6742,13 @@
               }
             ]
           },
+          "heading_weight": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "headings_font": {
             "anyOf": [
               {
@@ -6554,6 +6847,70 @@
           "tabs_per_workspace": {
             "nullable": true,
             "type": "boolean"
+          },
+          "text_antialiasing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "text_antialiasing_dark": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "text_cutoff": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_cutoff_dark": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_gamma": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_gamma_dark": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_hinting": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "text_hinting_dark": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "text_offset": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
+          },
+          "text_offset_dark": {
+            "format": "float",
+            "nullable": true,
+            "type": "number"
           },
           "theme": {
             "anyOf": [
@@ -6668,6 +7025,15 @@
           },
           "caret_color": {
             "$ref": "#/components/schemas/CaretColorChoice"
+          },
+          "caret_color_dark": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CaretColorChoice"
+              }
+            ],
+            "default": "default",
+            "description": "Independent dark-theme caret color. The original key is the light choice."
           },
           "caret_height": {
             "$ref": "#/components/schemas/CaretHeightChoice"
@@ -6784,6 +7150,14 @@
           "global_shortcut": {
             "$ref": "#/components/schemas/GlobalShortcut"
           },
+          "heading_weight": {
+            "default": 600,
+            "description": "Document headings and titles, independent of body and UI weights.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
           "headings_font": {
             "$ref": "#/components/schemas/FontSetting"
           },
@@ -6841,6 +7215,60 @@
             "default": false,
             "description": "**Workspace tabs**: each workspace keeps its own tabs (`true`, *Per\nworkspace*) or the open tabs stay as you switch (`false`, *Shared*,\nthe default). Absent from an older file, which reads as *Shared*.",
             "type": "boolean"
+          },
+          "text_antialiasing": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              }
+            ],
+            "default": "msaa16"
+          },
+          "text_antialiasing_dark": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextAntialiasing"
+              }
+            ],
+            "default": "msaa16"
+          },
+          "text_cutoff": {
+            "default": 0.05000000074505806,
+            "format": "float",
+            "type": "number"
+          },
+          "text_cutoff_dark": {
+            "default": 0.15000000596046448,
+            "format": "float",
+            "type": "number"
+          },
+          "text_gamma": {
+            "default": 1.75,
+            "format": "float",
+            "type": "number"
+          },
+          "text_gamma_dark": {
+            "default": 0.75,
+            "format": "float",
+            "type": "number"
+          },
+          "text_hinting": {
+            "default": true,
+            "type": "boolean"
+          },
+          "text_hinting_dark": {
+            "default": true,
+            "type": "boolean"
+          },
+          "text_offset": {
+            "default": 0.0,
+            "format": "float",
+            "type": "number"
+          },
+          "text_offset_dark": {
+            "default": 0.0,
+            "format": "float",
+            "type": "number"
           },
           "theme": {
             "$ref": "#/components/schemas/ThemeChoice"
@@ -7042,6 +7470,42 @@
         },
         "required": [
           "entries"
+        ],
+        "type": "object"
+      },
+      "HostContext": {
+        "additionalProperties": false,
+        "description": "UI-minted, live-only provenance. None of this is a provider argument.",
+        "properties": {
+          "refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefinementTarget"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "renderer_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "workspace_id": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "renderer_id",
+          "request_id",
+          "workspace_id"
         ],
         "type": "object"
       },
@@ -7345,6 +7809,15 @@
         "format": "uuid",
         "type": "string"
       },
+      "Ink": {
+        "enum": [
+          "Primary",
+          "Secondary",
+          "Hint",
+          "Accent"
+        ],
+        "type": "string"
+      },
       "InstantWindow": {
         "description": "A half-open instant window, `[after_ms, before_ms)`, in epoch milliseconds\nUTC. Absent means unbounded on that side.",
         "properties": {
@@ -7497,6 +7970,77 @@
           }
         ]
       },
+      "Layout": {
+        "additionalProperties": false,
+        "properties": {
+          "align": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Align"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "gap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Space"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "height": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sizing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "padding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Space"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "width": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Sizing"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
       "Lifecycle": {
         "description": "Whether a hit's document is in the trash.\n\n**Not a property of a fragment.** Trash is a flag on the manifest entry\n([ADR-95](../../../docs/decisions/ADR-076-100.md#adr-95-trash--a-document-in-the-trash-is-a-flag-on-its-manifest-entry)), so it is a property\nof the *document*, resolved by joining the mirrored listing. Storing it on\nevery fragment is what used to let a hit and its own document title disagree\nabout whether they were binned.",
         "enum": [
@@ -7609,6 +8153,48 @@
         },
         "required": [
           "families"
+        ],
+        "type": "object"
+      },
+      "ListHit": {
+        "description": "What a list result carries beyond its name.",
+        "properties": {
+          "color": {
+            "description": "Its swatch, as an accent token; absent for a list wearing no color.",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "description": "The list's id, in storage form.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The names of the lists it is inside, outermost first, as the rail\ndraws them. Empty for a top-level list.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "ListReference": {
+        "additionalProperties": false,
+        "properties": {
+          "listId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "listId"
         ],
         "type": "object"
       },
@@ -8007,6 +8593,245 @@
         ],
         "type": "object"
       },
+      "MiniAppCapability": {
+        "description": "An expiring bearer, minted by the AI worker for one exact live attempt.\nDebug deliberately never prints it; it is not a workspace or tab identity.",
+        "maxLength": 46,
+        "minLength": 46,
+        "type": "string"
+      },
+      "MiniAppPin": {
+        "additionalProperties": false,
+        "properties": {
+          "family": {
+            "type": "string"
+          },
+          "id": {
+            "$ref": "#/components/schemas/MiniAppPinId"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "family",
+          "version",
+          "title"
+        ],
+        "type": "object"
+      },
+      "MiniAppPinId": {
+        "description": "Stable opaque UUID, represented without bringing another authority into\nthis leaf crate. The gateway also validates domain identifiers.",
+        "type": "string"
+      },
+      "MiniAppPinMutation": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "enum": [
+                  "add"
+                ],
+                "type": "string"
+              },
+              "pin": {
+                "$ref": "#/components/schemas/MiniAppPin"
+              }
+            },
+            "required": [
+              "operation",
+              "pin"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "operation": {
+                "enum": [
+                  "remove"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "operation": {
+                "enum": [
+                  "move"
+                ],
+                "type": "string"
+              },
+              "to": {
+                "$ref": "#/components/schemas/MiniAppPinPlacement"
+              }
+            },
+            "required": [
+              "operation",
+              "id",
+              "to"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MiniAppPinPlacement": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "placement": {
+                "enum": [
+                  "first"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "placement": {
+                "enum": [
+                  "last"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "neighbor": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "placement": {
+                "enum": [
+                  "before"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement",
+              "neighbor"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "neighbor": {
+                "$ref": "#/components/schemas/MiniAppPinId"
+              },
+              "placement": {
+                "enum": [
+                  "after"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement",
+              "neighbor"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MiniAppPinsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "mutation": {
+            "$ref": "#/components/schemas/MiniAppPinMutation"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/MiniAppPinsScope"
+          }
+        },
+        "required": [
+          "scope",
+          "mutation"
+        ],
+        "type": "object"
+      },
+      "MiniAppPinsScope": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "type": "string"
+          },
+          "workspace": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile",
+          "workspace"
+        ],
+        "type": "object"
+      },
+      "MiniAppToolRequest": {
+        "additionalProperties": false,
+        "description": "Desktop MCP delegates only these bounded calls to an exact live attempt.",
+        "properties": {
+          "arguments": {},
+          "call_id": {
+            "type": "string"
+          },
+          "capability": {
+            "$ref": "#/components/schemas/MiniAppCapability"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "capability",
+          "name",
+          "call_id",
+          "arguments"
+        ],
+        "type": "object"
+      },
+      "MiniAppToolResponse": {
+        "properties": {
+          "content": {},
+          "is_error": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "is_error"
+        ],
+        "type": "object"
+      },
       "ModelCapabilities": {
         "properties": {
           "context_window": {
@@ -8014,6 +8839,11 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
+          },
+          "native_tools": {
+            "default": false,
+            "description": "Registered native tool transport, not a guarantee of request success.\nLive validation only; never written to AI settings or chat history.",
+            "type": "boolean"
           },
           "reasoning": {
             "$ref": "#/components/schemas/ReasoningControl"
@@ -9647,8 +10477,94 @@
         "type": "string"
       },
       "PublicAiEvent": {
-        "description": "An event safe to expose across Koru's public AI boundary.\n\nProvider tool calls are deliberately absent: their arguments and reasoning\ncontinuity data remain inside the worker. Clients observe only the minimal\n[`ToolActivity`] projection: stable target ids and a bounded public failure\nsummary, never raw tool arguments or results.",
+        "description": "An event safe to expose across Koru's public AI boundary.\n\nProvider tool calls are deliberately absent: their arguments and reasoning\ncontinuity data remain inside the worker. Clients observe only the minimal\n[`ToolActivity`] projection: stable target ids and a bounded public failure\nsummary, never raw tool arguments or general tool results. The registered\nreference-only mini-app result has a separate bounded, transient variant.",
         "oneOf": [
+          {
+            "description": "A live-only arrangement proposal. Native revision ownership is external\nto the upstream A2UI envelope and must be rechecked before application.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "call_id": {
+                "type": "string"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "envelope": {
+                "$ref": "#/components/schemas/UpdateEnvelope"
+              },
+              "host": {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              "invocation_id": {
+                "$ref": "#/components/schemas/ToolInvocationId"
+              },
+              "profile_id": {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              "type": {
+                "enum": [
+                  "mini_app_updated"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "chat_id",
+              "profile_id",
+              "invocation_id",
+              "call_id",
+              "host",
+              "envelope"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Only the registered, validated mini-app result crosses this boundary.\nIt is transient, never reconstructed from transcript or tool activity.",
+            "properties": {
+              "attempt_id": {
+                "$ref": "#/components/schemas/InferenceAttemptId"
+              },
+              "call_id": {
+                "type": "string"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "envelope": {
+                "$ref": "#/components/schemas/Envelope"
+              },
+              "host": {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              "invocation_id": {
+                "$ref": "#/components/schemas/ToolInvocationId"
+              },
+              "profile_id": {
+                "$ref": "#/components/schemas/ProfileId"
+              },
+              "type": {
+                "enum": [
+                  "mini_app_created"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "attempt_id",
+              "chat_id",
+              "profile_id",
+              "invocation_id",
+              "call_id",
+              "host",
+              "envelope"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "at": {
@@ -10087,6 +11003,18 @@
         ],
         "type": "object"
       },
+      "Radius": {
+        "enum": [
+          "None",
+          "S",
+          "M",
+          "L",
+          "XL",
+          "XXL",
+          "Full"
+        ],
+        "type": "string"
+      },
       "RateRunRequest": {
         "description": "`POST /v1/runs/{run}/rate`: one gesture on a finished run (D44).\n\nThe note travels here because it lives in the run's own content and\nnowhere else — never an event attribute, never a metric. The event the\nworker publishes carries the rating and whether a note exists, and not\na byte of the note itself.",
         "properties": {
@@ -10219,6 +11147,47 @@
           "title",
           "total_messages",
           "messages"
+        ],
+        "type": "object"
+      },
+      "ReadingCounts": {
+        "description": "**How far reading has got, for the workspaces a query is about.**\n\nScoped to the query's workspaces on purpose: a search in a workspace with\nfive pictures says five, however many thousands another workspace holds.\nCounts only — no name, no hash, no path.\n\nAn item is one readable blob referenced by a live entry: a file, or a\npicture in a page. `unread` counts those with no finished reading at the\ncurrent generation; `needs_reader` and `not_here` say why some of them are\nwaiting, and are each part of `unread`.",
+        "properties": {
+          "needs_reader": {
+            "description": "Of `unread`, those waiting for the reader to be installed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "not_here": {
+            "description": "Of `unread`, those whose bytes are not on this computer.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offer": {
+            "description": "Whether a surface should offer the reader now: something waits for it,\nit is not installed, and the person has not said *Not now* since the\nlast import that brought a picture or a scanned PDF. Every surface asks\nthis one place.",
+            "type": "boolean"
+          },
+          "total": {
+            "description": "Readable items in scope.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unread": {
+            "description": "Readable items with no finished reading.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread",
+          "total",
+          "needs_reader",
+          "not_here",
+          "offer"
         ],
         "type": "object"
       },
@@ -10511,6 +11480,49 @@
           "id",
           "kind",
           "path"
+        ],
+        "type": "object"
+      },
+      "RefinementContext": {
+        "additionalProperties": false,
+        "description": "Transient model-visible placement metadata for an exact active native owner.\nNever place this in persisted chat, events, provider continuity or sessions.",
+        "properties": {
+          "declaration": {
+            "$ref": "#/components/schemas/Envelope"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RefinementTarget"
+          }
+        },
+        "required": [
+          "target",
+          "declaration"
+        ],
+        "type": "object"
+      },
+      "RefinementTarget": {
+        "additionalProperties": false,
+        "description": "Native lifetime and optimistic revision, deliberately outside A2UI.",
+        "properties": {
+          "base_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "surface_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "tab_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab_id",
+          "surface_id",
+          "base_revision"
         ],
         "type": "object"
       },
@@ -11484,6 +12496,33 @@
           },
           "message_id": {
             "$ref": "#/components/schemas/MessageId"
+          },
+          "mini_app_host": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "mini_app_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefinementContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Exact captured declaration paired with the live target; never persisted."
           },
           "operation_id": {
             "type": "string"
@@ -12900,7 +13939,9 @@
           "1x",
           "2x",
           "3x",
-          "4x"
+          "4x",
+          "8x",
+          "16x"
         ],
         "type": "string"
       },
@@ -13082,6 +14123,20 @@
           "lifecycle": {
             "$ref": "#/components/schemas/Lifecycle"
           },
+          "list": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListHit"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**This hit is a task list**, not a document: `kind` is `task_list`,\n`document` is absent and `title` is the list's name. Only in an answer\nto a query that set [`SearchQuery::include_lists`]."
+          },
           "mime": {
             "default": null,
             "description": "MIME type of an opaque file, when the manifest recorded one.",
@@ -13098,6 +14153,18 @@
             "nullable": true,
             "type": "integer"
           },
+          "page": {
+            "description": "The page the words were found on, counting from 1, when the hit is a\n[`field::READ`] fragment of a file with more than one page.\n\n**Absent for everything else** — any other field, a picture, a one-page\nPDF, a plain-text file — and absent from an answer written before this\nfield existed, which is why it defaults rather than being required.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "picture_name": {
+            "description": "The name a person gave the picture the words were read from, when the\nhit is a [`field::READ`] fragment of a picture inside a document and\nsomebody named it (OCR EXPERIENCE §3: the picture mark, then its name\nonly when a person gave it one).\n\n**Absent for a picture nobody named**, for a file, for every other\nfield, and from an answer written before this field existed.",
+            "nullable": true,
+            "type": "string"
+          },
           "score": {
             "format": "double",
             "type": "number"
@@ -13110,6 +14177,20 @@
               "$ref": "#/components/schemas/MatchSpan"
             },
             "type": "array"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskHit"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**This hit is a task**: a node carrying `koru.task` or `koru.due`, or\nthe title of a page that is itself one. Only in an answer to a query\nthat set [`SearchQuery::task_results`]. A surface opens Tasks on\n`task.node`; the hit's own `node` is what it always was (absent for a\ntitle)."
           },
           "title": {
             "description": "The document's name, from the listing.",
@@ -13171,6 +14252,20 @@
             "nullable": true,
             "type": "integer"
           },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingCounts"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "How far reading the pictures and files **in this query's workspaces**\nhas got, and whether to offer the reader.\n\n`None` when the store says nothing about it: a store that predates\nreading, or one that does not count. A surface then shows no line —\nabsence is never read as \"everything is read\"."
+          },
           "request_seq": {
             "format": "uint64",
             "minimum": 0,
@@ -13217,6 +14312,11 @@
           "include_facets": {
             "default": false,
             "description": "Also return the workspaces the index knows, for a scope picker.",
+            "type": "boolean"
+          },
+          "include_lists": {
+            "default": false,
+            "description": "Answer with task lists too: a list whose name matches is a hit of its\nown, ahead of every other result in every sort. **Off by default**, and\nwith it off no list is a candidate and no list's name changes a typo\ncorrection: the answer is what it was before lists were indexed.",
             "type": "boolean"
           },
           "kinds": {
@@ -13278,6 +14378,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "task_results": {
+            "default": false,
+            "description": "Answer with tasks as tasks: a hit on a task carries\n[`SearchHit::task`], a task's own text ranks like a title, and text\nread from pictures and files keeps one result per task rather than one\nper document. **Off by default**; with it off hits, scores, order and\npage membership are unchanged.",
+            "type": "boolean"
           },
           "text": {
             "type": "string"
@@ -13600,6 +14705,34 @@
           },
           "markdown": {
             "type": "string"
+          },
+          "mini_app_host": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Native host provenance for this live request only. Never persisted or\naccepted from a model tool argument."
+          },
+          "mini_app_refinement": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RefinementContext"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Exact captured declaration paired with the live target; never persisted."
           },
           "operation_id": {
             "type": "string"
@@ -14445,6 +15578,13 @@
         },
         "type": "object"
       },
+      "Sizing": {
+        "enum": [
+          "Hug",
+          "Fill"
+        ],
+        "type": "string"
+      },
       "SnapshotRequest": {
         "properties": {
           "columns": {
@@ -14501,6 +15641,26 @@
           "title"
         ],
         "type": "object"
+      },
+      "Space": {
+        "enum": [
+          "S0",
+          "S0_5",
+          "S1",
+          "S1_5",
+          "S2",
+          "S2_5",
+          "S3",
+          "S3_5",
+          "S4",
+          "S5",
+          "S6",
+          "S7",
+          "S8",
+          "S10",
+          "S12"
+        ],
+        "type": "string"
       },
       "Status": {
         "description": "`GET /v1/status`.",
@@ -15220,6 +16380,41 @@
         },
         "type": "object"
       },
+      "Surface": {
+        "enum": [
+          "Ground",
+          "Raised",
+          "Chip"
+        ],
+        "type": "string"
+      },
+      "Surface2": {
+        "additionalProperties": false,
+        "properties": {
+          "catalogId": {
+            "type": "string"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/Component"
+            },
+            "type": "array"
+          },
+          "sendDataModel": {
+            "type": "boolean"
+          },
+          "surfaceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "surfaceId",
+          "catalogId",
+          "sendDataModel",
+          "components"
+        ],
+        "type": "object"
+      },
       "TargetState": {
         "enum": [
           "active",
@@ -15268,6 +16463,24 @@
           "count",
           "overdue",
           "trashed"
+        ],
+        "type": "object"
+      },
+      "TaskHit": {
+        "description": "What a task result carries: which node is the task, and whether it is done.",
+        "properties": {
+          "node": {
+            "description": "The task's node. For a node hit, the hit's own node; for the title of\na page that is a task, that page's root node.",
+            "type": "string"
+          },
+          "state": {
+            "description": "The task's lifecycle token as indexed — `open` when none is recorded.\nA hint for drawing; where the task is opened is decided from the task\nas it is at that moment, never from this.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "state"
         ],
         "type": "object"
       },
@@ -15380,6 +16593,14 @@
             "description": "Only tasks **not** carrying this key.",
             "nullable": true,
             "type": "string"
+          },
+          "only": {
+            "description": "**Exactly these tasks**, and nothing else. Absent means no selector.\n\nFor opening one task from somewhere that already knows which: the\nanswer is that task **as it is now**, whatever page it is on — open or\ncompleted, however long ago it was finished.\n\n**The selector is exclusive, not a filter that quietly wins.** With it\npresent:\n\n- `workspaces` must name exactly one workspace;\n- 1 to [`MAX_ONLY`] entries, each a node id that parses;\n- `bucket`, `list`, `due`, `priority`, `min_priority`, `tags`, `has`,\n  `missing`, `after` and `group_by` are refused (400);\n- `lifecycle`, `completed_on_or_after` and `recently_completed_since`\n  are not applied, and neither is `limit` — the selector bounds the\n  answer;\n- `include_trashed` applies as always;\n- `bucket_windows` is allowed, and fills [`TaskRow::bucket`].\n\nA reference that is not in that workspace, or is not a task, is simply\nnot in the answer. That is not an error.",
+            "items": {
+              "$ref": "#/components/schemas/TaskRef"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "overdue": {
             "anyOf": [
@@ -15513,6 +16734,23 @@
         ],
         "type": "object"
       },
+      "TaskRef": {
+        "description": "One task, named exactly: the document it is written in and its node.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "node": {
+            "description": "The task's node id, in storage form.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "node"
+        ],
+        "type": "object"
+      },
       "TaskRow": {
         "description": "One task. The identity is `(workspace, document, node)`, carried together —\nnever a node id on its own — and [`task`](Self::task) is the same triple as\nthe one string that is also its pagination key and its activity subject.",
         "properties": {
@@ -15525,6 +16763,11 @@
           },
           "breadcrumb": {
             "description": "Where the task lives: the workspace, then the document path, then the\nancestor rows, joined by `\" / \"` — one rule, computed the same way by\nthe desktop from an open document and by the store from the projection.",
+            "type": "string"
+          },
+          "bucket": {
+            "description": "**The task's natural bucket**: one of the five tokens, placed by the\nsame ordered rule the rail's counts use, so the five are a partition.\nA task pinned to Today with a later due keeps its natural bucket here\n(`upcoming`, say); the pin is the row's own `koru.today` attribute.\n\nPresent only in an answer to a query that named tasks with\n[`TaskQuery::only`] **and** sent\n[`bucket_windows`](TaskQuery::bucket_windows). Without the windows the\nstore does not know what *today* is and never guesses a day or a zone.",
+            "nullable": true,
             "type": "string"
           },
           "document": {
@@ -16273,6 +17516,24 @@
           "controller_lease"
         ],
         "type": "object"
+      },
+      "TextAntialiasing": {
+        "enum": [
+          "area",
+          "msaa8",
+          "msaa16"
+        ],
+        "type": "string"
+      },
+      "TextRole": {
+        "enum": [
+          "Ui",
+          "Row",
+          "Hint",
+          "Meta",
+          "PopoverHeading"
+        ],
+        "type": "string"
       },
       "ThemeChoice": {
         "description": "`theme=` in `preferences.conf`, and the terminal row's `theme=`.\n\nMatches `koru_draw::theme::ThemePreference`: case-sensitive, because\nthat is what the existing parser does and a file written in another\ncase has never been produced by any build.",
@@ -17110,6 +18371,37 @@
         ],
         "type": "object"
       },
+      "TrashedInAccount": {
+        "description": "One Workspace that is in the Trash here and live in the account, as the\nrecovery surfaces list it.",
+        "properties": {
+          "acknowledged_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "first_seen_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "profile": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              }
+            ],
+            "description": "The Profile the account keeps it under: where *Restore* puts it."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "profile",
+          "first_seen_ms"
+        ],
+        "type": "object"
+      },
       "TrashedRun": {
         "description": "One run in the trash, as the Trash tab draws it.",
         "properties": {
@@ -17391,6 +18683,22 @@
         "required": [
           "mode",
           "workspace_ids"
+        ],
+        "type": "object"
+      },
+      "UpdateEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "updateComponents": {
+            "$ref": "#/components/schemas/ComponentUpdate"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "updateComponents"
         ],
         "type": "object"
       },
@@ -23120,6 +24428,92 @@
         "summary": "Search non-private AI chats for a trusted tool caller"
       }
     },
+    "/v1/ai/tools/mini-app": {
+      "post": {
+        "description": "A validated result offered to the live native host; not a host acknowledgement.",
+        "operationId": "ai_mini_app_tool",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MiniAppToolRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MiniAppToolResponse"
+                }
+              }
+            },
+            "description": "A validated result offered to the live native host; not a host acknowledgement."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "ai.chat"
+            ]
+          }
+        ],
+        "summary": "Invoke a bounded mini-app tool for an exact live desktop attempt"
+      }
+    },
     "/v1/ai/usage": {
       "delete": {
         "description": "The number of text-free attempts and feedback events deleted. Chat history is unchanged.",
@@ -25742,6 +27136,110 @@
           }
         ],
         "summary": "Take a .koru bundle in. ?mode=restore or ?mode=duplicate, and ?owner=<profile>"
+      }
+    },
+    "/v1/mini-app-pins": {
+      "get": {
+        "description": "Requires settings.read and store.read_documents. Ordered immutable artifact references. Unknown or unreadable files are refused and preserved.",
+        "operationId": "mini_app_pins_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "profile",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workspace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MiniAppPin"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Requires settings.read and store.read_documents. Ordered immutable artifact references. Unknown or unreadable files are refused and preserved."
+          },
+          "400": {
+            "description": "Unsupported pin file or invalid mutation; bytes preserved"
+          },
+          "403": {
+            "description": "Scope or workspace authority refused"
+          },
+          "503": {
+            "description": "Authority unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "settings.read",
+              "store.read_documents"
+            ]
+          }
+        ],
+        "summary": "Read this device's mini-app pins for a profile/workspace"
+      },
+      "patch": {
+        "description": "Requires settings.write and store.read_documents; Add also requires artifacts.read. The authoritative ordered references after an idempotent mutation. Unpin never deletes artifacts.",
+        "operationId": "mini_app_pins_mutate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MiniAppPinsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MiniAppPin"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Requires settings.write and store.read_documents; Add also requires artifacts.read. The authoritative ordered references after an idempotent mutation. Unpin never deletes artifacts."
+          },
+          "400": {
+            "description": "Unsupported pin file or invalid mutation; bytes preserved"
+          },
+          "403": {
+            "description": "Scope or workspace authority refused"
+          },
+          "503": {
+            "description": "Authority unavailable"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "settings.write",
+              "store.read_documents"
+            ]
+          }
+        ],
+        "summary": "Add, remove or place one device-local mini-app pin"
       }
     },
     "/v1/openapi.json": {
@@ -35353,6 +36851,54 @@
         "summary": "Create a workspace and its manifest"
       }
     },
+    "/v1/workspaces/trashed-in-account": {
+      "get": {
+        "description": "each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrashedInAccount"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Workspaces in this device's trash that the account still holds live"
+      }
+    },
     "/v1/workspaces/unassigned": {
       "get": {
         "description": "each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore",
@@ -37000,6 +38546,71 @@
         "summary": "Restore a soft-deleted workspace"
       }
     },
+    "/v1/workspaces/{id}/restore-to": {
+      "post": {
+        "description": "the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveWorkspace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Restore a soft-deleted workspace into a profile"
+      }
+    },
     "/v1/workspaces/{id}/snapshot/{document}": {
       "post": {
         "description": "application/octet-stream — a Loro snapshot, ready to import",
@@ -37119,6 +38730,54 @@
           }
         ],
         "summary": "Move a document and its explore subtree into another workspace"
+      }
+    },
+    "/v1/workspaces/{id}/trashed-in-account/acknowledge": {
+      "post": {
+        "description": "null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Record that the person was told a trashed workspace is still in the account"
       }
     },
     "/v1/workspaces/{id}/versions/{version}/snapshot": {

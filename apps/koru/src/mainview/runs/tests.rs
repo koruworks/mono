@@ -21,6 +21,14 @@ fn a_result(version: u128, title: &str) -> OpenedArtifact {
     MainView::artifact_of_result(a_run_result(version, title))
 }
 
+/// Existing result presentation tests begin after authoritative MIME routing.
+/// The async version/family/binding route has its own in-memory host tests.
+impl MainView {
+    fn open_result_for_test(&mut self, opened: OpenedArtifact) -> bool {
+        self.open_markdown_artifact_tab(opened)
+    }
+}
+
 /// The same result as a *run* names it — the shape that arrives on
 /// [`Request::OpenResult`].
 fn a_run_result(version: u128, title: &str) -> OpenedResult {
@@ -64,7 +72,7 @@ fn a_header(run: RunId) -> RunHeader {
 fn a_result_opens_as_a_tab_named_after_it() {
     let (mut v, _w) = container();
     let before = v.tabs().len();
-    assert!(v.open_artifact_tab(a_result(0x90, "The quarterly summary")));
+    assert!(v.open_result_for_test(a_result(0x90, "The quarterly summary")));
     assert_eq!(v.tabs().len(), before + 1);
     let active = v.tabs().active();
     assert_eq!(active, v.tabs().len() - 1);
@@ -83,13 +91,13 @@ fn a_result_opens_as_a_tab_named_after_it() {
 #[test]
 fn opening_the_same_result_again_focuses_the_tab_it_is_already_in() {
     let (mut v, _w) = container();
-    v.open_artifact_tab(a_result(0x90, "The quarterly summary"));
+    v.open_result_for_test(a_result(0x90, "The quarterly summary"));
     let opened = v.tabs().len();
     let index = v.tabs().active();
 
     // Move away, then ask for it again.
     v.select(0);
-    assert!(v.open_artifact_tab(a_result(0x90, "The quarterly summary")));
+    assert!(v.open_result_for_test(a_result(0x90, "The quarterly summary")));
     assert_eq!(v.tabs().len(), opened, "no second tab on one version");
     assert_eq!(v.tabs().active(), index);
 }
@@ -98,8 +106,8 @@ fn opening_the_same_result_again_focuses_the_tab_it_is_already_in() {
 #[test]
 fn two_results_are_two_tabs() {
     let (mut v, _w) = container();
-    v.open_artifact_tab(a_result(0x90, "The quarterly summary"));
-    v.open_artifact_tab(a_result(0x91, "The regional detail"));
+    v.open_result_for_test(a_result(0x90, "The quarterly summary"));
+    v.open_result_for_test(a_result(0x91, "The regional detail"));
     let labels: Vec<&str> = v
         .tabs()
         .iter()
@@ -109,20 +117,82 @@ fn two_results_are_two_tabs() {
     assert_eq!(labels, ["The quarterly summary", "The regional detail"]);
 }
 
-/// **The request is what opens it**, so the run views' one gesture and the
-/// window's one primitive are the same path — not two.
+/// A run request waits for authoritative metadata before choosing a renderer.
 #[test]
 fn the_run_views_request_opens_the_tab() {
     let (mut v, _w) = container();
+    let (io, commands, answers) = crate::mini_app::artifact::Io::in_memory();
+    v.mini_app_artifacts = io;
+    let count = v.tabs().len();
     let opened = v.perform_run_request(Request::OpenResult(Box::new(a_run_result(
         0x90,
         "The quarterly summary",
     ))));
     assert!(opened);
+    assert_eq!(
+        v.tabs().len(),
+        count,
+        "a row hint cannot select the renderer"
+    );
+    use crate::mini_app::artifact::{Answer, Command, Opened};
+    use koru_artifact_wire::{
+        ArtifactFamily, ArtifactFamilyId, ArtifactTitle, ArtifactVersion, BlobHash, FamilyResponse,
+        MediaType, Ordinal, ProducedBy, RegistrationId,
+    };
+    let Command::Open {
+        epoch,
+        profile,
+        workspace,
+        version,
+    } = commands.try_recv().unwrap()
+    else {
+        panic!()
+    };
+    let family = ArtifactFamily {
+        id: ArtifactFamilyId::mint(),
+        workspace: koru_artifact_wire::WorkspaceId::from_uuid(workspace.as_uuid()),
+        title: ArtifactTitle::new("Metadata title").unwrap(),
+        created_by_run: None,
+        created_at_ms: 0,
+        retired_at_ms: None,
+    };
+    let metadata = ArtifactVersion {
+        id: version,
+        family: family.id,
+        ordinal: Ordinal::FIRST,
+        blob: BlobHash::from_digest("b3", &"0".repeat(64)).unwrap(),
+        size_bytes: 20,
+        mime: MediaType::new("text/markdown").unwrap(),
+        filename: None,
+        produced_by: Some(ProducedBy {
+            run: RunId::from_uuid(uuid::Uuid::from_u128(7)),
+            generation: koru_artifact_wire::AttemptGeneration::FIRST,
+        }),
+        registration_id: RegistrationId::mint(),
+        derived_from: None,
+        created_at_ms: 0,
+    };
+    answers
+        .send(Answer::Opened {
+            epoch,
+            profile,
+            workspace,
+            version,
+            result: Ok(Opened::Other {
+                version: metadata,
+                family: FamilyResponse {
+                    family,
+                    versions: vec![],
+                },
+            }),
+        })
+        .unwrap_or_else(|_| panic!("mailbox"));
+    assert!(v.maintain_mini_app_artifacts());
     assert!(matches!(
         v.tabs().get(v.tabs().active()).expect("a tab").view,
         TabView::Result(_)
     ));
+    assert_eq!(v.tabs().active_tab().label, "Metadata title");
 }
 
 /// A result tab's run icon is routed through the window's one run-tab door.
@@ -141,7 +211,7 @@ fn a_result_run_icon_opens_the_run_and_disappears_after_retirement() {
         documents: Default::default(),
         trashed: Vec::new(),
     });
-    assert!(v.open_artifact_tab(a_result(0x96, "The quarterly summary")));
+    assert!(v.open_result_for_test(a_result(0x96, "The quarterly summary")));
     let result_tab = v.tabs().active();
 
     let run_rect = match &mut v.tabs_mut().active_mut().view {
@@ -376,7 +446,7 @@ fn ctrl_shift_e_on_a_result_tab_reveals_it_in_artifacts() {
     let (mut v, w) = crate::mainview::harness::on_document();
     let run = RunId::from_uuid(uuid::Uuid::from_u128(0x55));
     v.explore.set_agent_runs(vec![a_run_row(run)]);
-    v.open_artifact_tab(a_result(0x95, "The quarterly summary"));
+    v.open_result_for_test(a_result(0x95, "The quarterly summary"));
 
     assert!(v.focus_or_toggle_sidebar(&w.ws), "the shortcut is answered");
     assert_eq!(

@@ -93,6 +93,22 @@ pub(crate) fn unassigned_restore(id: koru_core::WorkspaceId) -> Key {
     Key::model(id.as_uuid().as_u128(), UNASSIGNED_RESTORE)
 }
 
+/// The group of workspaces in this device's Trash that the account still
+/// keeps under this Profile (trash-recovery): its heading, and the parts of
+/// its rows, keyed by workspace like the Unassigned group's.
+pub(crate) const TRASHED_HEADING: Key =
+    Key::surface(popover_elements::SURFACE, "trashed-in-account-heading");
+pub(crate) const TRASHED: &str = "trashed-in-account";
+pub(crate) const TRASHED_RESTORE: &str = "trashed-in-account-restore";
+
+pub(crate) fn trashed(id: koru_core::WorkspaceId) -> Key {
+    Key::model(id.as_uuid().as_u128(), TRASHED)
+}
+
+pub(crate) fn trashed_restore(id: koru_core::WorkspaceId) -> Key {
+    Key::model(id.as_uuid().as_u128(), TRASHED_RESTORE)
+}
+
 /// Configured channels, independent of their current connection health.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SyncChannels {
@@ -101,19 +117,6 @@ pub(crate) struct SyncChannels {
 }
 
 impl SyncChannels {
-    pub(crate) fn controls(self) -> Vec<(MenuAction, char)> {
-        use koru_draw::icons;
-        match (self.devices, self.cloud) {
-            (true, true) => vec![
-                (MenuAction::Sync, icons::DEVICES),
-                (MenuAction::Cloud, icons::CLOUD),
-            ],
-            (true, false) => vec![(MenuAction::Sync, icons::DEVICES)],
-            (false, true) => vec![(MenuAction::Cloud, icons::CLOUD)],
-            (false, false) => vec![(MenuAction::Sync, icons::DESKTOP)],
-        }
-    }
-
     fn words(self, lang: koru_i18n::Lang) -> String {
         let mut channels = Vec::new();
         if self.devices {
@@ -170,28 +173,6 @@ impl ExploreView {
         )
     }
 
-    pub(crate) fn sync_channel_controls(&self) -> El {
-        row("Sync channels").gap(Space::S1).children(
-            self.sync_channels()
-                .controls()
-                .into_iter()
-                .map(|(action, glyph)| {
-                    row("Sync channel")
-                        .id(action.key())
-                        .hit()
-                        .focusable()
-                        .action(Action::Click)
-                        .action(Action::Focus)
-                        .semantics(Role::MenuItem)
-                        .name(action.words())
-                        .min_h(metrics::ROW_MIN)
-                        .pad_x(Space::S1)
-                        .radius(Radius::M)
-                        .states(&WORKSPACE_ROW_STATES)
-                        .child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary))
-                }),
-        )
-    }
     pub(crate) fn workspace_import_anchor(
         &self,
         area: koru_draw::geometry::Rect,
@@ -321,6 +302,98 @@ impl ExploreView {
         Some(group.child(rule()))
     }
 
+    /// **In the Trash on this device, still in the account** (trash-recovery
+    /// PLAN.final P2), under the Unassigned group and only while this
+    /// Profile has one: a heading, then per workspace its row — words, with
+    /// the row chrome; it does nothing — and, under it, *Restore to
+    /// {Profile}*. Only in the menu of the Profile the account keeps it in.
+    pub(crate) fn trashed_in_account_group(&self) -> Option<El> {
+        let rows = self.trashed_in_account_rows();
+        if rows.is_empty() {
+            return None;
+        }
+        let lang = crate::format::lang();
+        let hint = t(lang, Words::WorkspacesTrashedInAccountHint);
+        let mut group = col("Trashed in account group").child(
+            row("Trashed in account heading")
+                .pad_x(alias::NAV_PAD)
+                .min_h(metrics::ROW_MIN)
+                .child(
+                    text(t(lang, Words::WorkspacesTrashedInAccountHeading).to_uppercase())
+                        .id(TRASHED_HEADING)
+                        .semantics(Role::Heading)
+                        .name(Words::WorkspacesTrashedInAccountHeading)
+                        .role(roles::POPOVER_HEADING)
+                        .ink(Ink::Hint)
+                        .fill(),
+                ),
+        );
+        for entry in &rows {
+            let id = crate::manage::workspaces::app_workspace(entry.id);
+            let profile = self
+                .workspace_controller
+                .as_ref()
+                .map(|controller| controller.borrow().profile_name(entry.profile))
+                .unwrap_or_default();
+            let restore = koru_i18n::fill(t(lang, Words::WorkspacesRestoreTo), &[&profile]);
+            group = group
+                .child(
+                    row("Trashed in account row")
+                        .id(trashed(id))
+                        .min_h(metrics::ROW_MIN)
+                        .pad_x(alias::NAV_PAD)
+                        .gap(Space::S2)
+                        .hit()
+                        .focusable()
+                        .action(Action::Focus)
+                        .semantics(Role::MenuItem)
+                        .name_text(format!("{}, {hint}", entry.name))
+                        .radius(Radius::M)
+                        .states(&WORKSPACE_ROW_STATES)
+                        .child(
+                            leaf(
+                                "Trashed in account tile",
+                                TileLeaf {
+                                    name: entry.name.clone(),
+                                    icon: entry.icon.clone(),
+                                    color: entry.color.clone(),
+                                },
+                            )
+                            .decorative(),
+                        )
+                        .child(text(&entry.name).role(roles::ROW).fill().truncate()),
+                )
+                .child(
+                    row("Trashed in account action")
+                        .id(trashed_restore(id))
+                        .min_h(metrics::ROW_MIN)
+                        .pad_x(alias::NAV_PAD)
+                        .gap(Space::S2)
+                        .hit()
+                        .focusable()
+                        .action(Action::Click)
+                        .action(Action::Focus)
+                        .semantics(Role::MenuItem)
+                        .name_text(format!("{restore}: {}", entry.name))
+                        .radius(Radius::M)
+                        .states(&WORKSPACE_ROW_STATES)
+                        .child(
+                            icon(koru_draw::icons::ARROWS_CLOCKWISE, IconSize::L)
+                                .decorative()
+                                .ink(Ink::Secondary),
+                        )
+                        .child(
+                            text(restore.clone())
+                                .role(roles::ROW)
+                                .ink(Ink::Secondary)
+                                .fill()
+                                .truncate(),
+                        ),
+                );
+        }
+        Some(group.child(rule()))
+    }
+
     /// Where the window's workspace menu opens for an Unassigned row's
     /// *Move to…*: beside the page, level with the row — as the import
     /// menu anchors.
@@ -373,9 +446,9 @@ impl ExploreView {
                     .fill(),
             )
             .child(
-                text(t(lang, Words::ManageWorkspaces))
-                    .role(roles::HINT)
-                    .ink(Ink::Secondary)
+                row("Manage workspaces")
+                    .w(metrics::ROW_MIN)
+                    .min_h(metrics::ROW_MIN)
                     .id(MANAGE)
                     .semantics(Role::MenuItem)
                     .name(Words::ManageWorkspaces)
@@ -385,7 +458,12 @@ impl ExploreView {
                     .action(Action::Focus)
                     .pad_x(Space::S1)
                     .radius(Radius::M)
-                    .states(&WORKSPACE_ROW_STATES),
+                    .states(&WORKSPACE_ROW_STATES)
+                    .child(
+                        icon(koru_draw::icons::FADERS, IconSize::L)
+                            .decorative()
+                            .ink(Ink::Secondary),
+                    ),
             )
     }
 
@@ -399,11 +477,11 @@ impl ExploreView {
             MenuAction::Cloud => koru_draw::icons::CLOUD,
             MenuAction::Retry => koru_draw::icons::ARROWS_CLOCKWISE,
         };
-        let mut item = row("Workspace menu action")
+        let item = row("Workspace menu action")
             .id(action.key())
             .min_h(metrics::ROW_MIN)
-            .pad_x(alias::NAV_PAD)
-            .gap(Space::S2)
+            .pad_x(Space::S1)
+            .pad_y(Space::S0_5)
             .hit()
             .focusable()
             .action(Action::Click)
@@ -411,28 +489,35 @@ impl ExploreView {
             .semantics(Role::MenuItem)
             .name(action.words())
             .radius(Radius::M)
-            .states(&WORKSPACE_ROW_STATES)
+            .states(&WORKSPACE_ROW_STATES);
+        let mut contents = row("Workspace action contents")
+            .fill()
+            .min_h(metrics::ROW_MIN)
+            .gap(Space::S2)
             .child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary))
             .child(text(t(lang, action.words())).role(roles::ROW).fill());
         if action == MenuAction::Trash {
-            item = item.child(
+            contents = contents.child(
                 text(self.trash_count.to_string())
                     .role(roles::HINT)
                     .ink(Ink::Hint),
             );
         } else if action == MenuAction::Import {
-            item = item.child(
+            contents = contents.child(
                 icon(koru_draw::icons::CARET_RIGHT, IconSize::L)
                     .decorative()
                     .ink(Ink::Hint),
             );
         }
-        item
+        row("Workspace action inset")
+            .pad_x(alias::ROW_PLATE_INSET)
+            .child(item.fill().child(contents))
     }
 
     pub(crate) fn workspace_menu_footer(&self) -> El {
         let mut foot = col("Workspace menu footer")
-            .child(rule())
+            .pad_top(Space::S1)
+            .gap(Space::S1)
             .child(self.workspace_menu_action(MenuAction::New))
             .child(self.workspace_menu_action(MenuAction::Import));
         if let Some(notice) = self

@@ -3,6 +3,7 @@
 //! What a person can search for, decided here and nowhere else.
 
 use super::*;
+use crate::readings::ReadingText;
 use koru_projection::model::{DocumentProjection, ListedDocument, ProjectedAttr, ProjectedNode};
 use koru_store_core::ids::{DocumentId, WorkspaceId};
 
@@ -584,4 +585,112 @@ fn a_marked_task_is_found_by_its_text_and_narrowed_by_its_marker() {
         found(&index, "2026-09-10", Vec::new()),
         [("t1".to_owned(), "attr:koru.due".to_owned())]
     );
+}
+
+// ------------------------------------------------------------- readings
+
+fn with_blob(id: &str, kind: &str, hash: &str) -> ProjectedNode {
+    ProjectedNode {
+        name: Some(format!("{id}.bin")),
+        blob: Some(hash.to_owned()),
+        ..node(id, kind, "")
+    }
+}
+
+fn read_of(hash: &str, page_count: u32, pages: &[(u32, &str)]) -> (String, ReadingText) {
+    (
+        hash.to_owned(),
+        ReadingText {
+            hash: hash.to_owned(),
+            page_count,
+            pages: pages.iter().map(|(p, t)| (*p, (*t).to_owned())).collect(),
+        },
+    )
+}
+
+/// **One fragment per non-empty page**, keyed by the page, numbered only for a
+/// file of more than one page — and only for the pictures and files that are
+/// live in the document.
+#[test]
+fn a_reading_is_one_fragment_per_non_empty_page() {
+    let mut binned = with_blob("gone", "image", "b3:bin");
+    binned.in_trash = true;
+    let projected = projection(vec![
+        with_blob("manual", "file", "b3:manual"),
+        with_blob("photo", "image", "b3:photo"),
+        binned,
+        // A blob on a node that is neither a picture nor a file has no reading
+        // the index asks about.
+        with_blob("clip", "audio", "b3:clip"),
+        node("p1", "paragraph", "see the manual"),
+    ]);
+    let readings: HashMap<String, ReadingText> = [
+        read_of(
+            "b3:manual",
+            4,
+            &[(1, "contents"), (2, "   "), (3, "torque the bolts")],
+        ),
+        read_of("b3:photo", 1, &[(1, "a whiteboard")]),
+        read_of("b3:bin", 1, &[(1, "binned words")]),
+        read_of("b3:clip", 1, &[(1, "never asked")]),
+    ]
+    .into_iter()
+    .collect();
+
+    assert_eq!(
+        read_hashes(&projected),
+        ["b3:manual", "b3:photo"],
+        "the live pictures and files, and nothing else"
+    );
+
+    let document = projected.document.to_storage();
+    let built = reading_fragments(&projected, &readings);
+    let shape: Vec<(&str, Option<u32>, &str)> = built
+        .iter()
+        .map(|f| (f.key.as_str(), f.page, f.text.as_str()))
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            (
+                format!("node:{document}:manual:read:1").as_str(),
+                Some(1),
+                "contents"
+            ),
+            (
+                format!("node:{document}:manual:read:3").as_str(),
+                Some(3),
+                "torque the bolts"
+            ),
+            (
+                format!("node:{document}:photo:read:1").as_str(),
+                None,
+                "a whiteboard"
+            ),
+        ]
+    );
+    assert!(built.iter().all(|f| f.field == field::READ));
+    assert_eq!(built[0].kind, "file");
+    assert_eq!(built[2].kind, "image");
+    assert_eq!(built[0].seq, 1, "document order, as the node's other rows");
+    assert_eq!(built[2].seq, 2);
+}
+
+/// The same picture twice in one page is two nodes, and each is findable where
+/// it sits.
+#[test]
+fn one_picture_in_two_places_reads_in_both_and_is_asked_about_once() {
+    let projected = projection(vec![
+        with_blob("a", "image", "b3:same"),
+        with_blob("b", "image", "b3:same"),
+    ]);
+    assert_eq!(read_hashes(&projected), ["b3:same"]);
+    let readings: HashMap<_, _> = [read_of("b3:same", 1, &[(1, "receipt")])]
+        .into_iter()
+        .collect();
+    let nodes: Vec<_> = reading_fragments(&projected, &readings)
+        .into_iter()
+        .map(|f| f.node.unwrap())
+        .collect();
+    assert_eq!(nodes, ["a", "b"]);
 }

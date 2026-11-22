@@ -382,6 +382,11 @@ impl MainView {
         // what has the keyboard. Read from `ViewState::active` and
         // `Body::focus` — the two states the caret is drawn from, not a second
         // focus beside them.
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && let Some(focus) = app.chrome_accessibility_focus(cx.window, cx.view)
+        {
+            return Some(focus);
+        }
         if let Some(paragraph) = self.document_focus(&cx) {
             return Some(paragraph);
         }
@@ -398,6 +403,11 @@ impl MainView {
         // …or the Manage tab, which answers for its nav.
         if let Some(occurrence) = self.manage_focus(&cx) {
             return Some(occurrence);
+        }
+        if let TabView::Ocr(page) = &self.tabs().active_tab().view
+            && let Some(part) = page.focused_control()
+        {
+            return Some(cx.instance("ocr", self.tabs().active_tab().id, ControlPart::new(part)));
         }
         // Nothing else in the shell claims the keyboard, so it is the active
         // tab's region — which is where a character would go.
@@ -441,6 +451,7 @@ impl MainView {
 
     /// Everything the window publishes **except** the document body.
     fn revise_chrome(&self, rev: &mut Revision) {
+        self.revise_pin_menu(rev);
         // A focus-only F6/arrow move still needs a native focus update. The
         // host publishes only after this fingerprint changes.
         use super::chrome_focus::{ChromeStop, LaneControl};
@@ -457,6 +468,12 @@ impl MainView {
             }
             Some(ChromeStop::Apps(index)) => {
                 rev.byte(4).u64(index as u64);
+            }
+            // The toast's line (OCR Plan 3.3). The toast publishes no node of
+            // its own yet, so native focus stays where it was; the byte keeps
+            // the fingerprint honest about where the keyboard is.
+            Some(ChromeStop::Toast(index)) => {
+                rev.byte(5).u64(index as u64);
             }
         }
         rev.u64(self.profile_wait.revision);
@@ -533,6 +550,9 @@ impl MainView {
         // with the chrome.
         self.revise_canvas(rev);
         self.revise_manage(rev);
+        if let TabView::Ocr(page) = &self.tabs().active_tab().view {
+            page.revise(rev);
+        }
         // What the Store has confirmed about the document in front of the
         // person, and whether anything about saving has become news.
         self.persistence_revision(rev);
@@ -551,6 +571,7 @@ impl MainView {
         action: Action,
         data: Option<&ActionData>,
     ) -> bool {
+        self.sync_mini_app_refinement_target();
         // **A blocker owns everything beneath it here too.** A request that
         // named a control under an open menu is refused rather than performed,
         // which is the same answer the keyboard gives.
@@ -591,6 +612,11 @@ impl MainView {
         // The open document's own paragraphs, before the explore column: both
         // answer a `Model` target, and the document is the one in front of the
         // person.
+        if let TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view
+            && app.chrome_accessibility_action(target, action)
+        {
+            return true;
+        }
         if self.document_action(target, action, data) {
             return true;
         }
@@ -616,6 +642,14 @@ impl MainView {
         if self.manage_action(target, action, data) {
             return true;
         }
+        let tab = self.tabs().active_tab();
+        let cx = self.shell(target.view);
+        if target == cx.instance("ocr", tab.id, target.part)
+            && matches!(action, Action::Click | Action::Focus)
+            && let TabView::Ocr(page) = self.active_view()
+        {
+            return page.accessible_action(target.part.name(), action == Action::Click);
+        }
         self.explore_action(ws, target, action)
     }
 
@@ -629,27 +663,40 @@ impl MainView {
     /// coordinates. A tab lays out at its own origin and reports in its own
     /// coordinates, so this is the one thing it cannot work out for itself.
     fn tasks_context(&self, cx: &Shell) -> crate::tasks_view::accessibility::Context {
+        let area = if let TabView::MiniApp(app) = &self.tabs().active_tab().view {
+            let pane = self.focused_view_rect();
+            let region = app.regions.tasks;
+            Rect::new(pane.x + region.x, pane.y + region.y, region.w, region.h)
+        } else {
+            self.content()
+        };
         crate::tasks_view::accessibility::Context {
             window: cx.window,
             view: cx.view,
-            area: self.content(),
+            area,
             lang: cx.lang,
         }
     }
 
     /// The Tasks page under the content region, when that is the active tab.
     fn tasks_semantics(&self, cx: &Shell) -> Option<SemanticNode> {
-        let TabView::Tasks(page) = &self.tabs().active_tab().view else {
+        let page = self.tabs().active_tab().view.tasks()?;
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && app.regions.tasks.w == 0.0
+        {
             return None;
-        };
+        }
         Some(page.semantics(&self.tasks_context(cx)))
     }
 
     /// Where the keyboard is inside the Tasks page, when it is showing.
     fn tasks_focus(&self, cx: &Shell) -> Option<Occurrence> {
-        let TabView::Tasks(page) = &self.tabs().active_tab().view else {
+        let page = self.tabs().active_tab().view.tasks()?;
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && !app.tasks_focused()
+        {
             return None;
-        };
+        }
         Some(page.accessible_focus(&self.tasks_context(cx)))
     }
 
@@ -660,6 +707,13 @@ impl MainView {
     /// nothing, so a change in it must not make the window rebuild.
     fn revise_tasks(&self, rev: &mut Revision) {
         match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) => {
+                rev.byte(2);
+                app.revise_accessibility(rev);
+                if app.regions.tasks.w > 0.0 {
+                    app.tasks.revise(rev);
+                }
+            }
             TabView::Tasks(page) => {
                 rev.byte(1);
                 page.revise(rev);
@@ -673,7 +727,21 @@ impl MainView {
     /// Do what a client asked of the Tasks page, and drain what it asked for.
     fn tasks_action(&mut self, target: Occurrence, action: Action) -> bool {
         let index = self.tabs().active();
-        let Some(TabView::Tasks(page)) = self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
+        if let Some(TabView::MiniApp(app)) = self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
+        {
+            if app.regions.tasks.w <= 0.0 {
+                return false;
+            }
+            let handled = app.tasks.accessibility_action(target, action);
+            if handled && matches!(action, Action::Focus | Action::Click) {
+                app.focus_region(crate::mini_app::Region::Tasks);
+            }
+            return handled;
+        }
+        let Some(page) = self
+            .tabs_mut()
+            .get_mut(index)
+            .and_then(|tab| tab.view.tasks_mut())
         else {
             return false;
         };
@@ -746,14 +814,26 @@ impl MainView {
 
     /// The Manage tab under the content region, when that is the active tab.
     fn manage_semantics(&self, cx: &Shell) -> Option<SemanticNode> {
-        let TabView::Manage(page) = &self.tabs().active_tab().view else {
+        if !matches!(&self.tabs().active_tab().view, TabView::Settings(view) if view.manage_visible())
+        {
+            return None;
+        }
+        let TabView::Settings(crate::settings_view::SettingsView { manage: page, .. }) =
+            &self.tabs().active_tab().view
+        else {
             return None;
         };
         Some(page.semantics(&self.manage_context(cx)))
     }
 
     fn manage_focus(&self, cx: &Shell) -> Option<Occurrence> {
-        let TabView::Manage(page) = &self.tabs().active_tab().view else {
+        if !matches!(&self.tabs().active_tab().view, TabView::Settings(view) if view.manage_visible())
+        {
+            return None;
+        }
+        let TabView::Settings(crate::settings_view::SettingsView { manage: page, .. }) =
+            &self.tabs().active_tab().view
+        else {
             return None;
         };
         Some(page.accessible_focus(&self.manage_context(cx)))
@@ -763,7 +843,7 @@ impl MainView {
     /// front.
     fn revise_manage(&self, rev: &mut Revision) {
         match &self.tabs().active_tab().view {
-            TabView::Manage(page) => {
+            TabView::Settings(crate::settings_view::SettingsView { manage: page, .. }) => {
                 rev.byte(1);
                 page.revise(rev);
             }
@@ -788,12 +868,17 @@ impl MainView {
         action: Action,
         data: Option<&ActionData>,
     ) -> bool {
+        if !matches!(&self.tabs().active_tab().view, TabView::Settings(view) if view.manage_visible())
+        {
+            return false;
+        }
         // The request names the view it was published in; the tab's frame of
         // reference is the same one its tree was built against.
         let shell = self.shell(target.view);
         let cx = self.manage_context(&shell);
         let index = self.tabs().active();
-        let Some(TabView::Manage(page)) = self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
+        let Some(TabView::Settings(crate::settings_view::SettingsView { manage: page, .. })) =
+            self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
         else {
             return false;
         };
@@ -853,6 +938,18 @@ impl MainView {
         let mut node = SemanticNode::new(cx.surface(SHELL, parts::CONTENT), Role::TabPanel)
             .with_label(label)
             .with_bounds(self.content());
+        if let TabView::MiniApp(app) = &tab.view {
+            let mut children = app.chrome_semantics(cx.window, cx.view, self.focused_view_rect());
+            if let Some(body) = self.body_semantics(cx, scope) {
+                children.push(body);
+            } else {
+                self.bodies.borrow_mut().body_withheld(cx);
+            }
+            if let Some(tasks) = self.tasks_semantics(cx) {
+                children.push(tasks);
+            }
+            return node.with_children(children);
+        }
         match self.body_semantics(cx, scope) {
             Some(body) => node = node.with_children(vec![body]),
             // Not a document: whatever the client held of a document body goes
@@ -865,6 +962,7 @@ impl MainView {
                 if let Some(page) = self
                     .tasks_semantics(cx)
                     .or_else(|| self.manage_semantics(cx))
+                    .or_else(|| self.ocr_semantics(cx))
                 {
                     node = node.with_children(vec![page]);
                 } else if let Some(canvas) = self.canvas_semantics(cx) {
@@ -873,6 +971,33 @@ impl MainView {
             }
         }
         node
+    }
+
+    fn ocr_semantics(&self, cx: &Shell) -> Option<SemanticNode> {
+        let tab = self.tabs().active_tab();
+        let TabView::Ocr(page) = &tab.view else {
+            return None;
+        };
+        let area = self.content();
+        let children = page
+            .controls()
+            .into_iter()
+            .map(|(part, label, rect)| {
+                SemanticNode::new(
+                    cx.instance("ocr", tab.id, ControlPart::new(part)),
+                    Role::Button,
+                )
+                .with_label(t(cx.lang, label))
+                .with_bounds(Rect::new(area.x + rect.x, area.y + rect.y, rect.w, rect.h))
+                .with_actions([Action::Click, Action::Focus])
+            })
+            .collect();
+        Some(
+            SemanticNode::new(cx.instance("ocr", tab.id, ControlPart::ROOT), Role::Group)
+                .with_label(tab.label.clone())
+                .with_bounds(area)
+                .with_children(children),
+        )
     }
 }
 

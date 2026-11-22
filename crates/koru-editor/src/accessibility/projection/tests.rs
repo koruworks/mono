@@ -71,6 +71,72 @@ fn image_and_divider_geometry_stamps_do_not_export_placeholder_text_layouts() {
     }
 }
 
+/// **A picture's read words are its description** (OCR), republished when
+/// they arrive, change or go, and not otherwise: an unchanged picture is
+/// still the cheap skip, and long words go out capped.
+#[test]
+fn a_pictures_read_words_are_published_when_they_arrive_and_change() {
+    let image = CoreNode::image(
+        koru_core::BlobHash("b3:picture".into()),
+        "image/png",
+        Some(10),
+        Some(10),
+    )
+    .unwrap();
+    let mut row = Paragraph::from_node(&image, 0, Vec::new(), HashMap::new(), None, 0);
+    row.dirty = false;
+    row.shaped = 1;
+    row.height = 100.0;
+    let rows = [row];
+    let geometry = ViewGeometry {
+        origin: (0.0, 0.0),
+        content_x: 0.0,
+        scroll: 0.0,
+        viewport_h: VIEWPORT_H,
+    };
+    let mut doc = DocumentAccessibility::default();
+    let mut texts: HashMap<String, Arc<str>> = HashMap::new();
+    doc.set_picture_texts(&texts, 0);
+    let first = doc.body(&rows, geometry, None, Publish::Whole, base_of);
+    assert_eq!(first.rows[0].picture_text, None, "no words, no description");
+    assert_eq!(first.rows[0].facts.picture_text, None);
+    assert!(
+        doc.body(&rows, geometry, None, Publish::Delta, base_of)
+            .rows
+            .is_empty()
+    );
+
+    texts.insert("b3:picture".into(), Arc::from("TOTAL 42\nThank you"));
+    doc.set_picture_texts(&texts, 1);
+    let arrived = doc.body(&rows, geometry, None, Publish::Delta, base_of);
+    assert_eq!(arrived.rows.len(), 1, "the words arriving republish it");
+    assert_eq!(
+        arrived.rows[0].picture_text.as_deref(),
+        Some("TOTAL 42\nThank you")
+    );
+    assert!(arrived.rows[0].facts.picture_text.is_some());
+    assert!(
+        doc.body(&rows, geometry, None, Publish::Delta, base_of)
+            .rows
+            .is_empty(),
+        "and only once"
+    );
+
+    let long = "word ".repeat(300);
+    texts.insert("b3:picture".into(), Arc::from(long.as_str()));
+    doc.set_picture_texts(&texts, 2);
+    let changed = doc.body(&rows, geometry, None, Publish::Delta, base_of);
+    let published = changed.rows[0].picture_text.as_deref().unwrap();
+    assert!(published.ends_with("..."), "marked as cut");
+    assert!(published.chars().count() <= PICTURE_TEXT_LIMIT + 3);
+
+    texts.clear();
+    doc.set_picture_texts(&texts, 3);
+    let gone = doc.body(&rows, geometry, None, Publish::Delta, base_of);
+    assert_eq!(gone.rows.len(), 1, "the words going republish it too");
+    assert_eq!(gone.rows[0].picture_text, None);
+}
+
 #[test]
 fn navigable_delegate_pills_are_links() {
     for kind in [PillKind::Run, PillKind::Schedule, PillKind::SchedulePaused] {

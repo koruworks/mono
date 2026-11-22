@@ -22,6 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
+pub mod inspection;
 pub mod reconcile;
 
 type Pending<'a> = Pin<Box<dyn Future<Output = Result<Receipt, Error>> + Send + 'a>>;
@@ -58,6 +59,12 @@ pub enum Event {
     Deferred(Start),
     /// The remote receiver deferred this exact upload, without admitting bytes.
     UploadDeferred(Start),
+    /// The current upload was refused, without revoking the read direction.
+    /// Never an acknowledgement and never permission to retry its payload.
+    UploadRefused {
+        start: Start,
+        reason: koru_account_core::cloud_admission::Reason,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -113,6 +120,10 @@ pub struct Client<'a, R, W> {
     receipt: Option<(Receipt, u64)>,
     upload: Option<Upload<'a>>,
     batch: u64,
+    inspection_only: bool,
+    inspection_download: Option<Unit>,
+    inspection_joined: bool,
+    inspection_finished: bool,
     receive: Box<dyn FnMut(Completed) -> Result<Pending<'a>, Error> + Send + 'a>,
     authorize: Box<dyn FnMut(Unit) -> Result<(), Refusal> + Send + 'a>,
     permission: Box<dyn FnMut(&Start) -> Decision + Send + 'a>,
@@ -176,6 +187,10 @@ where
             receipt: None,
             upload: None,
             batch: 0,
+            inspection_only: false,
+            inspection_download: None,
+            inspection_joined: false,
+            inspection_finished: false,
             receive: Box::new(move |complete| {
                 receive(complete).map(|reply| Box::pin(reply) as Pending<'a>)
             }),
@@ -194,6 +209,14 @@ where
             queued_controls: self.controls.len(),
             writing: self.writing.is_some(),
         }
+    }
+    /// Whether the worker's current policy on this stream answers every
+    /// upload start before any body. A timed resource retry may send its
+    /// start only while this is true: absent, paused, not yet learned or a
+    /// closed stream are all false, and nothing carries over from an earlier
+    /// stream, so a held candidate stays held against any other worker.
+    pub fn upload_decision_required(&self) -> bool {
+        self.stream.peer_decision_required()
     }
     fn now(&self) -> u64 {
         self.observed
@@ -419,7 +442,10 @@ where
 
     fn advance(&mut self) -> Result<(), Error> {
         self.check()?;
-        if self.stream.status().incoming_complete && !self.status().committing {
+        if self.stream.status().incoming_complete
+            && !self.status().committing
+            && self.inspection_download.is_none()
+        {
             let deadline = self.stream.incoming_deadline().ok_or(Error::Invalid)?;
             let complete = self
                 .stream
@@ -490,6 +516,34 @@ where
             .as_millis()
             .try_into()
             .map_err(|_| Error::Invalid)?;
+        // A dedicated inspection owns no Store callbacks. Refuse transfer
+        // starts and payload frames before the normal stream can admit them.
+        if let Some(unit) = self.inspection_download
+            && let Record::Control(Control::TransferStart(start)) = &record
+            && (self.inspection_finished || !self.inspection_joined || start.unit != unit)
+        {
+            return Err(Error::Invalid);
+        }
+        if self.inspection_only && (self.inspection_download.is_none() || !self.inspection_joined) {
+            return match record {
+                Record::Control(control @ Control::TransferPolicy { .. }) => {
+                    self.stream
+                        .receive_control(control, first, now, &mut self.authorize)?;
+                    Ok(Event::Progress)
+                }
+                Record::Peer(frame) => {
+                    let values = metadata::decode(self.scope, frame, 1)?;
+                    if !matches!(values.as_slice(), [Metadata::Joined { live: false, .. }]) {
+                        return Err(Error::Invalid);
+                    }
+                    Ok(Event::Metadata(Messages {
+                        values,
+                        _charge: charge,
+                    }))
+                }
+                _ => Err(Error::Invalid),
+            };
+        }
         match record {
             Record::Control(control) => {
                 let start = match &control {
@@ -547,6 +601,25 @@ where
                 Ok(Event::Progress)
             }
             Record::Peer(frame) => {
+                if let koru_replication::protocol::PeerFrame::Error { code } = &frame
+                    && let Some(reason) =
+                        koru_account_core::cloud_admission::Reason::from_code(code)
+                {
+                    let upload = self.upload.as_ref().ok_or(Error::Invalid)?;
+                    if upload.start.is_some() || upload.acked {
+                        return Err(Error::Invalid);
+                    }
+                    (self.authorize)(upload.unit).map_err(Error::Authority)?;
+                    self.stream.reject_outgoing_admission(now)?;
+                    let upload = self.upload.take().ok_or(Error::Invalid)?;
+                    // Duplex retains any already-started bounded frame until
+                    // it is written. Never discard a partial frame or another
+                    // direction's retained Store job.
+                    return Ok(Event::UploadRefused {
+                        start: upload.advertised,
+                        reason,
+                    });
+                }
                 let (_, metadata) =
                     self.stream
                         .receive_peer_owned(frame, now, &mut self.authorize)?;

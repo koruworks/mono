@@ -63,8 +63,8 @@ fn alt_digits_are_the_rails_eight_slots() {
     );
     assert_eq!(
         resolve(&ch("1"), Some("1"), PRIMARY),
-        Some(Chord::SelectTab(0)),
-        "and Ctrl+1 the first tab"
+        Some(Chord::SelectWorkspace(0)),
+        "and Ctrl+1 the first workspace"
     );
 }
 
@@ -78,7 +78,7 @@ fn the_container_chords_resolve() {
     assert_eq!(resolve(&ch("n"), Some("n"), PRIMARY), Some(Chord::New));
     assert_eq!(resolve(&ch("a"), Some("a"), PRIMARY_SHIFT), None);
     assert_eq!(resolve(&ch("w"), Some("w"), PRIMARY), Some(Chord::CloseTab));
-    assert_eq!(resolve(&ch("p"), Some("p"), PRIMARY), Some(Chord::Search));
+    assert_eq!(resolve(&ch("k"), Some("k"), PRIMARY), Some(Chord::Search));
     assert_eq!(
         resolve(&ch("f"), Some("f"), PRIMARY_SHIFT),
         Some(Chord::Search)
@@ -151,25 +151,25 @@ fn a_control_code_resolves_the_same_as_the_letter() {
         Some(Chord::CloseTab)
     );
     assert_eq!(
-        resolve(&ch("\u{10}"), Some("\u{10}"), PRIMARY),
+        resolve(&ch("\u{0b}"), Some("\u{0b}"), PRIMARY),
         Some(Chord::Search)
     );
 }
 
 #[test]
-fn the_digits_select_by_position() {
+fn the_digits_select_workspaces_by_position() {
     assert_eq!(
         resolve(&ch("1"), Some("1"), PRIMARY),
-        Some(Chord::SelectTab(0))
+        Some(Chord::SelectWorkspace(0))
     );
     assert_eq!(
         resolve(&ch("9"), Some("9"), PRIMARY),
-        Some(Chord::SelectTab(8))
+        Some(Chord::SelectWorkspace(8))
     );
     assert_eq!(
         resolve(&ch("0"), Some("0"), PRIMARY),
         None,
-        "there is no tab zero"
+        "there is no workspace zero"
     );
 }
 
@@ -413,7 +413,10 @@ fn the_container_binds_nothing_the_registry_has_not_recorded() {
     // see it. Adding one means minting a `ShortcutId`, which is stable storage
     // the moment bindings are customisable — a decision, not a repair. Written
     // up in `docs/contributing/techdebt/README.md`; found by Plan 2.2 while adding `r`.
-    let candidates = ['t', 'w', 'j', 'e', 'o', 'p', 's', 'a', 'r', ','];
+    let candidates = [
+        't', 'w', 'j', 'e', 'o', 'p', 'k', 's', 'a', 'r', ',', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9',
+    ];
     for c in candidates {
         for mods in [
             koru_keys::PRIMARY,

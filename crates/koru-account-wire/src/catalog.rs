@@ -119,6 +119,9 @@ pub enum RouteId {
     IssueCloudSyncTokenV2,
     DescribeCloudWorkspaceV2,
     DiscoverCloudCatalog,
+    ReadCloudPlan,
+    ReadCloudUsageWorkspaces,
+    ReadCloudUsageDocuments,
     // Browser-based email sign-in (`koru.do/login` + loopback OAuth exchange).
     // Appended: the table is indexed by position.
     EmailBrowserStart,
@@ -194,6 +197,9 @@ impl RouteId {
             Self::IssueCloudSyncTokenV2 => "account.cloud_sync_token_issue_v2",
             Self::DescribeCloudWorkspaceV2 => "account.cloud_workspace_descriptor_read_v2",
             Self::DiscoverCloudCatalog => "account.cloud_discovery_read",
+            Self::ReadCloudPlan => "account.cloud_plan_read",
+            Self::ReadCloudUsageWorkspaces => "account.cloud_usage_workspaces_read",
+            Self::ReadCloudUsageDocuments => "account.cloud_usage_documents_read",
             Self::EmailBrowserStart => "account.email_browser_start",
         }
     }
@@ -1036,6 +1042,36 @@ pub const ROUTES: &[Route] = &[
         "Read one discovery receipt: scope, authorization generation, projection coverage and results grouped by current placement"
     ),
     route!(
+        ReadCloudPlan,
+        Get,
+        "/v1/account/cloud-plan",
+        AccountSession,
+        empty_request,
+        cloud_plan_response,
+        None,
+        "Read one coherent account Cloud policy and retained file usage snapshot"
+    ),
+    route!(
+        ReadCloudUsageWorkspaces,
+        Get,
+        "/v1/account/cloud-usage/workspaces",
+        AccountSession,
+        cloud_usage_query,
+        cloud_usage_page,
+        Query,
+        "Read a bounded page of owned retained Workspaces with current catalog placement"
+    ),
+    route!(
+        ReadCloudUsageDocuments,
+        Get,
+        "/v1/account/cloud-usage/workspaces/{workspace_id}/documents",
+        AccountSession,
+        cloud_usage_documents_query,
+        cloud_usage_documents_page,
+        Query,
+        "Read a bounded authoritative durable-unit inventory; per-document file bytes overlap and do not grant editing authority"
+    ),
+    route!(
         EmailBrowserStart,
         Post,
         "/v1/oauth/email/browser/start",
@@ -1046,6 +1082,25 @@ pub const ROUTES: &[Route] = &[
         "Start email sign-in in the system browser for a native client"
     ),
 ];
+
+schema_fn!(
+    cloud_usage_documents_query,
+    crate::cloud_plan::documents::CloudUsageDocumentsQueryV1
+);
+schema_fn!(
+    cloud_usage_documents_page,
+    crate::cloud_plan::documents::CloudUsageDocumentsResponseV1
+);
+
+schema_fn!(cloud_plan_response, crate::cloud_plan::CloudPlanResponseV1);
+schema_fn!(
+    cloud_usage_page,
+    crate::cloud_plan::CloudUsageWorkspacesResponseV1
+);
+schema_fn!(
+    cloud_usage_query,
+    crate::cloud_plan::CloudUsageWorkspacesQueryV1
+);
 
 schema_fn!(cloud_catalog_binding_request, CloudCatalogBindingRequestV2);
 schema_fn!(cloud_catalog_binding, CloudCatalogBindingV2);

@@ -8,7 +8,9 @@
 
 pub mod app_connections;
 pub mod billing_history;
+pub mod cloud_admission;
 pub mod cloud_leases;
+pub mod cloud_plan;
 pub mod cloud_selection;
 mod creation;
 mod device_ownership;

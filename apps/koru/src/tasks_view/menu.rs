@@ -172,7 +172,7 @@ pub fn list_picker_items(lists: &[ListFace], current: Option<ListId>) -> Vec<Lis
         .iter()
         .map(|face| ListPick::List {
             id: face.id,
-            name: face.name.clone(),
+            name: face.label(),
             color: face.color.clone(),
             checked: current == Some(face.id),
         })

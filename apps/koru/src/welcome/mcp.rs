@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! *Manage documents over MCP*: the command that registers this
+//! *Access your Koru workspace via MCP*: the command that registers this
 //! installation with the agent the person picks, shown on the row and put on
 //! the clipboard by *Copy*.
 //!

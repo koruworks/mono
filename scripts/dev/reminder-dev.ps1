@@ -344,6 +344,7 @@ try {
         "koru-api-gateway.exe",
         "koru-session-host.exe",
         "koru-voice-worker.exe",
+        "koru-read-worker.exe",
         "koru-terminal.exe",
         "koru-ai-chat.exe",
         "koru-mcp.exe",

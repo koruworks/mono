@@ -232,13 +232,9 @@ pub fn rows(
         )),
         Some(Choice::CycleProseLanguage),
     ));
-    out.push((Row::Divider, None));
-    out.push((
-        Row::item("Focus mode")
-            .with_trailing(Trailing::Toggle(false))
-            .enabled(false),
-        None,
-    ));
+    // **No *Focus mode* row** (owner, 2026-11-16). It was a disabled toggle
+    // for something not built: a row that can never be pressed is noise at
+    // the foot of a menu.
     out
 }
 

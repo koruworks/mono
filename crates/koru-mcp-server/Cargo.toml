@@ -7,6 +7,9 @@ license.workspace = true
 publish = false
 description = "Transport-neutral MCP tools for Koru."
 
+[features]
+test-support = []
+
 [dependencies]
 rmcp = { version = "=3.9.0", features = ["transport-io"] }
 tokio.workspace = true
@@ -16,6 +19,8 @@ schemars.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 loro.workspace = true
+# The revision a tool answers, in Loro's encoding with its peers in order.
+postcard.workspace = true
 koru-channel = { path = "../koru-channel" }
 koru-history = { path = "../koru-history" }
 koru-api-client = { path = "../koru-api-client" }

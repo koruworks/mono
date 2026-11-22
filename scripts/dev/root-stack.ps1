@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: MPL-2.0
 
 param(
-    [Parameter(Mandatory = $true)]
     [ValidateSet("Start", "Stop", "Open")]
-    [string]$Action,
+    [string]$Action = "Start",
 
     [AllowEmptyString()]
-    [string]$Root = ""
+    [string]$Root = "",
+
+    [ValidateSet("root", "root-open", "root-stop", "mcp-add")]
+    [string]$LauncherCommand,
+    [switch]$RegisterMcp,
+    [switch]$ValidateOnly
 )
 
 # The shipped launcher deliberately does NOT mirror this script, and nobody
@@ -29,6 +33,44 @@ param(
 # as ANSI, and a UTF-8 dash arrives as three cp1252 characters, one of which is a
 # curly quote that silently opens a string.
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'mcp-registration.ps1')
+
+# Parse before dotenv imports, setup, stopping processes, or resolving a root.
+# A leading dash is always an option; use .\--mcp for a literal directory.
+try {
+    $mcpName = 'koru'
+    if ($LauncherCommand) {
+        $pathSeen = $false
+        $flagSeen = $false
+        for ($index = 0; $index -lt [int]$env:ROOT_COMMAND_COUNT; $index++) {
+            $value = [Environment]::GetEnvironmentVariable("ROOT_COMMAND_ARG_$index", 'Process')
+            if ([string]::IsNullOrWhiteSpace($value)) { throw "${LauncherCommand}: empty argument." }
+            if ($LauncherCommand -eq 'root' -and $value -eq '--mcp') {
+                if ($flagSeen) { throw 'root: --mcp was supplied more than once.' }
+                $RegisterMcp = $true
+                $flagSeen = $true
+            } elseif ($value.StartsWith('-')) {
+                throw "${LauncherCommand}: unknown option '$value'."
+            } elseif ($pathSeen) {
+                throw "${LauncherCommand}: takes at most one $(if ($LauncherCommand -eq 'mcp-add') { 'name' } else { 'path' })."
+            } else {
+                if ($LauncherCommand -eq 'mcp-add') { $mcpName = $value }
+                else { $Root = $value }
+                $pathSeen = $true
+            }
+        }
+        switch ($LauncherCommand) {
+            'root-open' { $Action = 'Open' }
+            'root-stop' { $Action = 'Stop' }
+            'mcp-add' { Assert-McpName $mcpName }
+        }
+    }
+    if ($RegisterMcp -and $Action -ne 'Start') { throw '--RegisterMcp requires Start.' }
+} catch {
+    [Console]::Error.WriteLine("koru: $($_.Exception.Message)")
+    exit 2
+}
+if ($ValidateOnly) { exit 0 }
 
 function Import-DotenvFile([string] $Path, [string] $Label) {
     # Every name in the file, not a list this script keeps in step by hand.
@@ -133,6 +175,20 @@ $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 
 Push-Location -LiteralPath $repo
 try {
+    if ($RegisterMcp) { $mcpName = Get-BranchMcpName $repo }
+    $bin = Get-DevelopmentBin $repo
+    $bridge = Join-Path $bin 'koru-mcp.exe'
+    if ($LauncherCommand -eq 'mcp-add') {
+        $registrationRoot = $env:KORU_ROOT
+        if (-not [string]::IsNullOrWhiteSpace($registrationRoot)) {
+            $registrationRoot = [IO.Path]::GetFullPath($registrationRoot)
+        }
+        & (Join-Path $PSScriptRoot 'stop-exact-exe.ps1') -ExecutablePath @($bridge)
+        & cargo build --target-dir (Split-Path -Parent $bin) -p koru-mcp
+        if ($LASTEXITCODE -ne 0) { throw 'the MCP bridge did not build; nothing was registered.' }
+        Register-McpBridge $mcpName $bridge $registrationRoot
+        exit 0
+    }
     if ([string]::IsNullOrWhiteSpace($Root)) {
         if (-not [string]::IsNullOrWhiteSpace($env:KORU_ROOT)) {
             $Root = $env:KORU_ROOT
@@ -144,9 +200,9 @@ try {
     # Endpoint isolation hashes the text, so equivalent-looking spellings are
     # intentionally not allowed to drift between launches.
     $Root = [System.IO.Path]::GetFullPath($Root)
-    $bin = Join-Path $repo "target\debug"
     $agent = Join-Path $bin "koru-agent.exe"
     $app = Join-Path $bin "koru.exe"
+    $reader = Join-Path $bin "koru-read-worker.exe"
 
     # **One ask, because there is one process to ask.** The API Gateway and the
     # session host are roles of koru-agent.exe now, supervised children ended by
@@ -159,18 +215,19 @@ try {
     }
 
     if ($Action -eq "Open") {
-        if (-not (Test-Path -LiteralPath $agent)) {
-            throw "Koru Agent is not built; run koru.bat root `"$Root`" first"
+        if (-not (Test-Path -LiteralPath $agent) -or -not (Test-Path -LiteralPath $app)) {
+            throw "Koru is not built; run koru.bat root `"$Root`" first"
         }
         $status = Get-AgentStatus $agent $Root
-        if ($status -notmatch '(?m)^running, version ') {
-            throw "No Koru Agent is running for $Root; run koru.bat root `"$Root`" first"
+        if ($status -match '(?m)^running, version ') {
+            & $agent --root $Root open
+            if ($LASTEXITCODE -ne 0) {
+                throw "Koru Agent could not open the workspace window (exit $LASTEXITCODE)"
+            }
+            exit 0
         }
-        & $agent --root $Root open
-        if ($LASTEXITCODE -ne 0) {
-            throw "Koru Agent could not open the workspace window (exit $LASTEXITCODE)"
-        }
-        exit 0
+        # A rebuild must stop every root sharing this executable. Reopen a
+        # stopped root with the built binaries, without stopping its peers.
     }
 
     if ($Action -eq "Stop") {
@@ -220,23 +277,41 @@ try {
     }
     Use-SharedDevelopmentDictionaries $repo
     Write-Host "[Koru] isolated root: $Root"
-    # A window keeps the Gateway endpoint it discovered at launch. Leaving one
-    # alive while restarting Agent can make the newly spawned Koru hand its
-    # activation to that stale window; the new child then exits, Agent sees no
-    # owned window, and its supervised Gateway shuts down. Stop this worktree's
-    # debug Koru image before the services so the replacement window must
-    # discover the replacement Gateway. Other worktrees and installed builds
-    # have different executable paths and remain untouched.
-    & (Join-Path $PSScriptRoot "stop-exact-exe.ps1") -ExecutablePath @($app)
-    Stop-RootServices
-    Start-Sleep -Seconds 1
+    if ($Action -eq "Start") {
+        # A window keeps the Gateway endpoint it discovered at launch. Leaving one
+        # alive while restarting Agent can make the newly spawned Koru hand its
+        # activation to that stale window; the new child then exits, Agent sees no
+        # owned window, and its supervised Gateway shuts down. Stop this worktree's
+        # debug Koru image before the services so the replacement window must
+        # discover the replacement Gateway. Other worktrees and installed builds
+        # have different executable paths and remain untouched.
+        & (Join-Path $PSScriptRoot "stop-exact-exe.ps1") -ExecutablePath @($app, $bridge)
+        Stop-RootServices
+        # Every root in this checkout shares these images. Stopping only $Root
+        # leaves other Agents, their Gateway/session roles and readers holding
+        # Windows executable locks. The exact-path helper waits for all of them
+        # to exit; installed Koru and other worktrees are outside its target set.
+        Write-Host "[Koru] stopping shared debug binaries across this checkout's roots before rebuilding"
+        & (Join-Path $PSScriptRoot "stop-exact-exe.ps1") -ExecutablePath @($app, $agent, $reader, $bridge)
 
-    # **Two packages, not four.** koru-agent.exe hosts the API Gateway and the
-    # session host as worker roles of its own image, so building it builds them;
-    # there is no sibling to keep in step any more.
-    & cargo build -p koru-agent -p koru
-    if ($LASTEXITCODE -ne 0) {
-        throw "the root stack did not build (close any Koru window using this debug binary and retry)"
+        # Agent hosts the gateway and session roles, but the Store's reader is a
+        # separate executable. Build it here too: a plain test build can have
+        # replaced it with one that cannot recognize pictures or scanned pages.
+        # Runtime chats also launch the sibling MCP bridge, so it must match
+        # this build even without --mcp.
+        # koru.bat has verified and extracted the shared ONNX Runtime archive.
+        if (-not $env:ORT_LIB_PATH) {
+            $env:ORT_LIB_PATH = Join-Path $repo "third-party\sherpa-onnx\1.13.6\sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib\lib"
+        }
+        & cargo build --target-dir (Split-Path -Parent $bin) -p koru-agent -p koru -p koru-mcp -p koru-read-worker --features koru-read-worker/recognition
+        if ($LASTEXITCODE -ne 0) {
+            throw "the root stack did not build (close any Koru window using this debug binary and retry)"
+        }
+    }
+
+    if ($RegisterMcp) {
+        Write-Host "[Koru] registering $mcpName on isolated root: $Root"
+        Register-McpBridge $mcpName $bridge $Root
     }
 
     # Start-Process joins ArgumentList into a Windows command line. Quote the

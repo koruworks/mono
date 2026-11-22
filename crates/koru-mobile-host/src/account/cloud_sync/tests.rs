@@ -168,3 +168,56 @@ fn workspace(owner: ProfileId, id: WorkspaceId) -> koru_store_core::Workspace {
     workspace.id = id;
     workspace
 }
+
+/// M3: the phone opens a Profile and its Workspaces to Cloud through the same
+/// group choice the desktop commits, so a Profile created with the account can
+/// start by itself here too. Asked again for an open Profile, it changes
+/// nothing.
+#[test]
+fn the_phone_opens_a_profile_and_its_workspaces_to_cloud() {
+    use koru_store_core::transport::TransportMode;
+    let directory = tempfile::tempdir().unwrap();
+    let host =
+        crate::MobileHost::open(directory.path().to_path_buf(), [73; 64], "Phone", true).unwrap();
+    let profile = host
+        .store
+        .with_store(|store| {
+            let at = koru_store_core::Timestamp::from_millis(1_770_000_000_000);
+            let profile = store
+                .create_profile(
+                    "Profile",
+                    None,
+                    None,
+                    koru_store_core::Locale::parse("en").unwrap(),
+                    at,
+                )
+                .unwrap();
+            store.create_workspace(profile.id, "First", at).unwrap();
+            store.create_workspace(profile.id, "Second", at).unwrap();
+            profile.id
+        })
+        .unwrap();
+    let port = MobileCloudSync::new(host.store.clone(), directory.path());
+    assert!(port.starts_created_profiles_on());
+    let group = |host: &crate::MobileHost| {
+        host.store
+            .with_store(move |store| store.transport_mode_group(profile).unwrap())
+            .unwrap()
+    };
+    assert_eq!(group(&host).profile.mode, TransportMode::LocalOnly);
+
+    port.open_to_cloud(profile).unwrap();
+    let opened = group(&host);
+    assert_eq!(opened.profile.mode, TransportMode::Cloud);
+    assert_eq!(opened.children.len(), 2);
+    assert!(
+        opened
+            .children
+            .iter()
+            .all(|child| child.mode == TransportMode::Cloud)
+    );
+
+    port.open_to_cloud(profile).unwrap();
+    let again = group(&host);
+    assert_eq!(again.profile.revision, opened.profile.revision);
+}

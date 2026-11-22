@@ -2,6 +2,7 @@
 
 //! The Store end of the Agent-owned replication control session.
 
+use crate::cloud_inspection_host::{InspectionHub, Owner as InspectionOwner};
 use std::sync::{Arc, Mutex};
 
 use koru_sync_control::{
@@ -119,6 +120,7 @@ pub fn start(
     replication: impl Into<ReplicationRuntime>,
     grace: std::time::Duration,
     store: crate::StoreWorkerClient,
+    inspections: Arc<InspectionHub>,
 ) -> Result<(), String> {
     let replication = replication.into();
     let endpoint = koru_ipc::Endpoint::for_service_root(CONTROL_SERVICE, channel, root)
@@ -126,7 +128,7 @@ pub fn start(
     let listener = koru_ipc::Listener::bind(endpoint).map_err(|error| error.to_string())?;
     std::thread::Builder::new()
         .name("koru-store-server sync control".into())
-        .spawn(move || serve(listener, host, replication, grace, store))
+        .spawn(move || serve(listener, host, replication, grace, store, inspections))
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -137,6 +139,7 @@ fn serve(
     replication: ReplicationRuntime,
     grace: std::time::Duration,
     store: crate::StoreWorkerClient,
+    inspections: Arc<InspectionHub>,
 ) {
     loop {
         let Ok(mut stream) = listener.accept() else {
@@ -226,7 +229,10 @@ fn serve(
                 response,
                 koru_sync_control::ControlResponse::Rejected { .. }
             ) {
-                response = runtime_action.apply(&replication, &store, response);
+                // The control-state lock is already released. Live callbacks
+                // may re-enter it while checking the inspection's authority.
+                inspections.revalidate();
+                response = runtime_action.apply(&replication, &store, &inspections, response);
                 // **Nothing is promoted here any more** (D258). B8 raised this
                 // device's seeded `local_only` rows from the account, pairing
                 // and selection evidence these very requests carry; on
@@ -237,10 +243,20 @@ fn serve(
                 // trigger is now `Store::choose_transport_mode`, reached from
                 // the Manage tab through the local Store route.
             }
-            let response = ResponseFrame {
+            let mut response = ResponseFrame {
                 id: request.id,
                 response,
             };
+            if matches!(
+                response.response,
+                koru_sync_control::ControlResponse::CloudInspection(_)
+            ) && serde_json::to_vec(&response).map_or(true, |bytes| {
+                bytes.len() > koru_sync_control::inspection::MAX_INSPECTION_RESPONSE_FRAME_BYTES
+            }) {
+                response.response = koru_sync_control::ControlResponse::Rejected {
+                    code: "inspection_frame_too_large".into(),
+                };
+            }
             if let Err(error) =
                 koru_ipc::frame::write_frame(&mut stream, CONTROL_FRAME_VERSION, &response)
             {
@@ -275,6 +291,7 @@ fn serve(
         if let Ok(mut state) = host.lock() {
             state.end_session(hello.session_id);
         }
+        inspections.close_session(hello.session_id.as_uuid());
         // **The host clears; the data plane is only released.** Host
         // bookkeeping is what a status surface reads, and with no session
         // there is honestly none — but the endpoint, the connections and the
@@ -286,7 +303,32 @@ fn serve(
     }
 }
 
+fn inspection_owner(
+    session: koru_sync_control::ControlSessionId,
+    owner: koru_sync_control::inspection::InspectionOwner,
+) -> InspectionOwner {
+    InspectionOwner {
+        control_session: session.as_uuid(),
+        owner_scope: owner.owner_scope,
+        account: owner.account_id,
+        account_generation: owner.account_generation,
+    }
+}
+
 enum RuntimeAction {
+    InspectionStart {
+        owner: InspectionOwner,
+        token: uuid::Uuid,
+        request: koru_sync_control::inspection::InspectionRequest,
+    },
+    InspectionPoll {
+        owner: InspectionOwner,
+        token: uuid::Uuid,
+    },
+    InspectionCancel {
+        owner: InspectionOwner,
+        token: uuid::Uuid,
+    },
     Provision([u8; 32]),
     Authorize(koru_sync_control::AuthorizationSnapshot),
     Connect(koru_device::DeviceId),
@@ -366,6 +408,11 @@ enum CloudRootAction {
         frames: Vec<Vec<u8>>,
         advertised: Option<Vec<u8>>,
     },
+    /// `Store::reconcile_account_live` (trash-recovery PLAN.final P2).
+    ReconcileAccountLive {
+        account_id: uuid::Uuid,
+        listed: Vec<(koru_store_core::WorkspaceId, koru_store_core::ProfileId)>,
+    },
 }
 
 /// The request's kind for a log line, and never its contents: a gossip batch
@@ -380,6 +427,9 @@ enum CloudRootAction {
 fn request_kind_name(request: &koru_sync_control::ControlRequest) -> &'static str {
     use koru_sync_control::ControlRequest as R;
     match request {
+        R::StartCloudInspection { .. } => "start_cloud_inspection",
+        R::PollCloudInspection { .. } => "poll_cloud_inspection",
+        R::CancelCloudInspection { .. } => "cancel_cloud_inspection",
         R::ProvisionEndpoint { .. } => "provision_endpoint",
         R::ReplaceAuthorization { .. } => "replace_authorization",
         R::ConnectPeer { .. } => "connect_peer",
@@ -405,6 +455,7 @@ fn request_kind_name(request: &koru_sync_control::ControlRequest) -> &'static st
         R::ReadCloudBootstrapV2 { .. } => "read_cloud_bootstrap_v2",
         R::BindCloudAccountScope { .. } => "bind_cloud_account_scope",
         R::ReadCloudAccountBinding { .. } => "read_cloud_account_binding",
+        R::ReconcileCloudAccountLive { .. } => "reconcile_cloud_account_live",
         R::ReadCloudRootInventory { .. } => "read_cloud_root_inventory",
         R::ReadCloudRootFrontier { .. } => "read_cloud_root_frontier",
         R::ExportCloudRootUnit { .. } => "export_cloud_root_unit",
@@ -416,6 +467,32 @@ impl RuntimeAction {
     fn from_request(request: &koru_sync_control::ControlRequest) -> Self {
         use koru_sync_control::ControlRequest;
         match request {
+            ControlRequest::StartCloudInspection {
+                control_session_id,
+                owner,
+                token,
+                request,
+            } => Self::InspectionStart {
+                owner: inspection_owner(*control_session_id, *owner),
+                token: *token,
+                request: (**request).clone(),
+            },
+            ControlRequest::PollCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            } => Self::InspectionPoll {
+                owner: inspection_owner(*control_session_id, *owner),
+                token: *token,
+            },
+            ControlRequest::CancelCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            } => Self::InspectionCancel {
+                owner: inspection_owner(*control_session_id, *owner),
+                token: *token,
+            },
             ControlRequest::ProvisionEndpoint { secret } => Self::Provision(*secret.expose()),
             ControlRequest::ReplaceAuthorization { snapshot } => Self::Authorize(snapshot.clone()),
             ControlRequest::ConnectPeer { peer } => Self::Connect(*peer),
@@ -478,6 +555,22 @@ impl RuntimeAction {
             ControlRequest::ReadCloudAccountBinding { .. } => {
                 Self::CloudRoot(CloudRootAction::ReadBinding)
             }
+            ControlRequest::ReconcileCloudAccountLive {
+                account_id,
+                workspaces,
+                ..
+            } => Self::CloudRoot(CloudRootAction::ReconcileAccountLive {
+                account_id: account_id.as_uuid(),
+                listed: workspaces
+                    .iter()
+                    .map(|listed| {
+                        (
+                            koru_store_core::WorkspaceId::from_uuid(listed.workspace_id.as_uuid()),
+                            koru_store_core::ProfileId::from_uuid(listed.profile_id.as_uuid()),
+                        )
+                    })
+                    .collect(),
+            }),
             ControlRequest::ReadCloudRootInventory {
                 repair_unitless, ..
             } => Self::CloudRoot(CloudRootAction::Inventory {
@@ -522,9 +615,33 @@ impl RuntimeAction {
         self,
         runtime: &ReplicationRuntime,
         store: &crate::StoreWorkerClient,
+        inspections: &Arc<InspectionHub>,
         response: koru_sync_control::ControlResponse,
     ) -> koru_sync_control::ControlResponse {
         match self {
+            Self::InspectionStart {
+                owner,
+                token,
+                request,
+            } => {
+                return match inspections.start(owner, token, request) {
+                    Ok(token) => {
+                        koru_sync_control::ControlResponse::CloudInspectionStarted { token }
+                    }
+                    Err(failure) => koru_sync_control::ControlResponse::CloudInspection(
+                        koru_sync_control::inspection::InspectionPoll::Failed { failure },
+                    ),
+                };
+            }
+            Self::InspectionPoll { owner, token } => {
+                return koru_sync_control::ControlResponse::CloudInspection(
+                    inspections.poll(owner, token),
+                );
+            }
+            Self::InspectionCancel { owner, token } => {
+                inspections.cancel(owner, token);
+                return koru_sync_control::ControlResponse::Ok;
+            }
             Self::ReadCloudBootstrap { workspace, policy } => {
                 let koru_sync_control::ControlResponse::CloudBootstrap {
                     control_session_id, ..
@@ -806,6 +923,9 @@ mod cloud_root {
             | ControlResponse::CloudRootFrontier {
                 control_session_id, ..
             }
+            | ControlResponse::CloudAccountLiveTrashed {
+                control_session_id, ..
+            }
             | ControlResponse::CloudRootUnitExport {
                 control_session_id, ..
             }
@@ -847,6 +967,34 @@ mod cloud_root {
                     })
                     .map_err(|error| code(&error))
             }),
+            CloudRootAction::ReconcileAccountLive { account_id, listed } => {
+                let answered = store.with_store(move |store| {
+                    store
+                        .reconcile_account_live(
+                            account_id,
+                            &listed,
+                            koru_store_core::Timestamp::now(),
+                        )
+                        .map_err(|error| code(&error))
+                });
+                answered.map(|outcome| {
+                    outcome.map(|outcome| {
+                        if outcome.changed {
+                            // What the recovery surfaces show changed, and no
+                            // route did it: wake the catalog's readers.
+                            store.notify_catalog_change();
+                        }
+                        ControlResponse::CloudAccountLiveTrashed {
+                            control_session_id: session,
+                            trashed: outcome
+                                .trashed
+                                .into_iter()
+                                .map(|workspace| cloud(workspace.as_uuid()))
+                                .collect(),
+                        }
+                    })
+                })
+            }
             CloudRootAction::Inventory { repair } => store.with_store(move |store| {
                 // Q10's repair before the job and the read: the unit the v1
                 // window withheld is published, so a pending overlay the
@@ -1092,6 +1240,137 @@ mod tests {
         ResponseFrame,
     };
 
+    /// **The round trip against a real Store** (trash-recovery PLAN.final
+    /// P2): the placeholder the host answered is replaced by what this
+    /// device's Store holds in its Trash, the Store keeps the fact, and —
+    /// because no route made that write — the catalog's readers are woken.
+    /// The same observation again changes nothing and wakes nobody; an
+    /// account that no longer lists it clears the fact.
+    #[test]
+    fn the_account_live_request_is_answered_from_the_store_which_keeps_the_fact() {
+        use koru_store_core::ProfileAccountBinding;
+        use koru_store_core::text::Locale;
+
+        let memory = crate::daemon::memory::MemoryStore::open("account-live").unwrap();
+        let at = koru_store_core::Timestamp::from_millis(1_800_000_000_000);
+        let account = uuid::Uuid::new_v4();
+        let (workspace, kept) = memory
+            .with_store(move |store| {
+                let quiet = store
+                    .create_profile("Quiet", None, None, Locale::default(), at)
+                    .unwrap();
+                let workspace = store.create_workspace(quiet.id, "Stuck", at).unwrap();
+                store.delete_workspace(workspace.id, at).unwrap();
+                let kept = store
+                    .create_profile("Kept", None, None, Locale::default(), at)
+                    .unwrap();
+                let binding =
+                    ProfileAccountBinding::parse_identity_id(&account.to_string()).unwrap();
+                store.bind_profile_account(kept.id, None, binding).unwrap();
+                (workspace.id, kept.id)
+            })
+            .unwrap();
+
+        let session = ControlSessionId::new();
+        let client = memory.client();
+        let ask = |listed| {
+            let answer = cloud_root::answer(
+                &client,
+                CloudRootAction::ReconcileAccountLive {
+                    account_id: account,
+                    listed,
+                },
+                ControlResponse::CloudAccountLiveTrashed {
+                    control_session_id: session,
+                    trashed: Vec::new(),
+                },
+            );
+            // The wake is queued behind the write; one more turn of the
+            // queue and it has been served.
+            client.with_store(|_| ()).unwrap();
+            match answer {
+                ControlResponse::CloudAccountLiveTrashed {
+                    control_session_id,
+                    trashed,
+                } => {
+                    assert_eq!(control_session_id, session);
+                    trashed
+                        .into_iter()
+                        .map(|id| id.as_uuid())
+                        .collect::<Vec<_>>()
+                }
+                other => panic!("{other:?}"),
+            }
+        };
+        let facts = || {
+            memory
+                .with_store(|store| store.trashed_in_account().unwrap())
+                .unwrap()
+        };
+
+        let before = memory.catalog_generation();
+        assert_eq!(ask(vec![(workspace, kept)]), vec![workspace.as_uuid()]);
+        let held = facts();
+        assert_eq!(held.len(), 1);
+        assert_eq!((held[0].workspace.id, held[0].profile), (workspace, kept));
+        let woken = memory.catalog_generation();
+        assert!(
+            woken > before,
+            "the recovery surfaces are told to read again"
+        );
+
+        assert_eq!(ask(vec![(workspace, kept)]), vec![workspace.as_uuid()]);
+        assert_eq!(
+            memory.catalog_generation(),
+            woken,
+            "confirming what was known wakes nobody"
+        );
+
+        assert!(ask(Vec::new()).is_empty());
+        assert!(facts().is_empty(), "the set is replaced");
+        assert!(memory.catalog_generation() > woken);
+        memory.close();
+    }
+
+    /// The account-live request is a Store-backed root action carrying
+    /// exactly the pairs it was sent — and, unlike the permit pages, it is
+    /// not under the 64 KiB Cloud frame cap (trash-recovery PLAN.final P2).
+    #[test]
+    fn the_account_live_request_reaches_the_store_with_its_pairs() {
+        let cloud = |byte: u8| {
+            let mut bytes = [byte; 16];
+            bytes[6] = 0x40 | (bytes[6] & 0x0f);
+            bytes[8] = 0x80 | (bytes[8] & 0x3f);
+            koru_device::cloud::CloudId::from_bytes(bytes)
+        };
+        let request = ControlRequest::ReconcileCloudAccountLive {
+            control_session_id: ControlSessionId::new(),
+            account_id: cloud(1),
+            workspaces: vec![koru_sync_control::cloud::CloudAccountLiveWorkspace {
+                workspace_id: cloud(2),
+                profile_id: cloud(3),
+            }],
+        };
+        assert!(!koru_sync_control::is_cloud_request(&request));
+        assert_eq!(request_kind_name(&request), "reconcile_cloud_account_live");
+        match RuntimeAction::from_request(&request) {
+            RuntimeAction::CloudRoot(CloudRootAction::ReconcileAccountLive {
+                account_id,
+                listed,
+            }) => {
+                assert_eq!(account_id, cloud(1).as_uuid());
+                assert_eq!(
+                    listed,
+                    vec![(
+                        koru_store_core::WorkspaceId::from_uuid(cloud(2).as_uuid()),
+                        koru_store_core::ProfileId::from_uuid(cloud(3).as_uuid()),
+                    )]
+                );
+            }
+            _ => panic!("the account-live request is a Store-backed root action"),
+        }
+    }
+
     /// **The repair flag is carried, and a plain read never repairs**
     /// (root-catalog QUESTIONS.md Q10). The Agent owns the decision — it is
     /// the only side that knows the pass ran under the v2 contract, read the
@@ -1140,6 +1419,7 @@ mod tests {
             replication.clone(),
             std::time::Duration::from_millis(200),
             test_store_client(),
+            InspectionHub::new(tokio::runtime::Handle::current()),
         )
         .unwrap();
         let endpoint =
@@ -1262,6 +1542,7 @@ mod tests {
             replication.clone(),
             grace,
             test_store_client(),
+            InspectionHub::new(tokio::runtime::Handle::current()),
         )
         .unwrap();
         let endpoint =
@@ -1303,6 +1584,7 @@ mod tests {
             replication.clone(),
             std::time::Duration::from_millis(300),
             test_store_client(),
+            InspectionHub::new(tokio::runtime::Handle::current()),
         )
         .unwrap();
         let endpoint =

@@ -17,6 +17,67 @@ use super::*;
 use crate::gateway_host::GatewayServiceError;
 
 #[test]
+fn inspection_control_keeps_a_reserved_cancel_lane_after_lost_start_ack() {
+    use koru_store_wire::cloud_document::{CloudDocumentAction, CloudDocumentSelection};
+    use koru_sync_control::inspection::{InspectionOwner, InspectionRequest};
+    use koru_sync_control::{ControlRequest, ControlSessionId};
+    let (commands, queue) = std::sync::mpsc::channel();
+    let mut control = SyncControl::for_test(koru_sync_control::ControlStatus::default());
+    control.commands = commands;
+    let session = ControlSessionId::new();
+    let token = uuid::Uuid::new_v4();
+    let owner = InspectionOwner {
+        owner_scope: 1,
+        account_generation: 2,
+        account_id: koru_device::cloud::CloudId::from_bytes(uuid::Uuid::new_v4().into_bytes()),
+    };
+    let selection = CloudDocumentSelection {
+        account_id: owner.account_id.to_string(),
+        workspace_id: uuid::Uuid::new_v4().to_string(),
+        incarnation_id: uuid::Uuid::new_v4().to_string(),
+        cloud_unit_id: uuid::Uuid::new_v4().to_string(),
+        document_id: uuid::Uuid::new_v4().to_string(),
+        source_head_digest: "ab".repeat(32),
+    };
+    let start = || ControlRequest::StartCloudInspection {
+        control_session_id: session,
+        owner,
+        token,
+        request: Box::new(InspectionRequest {
+            selection: selection.clone(),
+            action: CloudDocumentAction::Inspect,
+            can_write: false,
+        }),
+    };
+    drop(control.inspection_request_pending(start()).unwrap());
+    assert!(
+        control.inspection_request_pending(start()).is_err(),
+        "caller timeout cannot release queued ownership"
+    );
+    let cancel = || ControlRequest::CancelCloudInspection {
+        control_session_id: session,
+        owner,
+        token,
+    };
+    drop(control.inspection_request_pending(cancel()).unwrap());
+    assert!(
+        control.inspection_request_pending(cancel()).is_err(),
+        "cancellation backlog is bounded too"
+    );
+    let first = queue.recv().unwrap();
+    let second = queue.recv().unwrap();
+    assert!(
+        matches!(&first, PairingCommand::Cloud { request, .. } if matches!(request.as_ref(), ControlRequest::StartCloudInspection { token: got, .. } if *got == token))
+    );
+    assert!(
+        matches!(&second, PairingCommand::Cloud { request, .. } if matches!(request.as_ref(), ControlRequest::CancelCloudInspection { token: got, .. } if *got == token))
+    );
+    assert!(queue.try_recv().is_err());
+    drop((first, second));
+    assert!(control.inspection_request_pending(start()).is_ok());
+}
+
+#[test]
 fn every_voice_host_uses_the_store_service_root() {
     let paths = Paths::for_root(std::path::PathBuf::from("C:/isolated-koru"));
     let root = voice_service_root(&paths);

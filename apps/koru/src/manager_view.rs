@@ -62,6 +62,8 @@ pub enum ManagerView {
 /// as a tab in the container it came from.
 pub struct DocumentPane {
     doc: BuiltInDocument,
+    /// The original resident authority, independent of global active context.
+    resident: Option<(koru_core::WorkspaceId, koru_core::DocumentId)>,
     /// The document node, remembered so "restore as a tab" can name it without
     /// re-asking the editor for its root.
     node: NodeId,
@@ -113,6 +115,7 @@ impl DocumentPane {
     pub fn open(ws: &WorkspaceDoc, doc: NodeId, popout_close: PopoutClose) -> Self {
         Self {
             doc: BuiltInDocument::open(ws, doc).owns_the_window(ws),
+            resident: ws.id().zip(ws.stamped_document_id()),
             node: doc,
             close: None,
             support_toast: None,
@@ -155,6 +158,31 @@ impl DocumentPane {
 }
 
 impl View for DocumentPane {
+    fn editing_document(&self) -> Option<(koru_core::WorkspaceId, koru_core::DocumentId)> {
+        self.resident
+    }
+
+    fn ime_target(&self) -> Option<koru_workspace_host::ImeTarget> {
+        if self.close.is_some() {
+            return None;
+        }
+        View::ime_target(&self.doc)
+    }
+
+    fn ime(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: koru_workspace_host::ImeTargetId,
+        event: &winit::event::Ime,
+    ) -> bool {
+        // A close dialog withdraws input, but the old owner must still be
+        // cancellable after the dialog has appeared.
+        if self.close.is_some() && !matches!(event, winit::event::Ime::Disabled) {
+            return false;
+        }
+        View::ime(&mut self.doc, ws, target, event)
+    }
+
     /// **Straight through to the document, which draws its own caption.**
     ///
     /// A popped-out window shares the container's workspace, so it is owed the
@@ -173,6 +201,7 @@ impl View for DocumentPane {
         // there is no id left to reopen at — `first` lands on whatever the new
         // workspace's library offers, the same as a cold start.
         self.doc = BuiltInDocument::first(ws);
+        self.resident = ws.id().zip(ws.stamped_document_id());
     }
 
     fn key(
@@ -471,7 +500,7 @@ impl View for DocumentPane {
         View::take_wants_join_new_list(&mut self.doc)
     }
 
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<koru_workspace_host::tasks::ListCreate> {
         View::take_wants_create_list(&mut self.doc)
     }
 
@@ -511,7 +540,7 @@ impl View for DocumentPane {
         View::set_tag_table(&mut self.doc, tags)
     }
 
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         View::set_list_table(&mut self.doc, lists)
     }
 
@@ -521,6 +550,34 @@ impl View for DocumentPane {
 
     fn take_wants_copy_image(&mut self) -> Option<String> {
         View::take_wants_copy_image(&mut self.doc)
+    }
+
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        View::take_wants_save_reading(&mut self.doc)
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        View::take_wants_reading_offers(&mut self.doc)
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        View::take_wants_read_again(&mut self.doc)
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        View::set_reading_offers(&mut self.doc, target, offers)
+    }
+
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        View::take_wants_picture_texts(&mut self.doc)
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        View::set_picture_text(&mut self.doc, hash, text)
     }
 
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
@@ -786,6 +843,49 @@ impl ManagerView {
 }
 
 impl View for ManagerView {
+    fn child_document_request(&self) -> Option<koru_workspace_host::ChildDocumentRequest> {
+        match self {
+            Self::Container(view) => view.child_document_request(),
+            Self::Document(_) => None,
+        }
+    }
+
+    fn editing_document(&self) -> Option<(koru_core::WorkspaceId, koru_core::DocumentId)> {
+        match self {
+            Self::Container(view) => view.editing_document(),
+            Self::Document(view) => view.editing_document(),
+        }
+    }
+
+    fn ime_target(&self) -> Option<koru_workspace_host::ImeTarget> {
+        match self {
+            Self::Container(view) => view.ime_target(),
+            Self::Document(view) => view.ime_target(),
+        }
+    }
+
+    fn ime(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: koru_workspace_host::ImeTargetId,
+        event: &winit::event::Ime,
+    ) -> bool {
+        let handled = match self {
+            Self::Container(view) => view.ime(ws, target, event),
+            Self::Document(view) => view.ime(ws, target, event),
+        };
+        if handled && matches!(event, winit::event::Ime::Commit(_)) {
+            self.dispatched(ws, handled)
+        } else {
+            handled
+        }
+    }
+
+    forward_to_the_window! {
+        fn begin_file_image_open(&mut self, file: koru_core::DocumentId) -> bool;
+        fn show_file_reading(&mut self, file: koru_core::DocumentId, details: Result<koru_workspace_host::reading_details::ReadingDetails, String>) -> bool;
+        fn show_file_image(&mut self, file: koru_core::DocumentId, name: String, image: std::sync::Arc<koru_ui::media_viewer::ViewerImage>) -> bool;
+    }
     fn set_window_focused(&mut self, focused: bool) {
         match self {
             Self::Container(view) => view.set_window_focused(focused),
@@ -1029,6 +1129,18 @@ impl View for ManagerView {
             Self::Container(view) => {
                 view.open_search_target(ws, document, node, trash_root, match_text)
             }
+            Self::Document(_) => false,
+        }
+    }
+
+    fn open_tasks_target(
+        &mut self,
+        target: koru_workspace_host::TasksTarget,
+        match_text: Option<&str>,
+    ) -> bool {
+        match self {
+            Self::Container(view) => view.open_tasks_target(target, match_text),
+            // A document popped into its own window hosts no Tasks tab.
             Self::Document(_) => false,
         }
     }
@@ -1552,6 +1664,25 @@ impl View for ManagerView {
         }
     }
 
+    fn show_import_notice_reading(
+        &mut self,
+        message: String,
+        target: koru_workspace_host::ImportNoticeTarget,
+        reading: koru_workspace_host::reader_offer::ImportReading,
+    ) -> bool {
+        match self {
+            Self::Container(c) => c.show_import_notice_reading(message, target, reading),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn reader_answered(&mut self, state: Option<&koru_store_wire::reader::ReaderState>) -> bool {
+        match self {
+            Self::Container(c) => c.reader_answered(state),
+            Self::Document(_) => false,
+        }
+    }
+
     fn show_import_preview(&mut self, preview: koru_workspace_host::ImportPreview) -> bool {
         match self {
             Self::Container(c) => c.show_import_preview(preview),
@@ -1571,6 +1702,31 @@ impl View for ManagerView {
     fn create_document_failed(&mut self) {
         if let Self::Container(c) = self {
             koru_workspace_host::View::create_document_failed(c);
+        }
+    }
+
+    fn draft_document_content(
+        &self,
+        profile: koru_core::ProfileId,
+        workspace: Option<koru_core::WorkspaceId>,
+    ) -> Option<Result<koru_core::schema::Cutting, koru_core::StoreError>> {
+        match self {
+            Self::Container(c) => c.draft_document_content(profile, workspace),
+            _ => None,
+        }
+    }
+
+    fn created_document(&mut self, ws: &mut WorkspaceDoc, document: koru_core::DocumentId) -> bool {
+        match self {
+            Self::Container(c) => c.created_document(ws, document),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn prepare_document_creation_close(&mut self) -> bool {
+        match self {
+            Self::Container(c) => c.prepare_document_creation_close(),
+            Self::Document(_) => true,
         }
     }
 
@@ -2087,7 +2243,7 @@ impl View for ManagerView {
         }
     }
 
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<koru_workspace_host::tasks::ListCreate> {
         match self {
             Self::Container(v) => v.take_wants_create_list(),
             Self::Document(v) => v.take_wants_create_list(),
@@ -2183,7 +2339,7 @@ impl View for ManagerView {
         }
     }
 
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         match self {
             Self::Container(v) => v.set_list_table(lists),
             Self::Document(v) => v.set_list_table(lists),
@@ -2201,6 +2357,52 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.take_wants_copy_image(),
             Self::Document(v) => v.take_wants_copy_image(),
+        }
+    }
+
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_save_reading(),
+            Self::Document(v) => v.take_wants_save_reading(),
+        }
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_reading_offers(),
+            Self::Document(v) => v.take_wants_reading_offers(),
+        }
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_read_again(),
+            Self::Document(v) => v.take_wants_read_again(),
+        }
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        match self {
+            Self::Container(v) => v.set_reading_offers(target, offers),
+            Self::Document(v) => v.set_reading_offers(target, offers),
+        }
+    }
+
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        match self {
+            Self::Container(v) => v.take_wants_picture_texts(),
+            Self::Document(v) => v.take_wants_picture_texts(),
+        }
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        match self {
+            Self::Container(v) => v.set_picture_text(hash, text),
+            Self::Document(v) => v.set_picture_text(hash, text),
         }
     }
 
@@ -2375,6 +2577,14 @@ impl View for ManagerView {
     // recording is saved to, the same trap one window over.
     forward_to_the_window! {
         fn adopt_preferences(&mut self, settings: &Settings);
+        // DocumentPane intentionally inherits no child-host or task-receipt
+        // state; forwarding preserves its defaults without dropping the
+        // container's live requests and correlated receipts.
+        fn accept_child_document(&mut self, request: koru_workspace_host::ChildDocumentRequest, doc: &WorkspaceDoc) -> bool;
+        fn child_document_loaded(&mut self, request: koru_workspace_host::ChildDocumentRequest, doc: &WorkspaceDoc) -> bool;
+        fn child_document_failed(&mut self, request: koru_workspace_host::ChildDocumentRequest);
+        fn task_command_rejected(&mut self, command: &koru_workspace_host::tasks::TaskCommand, error: &str) -> bool;
+        fn task_command_observed(&mut self, landed: &koru_workspace_host::tasks::Landed) -> bool;
         fn adopt_startup_preferences(&mut self, settings: &Settings);
         fn delegate_folder_chosen(
             &mut self,

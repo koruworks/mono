@@ -67,6 +67,21 @@ fn an_older_shell_is_refused_as_readily_as_a_newer_one() {
 }
 
 #[test]
+fn a_shell_on_49_is_refused_because_it_would_read_a_task_as_a_document() {
+    // 50 gave a target its kind. A 49 shell reads a target without one as a
+    // document or a workspace, so a task or a task list sent to it would open
+    // the wrong thing; the handshake is where that is stopped.
+    assert_eq!(PROTOCOL_VERSION, 50);
+    match accept(&hello(49), "d", "i") {
+        AgentGreeting::Refused { ours, theirs, .. } => {
+            assert_eq!(ours, 50);
+            assert_eq!(theirs, 49);
+        }
+        other => panic!("expected Refused, got {other:?}"),
+    }
+}
+
+#[test]
 fn an_unknown_frame_version_is_closed_rather_than_answered() {
     // **The rule that cannot be expressed as a refusal.** Writing one would
     // mean framing a reply in the very format the peer has just shown it does

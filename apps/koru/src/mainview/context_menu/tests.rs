@@ -353,7 +353,7 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     assert_eq!(submenu(MenuAction::NewAgent), Some(flyout));
     assert_eq!(
         submenu(MenuAction::Documents),
-        Some(vec![MenuAction::NewDocument])
+        Some(vec![MenuAction::NewDocument, MenuAction::MiniApp])
     );
     assert_eq!(
         submenu(MenuAction::Chats),
@@ -398,7 +398,8 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     );
     assert_eq!(
         MenuAction::NewDocument.shortcut(),
-        Some(koru_keys::label_of(koru_keys::ShortcutId::NewTab))
+        None,
+        "Ctrl+T now opens the New menu, so it is not New document's chord"
     );
     // Ctrl+I is Italic; New chat has no chord of its own.
     assert_eq!(MenuAction::NewAiChat.shortcut(), None);
@@ -423,6 +424,7 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
         document_plus_items(),
         vec![
             MenuAction::NewDocument,
+            MenuAction::MiniApp,
             MenuAction::Divider,
             MenuAction::OpenRecentDocument(doc),
             // Moved here from the Welcome page, and only offered when there
@@ -476,14 +478,99 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
     let eleventh = many[PLUS_RECENT_MAX].0;
     set_plus_snapshots(many, vec![], vec![], vec![]);
     let docs = document_plus_items();
-    assert_eq!(docs.len(), 1 + 1 + PLUS_RECENT_MAX + 2);
+    assert_eq!(docs.len(), 2 + 1 + PLUS_RECENT_MAX + 2);
     assert_eq!(docs.last(), Some(&MenuAction::ClearRecents));
     assert!(!docs.contains(&MenuAction::OpenRecentDocument(eleventh)));
 
     set_plus_snapshots(vec![], vec![], vec![], vec![]);
-    assert_eq!(document_plus_items(), vec![MenuAction::NewDocument]);
+    assert_eq!(
+        document_plus_items(),
+        vec![MenuAction::NewDocument, MenuAction::MiniApp]
+    );
     assert_eq!(chat_plus_items(), vec![MenuAction::NewAiChat]);
     assert_eq!(shell_plus_items(), shell_profile_items());
+}
+
+/// The Tasks flyout: *New list* first, then a rule and each list, nested and
+/// wearing its colour. With no lists it is just *New list*.
+#[test]
+fn the_tasks_flyout_lists_nested_coloured_lists_under_new_list() {
+    use koru_core::ids::ListId;
+    let top = ListId::new();
+    let child = ListId::new();
+    set_task_lists(vec![
+        (top, "Top".into(), Some("red"), 0),
+        (child, "Child".into(), None, 1),
+    ]);
+    assert_eq!(
+        task_plus_items(),
+        vec![
+            MenuAction::NewList,
+            MenuAction::Divider,
+            MenuAction::TaskListRow(top, Some("red"), 0),
+            MenuAction::TaskListRow(child, None, 1),
+        ]
+    );
+
+    // A row reads its name, colour and depth.
+    let child = MenuAction::TaskListRow(child, None, 1);
+    assert_eq!(child.label(), "Child");
+    assert_eq!(koru_ui::MenuItem::indent(&child), 1);
+    let top = MenuAction::TaskListRow(top, Some("red"), 0);
+    assert_eq!(koru_ui::MenuItem::swatch(&top), Some(Some("red")));
+    assert_eq!(koru_ui::MenuItem::indent(&top), 0);
+
+    // The `+` menu carries the flyout.
+    assert!(new_tab_items().contains(&MenuAction::Tasks));
+    assert_eq!(submenu(MenuAction::Tasks), Some(task_plus_items()));
+
+    // Nothing to list: only *New list*.
+    set_task_lists(vec![]);
+    assert_eq!(task_plus_items(), vec![MenuAction::NewList]);
+}
+
+/// The `+` menu's flyouts wear the letters the launcher already uses, so a
+/// plain key opens the same door the grid's letter does.
+#[test]
+fn the_plus_menu_flyouts_carry_mnemonic_letters() {
+    assert_eq!(MenuAction::Documents.mnemonic(), Some('d'));
+    assert_eq!(MenuAction::Canvases.mnemonic(), Some('v'));
+    assert_eq!(MenuAction::Tasks.mnemonic(), Some('t'));
+    assert_eq!(MenuAction::NewShell.mnemonic(), Some('s'));
+    assert_eq!(MenuAction::NewAgent.mnemonic(), Some('a'));
+    assert_eq!(MenuAction::Chats.mnemonic(), Some('c'));
+    assert_eq!(MenuAction::ImportAs.mnemonic(), Some('i'));
+    assert_eq!(MenuAction::OpenWelcome.mnemonic(), None, "no letter");
+}
+
+/// The Move flyout offers the four edges, and the `+` menu carries it between
+/// Socials and Import.
+#[test]
+fn the_move_flyout_offers_the_four_edges() {
+    use koru_editor::SplitSide;
+    assert_eq!(
+        submenu(MenuAction::Move),
+        Some(vec![
+            MenuAction::MoveToSplit(SplitSide::Up),
+            MenuAction::MoveToSplit(SplitSide::Right),
+            MenuAction::MoveToSplit(SplitSide::Down),
+            MenuAction::MoveToSplit(SplitSide::Left),
+        ])
+    );
+    assert_eq!(MenuAction::Move.mnemonic(), Some('m'));
+    let items = new_tab_items();
+    let socials = items
+        .iter()
+        .position(|a| *a == MenuAction::Socials)
+        .unwrap();
+    let import = items
+        .iter()
+        .position(|a| *a == MenuAction::ImportAs)
+        .unwrap();
+    assert!(
+        items[socials + 1..import].contains(&MenuAction::Move),
+        "Move sits below Socials and above Import"
+    );
 }
 
 // ------------------------------------------------ the + menu's profile rows
@@ -927,6 +1014,72 @@ fn a_file_menu_offers_the_note_row_the_file_has_earned() {
     assert_eq!(file_items(1, Some(true))[5].label(), "Move to trash");
 }
 
+/// ***Read all pages* and *Read again* in the Files menu** (OCR Plan 3.2,
+/// EXPERIENCE §4): shown for one file exactly where the Store's answer offers
+/// each, as the menu's last group, after its own rule; never for a
+/// multi-selection; never before an answer is known. Every row above them is
+/// the menu without them, so a menu corrected in place moves nothing the
+/// pointer is on.
+#[test]
+fn files_ocr_menu_offers_rescan_without_the_automatic_retry() {
+    use koru_workspace_host::reading_requests::ReadingOffers;
+    let offered = |read_all, force_ocr| {
+        Some(ReadingOffers {
+            force_ocr,
+            read_all,
+            read_again: true,
+        })
+    };
+    let base = explore_file_items(1, Some(false), None);
+    assert!(base.contains(&MenuAction::ViewExtractedText));
+    assert!(!base.contains(&MenuAction::ReadAllPages));
+    assert!(!base.contains(&MenuAction::ReadAgain));
+    assert_eq!(
+        explore_file_items(1, Some(false), offered(false, false)),
+        base,
+        "automatic retry alone does not add a Files menu action"
+    );
+
+    let capped = explore_file_items(1, Some(false), offered(true, false));
+    assert_eq!(capped[..base.len()], base[..], "nothing above moves");
+    assert_eq!(
+        capped[base.len()..],
+        [MenuAction::Divider, MenuAction::ReadAllPages]
+    );
+    let read = explore_file_items(1, Some(false), offered(false, true));
+    assert_eq!(
+        read[base.len()..],
+        [MenuAction::Divider, MenuAction::ForceOcr]
+    );
+    assert!(!read.contains(&MenuAction::ReadAgain));
+    let both = explore_file_items(1, Some(true), offered(true, true));
+    assert_eq!(
+        both[both.len() - 3..],
+        [
+            MenuAction::Divider,
+            MenuAction::ReadAllPages,
+            MenuAction::ForceOcr
+        ]
+    );
+
+    // A multi-selection: neither, whatever is known.
+    let many = explore_file_items(3, None, offered(true, true));
+    assert!(!many.contains(&MenuAction::ReadAllPages));
+    assert!(!many.contains(&MenuAction::ReadAgain));
+    assert!(!many.contains(&MenuAction::ForceOcr));
+
+    // Their words are the shared ones, in the language drawn.
+    let lang = crate::format::lang();
+    assert_eq!(
+        MenuAction::ReadAllPages.label(),
+        koru_i18n::t(lang, koru_i18n::Key::ReadingReadAllPages)
+    );
+    assert_eq!(
+        MenuAction::ForceOcr.label(),
+        koru_i18n::t(lang, koru_i18n::Key::ReadingForceOcr)
+    );
+}
+
 #[test]
 fn export_opens_a_format_submenu() {
     assert_eq!(submenu(MenuAction::ExportAs), Some(export_items()));
@@ -1037,7 +1190,7 @@ fn the_overflow_keeps_the_pin_glyph_and_uses_text_for_destinations() {
     assert_eq!(MenuAction::HeaderUpdates.icon(), None);
     assert_eq!(
         MenuAction::HeaderFeedback.icon(),
-        Some(koru_draw::icons::USER_SOUND)
+        MenuAction::HelpSendFeedback.icon()
     );
 }
 
@@ -1056,7 +1209,15 @@ fn support_sits_where_help_was_with_the_headset_glyph() {
         assert_eq!(items[zoom + 3], MenuAction::HeaderFeedback);
     } else {
         // Hidden for now: Feedback is the only destination after zoom.
-        assert_eq!(&items[zoom + 2..], &[MenuAction::HeaderFeedback]);
+        assert_eq!(items[zoom + 2], MenuAction::HeaderFeedback);
+        let footer = &items[zoom + 3..];
+        if let Some(branch) = crate::build_stamp::caption_branch() {
+            assert_eq!(footer, &[MenuAction::Divider, MenuAction::HeaderBranch]);
+            assert_eq!(MenuAction::HeaderBranch.label(), branch);
+            assert!(!MenuAction::HeaderBranch.selectable());
+        } else {
+            assert!(footer.is_empty());
+        }
     }
     assert_eq!(
         MenuAction::HeaderSupport.icon(),
@@ -1097,6 +1258,9 @@ fn the_window_menu_has_no_destructive_rows() {
                     (true, true) => MenuAction::HeaderStopRecording,
                     (true, false) => MenuAction::HeaderStartRecording,
                     (false, _) if OVERFLOW_HIDDEN_ROWS_SHOWN => MenuAction::HeaderUpdates,
+                    (false, _) if crate::build_stamp::caption_branch().is_some() => {
+                        MenuAction::HeaderBranch
+                    }
                     (false, _) => MenuAction::HeaderFeedback,
                 };
                 assert_eq!(items.last().copied(), Some(want_last));
@@ -1314,7 +1478,7 @@ fn the_controls_dim_at_the_ends_of_the_range_and_at_actual_size() {
             .into_iter()
             .filter_map(|(control, _)| match control {
                 Control::Button { enabled, .. } => Some(enabled),
-                Control::Readout(_) => None,
+                Control::Readout(_) | Control::Segment { .. } => None,
             })
             .collect()
     };
@@ -1452,6 +1616,7 @@ fn the_canvases_flyout_offers_new_canvas_then_recent_canvases() {
         document_plus_items(),
         vec![
             MenuAction::NewDocument,
+            MenuAction::MiniApp,
             MenuAction::Divider,
             MenuAction::OpenRecentDocument(page),
             MenuAction::Divider,

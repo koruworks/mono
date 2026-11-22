@@ -421,8 +421,14 @@ fn deleting_a_list_clears_memberships_and_keeps_the_tasks() {
     use crate::system::SystemDoc;
 
     let mut sys = SystemDoc::create().unwrap();
-    let wedding = sys.create_list("Wedding", Some("pink"), 1).unwrap();
-    let bike = sys.create_list("Bike Project", Some("blue"), 2).unwrap();
+    let wedding = sys
+        .create_list_under(None, "Wedding", Some("pink"), 1)
+        .unwrap()
+        .id();
+    let bike = sys
+        .create_list_under(None, "Bike Project", Some("blue"), 2)
+        .unwrap()
+        .id();
 
     let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "lists").unwrap();
     let cake = ws

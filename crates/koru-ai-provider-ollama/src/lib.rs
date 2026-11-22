@@ -211,6 +211,7 @@ impl AiProvider for OllamaProvider {
             Err(error) => return Err(error),
         };
         let effective = validate_reasoning(&descriptor.capabilities.reasoning, request.reasoning)?;
+        let tools_unavailable = !descriptor.capabilities.native_tools && !request.tools.is_empty();
         let converted = conversion::convert(&request)?;
         let mut messages = Vec::with_capacity(converted.messages.len() + 1);
         messages.push(json!({ "role": "system", "content": converted.system }));
@@ -227,7 +228,7 @@ impl AiProvider for OllamaProvider {
             "messages": messages,
             "stream": true
         });
-        if !request.tools.is_empty() {
+        if !request.tools.is_empty() && descriptor.capabilities.native_tools {
             body["tools"] = json!(
                 request
                     .tools
@@ -267,6 +268,13 @@ impl AiProvider for OllamaProvider {
         };
         ensure_success(response.status())?;
         let mut pending = VecDeque::new();
+        if tools_unavailable {
+            pending.push_back(AiEvent::Notice {
+                attempt_id: request.attempt_id,
+                notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+                at: Timestamp::now(),
+            });
+        }
         pending.push_back(AiEvent::Started {
             attempt_id: request.attempt_id,
             provider_response_id: None,

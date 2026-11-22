@@ -38,6 +38,7 @@
 
 pub mod authority;
 pub mod paths;
+pub mod pins;
 pub mod registry;
 pub mod sections;
 pub mod storage;
@@ -54,6 +55,8 @@ pub use sections::{
     OpenAiSection, RecordingPrefs, Section, SectionValues, StorageClass, TerminalPatch,
     TerminalSettings,
 };
+pub mod text_rendering;
+pub use text_rendering::{TextAntialiasing, TextRendering, TextRenderingPreferences};
 pub use values::{
     AgentPermission, AiProvider, CanvasBackground, CaretColorChoice, CaretHeightChoice,
     CaretWidthChoice, CloseBehaviorChoice, DensityChoice, DictationGesture, DictationInput,

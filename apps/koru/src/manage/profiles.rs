@@ -29,6 +29,7 @@ mod removal;
 mod results;
 mod scopes;
 mod surface;
+mod sync_modes;
 
 mod attach;
 #[cfg(test)]
@@ -38,6 +39,7 @@ mod selection_tests;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use cloud::inventory;
 pub use cloud::{Status as CloudStatus, SyncAvailability};
 pub use effect::Effect;
 pub use intent::{Intent, LinkControl, SessionAction};
@@ -92,9 +94,11 @@ pub struct ViewHints {
 }
 
 pub struct ProfilesController {
+    sync_modes: sync_modes::State,
     cloud: cloud::State,
     cloud_uri: Option<String>,
     cloud_visible: bool,
+    inventory_cancellations: inventory::Cancellations,
     /// One Profile's Cloud sync progress, polled while it shows.
     progress: progress::Poll,
     /// Which Profile that is: the selected one, or Koru Cloud's disclosure.
@@ -176,9 +180,11 @@ impl Default for ProfilesController {
 impl ProfilesController {
     pub fn new() -> Self {
         Self {
+            sync_modes: Default::default(),
             cloud: Default::default(),
             cloud_uri: None,
             cloud_visible: false,
+            inventory_cancellations: Default::default(),
             progress: Default::default(),
             progress_owner: ProgressOwner::Selected,
             local_effects: Default::default(),
@@ -298,6 +304,9 @@ impl ProfilesController {
             return false;
         }
         let changed_scope = self.account.active_scope != state.active_scope;
+        if changed_scope {
+            self.retire_cloud_inventory();
+        }
         self.activate_scope(state.active_scope);
         if changed_scope
             || self.account.active_account_id != state.active_account_id
@@ -309,6 +318,7 @@ impl ProfilesController {
                     | AccountStage::Unavailable
             )
         {
+            self.retire_cloud_inventory();
             self.cloud.invalidate();
             self.cloud_uri = None;
         }
@@ -594,14 +604,26 @@ impl ProfilesController {
             .preview_request
             .is_some()
             .then(|| std::time::Instant::now() + std::time::Duration::from_millis(16));
-        match (preview, self.progress.deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        [
+            preview,
+            self.progress.deadline(),
+            self.sync_modes.deadline(),
+            self.cloud_storage_deadline(),
+            self.cloud.inventory.deadline(),
+            self.cloud.inspection.deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     pub fn maintain(&mut self, now: std::time::Instant) -> bool {
-        self.drain_deletion_preview() | self.maintain_cloud_progress(now)
+        self.drain_deletion_preview()
+            | self.maintain_cloud_progress(now)
+            | self.maintain_sync_modes(now)
+            | self.maintain_cloud_storage(now)
+            | self.cloud.inventory.maintain(now)
+            | self.cloud.inspection.maintain(now)
     }
 }
 

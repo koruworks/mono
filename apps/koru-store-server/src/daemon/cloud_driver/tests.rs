@@ -676,3 +676,18 @@ fn a_hinted_provisioning_still_publishes_its_unit() {
         })
         .unwrap();
 }
+
+/// A session stopped by its own permit being replaced is not a refusal; the
+/// same code from a service that fenced a permit still held here is, and so
+/// is every other way a pass can stop.
+#[test]
+fn only_a_fence_after_the_permit_was_replaced_is_a_designed_ending() {
+    let fenced = Refusal::ReplicaFenced.code();
+    assert!(ended_with_its_permit(fenced, false));
+    assert!(
+        !ended_with_its_permit(fenced, true),
+        "the service fenced a permit this device still holds"
+    );
+    assert!(!ended_with_its_permit("sync_peer_closed", false));
+    assert!(!ended_with_its_permit("authorization_unavailable", false));
+}

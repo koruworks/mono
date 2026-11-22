@@ -75,6 +75,7 @@ fn wire_row(title: &str) -> TaskRow {
         breadcrumb: String::new(),
         title: title.to_owned(),
         attributes: Vec::<AttributeRowValue>::new(),
+        bucket: None,
     }
 }
 
@@ -439,6 +440,38 @@ fn a_client_can_put_the_caret_in_the_capture_row() {
     assert!(view.capture.is_some());
 }
 
+#[test]
+fn embedded_collection_has_no_capture_or_creation_entry() {
+    for target in [
+        RailTarget::Bucket(Bucket::Today),
+        RailTarget::Bucket(Bucket::Next),
+        RailTarget::Bucket(Bucket::Upcoming),
+        RailTarget::Bucket(Bucket::Later),
+        RailTarget::Bucket(Bucket::Completed),
+        RailTarget::List(koru_core::ids::ListId::new()),
+    ] {
+        let mut view = page(&["a"]).collection_only();
+        view.set_target(target);
+        assert!(!view.plus_visible());
+        assert!(!view.lane_plus_visible());
+        let plus = view.plus_rect();
+        assert_ne!(
+            view.hit_at(plus.x + 1.0, plus.y + 1.0),
+            Some(super::super::view::Hit::HeaderPlus)
+        );
+        assert!(
+            !nodes(&view)
+                .iter()
+                .any(|node| node.occurrence.part == parts::CAPTURE)
+        );
+        assert!(!view.accessibility_action(cx().surface(parts::CAPTURE), Action::Focus));
+        view.begin_capture();
+        view.restore_capture("must not create");
+        assert!(view.capture.is_none());
+        assert!(view.take_request().is_none());
+    }
+}
+
 /// Accessible focus is a function over the state the page is drawn from, never
 /// a second field kept in step.
 #[test]
@@ -656,6 +689,7 @@ fn the_list_chip_is_a_control_and_opens_the_list_picker() {
         id: list,
         name: "Bike Project".to_owned(),
         color: None,
+        path: None,
     }]);
 
     let chip = find(&view, &row_occurrence(&view, 0, parts::LIST_CHIP).locator())

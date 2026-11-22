@@ -23,7 +23,9 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+use std::time::{Duration, Instant};
 
 use koru_api_client::{CatalogChange, CatalogFlags, Client, WorkspaceError};
 use koru_api_wire::WorkspaceLifecycleAction;
@@ -78,6 +80,11 @@ enum Command {
     },
     /// Restore a Profile deletion batch (root catalog §6.3).
     RestoreProfile(ProfileId, koru_api_client::DeletionId),
+    /// Restore a trashed workspace into a Profile, in one step.
+    RestoreWorkspaceTo(WorkspaceId, ProfileId),
+    /// Record that the person was told a trashed workspace is still in the
+    /// account.
+    AcknowledgeTrashed(WorkspaceId),
     /// Ask whether this session may remove a workspace at all.
     Probe,
     /// The same question about moving one. Two probes, because a window can
@@ -102,6 +109,34 @@ enum Command {
     Reorder(ProfileId, Vec<WorkspaceId>),
     Pin(WorkspaceId, bool),
     ReconcileListing(WorkspaceId),
+}
+
+impl Command {
+    /// What the log calls it: the request's kind and nothing it carries — no
+    /// workspace or Profile name, no confirmation token.
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Keyed(_, command) => command.kind(),
+            Self::Catalog => "catalog",
+            Self::Profiles => "profiles",
+            Self::CreateProfile(_) => "create_profile",
+            Self::KeepProfile(..) => "keep_profile",
+            Self::EnsureLive { .. } => "ensure_live",
+            Self::RestoreProfile(..) => "restore_profile",
+            Self::RestoreWorkspaceTo(..) => "restore_workspace_to",
+            Self::AcknowledgeTrashed(_) => "acknowledge_trashed",
+            Self::Probe => "probe_destroy",
+            Self::ProbeMigration => "probe_migrate",
+            Self::Consequence(..) => "consequence",
+            Self::Lifecycle(..) => "lifecycle",
+            Self::MoveConsequence(..) => "move_consequence",
+            Self::Migrate(..) => "migrate",
+            Self::Appearance { .. } => "appearance",
+            Self::Reorder(..) => "reorder",
+            Self::Pin(..) => "pin",
+            Self::ReconcileListing(_) => "reconcile_listing",
+        }
+    }
 }
 
 /// How the surface reaches the gateway, or the fact that it does not.
@@ -132,8 +167,51 @@ struct Live {
     flags: Arc<CatalogFlags>,
     /// Transport receipts still owed, including if the worker exits early.
     awaiting: RefCell<VecDeque<crate::CommandId>>,
+    /// What the worker is doing now, shared with it so a press queued
+    /// behind a request that never returns is logged when it happens.
+    busy: Arc<Busy>,
     _inert_orders: Option<Receiver<Command>>,
     _inert_answers: Option<Sender<Answer>>,
+}
+
+/// **Which request the worker is on, and for how long.**
+///
+/// The worker runs one request at a time, in order, so one that never returns
+/// holds every press after it — a Restore confirmed and never sent, its
+/// button dimmed until the window restarted (2026-11-20, 0.1.9). Nothing said
+/// which request it was waiting on: the worker logged nothing, and the
+/// gateway logs a request only once it ends. This is what the log needs to
+/// name it next time.
+#[derive(Default)]
+struct Busy {
+    current: std::sync::Mutex<Option<(&'static str, Instant)>>,
+    /// Sent and not yet taken by the worker.
+    queued: AtomicUsize,
+}
+
+/// A request running this long is logged when it ends.
+const SLOW: Duration = Duration::from_secs(2);
+/// A press queued behind a request running this long is logged as it is
+/// queued: the person is waiting on it now.
+const STUCK: Duration = Duration::from_secs(5);
+
+impl Busy {
+    fn start(&self, kind: &'static str) {
+        self.queued.fetch_sub(1, Ordering::Relaxed);
+        if let Ok(mut current) = self.current.lock() {
+            *current = Some((kind, Instant::now()));
+        }
+    }
+
+    fn finish(&self) -> Option<Duration> {
+        let mut current = self.current.lock().ok()?;
+        current.take().map(|(_, since)| since.elapsed())
+    }
+
+    fn running(&self) -> Option<(&'static str, Duration)> {
+        let current = self.current.lock().ok()?;
+        current.map(|(kind, since)| (kind, since.elapsed()))
+    }
 }
 
 impl WorkspaceLinks {
@@ -165,6 +243,7 @@ impl WorkspaceLinks {
                 ended: std::cell::Cell::new(false),
                 flags: Arc::new(CatalogFlags::default()),
                 awaiting: RefCell::default(),
+                busy: Arc::default(),
                 _inert_orders: Some(sunk),
                 _inert_answers: Some(never),
             }),
@@ -186,9 +265,21 @@ impl WorkspaceLinks {
         let flags = Arc::new(CatalogFlags::default());
         let theirs = Arc::clone(&flags);
         let segment = segment.to_owned();
+        let busy = Arc::new(Busy::default());
+        let worker_busy = Arc::clone(&busy);
         let _ = std::thread::Builder::new()
             .name("koru-workspaces-link".into())
-            .spawn(move || serve(&segment, root, &orders, &answers_out, &theirs, wake));
+            .spawn(move || {
+                serve(
+                    &segment,
+                    root,
+                    &orders,
+                    &answers_out,
+                    &theirs,
+                    &worker_busy,
+                    wake,
+                );
+            });
         Self {
             live: Some(Live {
                 commands,
@@ -196,6 +287,7 @@ impl WorkspaceLinks {
                 ended: std::cell::Cell::new(false),
                 flags,
                 awaiting: RefCell::default(),
+                busy,
                 _inert_orders: None,
                 _inert_answers: None,
             }),
@@ -222,6 +314,7 @@ impl WorkspaceLinks {
                 ended: std::cell::Cell::new(false),
                 flags: Arc::new(CatalogFlags::default()),
                 awaiting: RefCell::default(),
+                busy: Arc::default(),
                 _inert_orders: Some(sunk),
                 _inert_answers: None,
             }),
@@ -412,6 +505,22 @@ impl WorkspaceLinks {
         ));
     }
 
+    pub(crate) fn restore_workspace_to(
+        &self,
+        id: crate::CommandId,
+        workspace: WorkspaceId,
+        to: ProfileId,
+    ) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::RestoreWorkspaceTo(workspace, to)),
+        ));
+    }
+
+    pub(crate) fn acknowledge_trashed(&self, workspace: WorkspaceId) {
+        self.send(Command::AcknowledgeTrashed(workspace));
+    }
+
     pub(crate) fn keep_profile(
         &self,
         id: crate::CommandId,
@@ -428,6 +537,18 @@ impl WorkspaceLinks {
         if let Some(live) = &self.live {
             if let Command::Keyed(id, _) = &command {
                 live.awaiting.borrow_mut().push_back(*id);
+            }
+            let ahead = live.busy.queued.fetch_add(1, Ordering::Relaxed);
+            if let Some((running, for_how_long)) = live.busy.running()
+                && for_how_long >= STUCK
+            {
+                tracing::warn!(
+                    queued = command.kind(),
+                    running,
+                    running_ms = for_how_long.as_millis() as u64,
+                    ahead,
+                    "workspaces link: a request waits behind one that has not returned"
+                );
             }
             // A dead worker is reported by the answer channel, which the
             // surface is already polling. Failing here as well would be two
@@ -454,11 +575,16 @@ fn serve(
     orders: &Receiver<Command>,
     answers: &Sender<Answer>,
     flags: &Arc<CatalogFlags>,
+    busy: &Busy,
     wake: Arc<dyn Fn() + Send + Sync>,
 ) {
     let client = match connect(segment, root.as_deref()) {
         Some(client) => client,
         None => {
+            tracing::warn!(
+                segment,
+                "workspaces link: could not connect to the gateway; the surface reports it unavailable"
+            );
             publish_answer(answers, &*wake, Answer::Unavailable);
             return;
         }
@@ -477,11 +603,23 @@ fn serve(
         .ok();
 
     while let Ok(command) = orders.recv() {
+        let kind = command.kind();
+        busy.start(kind);
+        tracing::debug!(request = kind, "workspaces link: request started");
         let answer = run(&client, command);
+        let took = busy.finish().unwrap_or_default();
+        let took_ms = took.as_millis() as u64;
+        if took >= SLOW {
+            tracing::info!(request = kind, took_ms, "workspaces link: slow request");
+        } else {
+            tracing::debug!(request = kind, took_ms, "workspaces link: request finished");
+        }
         if !publish_answer(answers, &*wake, answer) {
-            return; // the surface is gone
+            tracing::debug!("workspaces link: the surface is gone; the worker ends");
+            return;
         }
     }
+    tracing::debug!("workspaces link: no more requests; the worker ends");
 }
 
 fn publish_answer(answers: &Sender<Answer>, wake: &dyn Fn(), answer: Answer) -> bool {
@@ -534,6 +672,20 @@ fn run(client: &Client, command: Command) -> Answer {
         // the restore decides what the Trash contains, like a workspace's.
         Command::RestoreProfile(profile, deletion) => {
             Answer::ProfileRestored(client.store().restore_profile(profile, deletion))
+        }
+        // The Store's own route again, and the same scope: nothing is open
+        // in a trashed workspace, so there is no gateway consequence to ask
+        // for and no token to spend.
+        Command::RestoreWorkspaceTo(workspace, to) => Answer::RestoredTo(
+            client
+                .store()
+                .restore_workspace_to(workspace, to)
+                .map(|_| ()),
+        ),
+        Command::AcknowledgeTrashed(workspace) => {
+            // A failure is only a notice that may be shown once more.
+            let _ = client.store().acknowledge_trashed_in_account(workspace);
+            Answer::Acknowledged
         }
         Command::KeepProfile(owner, attempt) => {
             Answer::ProfileKept(client.catalog().keep_profile(owner, attempt))

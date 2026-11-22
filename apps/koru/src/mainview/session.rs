@@ -38,7 +38,7 @@ impl MainView {
         // to the content in the same breath: a restored width is not a drag,
         // and the first frame should be laid out against it rather than snapping
         // to it a moment later.
-        if let Some(w) = settings.workspace.and_then(|id| settings.sidebar_w_in(id)) {
+        if let Some(w) = settings.sidebar_width_for(settings.workspace) {
             self.sidebar.set_full(w.clamp(SIDEBAR_MIN_W, SIDEBAR_MAX_W));
         }
         self.sidebar.set_immediately(settings.sidebar_open);
@@ -66,6 +66,13 @@ impl MainView {
             .map(|id| settings.collapsed_in(id).to_vec())
             .unwrap_or_default();
         self.explore.set_collapsed(collapsed);
+        // The task lists shut in the rail, the same way and for the same
+        // reason: per workspace, per device, before the first draw.
+        let shut = settings
+            .workspace
+            .map(|id| settings.collapsed_lists_in(id).to_vec())
+            .unwrap_or_default();
+        self.explore.rail_mut().set_collapsed(shut);
 
         // Rebuild the list, dropping anything whose node has gone. Every tab is
         // rebuilt now: there is no permanent one to keep alive across the swap.
@@ -96,6 +103,7 @@ impl MainView {
                 // welcome reads the global default view mode and canvas colour it
                 // offers, so it must not be skipped the way it used to be.
                 match &mut t.view {
+                    TabView::MiniApp(_) => {}
                     TabView::Leaf(l) => View::restore(l, workspace, settings),
                     TabView::Welcome(w) => {
                         View::restore(w, workspace, settings);
@@ -104,7 +112,6 @@ impl MainView {
                     // Koru should strand somebody on at startup; older
                     // settings still parse but reopen on the durable Welcome
                     // floor, so a restored tab is welcome-shaped.
-                    TabView::Manage(w) => View::restore(w, workspace, settings),
                     TabView::Trash(t) => View::restore(t, workspace, settings),
                     // **The rail is put back from the tab**, not the other way
                     // round: the container pushes this target into
@@ -131,7 +138,7 @@ impl MainView {
                     // document read through the gateway; a result tab shows an
                     // artifact version, which is immutable. There is nothing in
                     // `Settings` that is about either.
-                    TabView::Run(_) | TabView::Result(_) => {}
+                    TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => {}
                     // The camera will be the surface's (`DocViewPrefs`, P1.5);
                     // the placeholder reads nothing.
                     TabView::Canvas(c) => View::restore(c, workspace, settings),
@@ -169,9 +176,8 @@ impl MainView {
         // `regions.sidebar.w`: `solve` clamps against `CONTENT_MIN_W`, so
         // storing the clamped one would mean opening on a laptop permanently
         // shrank the width chosen on a desktop.
-        if let Some(id) = settings.workspace {
-            settings.set_sidebar_w_in(id, self.sidebar.full());
-        }
+        // One width for every workspace: switching must not resize the pane.
+        settings.sidebar_width = Some(self.sidebar.full());
         // Persist the full split tree. The legacy focused-group fields below
         // are kept so older builds can still restore *something*.
         settings.pane_tree = Some(self.pane_tree_state());
@@ -187,6 +193,7 @@ impl MainView {
         // a tree come back expanded after a switch.
         if let Some(id) = settings.workspace {
             settings.set_collapsed_in(id, self.explore.collapsed());
+            settings.set_collapsed_lists_in(id, self.explore.rail().collapsed());
         }
         // ...and a workspace that no longer exists stops being remembered. The
         // pane knows the list because the shell hands it one; before it has,
@@ -207,9 +214,9 @@ impl MainView {
         for (_, group) in self.panes.iter_groups() {
             for t in group.tabs().iter() {
                 match &t.view {
+                    TabView::MiniApp(_) => {}
                     TabView::Leaf(l) => View::capture(l, settings),
                     TabView::Welcome(w) => View::capture(w, settings),
-                    TabView::Manage(w) => View::capture(w, settings),
                     TabView::Trash(t) => View::capture(t, settings),
                     TabView::Tasks(t) => View::capture(t, settings),
                     TabView::Reminders(r) => View::capture(r, settings),
@@ -218,7 +225,7 @@ impl MainView {
                     TabView::AiChat(_) => {}
                     TabView::Socials(_) => {}
                     TabView::Session(_) => {}
-                    TabView::Run(_) | TabView::Result(_) => {}
+                    TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => {}
                     TabView::Canvas(c) => View::capture(c, settings),
                     TabView::Feedback(f) => View::capture(f, settings),
                     TabView::Diff(_) => {}
@@ -368,9 +375,12 @@ impl MainView {
             // And one Manage tab, though a session written while both tabs
             // existed may hold both a `manage` and a `workspaces` token.
             if matches!(which, TabRef::Manage | TabRef::Workspaces)
-                && let Some(existing) = tabs
-                    .iter()
-                    .position(|tab| matches!(tab.view, TabView::Manage(_)))
+                && let Some(existing) = tabs.iter().position(|tab| {
+                    matches!(
+                        tab.view,
+                        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+                    )
+                })
             {
                 if stored_index == settings.tab {
                     restored_active = existing;
@@ -449,11 +459,21 @@ impl MainView {
                             }
                             // One Manage tab: `manage` and the legacy
                             // `workspaces` token both restore it.
-                            if matches!(tab.view, TabView::Manage(_))
-                                && main_tabs
-                                    .iter()
-                                    .any(|t| matches!(t.view, TabView::Manage(_)))
-                            {
+                            if matches!(
+                                tab.view,
+                                TabView::Settings(crate::settings_view::SettingsView {
+                                    manage: _,
+                                    ..
+                                })
+                            ) && main_tabs.iter().any(|t| {
+                                matches!(
+                                    t.view,
+                                    TabView::Settings(crate::settings_view::SettingsView {
+                                        manage: _,
+                                        ..
+                                    })
+                                )
+                            }) {
                                 continue;
                             }
                             main_tabs.push(tab);
@@ -651,6 +671,7 @@ impl MainView {
         // empty draft rather than as a node that will not parse. What it
         // *was* is a blank page, and a blank page restores perfectly.
         Some(match &t.view {
+            TabView::MiniApp(_) => return None,
             _ if t.draft.is_some() => TabRef::Draft,
             // **Before the `Leaf` arm, and that ordering is the whole
             // of it.** A notes tab *is* a `Leaf`, so the arm below
@@ -662,7 +683,7 @@ impl MainView {
             // will not tell you.
             _ if t.whats_new.is_some() => private_page_ref(t)?,
             TabView::Welcome(_) => TabRef::Welcome,
-            TabView::Manage(_) => TabRef::Manage,
+            TabView::Settings(view) if view.manage_visible() => TabRef::Manage,
             TabView::Trash(_) => TabRef::Trash,
             TabView::Tasks(t) => TabRef::Tasks(tasks_tab_ref(t.target())),
             // A Reminders page comes back as a Reminders page: one
@@ -701,7 +722,7 @@ impl MainView {
             // anybody had asked to look at it. The run itself is
             // durable and is reopened from wherever it was reached,
             // and so is a result: it is reopened from its run.
-            TabView::Run(_) | TabView::Result(_) => return None,
+            TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => return None,
             // **A canvas persists as a document**, like a page: the
             // settings format does not change, and the kind is read
             // again from the manifest when it comes back.

@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The Cloud card needs a purchase-management decision, not subscription IDs.
+//! Cloud access and purchase management are separate account decisions.
 use super::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 struct Page {
     subscriptions: Vec<Entry>,
-    #[serde(deserialize_with = "required_cursor")]
-    next_cursor: Option<String>,
+    /// Older deployments omit this; retain their subscription-based behavior.
     #[serde(default)]
     cloud_access: Option<bool>,
+    #[serde(deserialize_with = "required_cursor")]
+    next_cursor: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -24,6 +25,13 @@ struct CheckoutHandoffRequest<'a> {
 #[derive(Deserialize)]
 struct CheckoutHandoffResponse {
     checkout_url: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CloudSubscriptionStatus {
+    pub current: bool,
+    pub cloud_access: bool,
+    pub kind: Option<SubscriptionKind>,
 }
 fn required_cursor<'de, D: serde::Deserializer<'de>>(value: D) -> Result<Option<String>, D::Error> {
     Option::<String>::deserialize(value)
@@ -54,12 +62,6 @@ pub enum SubscriptionKind {
     Paused,
     Incomplete,
     Complimentary,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CloudSubscriptionSummary {
-    pub has_subscription: bool,
-    pub kind: Option<SubscriptionKind>,
 }
 
 impl Status {
@@ -98,23 +100,23 @@ impl AccountClient {
         authorization: &AccountAuthorization<'_>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<bool, ClientError> {
-        self.cloud_subscription_summary(authorization, cancelled)
-            .map(|summary| summary.has_subscription)
+        self.cloud_subscription_status(authorization, cancelled)
+            .map(|status| status.current)
     }
 
-    /// Return whether the account holds a manageable Cloud subscription (or
-    /// complimentary access) together with its kind (`Trialing`, `Active`,
-    /// `Complimentary`, etc.) for UI labels.
-    pub fn cloud_subscription_summary(
+    /// Read current access independently of whether there is a purchase to manage,
+    /// along with the subscription kind for UI status labels.
+    /// Complimentary access never fabricates a subscription entry.
+    pub fn cloud_subscription_status(
         &self,
         authorization: &AccountAuthorization<'_>,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<CloudSubscriptionSummary, ClientError> {
+    ) -> Result<CloudSubscriptionStatus, ClientError> {
         let started = std::time::Instant::now();
         let mut cursor: Option<String> = None;
         let mut seen = std::collections::HashSet::new();
         let mut best: Option<Status> = None;
-        let mut complimentary = false;
+        let mut saw_cloud_access: Option<bool> = None;
         for _ in 0..32 {
             if cancelled() || started.elapsed() >= REQUEST_TIMEOUT {
                 return Err(ClientError::Transport(TransportError::Timeout));
@@ -139,8 +141,8 @@ impl AccountClient {
             if page.subscriptions.len() > 25 {
                 return Err(ClientError::InvalidResponse);
             }
-            if page.cloud_access == Some(true) {
-                complimentary = true;
+            if page.cloud_access.is_some() {
+                saw_cloud_access = page.cloud_access;
             }
             for entry in &page.subscriptions {
                 if entry.status.priority() > best.map_or(0, Status::priority) {
@@ -150,21 +152,18 @@ impl AccountClient {
             if let Some(status) = best
                 && status.as_kind().is_some()
             {
-                return Ok(CloudSubscriptionSummary {
-                    has_subscription: true,
+                return Ok(CloudSubscriptionStatus {
+                    current: true,
+                    cloud_access: page.cloud_access.or(saw_cloud_access).unwrap_or(true),
                     kind: status.as_kind(),
                 });
             }
             let Some(next) = page.next_cursor else {
-                if complimentary {
-                    return Ok(CloudSubscriptionSummary {
-                        has_subscription: true,
-                        kind: Some(SubscriptionKind::Complimentary),
-                    });
-                }
-                return Ok(CloudSubscriptionSummary {
-                    has_subscription: false,
-                    kind: None,
+                let cloud_access = page.cloud_access.or(saw_cloud_access).unwrap_or(false);
+                return Ok(CloudSubscriptionStatus {
+                    current: false,
+                    cloud_access,
+                    kind: cloud_access.then_some(SubscriptionKind::Complimentary),
                 });
             };
             if next.is_empty()
@@ -188,56 +187,8 @@ impl AccountClient {
         authorization: &AccountAuthorization<'_>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<bool, ClientError> {
-        let started = std::time::Instant::now();
-        let mut cursor: Option<String> = None;
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..32 {
-            if cancelled() || started.elapsed() >= REQUEST_TIMEOUT {
-                return Err(ClientError::Transport(TransportError::Timeout));
-            }
-            let mut path = "/v1/account/subscription?limit=25".to_owned();
-            if let Some(cursor) = &cursor {
-                path.push_str("&cursor=");
-                path.push_str(cursor);
-            }
-            let page: Page = self.execute(
-                RouteId::Account,
-                vec![],
-                Some(authorization),
-                false,
-                Some(path),
-            )?;
-            if cancelled() || started.elapsed() >= REQUEST_TIMEOUT {
-                return Err(ClientError::Transport(TransportError::Timeout));
-            }
-            if page.subscriptions.len() > 25 {
-                return Err(ClientError::InvalidResponse);
-            }
-            if let Some(cloud_access) = page.cloud_access {
-                return Ok(cloud_access);
-            }
-            if page
-                .subscriptions
-                .iter()
-                .any(|entry| matches!(entry.status, Status::Trialing | Status::Active))
-            {
-                return Ok(true);
-            }
-            let Some(next) = page.next_cursor else {
-                return Ok(false);
-            };
-            if next.is_empty()
-                || next.len() > 2048
-                || !next
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-                || !seen.insert(next.clone())
-            {
-                return Err(ClientError::InvalidResponse);
-            }
-            cursor = Some(next);
-        }
-        Err(ClientError::InvalidResponse)
+        self.cloud_subscription_status(authorization, cancelled)
+            .map(|status| status.cloud_access)
     }
 
     /// Mint a short-lived signed desktop checkout handoff URL on the website so

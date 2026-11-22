@@ -323,6 +323,8 @@ impl Body {
     /// node id rather than row index, so a remote insert above the caret does
     /// not move it.
     pub fn rebuild(&mut self, ws: &WorkspaceDoc) {
+        self.settle_local(ws);
+        self.pending = Pending::default();
         self.structure_dirty = true;
         self.rebuild_reusing(ws, None);
     }
@@ -627,6 +629,10 @@ impl Body {
         self.composition = Some(composition);
     }
 
+    pub(crate) fn composition_mut(&mut self) -> Option<&mut crate::dictation::Composition> {
+        self.composition.as_mut()
+    }
+
     pub(crate) fn set_composition_text(&mut self, text: &str) {
         if let Some(open) = self.composition.as_mut() {
             open.set_text(text);
@@ -658,19 +664,38 @@ impl Body {
         };
         let node = open.node();
         let Some(range) = open.range(ws) else {
-            self.composition = None;
+            // Keep a native session's failed anchor until its terminal event.
+            // Otherwise a late Commit would look like a direct commit into
+            // whichever row became focused after this one disappeared.
+            if open.native_cursor.is_none() {
+                self.composition = None;
+            }
             return;
         };
         let text = open.text().to_owned();
+        let native_cursor = open.native_cursor;
         let Some(row) = self.rows.iter().find(|r| r.id == node) else {
             // The composed node is not a row of this body any more — it was
             // hidden, or the view was re-rooted out from under the dictation.
-            self.composition = None;
+            if open.native_cursor.is_none() {
+                self.composition = None;
+            }
             return;
         };
         match row.composition.as_ref() {
             // Already spliced with exactly this, which is the reused-row case.
-            Some(run) if run.authored == range && run.text == text => return,
+            Some(run) if run.authored == range && run.text == text => {
+                if let Some(cursor) = native_cursor {
+                    let row = self.rows.iter_mut().find(|r| r.id == node).unwrap();
+                    row.ime_caret_hidden = cursor.is_none();
+                    if let Some((a, f)) = cursor {
+                        row.place_selection(range.start + a, range.start + f);
+                    } else {
+                        row.place_caret(range.start + text.len());
+                    }
+                }
+                return;
+            }
             // Spliced with something else: the row has to be authored again
             // before it can carry the new one.
             Some(_) => {
@@ -685,6 +710,15 @@ impl Body {
             self.composition = None;
             return;
         };
+        // Winit clears preedit immediately before Commit. Keep its stable
+        // replacement range, but show the authored text in the meantime.
+        if native_cursor.is_some() && text.is_empty() {
+            row.ime_caret_hidden = native_cursor == Some(None);
+            if let Some((a, f)) = self.composition.as_ref().and_then(|c| c.resolve(ws)) {
+                row.place_selection(a, f);
+            }
+            return;
+        }
         let caret = range.start + text.len();
         if !row.compose(range, &text) {
             self.composition = None;
@@ -694,7 +728,13 @@ impl Body {
             // leave the caret behind the words while they grow in front of it.
             // Queue this against the new layout for the same reason ordinary
             // text edits do: the row was just invalidated by `compose`.
-            row.place_caret(caret);
+            row.ime_caret_hidden = native_cursor == Some(None);
+            if let Some(Some((a, f))) = native_cursor {
+                let start = caret - text.len();
+                row.place_selection(start + a, start + f);
+            } else {
+                row.place_caret(caret);
+            }
         }
     }
 
@@ -842,6 +882,20 @@ impl Body {
     /// Whether this body is behind the document.
     pub fn is_stale(&self) -> bool {
         self.pending.structural || !self.pending.touched.is_empty()
+    }
+
+    /// Acknowledge that this body's rows already reflect the current document.
+    ///
+    /// Local edits update the edited row (or rebuild the body) in place, while
+    /// the Loro subscription still records those same ops into `tracker`.
+    /// Draining the tracker here keeps `known` current and discards the
+    /// already-applied batch so a later [`defer_pending`](Self::defer_pending)
+    /// sees only changes made outside this view.
+    pub fn settle_local(&mut self, ws: &WorkspaceDoc) {
+        if let Some(tracker) = self.tracker.as_ref() {
+            let _ = tracker.drain(ws);
+        }
+        self.synced_version = Some(ws.version().encode());
     }
 
     /// Mark every row as needing a fresh read, without touching the tracker.
@@ -3057,7 +3111,6 @@ mod tests {
     #[test]
     fn a_click_in_the_title_gap_lands_on_the_first_body_row() {
         use koru_draw::text::TextEngine;
-        use koru_draw::theme;
 
         let mut engine = TextEngine::new();
         let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
@@ -3077,10 +3130,10 @@ mod tests {
         let title_bot = o.rows[0].y + o.rows[0].height;
         let body_top = o.rows[1].y;
         assert!(
-            body_top - title_bot >= theme::TITLE_GAP_BELOW,
+            body_top - title_bot >= o.rows[0].metrics.title_gap,
             "title gap is present: title_bot={title_bot} body_top={body_top}"
         );
-        let in_gap = title_bot + theme::TITLE_GAP_BELOW * 0.5;
+        let in_gap = title_bot + o.rows[0].metrics.title_gap * 0.5;
         assert_eq!(
             o.row_at_y(in_gap),
             Some(1),
@@ -3586,5 +3639,36 @@ mod sync_tests {
         body.title_row = true;
         body.rebuild(&ws);
         (ws, body, doc)
+    }
+
+    /// **A local rebuild settles the view's own tracker.**
+    ///
+    /// Without draining `tracker` on `rebuild`, a local `Enter` left
+    /// `structure_dirty` armed inside the author's own subscription — so a
+    /// later `defer_pending` (triggered by an edit in another document or
+    /// another split pane) mistook the author's old edit for a fresh structural
+    /// change and rebuilt the body again.
+    #[test]
+    fn a_local_rebuild_leaves_nothing_pending_in_the_authors_tracker() {
+        let (mut ws, one, two) = two_documents(2);
+        let mut body = body_over(&ws, one);
+        assert!(!body.is_stale());
+
+        // Local structural edit on `one`, followed by `body.rebuild(&ws)` —
+        // the exact sequence `split_focused` and `append_row` run.
+        ws.insert(Parent::Node(one), Node::paragraph("local").unwrap())
+            .unwrap();
+        body.rebuild(&ws);
+        assert!(!body.is_stale());
+
+        // An edit in `two` now triggers `defer_pending` on `body`. Because
+        // `rebuild` settled `one`'s tracker, `body` stays clean.
+        ws.insert(Parent::Node(two), Node::paragraph("elsewhere").unwrap())
+            .unwrap();
+        body.defer_pending(&ws);
+        assert!(
+            !body.is_stale(),
+            "a local rebuild must not leave its own structural flag in the tracker"
+        );
     }
 }

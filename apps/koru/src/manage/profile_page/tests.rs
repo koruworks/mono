@@ -146,7 +146,7 @@ fn the_status_line_says_which_profile_is_open_and_switch_opens_another() {
         view.laid()
             .header
             .status_text
-            .starts_with("Current profile · ")
+            .starts_with("Current profile")
     );
     assert!(
         !controls(&view).contains(&Control::Switch),
@@ -192,7 +192,10 @@ fn a_local_profile_signs_in_with_google_while_signed_out() {
     let mut view = manage(std::slice::from_ref(&local));
     signed_out(&mut view);
     let row = &view.laid().sign_in.as_ref().unwrap().rows[0];
-    assert_eq!(row.label.as_deref(), Some("On this computer only"));
+    assert_eq!(
+        row.label.as_deref(),
+        Some("Not connected to a Koru account")
+    );
     let session = view.laid().placed(Control::Session).unwrap();
     assert_eq!(session.look, Look::Google);
     assert_eq!(session.label, "Sign in with Google");
@@ -283,43 +286,73 @@ fn a_synced_profile_lists_its_google_accounts_and_the_account_actions() {
 }
 
 #[test]
-fn the_cloud_row_is_the_shared_switch_or_the_way_to_koru_cloud() {
+fn sync_modes_profile_and_workspace_choices_show_saved_state_and_ceiling() {
+    use koru_store_core::TransportMode;
     let synced = profile("Synced", Some(IDENTITY));
     let mut view = manage(std::slice::from_ref(&synced));
     signed_in(&mut view, &synced, vec![identity(1, "one@example.test")]);
     view.c.set_cloud_status(profiles::CloudStatus::Subscribe);
     view.delegate(|_| ());
-    assert!(!controls(&view).contains(&Control::CloudSync));
-    assert!(press(&mut view, Control::GetCloud));
-    assert_eq!(view.page(), Some(Page::Cloud));
-
-    view.show(Page::Profile(synced.id));
+    let workspace = koru_store_core::ids::WorkspaceId::new();
+    view.c
+        .set_sync_settings_for_test(koru_store_wire::ProfileTransportSettings {
+            mode: "p2p".into(),
+            explicit_choice: false,
+            revision: 2,
+            workspaces: vec![koru_store_wire::WorkspaceTransportSettings {
+                id: workspace.to_storage(),
+                name: "Work".into(),
+                mode: "local_only".into(),
+                explicit_choice: true,
+                revision: 3,
+            }],
+        });
+    view.delegate(|_| ());
+    assert!(controls(&view).contains(&Control::SyncMode(None, TransportMode::P2p)));
+    assert!(controls(&view).contains(&Control::SyncMode(None, TransportMode::Cloud)));
+    // Koru Free (M3.2): an account with no Koru Cloud yet can still choose
+    // Cloud — turning it on is how it asks for a Free place — so the Cloud
+    // mode is offered, not dimmed, while the account has no subscription.
+    assert!(
+        !view
+            .laid()
+            .disabled
+            .contains(&Control::SyncMode(None, TransportMode::Cloud))
+    );
+    assert!(matches!(
+        view.laid()
+            .placed(Control::SyncMode(None, TransportMode::P2p))
+            .unwrap()
+            .look,
+        Look::Action(koru_ui::button::ActionStyle::Primary)
+    ));
+    // A Workspace's own choice cannot exceed the Profile's: what its row's
+    // strip is dimmed by (the row itself is `workspaces`' to lay).
+    assert!(
+        !view
+            .c
+            .sync_mode_enabled(Some(workspace), TransportMode::Cloud)
+    );
+    assert!(
+        view.c
+            .sync_mode_enabled(Some(workspace), TransportMode::P2p)
+    );
     view.c.set_cloud_status(profiles::CloudStatus::Manage);
     view.c
         .set_cloud_subscription_kind(Some(koru_agent_wire::CloudSubscriptionKind::Trialing));
     view.delegate(|_| ());
-    let switch = view.laid().placed(Control::CloudSync).unwrap().clone();
-    let Look::Toggle(toggle) = switch.look else {
-        panic!("the shared switch")
-    };
-    assert_eq!(toggle, Toggle::new(false));
-    // Subscription type ("Trial") and Manage subscription button -> /dashboard.
-    let section = view.laid().sign_in.clone().unwrap();
     assert!(
-        section
-            .rows
-            .iter()
-            .any(|row| row.label.as_deref() == Some("Subscription")
-                && row.hint.as_deref() == Some("Trial"))
+        !view
+            .laid()
+            .disabled
+            .contains(&Control::SyncMode(None, TransportMode::Cloud))
     );
-    assert!(press(&mut view, Control::CloudPrimary));
     assert!(
-        matches!(view.take_effect(), Some(Effect::OpenWebsite(url)) if url.ends_with("/dashboard"))
+        !view
+            .c
+            .sync_mode_enabled(Some(workspace), TransportMode::Cloud),
+        "the Profile is still P2P, whatever the account now allows"
     );
-    // Turning it on is the whole act: nothing is asked (2026-11-11).
-    assert!(press(&mut view, Control::CloudSync));
-    assert!(view.c.prompts().next().is_none());
-    assert_eq!(view.c.cloud_sync_pending_for(synced.id), Some(true));
 }
 
 #[test]
@@ -342,7 +375,14 @@ fn a_profiles_own_repair_is_an_attention_card_and_another_profiles_is_not() {
 
     let section = view.laid().sign_in.clone().unwrap();
     assert!(section.repair.is_some());
-    assert!(section.rows.is_empty(), "the repair is the section");
+    assert!(
+        section.rows.is_empty(),
+        "the sync choices are on the head and in the rows, not in this card"
+    );
+    assert!(controls(&view).contains(&Control::SyncMode(
+        None,
+        koru_store_core::TransportMode::P2p
+    )));
     let cancel = view
         .laid()
         .controls
@@ -467,9 +507,16 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
         vec![
             Control::Tile,
             Control::Name,
+            // The Profile's sync choice ends the title line, and the way to
+            // Koru Cloud is under it: before the Workspaces, as drawn.
+            Control::SyncMode(None, koru_store_core::TransportMode::LocalOnly),
+            Control::SyncMode(None, koru_store_core::TransportMode::P2p),
+            Control::SyncMode(None, koru_store_core::TransportMode::Cloud),
+            Control::CloudSettings,
+            // *Sign-in and sync* sits between the head and the Workspaces.
+            Control::Session,
             Control::ImportWorkspaces,
             Control::NewWorkspace,
-            Control::Session,
             Control::Delete,
             Control::RemoveFromDevice,
         ],
@@ -479,7 +526,14 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
     let none = ModifiersState::empty();
     assert!(key(&mut view, NamedKey::Tab, none));
     assert_eq!(view.focus(), Some(nav::Entry::Profile(personal.id)));
-    for _ in 1..nav {
+    // The sync options come before the Profiles, so the open page's row is
+    // not the nav's first: walk from it to the nav's end.
+    let at = view
+        .focus_order()
+        .iter()
+        .position(|entry| *entry == nav::Entry::Profile(personal.id))
+        .unwrap();
+    for _ in at + 1..nav {
         assert!(key(&mut view, NamedKey::Tab, none));
     }
     assert!(key(&mut view, NamedKey::Tab, none));
@@ -493,12 +547,12 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
     // Shift+Tab from the first control goes back to the nav's last row.
     assert!(key(&mut view, NamedKey::ArrowUp, none));
     assert!(key(&mut view, NamedKey::Tab, ModifiersState::SHIFT));
-    assert_eq!(view.focus(), Some(nav::Entry::Cloud));
+    assert_eq!(view.focus(), Some(nav::Entry::NewProfile));
     // Past the last control, Tab wraps to the nav's first row.
     for _ in 0..page.len() + 1 {
         assert!(key(&mut view, NamedKey::Tab, none));
     }
-    assert_eq!(view.focus(), Some(nav::Entry::Profile(personal.id)));
+    assert_eq!(view.focus(), Some(nav::Entry::Cloud));
 }
 
 #[test]
@@ -527,6 +581,7 @@ fn the_inspector_names_the_pages_parts() {
     assert_eq!(named(&snapshot, "Manage profile header"), 1);
     assert_eq!(named(&snapshot, "Manage sign-in and sync"), 1);
     assert_eq!(named(&snapshot, "Manage account actions"), 1);
+    assert_eq!(named(&snapshot, "Manage sync choices"), 1);
     assert_eq!(named(&snapshot, "Manage delete profile"), 1);
     assert_eq!(named(&snapshot, "Manage attention"), 0);
     assert!(named(&snapshot, "KoruCardRow") >= 1, "shared rows");
@@ -599,12 +654,14 @@ fn a_screen_reader_hears_the_pages_controls_as_buttons_and_presses_them() {
                 ))
         })
         .expect("the device-local removal");
-    let switch = tree
-        .children
-        .iter()
-        .find(|node| node.role == accesskit::Role::Switch)
-        .expect("Cloud sync is a switch");
-    assert_eq!(switch.label.as_deref(), Some("Cloud sync"));
+    for label in ["Sync off: Synced", "P2P: Synced", "Cloud: Synced"] {
+        let choice = tree
+            .children
+            .iter()
+            .find(|node| node.label.as_deref() == Some(label))
+            .expect("each sync mode names its Profile");
+        assert_eq!(choice.role, accesskit::Role::Button);
+    }
     let unlink = tree
         .children
         .iter()

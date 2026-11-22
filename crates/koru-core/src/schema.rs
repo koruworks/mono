@@ -27,6 +27,8 @@ use loro::{
 };
 use uuid::Uuid;
 
+pub mod file_references;
+
 use crate::change::ChangeTracker;
 
 use crate::ids::{AttrId, DocRef, DocumentId, NodeId, ProfileId, Ref, WorkspaceId, genesis_peer};
@@ -542,9 +544,32 @@ mod cutting_blob_tests {
     }
 }
 
+/// The three existing document trees understood by the schema reader. This is
+/// an in-memory adapter choice, never a persisted format or migration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentTree {
+    Nodes,
+    Outline,
+    Library,
+}
+impl DocumentTree {
+    pub const ALL: [Self; 3] = [Self::Nodes, Self::Outline, Self::Library];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Nodes => C_NODES,
+            Self::Outline => C_OUTLINE,
+            Self::Library => C_LIBRARY,
+        }
+    }
+    pub fn exists_in(self, doc: &LoroDoc) -> bool {
+        matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(self.as_str()))
+    }
+}
+
 /// A workspace: its outline of tasks and its workspace-scoped library.
 pub struct WorkspaceDoc {
     doc: LoroDoc,
+    node_tree: DocumentTree,
     /// `NodeId` is the public identity; `TreeID` is Loro's. This maps between
     /// them, and carries the little that is worth caching beside it. Rebuilt
     /// from the tree after any import.
@@ -666,6 +691,7 @@ impl WorkspaceDoc {
         doc.commit();
         Ok(Self {
             doc,
+            node_tree: DocumentTree::Nodes,
             index: HashMap::new(),
             blob_nodes: Vec::new(),
             undo: None,
@@ -727,6 +753,7 @@ impl WorkspaceDoc {
 
         let mut ws = Self {
             doc,
+            node_tree: DocumentTree::Nodes,
             index: HashMap::new(),
             blob_nodes: Vec::new(),
             undo: None,
@@ -770,6 +797,7 @@ impl WorkspaceDoc {
         decode.stop_with(|| format!("{} KB", bytes.len() / 1024));
         let mut ws = Self {
             doc,
+            node_tree: DocumentTree::Nodes,
             index: HashMap::new(),
             blob_nodes: Vec::new(),
             undo: None,
@@ -793,6 +821,27 @@ impl WorkspaceDoc {
     /// Undo is off, as it is on every fresh document — a walker has no history
     /// to keep and `enable_undo` is what asks for one.
     pub fn adopt(doc: LoroDoc) -> Result<Self> {
+        Self::adopt_on_tree(doc, DocumentTree::Nodes)
+    }
+
+    /// Read or make targeted ordinary domain edits on an existing detached
+    /// source tree. The complete raw source (including global ID uniqueness)
+    /// is validated before an index is built. No root is created, copied or
+    /// normalized; exports retain the original source's CRDT lineage.
+    pub fn adopt_detached_tree(
+        doc: LoroDoc,
+        tree: DocumentTree,
+        budget: file_references::ReferenceBudget,
+    ) -> Result<Self> {
+        file_references::inspect_file_references(&doc, budget)
+            .map_err(|_| StoreError::Malformed("unsupported detached source"))?;
+        if !tree.exists_in(&doc) {
+            return Err(StoreError::Malformed("missing detached source tree"));
+        }
+        Self::adopt_on_tree(doc, tree)
+    }
+
+    fn adopt_on_tree(doc: LoroDoc, tree: DocumentTree) -> Result<Self> {
         // Not persisted, so it does not survive a fork and has to be re-applied
         // — the same rule `from_snapshot` follows. It governs how marks expand
         // on edits rather than what a read sees, so a reader that skipped it
@@ -800,6 +849,7 @@ impl WorkspaceDoc {
         configure_styles(&doc);
         let mut ws = Self {
             doc,
+            node_tree: tree,
             index: HashMap::new(),
             blob_nodes: Vec::new(),
             undo: None,
@@ -809,6 +859,112 @@ impl WorkspaceDoc {
         };
         ws.reindex()?;
         Ok(ws)
+    }
+
+    /// Read existing rich text without creating a missing text container.
+    /// Detached inspection must not use the editor's ensure-on-access path.
+    pub fn existing_runs(&self, target: NodeId) -> Result<Vec<TextRun>> {
+        let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+        match meta.get(K_TEXT) {
+            None => Ok(Vec::new()),
+            Some(ValueOrContainer::Container(container)) => {
+                let text = container
+                    .into_text()
+                    .map_err(|_| StoreError::Malformed("invalid existing text"))?;
+                Ok(runs_from_text(&text))
+            }
+            _ => Err(StoreError::Malformed("invalid existing text")),
+        }
+    }
+
+    /// Passive original text/attributes for a text-shaped node whose raw blob
+    /// slot may coexist after concurrent edits. The ordinary reader is unchanged.
+    /// An embed is separately visible through `read`; neither slot authorizes
+    /// navigation or mutation of an embedded target.
+    pub fn attachment_context(&self, target: NodeId) -> Result<Node> {
+        let mut node = self.read(target)?;
+        if node.kind.shape() == crate::node::Shape::Text {
+            let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+            let text = match meta.get(K_TEXT) {
+                None => String::new(),
+                Some(ValueOrContainer::Container(container)) => container
+                    .into_text()
+                    .map_err(|_| StoreError::Malformed("invalid retained text"))?
+                    .to_string(),
+                _ => return Err(StoreError::Malformed("invalid retained text")),
+            };
+            node.content = Content::Text {
+                text,
+                attrs: read_attrs(&meta),
+            };
+        }
+        Node::check(node.kind, &node.content)?;
+        Ok(node)
+    }
+
+    /// Explicitly remove only a retained attachment slot from a text-shaped
+    /// node. The original text, attributes, embed, children, identity and Trash
+    /// position remain recoverable. A blob-shaped node uses its ordinary leaf
+    /// removal instead; this never leaves an image/file without required content.
+    pub fn remove_retained_blob_slot(
+        &mut self,
+        target: NodeId,
+        budget: file_references::ReferenceBudget,
+    ) -> Result<()> {
+        file_references::inspect_file_references(&self.doc, budget)
+            .map_err(|_| StoreError::Malformed("unsupported retained source"))?;
+        let node = self.attachment_context(target)?;
+        if node.kind.shape() != crate::node::Shape::Text || self.retained_blob(target)?.is_none() {
+            return Err(StoreError::Malformed("not a retained text attachment"));
+        }
+        let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+        for key in [K_BLOB, K_MIME, K_WIDTH, K_HEIGHT] {
+            if meta.get(key).is_some() {
+                meta.delete(key)?;
+            }
+        }
+        self.doc.commit();
+        if let Some(locator) = self.index.get_mut(&target) {
+            locator.blob_hash = None;
+        }
+        self.blob_nodes.retain(|id| *id != target);
+        Ok(())
+    }
+
+    /// Read the actual blob slot even when a legacy embed coexists with it.
+    /// Unlike the forgiving content projection, malformed slot fields fail.
+    /// This does not expand an embed or authorize editing its target. Callers
+    /// establishing complete source semantics still use the strict raw walk.
+    pub fn retained_blob(&self, target: NodeId) -> Result<Option<Content>> {
+        let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+        let Some(raw) = meta.get(K_BLOB) else {
+            return Ok(None);
+        };
+        let hash = as_string(raw)
+            .filter(|s| !s.is_empty())
+            .ok_or(StoreError::Malformed("invalid retained blob"))?;
+        let mime = match meta.get(K_MIME) {
+            None => String::new(),
+            Some(value) => {
+                as_string(value).ok_or(StoreError::Malformed("invalid retained mime"))?
+            }
+        };
+        let dimension = |key| -> Result<Option<u32>> {
+            meta.get(key)
+                .map(|value| {
+                    as_i64(value)
+                        .and_then(|n| u32::try_from(n).ok())
+                        .ok_or(StoreError::Malformed("invalid retained dimension"))
+                })
+                .transpose()
+        };
+        Ok(Some(Content::Blob {
+            hash: BlobHash(hash),
+            mime,
+            width: dimension(K_WIDTH)?,
+            height: dimension(K_HEIGHT)?,
+            attrs: read_attrs(&meta),
+        }))
     }
 
     pub fn name(&self) -> Option<String> {
@@ -942,13 +1098,7 @@ impl WorkspaceDoc {
     /// [ADR-91]: ../../../docs/decisions/ADR-076-100.md#adr-91-perdocument--a-document-keeps-a-root-node-for-its-title-and-the-manifest-mirrors-it
     /// [TECHDEBT 57]: ../../../docs/contributing/techdebt/README.md
     pub fn own_document_id(&self) -> Option<DocumentId> {
-        let stamped = self
-            .doc
-            .get_map(C_META)
-            .get(K_DOCUMENT)
-            .and_then(as_string)
-            .as_deref()
-            .and_then(DocumentId::parse);
+        let stamped = self.stamped_document_id();
         if stamped.is_some() {
             return stamped;
         }
@@ -957,6 +1107,17 @@ impl WorkspaceDoc {
             .into_iter()
             .find(|&id| self.kind_of(id) == Some(Kind::Document))
             .map(|root| self.document_id(root))
+    }
+
+    /// The explicit Store identity, without the legacy root-node fallback.
+    /// Loading code uses this before stamping an unstamped legacy document.
+    pub fn stamped_document_id(&self) -> Option<DocumentId> {
+        self.doc
+            .get_map(C_META)
+            .get(K_DOCUMENT)
+            .and_then(as_string)
+            .as_deref()
+            .and_then(DocumentId::parse)
     }
 
     /// Record which document this is, on one that does not say.
@@ -1006,6 +1167,7 @@ impl WorkspaceDoc {
     pub fn fork_for_read(&self) -> Self {
         Self {
             doc: self.doc.fork(),
+            node_tree: self.node_tree,
             index: self.index.clone(),
             blob_nodes: self.blob_nodes.clone(),
             undo: None,
@@ -1113,7 +1275,7 @@ impl WorkspaceDoc {
     }
 
     fn nodes(&self) -> loro::LoroTree {
-        self.doc.get_tree(C_NODES)
+        self.doc.get_tree(self.node_tree.as_str())
     }
 
     /// Build the one-tree read model used by the legacy workspace importer.
@@ -4132,15 +4294,17 @@ impl WorkspaceDoc {
     ///
     /// The first root in document order wins, which is the root every reader
     /// was already showing; each duplicate's children move to the end of the
-    /// winner, in order, and the emptied duplicate is deleted. **Nothing is
-    /// dropped**: the fold is moves plus a delete of a root whose only
-    /// remaining content is a title the winner carries too, because both were
-    /// seeded from the same manifest entry.
+    /// winner, in order. Each duplicate root becomes a paragraph before its
+    /// children. Its title, marks, attributes and identity remain available to
+    /// edits that a peer made before receiving the repair. Even an empty or
+    /// identical title is retained: local equality cannot rule out a later
+    /// incoming edit to that root. Recovery can therefore add a repeated title
+    /// or empty paragraph, but never deletes the node a peer is still editing.
     ///
     /// Convergence is the trash union's argument exactly (`ensure_trash_root`):
     /// the rule is a deterministic function of the merged state, so two
     /// replicas repairing the same pair issue the same moves and the same
-    /// delete, and ordinary ops converge like anything else. Returns whether
+    /// relabel, and ordinary ops converge like anything else. Returns whether
     /// anything was folded, so the caller can publish.
     pub fn unify_document_roots(&mut self) -> Result<bool> {
         let roots: Vec<NodeId> = self
@@ -4156,11 +4320,13 @@ impl WorkspaceDoc {
         }
         // A union made of ordinary ops, so it converges like anything else.
         for &dup in duplicates {
+            let end = self.children(Parent::Node(canonical))?.len();
+            self.move_node(dup, Parent::Node(canonical), end)?;
+            self.set_kind(dup, Kind::Paragraph)?;
             for child in self.children(Parent::Node(dup))? {
                 let end = self.children(Parent::Node(canonical))?.len();
                 self.move_node(child, Parent::Node(canonical), end)?;
             }
-            self.delete(dup)?;
         }
         Ok(true)
     }
@@ -5152,6 +5318,9 @@ mod attr_storage_tests {
         assert_eq!(reopened.export_snapshot().unwrap(), before);
     }
 }
+
+#[cfg(test)]
+mod stamped_identity_tests;
 
 #[cfg(test)]
 mod schema_marker_tests {

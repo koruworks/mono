@@ -13,6 +13,13 @@ pub(crate) struct ViewProjection {
 }
 
 fn project(modes: &[NavigatorMode], active: NavigatorMode, capacity: usize) -> ViewProjection {
+    if capacity < 2 && modes.len() > capacity {
+        return ViewProjection {
+            visible: vec![],
+            folded: modes.to_vec(),
+            promoted: None,
+        };
+    }
     if modes.len() <= capacity {
         return ViewProjection {
             visible: modes.to_vec(),
@@ -46,12 +53,19 @@ mod tests;
 impl ExploreView {
     pub(crate) fn view_projection(&self, height: f32) -> ViewProjection {
         let rail = self.rail_model();
-        project(&self.rail_modes(), self.mode, rail.view_capacity(height))
+        project(
+            &self.rail_modes(),
+            self.mode,
+            rail.view_capacity(height)
+                .saturating_sub(usize::from(!rail.pins.is_empty() || self.pins_menu_needed))
+                .max(1),
+        )
     }
 
     pub(crate) fn rail_model_at(&self, height: f32) -> Rail {
         let mut rail = self.rail_model();
-        let projection = project(&self.rail_modes(), self.mode, rail.view_capacity(height));
+        let capacity = rail.view_capacity(height);
+        let projection = self.view_projection(height);
         rail.views = projection
             .visible
             .iter()
@@ -66,6 +80,17 @@ impl ExploreView {
             rail.views.push(Item {
                 hit: apps_rail::Hit::Overflow,
                 name: koru_i18n::t(crate::format::lang(), koru_i18n::Key::RailMoreViews).to_owned(),
+                contents: Contents::Glyph(icons::DOTS_THREE),
+                selected: false,
+                dimmed: false,
+            });
+        }
+        let available = capacity.saturating_sub(rail.views.len());
+        if !rail.pins.is_empty() || self.pins_menu_needed {
+            rail.pins.truncate(available.saturating_sub(1));
+            rail.pins.push(Item {
+                hit: apps_rail::Hit::PinOverflow,
+                name: koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppPins).into(),
                 contents: Contents::Glyph(icons::DOTS_THREE),
                 selected: false,
                 dimmed: false,

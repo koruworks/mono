@@ -42,6 +42,158 @@ use crate::mainview::MainView;
 use crate::mainview::harness::*;
 
 const VIEWPORT: (f32, f32) = (1200.0, 700.0);
+#[test]
+fn mini_app_pin_menu_native_actions_and_focus_publish_through_the_real_delta_route() {
+    let (mut w, root) = workspace_with(&["one"]);
+    let mut slots = Slots::default();
+    let mut window = Window::open(&mut w, &mut slots, root);
+    window.v.adopt_pin_projection(
+        (1..=17)
+            .map(|n| koru_settings::pins::Pin {
+                id: koru_settings::pins::PinId(n),
+                family: "33333333-3333-4333-8333-333333333333".into(),
+                version: format!("44444444-4444-4444-8444-{n:012x}"),
+                title: format!("App {n}"),
+            })
+            .collect(),
+    );
+    assert!(
+        window
+            .v
+            .open_mini_app_pins(Some(koru_settings::pins::PinId(17)))
+    );
+    assert_eq!(window.service(), Some(Scope::Delta));
+    let row = window
+        .nodes(Scope::Whole)
+        .into_iter()
+        .find(|n| {
+            n.occurrence.part
+                == koru_workspace_host::accessibility::ControlPart::new("pin-menu-unpin")
+        })
+        .unwrap();
+    window
+        .adapter
+        .queue(row.occurrence.node_id(), Action::Focus);
+    window.service();
+    assert_eq!(window.perform(&mut w.ws), 1);
+    assert_eq!(window.service(), Some(Scope::Delta));
+    window
+        .adapter
+        .queue(row.occurrence.node_id(), Action::Click);
+    window.service();
+    assert_eq!(window.perform(&mut w.ws), 1);
+    assert_eq!(
+        window.v.explore.mini_app_pins.len(),
+        17,
+        "test worker never touches a real authority"
+    );
+    window.press(&mut w.ws, Key::Named(NamedKey::ArrowUp), None);
+    assert_eq!(window.service(), Some(Scope::Delta));
+    window.press(&mut w.ws, Key::Named(NamedKey::Escape), None);
+    window.service();
+    assert!(
+        !window
+            .v
+            .accessibility_action(&mut w.ws, row.occurrence, Action::Click, None)
+    );
+}
+
+#[test]
+fn mini_app_refinement_publishes_unique_tasks_and_document_with_same_source_in_another_window() {
+    let (mut w, root) = workspace_with(&["one", "two"]);
+    let document = koru_core::DocumentId::new();
+    w.ws.stamp_document_id(document).unwrap();
+    let mut slots = Slots::default();
+    let mut ordinary = Window::open(&mut w, &mut slots, root);
+    let mut composed = Window::open(&mut w, &mut slots, root);
+    let id = composed.v.tabs().active_tab().id;
+    let mut app = crate::mini_app::MiniApp::fixture(w.ws.id().unwrap(), id).unwrap();
+    assert!(app.land(&w.ws, document));
+    let task =
+        w.ws.insert(
+            Parent::Node(root),
+            CoreNode::task("Task beside document").unwrap(),
+        )
+        .unwrap();
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 11, 13).unwrap();
+    let row = koru_store_wire::tasks::TaskRow {
+        workspace: koru_store_core::ids::WorkspaceId::from_uuid(w.ws.id().unwrap().as_uuid()),
+        document: koru_store_core::ids::DocumentId::from_uuid(document.as_uuid()),
+        node: task.to_storage(),
+        task: format!(
+            "task:{}:{}:{}",
+            w.ws.id().unwrap().to_storage(),
+            document.to_storage(),
+            task.to_storage()
+        ),
+        node_kind: "paragraph".into(),
+        lifecycle: "open".into(),
+        document_trashed: false,
+        in_trash: false,
+        breadcrumb: "Notes".into(),
+        title: "Task beside document".into(),
+        attributes: vec![],
+        bucket: None,
+    };
+    app.tasks.seed_for_test(
+        vec![crate::tasks_view::query::TaskEntry::of(&row, today, 0).unwrap()],
+        today,
+    );
+    composed.v.tabs_mut().active_mut().view = crate::mainview::tab::TabView::MiniApp(Box::new(app));
+    composed.v.tabs_mut().active_mut().document = None;
+    composed.v.tabs_mut().active_mut().invalidate_size();
+    composed.v.relayout();
+    composed.v.size_visible_groups();
+    composed.service();
+    for swapped in [true, false] {
+        let crate::mainview::tab::TabView::MiniApp(app) =
+            &mut composed.v.tabs_mut().active_mut().view
+        else {
+            panic!()
+        };
+        View::set_viewport(app.as_mut(), 1000.0, 600.0);
+        let target = app.refinement_target();
+        let mut root = app
+            .effective_definition()
+            .envelope
+            .surface
+            .components
+            .remove(0);
+        root.arrangement = Some(
+            if swapped {
+                "document-first"
+            } else {
+                "tasks-first"
+            }
+            .into(),
+        );
+        app.refine(
+            target,
+            &koru_ai_core::mini_apps::UpdateEnvelope {
+                version: "1.0".into(),
+                update: koru_ai_core::mini_apps::ComponentUpdate {
+                    surface_id: target.surface_name(),
+                    components: vec![root],
+                },
+            },
+        )
+        .unwrap();
+        assert!(app.regions.tasks.w > 0.0 && app.regions.document.w > 0.0);
+        composed.service();
+        ordinary.service();
+        assert_eq!(composed.pane.counters().duplicate_ids, 0);
+        assert_eq!(composed.pane.counters().unresolved_focus, 0);
+        assert_eq!(ordinary.pane.counters().duplicate_ids, 0);
+        assert_eq!(ordinary.pane.counters().unresolved_focus, 0);
+        assert!(
+            composed
+                .client
+                .locators()
+                .iter()
+                .any(|id| id.contains("task-row"))
+        );
+    }
+}
 
 // ----------------------------------------------------------------- the platform
 
@@ -961,6 +1113,7 @@ fn open_tasks_page(window: &mut Window, titles: &[&str]) -> Vec<KoruNodeId> {
                     breadcrumb: String::new(),
                     title: (*title).to_owned(),
                     attributes: Vec::new(),
+                    bucket: None,
                 },
                 today,
                 0,

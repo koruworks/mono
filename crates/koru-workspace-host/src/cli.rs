@@ -39,7 +39,27 @@ pub enum Command {
     /// registry — the binary answers so the table can never be a stale copy
     /// in a script.
     Envs,
+    /// `--ui`: the UI Lab, in a window of its own with no workspace behind it.
+    ///
+    /// **A command of its own rather than a kind of [`Run`](Self::Run).** The
+    /// Lab opens no profile, Store or account, so every option that names one
+    /// is refused beside it instead of being carried along unread; what is
+    /// left is in [`UiCommand`]. A binary that hosts no Lab must refuse this
+    /// rather than open its ordinary window.
+    Ui(UiCommand),
 }
+
+/// What a `--ui` launch was given: everything the Lab reads from the command
+/// line, already validated.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct UiCommand {
+    /// `--window-size`, in logical pixels, when it was given.
+    pub window_size: Option<(f32, f32)>,
+}
+
+// Sizes come from `parse_window_size`, which only yields whole pixels inside
+// the accepted range, so the comparison is total.
+impl Eq for UiCommand {}
 
 /// One accepted flag. `value` is what it needs after it, and is `None` for a
 /// flag that takes nothing.
@@ -264,6 +284,18 @@ const FLAGS: &[Flag] = &[
         help: &["Internal crash-safe update reopen claim. Not intended for normal use."],
     },
     Flag {
+        name: UI_FLAG,
+        short: None,
+        value: Value::None,
+        args: "--ui",
+        help: &[
+            "Open the UI Lab: Koru's own components on made-up content, in a",
+            "window of its own. Opens no profile, workspace or account, and",
+            "saves nothing. Only --window-size may be given with it; any other",
+            "option is refused.",
+        ],
+    },
+    Flag {
         name: "--backup",
         short: None,
         value: Value::Optional,
@@ -332,6 +364,16 @@ pub enum Why {
         /// What a valid value looks like, quoted in the error.
         expected: &'static str,
     },
+    /// A real flag that `--ui` cannot be combined with: one that names a
+    /// workspace, a root, an activation or a one-shot command, none of which
+    /// the UI Lab has.
+    NotWithUi,
+    /// A flag given twice on a `--ui` line. Which of two values was meant is
+    /// not something to guess, and a second copy is where a different request
+    /// would hide.
+    RepeatedWithUi,
+    /// `--ui`, handed to a program that hosts no UI Lab.
+    UiUnsupported,
 }
 
 impl Rejected {
@@ -353,6 +395,34 @@ impl Rejected {
             Why::InvalidValue { expected } => {
                 format!("`{}` needs {expected}", self.arg)
             }
+            Why::NotWithUi => format!(
+                "`{}` cannot be combined with `{UI_FLAG}` - the UI Lab opens no \
+                 workspace, and takes only `--window-size`",
+                self.arg
+            ),
+            Why::RepeatedWithUi if self.arg == UI_FLAG => {
+                format!("`{UI_FLAG}` was given more than once - give it once")
+            }
+            Why::RepeatedWithUi => format!(
+                "`{}` was given more than once beside `{UI_FLAG}` - give it once",
+                self.arg
+            ),
+            Why::UiUnsupported => format!(
+                "`{}` is not supported by this program - the UI Lab opens with `koru {UI_FLAG}`",
+                self.arg
+            ),
+        }
+    }
+
+    /// `--ui`, refused by a program that has no UI Lab to open.
+    ///
+    /// The parser is shared, so it accepts the flag for every binary; the one
+    /// that hosts the Lab dispatches it before its ordinary startup, and each
+    /// of the others answers with this instead of opening its usual window.
+    pub fn ui_unsupported() -> Self {
+        Self {
+            arg: UI_FLAG.to_string(),
+            why: Why::UiUnsupported,
         }
     }
 
@@ -394,6 +464,11 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Rejecte
     }
 
     let mut command = Command::Run;
+    // Every flag this line named, in order, once each token has been accepted
+    // on its own terms. `--ui` is judged against the whole of it afterwards,
+    // so it makes no difference which side of `--ui` a conflict was written.
+    let mut seen: Vec<&'static str> = Vec::new();
+    let mut window_size = None;
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
@@ -462,11 +537,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Rejecte
             "--where" => command = Command::Where,
             "--profiles" => command = Command::Profiles,
             "--envs" => command = Command::Envs,
-            "--window-size" => {
-                if value
-                    .as_deref()
-                    .is_some_and(|size| parse_window_size(size).is_none())
-                {
+            WINDOW_SIZE_FLAG => {
+                // `Value::Required` means a value is always here by now.
+                let size = value.as_deref().and_then(parse_window_size);
+                if size.is_none() {
                     return Err(Rejected {
                         arg: flag.name.to_string(),
                         why: Why::InvalidValue {
@@ -474,12 +548,55 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, Rejecte
                         },
                     });
                 }
+                window_size = size;
             }
             _ => {}
         }
+        seen.push(flag.name);
         i += step;
     }
+    if seen.contains(&UI_FLAG) {
+        return ui_command(&seen, window_size).map(Command::Ui);
+    }
     Ok(command)
+}
+
+/// The UI Lab's flag. Named once because the parser, the conflict messages
+/// and the help all have to spell it the same way.
+const UI_FLAG: &str = "--ui";
+
+/// The one option the UI Lab takes.
+const WINDOW_SIZE_FLAG: &str = "--window-size";
+
+/// Decide a line that named `--ui`, from every flag it named.
+///
+/// **Refused, not ignored.** `koru --ui --profile Work` cannot mean anything:
+/// the Lab opens no profile, so carrying on would be dropping an argument the
+/// person wrote — the failure this parser exists to prevent. The first flag
+/// that does not belong is the one quoted back. A flag given twice is refused
+/// for the same reason: the Lab would have to pick one.
+fn ui_command(
+    seen: &[&'static str],
+    window_size: Option<(f32, f32)>,
+) -> Result<UiCommand, Rejected> {
+    if let Some(conflict) = seen
+        .iter()
+        .find(|name| **name != UI_FLAG && **name != WINDOW_SIZE_FLAG)
+    {
+        return Err(Rejected {
+            arg: conflict.to_string(),
+            why: Why::NotWithUi,
+        });
+    }
+    for name in [UI_FLAG, WINDOW_SIZE_FLAG] {
+        if seen.iter().filter(|flag| **flag == name).count() > 1 {
+            return Err(Rejected {
+                arg: name.to_string(),
+                why: Why::RepeatedWithUi,
+            });
+        }
+    }
+    Ok(UiCommand { window_size })
 }
 
 /// The closest flag to `typed`, if one is close enough to be worth suggesting.
@@ -780,6 +897,178 @@ mod tests {
                 assert!(text.contains(short), "{short} is not in the help");
             }
         }
+    }
+
+    /// One flag as it would be typed, with a value where it needs one.
+    fn spelled(flag: &Flag) -> Vec<&'static str> {
+        match flag.value {
+            Value::Required if flag.name == WINDOW_SIZE_FLAG => vec![flag.name, "1024x768"],
+            Value::Required => vec![flag.name, "x"],
+            _ => vec![flag.name],
+        }
+    }
+
+    #[test]
+    fn ui_is_a_command_of_its_own() {
+        assert_eq!(
+            parse(argv(&["--ui"])),
+            Ok(Command::Ui(UiCommand { window_size: None }))
+        );
+        let sized = Ok(Command::Ui(UiCommand {
+            window_size: Some((1024.0, 768.0)),
+        }));
+        assert_eq!(parse(argv(&["--ui", "--window-size", "1024x768"])), sized);
+        assert_eq!(parse(argv(&["--window-size", "1024x768", "--ui"])), sized);
+        assert_eq!(parse(argv(&["--window-size=1024x768", "--ui"])), sized);
+        // And a line without it is still the ordinary launch, sized or not.
+        assert_eq!(
+            parse(argv(&["--window-size", "1024x768"])),
+            Ok(Command::Run)
+        );
+    }
+
+    /// The UI Lab opens no workspace, so every flag that names one — or a
+    /// root, an activation, a one-shot command — is refused beside `--ui`,
+    /// whichever side of it the flag was written on. Walked from the table, so
+    /// a flag added later is covered without anyone remembering to.
+    #[test]
+    fn every_other_flag_conflicts_with_ui_in_either_order() {
+        for flag in FLAGS {
+            if [UI_FLAG, WINDOW_SIZE_FLAG, "--help", "--version"].contains(&flag.name) {
+                continue;
+            }
+            let own = spelled(flag);
+            let before: Vec<&str> = own.iter().copied().chain([UI_FLAG]).collect();
+            let after: Vec<&str> = [UI_FLAG].into_iter().chain(own.iter().copied()).collect();
+            let sized: Vec<&str> = [UI_FLAG, WINDOW_SIZE_FLAG, "1024x768"]
+                .into_iter()
+                .chain(own.iter().copied())
+                .collect();
+            for args in [before, after, sized] {
+                let bad = parse(argv(&args)).unwrap_err();
+                assert_eq!(bad.arg, flag.name, "for {args:?}");
+                assert_eq!(bad.why, Why::NotWithUi, "for {args:?}");
+                let message = bad.message();
+                assert!(message.contains(flag.name), "for {args:?}: {message}");
+                assert!(message.contains("`--ui`"), "for {args:?}: {message}");
+            }
+        }
+        // The `=` spelling is the same flag.
+        let bad = parse(argv(&["--profile=Work", "--ui"])).unwrap_err();
+        assert_eq!((bad.arg.as_str(), bad.why), ("--profile", Why::NotWithUi));
+    }
+
+    /// The conflict is named even when the line also repeats something.
+    #[test]
+    fn a_repeated_flag_beside_ui_is_refused() {
+        for (args, repeated) in [
+            (vec!["--ui", "--ui"], "--ui"),
+            (vec!["--ui", "--window-size", "1024x768", "--ui"], "--ui"),
+            (
+                vec![
+                    "--ui",
+                    "--window-size",
+                    "1024x768",
+                    "--window-size",
+                    "800x600",
+                ],
+                "--window-size",
+            ),
+            (
+                vec!["--window-size=800x600", "--window-size=1024x768", "--ui"],
+                "--window-size",
+            ),
+        ] {
+            let bad = parse(argv(&args)).unwrap_err();
+            assert_eq!(bad.arg, repeated, "for {args:?}");
+            assert_eq!(bad.why, Why::RepeatedWithUi, "for {args:?}");
+            assert!(bad.message().contains("more than once"), "for {args:?}");
+        }
+        // A second `--ui` does not hide the flag that does not belong.
+        let bad = parse(argv(&["--ui", "--profile", "Work", "--ui"])).unwrap_err();
+        assert_eq!((bad.arg.as_str(), bad.why), ("--profile", Why::NotWithUi));
+        // Without `--ui` a repeat is what it always was: accepted.
+        assert_eq!(
+            parse(argv(&["--peer", "A", "--peer", "B"])),
+            Ok(Command::Run)
+        );
+    }
+
+    /// `--ui` does not loosen anything: what was refused without it is refused
+    /// with it, for the reason it always was, and never becomes a UI launch.
+    #[test]
+    fn an_unknown_or_malformed_argument_beside_ui_is_still_refused() {
+        for args in [
+            vec!["--ui", "--bogus"],
+            vec!["--bogus", "--ui"],
+            vec!["--uii"],
+            vec!["--ui", "--uii"],
+            vec!["-ui"],
+            vec!["--UI"],
+            vec!["--ui=1"],
+            vec!["--ui", "--story", "button"],
+        ] {
+            let bad = parse(argv(&args)).unwrap_err();
+            assert!(
+                matches!(bad.why, Why::Unknown { .. }),
+                "for {args:?}: {bad:?}"
+            );
+        }
+        assert_eq!(nearest("--uii"), Some("--ui"));
+        assert_eq!(
+            parse(argv(&["--uii"])).unwrap_err().why,
+            Why::Unknown {
+                did_you_mean: Some("--ui")
+            }
+        );
+        for args in [vec!["--ui", "button"], vec!["ui"], vec!["button", "--ui"]] {
+            assert_eq!(
+                parse(argv(&args)).unwrap_err().why,
+                Why::Unexpected,
+                "for {args:?}"
+            );
+        }
+        for args in [
+            vec!["--ui", "--window-size"],
+            vec!["--window-size", "--ui"],
+            vec!["--ui", "--profile"],
+        ] {
+            assert_eq!(
+                parse(argv(&args)).unwrap_err().why,
+                Why::MissingValue,
+                "for {args:?}"
+            );
+        }
+        for args in [
+            vec!["--ui", "--window-size", "wide"],
+            vec!["--window-size", "100x100", "--ui"],
+        ] {
+            assert_eq!(
+                parse(argv(&args)).unwrap_err().why,
+                Why::InvalidValue {
+                    expected: WINDOW_SIZE_EXPECTED
+                },
+                "for {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn help_and_version_still_win_beside_ui() {
+        assert_eq!(parse(argv(&["--ui", "--help"])), Ok(Command::Help));
+        assert_eq!(parse(argv(&["-h", "--ui"])), Ok(Command::Help));
+        assert_eq!(parse(argv(&["--ui", "--version"])), Ok(Command::Version));
+        assert_eq!(parse(argv(&["-V", "--ui"])), Ok(Command::Version));
+        assert!(help("koru").contains("--ui"));
+    }
+
+    /// What a binary with no UI Lab says instead of opening its usual window.
+    #[test]
+    fn a_program_without_a_lab_names_the_flag_it_refuses() {
+        let bad = Rejected::ui_unsupported();
+        assert_eq!((bad.arg.as_str(), &bad.why), ("--ui", &Why::UiUnsupported));
+        assert!(bad.message().contains("not supported"), "{}", bad.message());
+        assert!(bad.message().contains("koru --ui"), "{}", bad.message());
     }
 
     /// The help is what an error prints, so it has to name the version and the

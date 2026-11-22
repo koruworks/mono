@@ -61,6 +61,7 @@ import app.koru.mobile.BuildConfig
 import app.koru.mobile.R
 import app.koru.mobile.domain.*
 import app.koru.mobile.ui.editor.DocumentViewer
+import app.koru.mobile.ui.editor.CloudCopyScreen
 import app.koru.mobile.ui.run.RunScreen
 import app.koru.mobile.ui.theme.KoruSpacing
 import app.koru.mobile.ui.theme.AppearancePreferences
@@ -97,6 +98,7 @@ private object Routes {
     const val Diagnostics = "diagnostics"
     const val Settings = "settings"
     const val Account = "account"
+    const val CloudFiles = "cloud-files"
     const val CloudProgress = "cloud-progress/{profileId}"
     const val Licenses = "licenses"
     const val License = "license/{file}"
@@ -293,6 +295,11 @@ fun KoruApp(
         }
         composable(Routes.Account) {
             val account by model.account.collectAsState()
+            val cloudStorage by model.cloudStorage.collectAsStateWithLifecycle()
+            DisposableEffect(model) {
+                model.cloudStorageVisible(true)
+                onDispose { model.cloudStorageVisible(false) }
+            }
             val renderedScope = account.activeScope
             val localProfiles by model.visibleProfiles.collectAsState()
             AccountScreen(account, localProfiles.rows,
@@ -304,7 +311,35 @@ fun KoruApp(
                 },
                 onSwitchAccount = { model.accountAction(AccountIntent.SwitchAccount, appearance.language, renderedScope, accountId = it) },
                 hiddenProfileCount = localProfiles.hiddenCount,
-                onSelectProfiles = { model.accountAction(AccountIntent.SelectProfiles, appearance.language, renderedScope, profiles = it) })
+                onSelectProfiles = { model.accountAction(AccountIntent.SelectProfiles, appearance.language, renderedScope, profiles = it) },
+                cloudStorage = cloudStorage, onRefreshCloudStorage = model::refreshCloudStorage,
+                onCloudFiles = { nav.navigate(Routes.CloudFiles) })
+        }
+        composable(Routes.CloudFiles) {
+            val account by model.account.collectAsState()
+            val inventory by model.cloudInventory.collectAsStateWithLifecycle()
+            val copyState by model.cloudCopy.collectAsStateWithLifecycle()
+            val owner = account.activeScope
+            DisposableEffect(model) {
+                model.cloudInventoryVisible(true)
+                onDispose { model.cloudInventoryVisible(false); model.closeCloudCopy() }
+            }
+            val shownCopy = copyState.forAccount(owner, account.activeAccountId.takeIf { account.signedIn })
+            val copyKey = shownCopy.key
+            if (copyKey != null) {
+                androidx.activity.compose.BackHandler { model.closeCloudCopy() }
+                key(copyKey) {
+                    CloudCopyScreen(copyKey, shownCopy.copy?.document, shownCopy.phase,
+                        shownCopy.copy?.permittedNodes.orEmpty(), shownCopy.copy?.removableFiles?.mapValues { it.value.mode }.orEmpty(), shownCopy.copy?.files.orEmpty(),
+                        shownCopy.copy?.trashedNodes.orEmpty(), shownCopy.copy?.structure.orEmpty(),
+                        model::closeCloudCopy, model::reloadCloudCopy, model::removeCloudFile)
+                }
+            } else CloudInventoryScreen(inventory.forAccount(owner, account.activeAccountId.takeIf { account.signedIn }),
+                account.profiles.associate { it.id.value to it.name }, nav::popBackStack,
+                first = { model.cloudInventoryFirst(owner) }, next = { model.cloudInventoryNext(owner) },
+                previous = { model.cloudInventoryPrevious(owner) }, workspaces = { model.cloudInventoryWorkspaces(owner) },
+                documents = { model.cloudInventoryDocuments(it, owner) },
+                inspect = { row, epoch -> model.openCloudCopy(row, epoch, owner) })
         }
         composable(Routes.Diagnostics) {
             val account by model.accountDiagnostics.collectAsState()
@@ -1311,7 +1346,12 @@ private fun CloudSyncActionRow(
         is CloudSyncDetail.Complete -> stringResource(R.string.account_cloud_sync_complete)
         is CloudSyncDetail.Partial ->
             stringResource(R.string.account_cloud_sync_partial, value.synced, value.total)
-        is CloudSyncDetail.Failed -> value.code
+        is CloudSyncDetail.Failed ->
+            if (value.code == "cloud_free_capacity_full") {
+                stringResource(R.string.account_cloud_sync_free_full)
+            } else {
+                value.code
+            }
         is CloudSyncDetail.Unattached -> stringResource(R.string.account_cloud_sync_unattached)
     }
     val color = if (row.interactive) {

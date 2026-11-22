@@ -12,6 +12,7 @@
 //! child, never a sibling daemon.
 
 use crate::Paths;
+use std::sync::Arc;
 
 /// Everything that can go wrong on the way to a voice worker.
 ///
@@ -103,6 +104,8 @@ const TRUST_GOSSIP_ANTIENTROPY: std::time::Duration = std::time::Duration::from_
 
 #[derive(Clone)]
 pub struct SyncControl {
+    inspection_requests: Arc<std::sync::atomic::AtomicBool>,
+    inspection_cancels: Arc<std::sync::atomic::AtomicBool>,
     commands: std::sync::mpsc::Sender<PairingCommand>,
     events: std::sync::Arc<std::sync::Mutex<Vec<koru_sync_control::PairingEvent>>>,
     status: std::sync::Arc<std::sync::Mutex<koru_sync_control::ControlStatus>>,
@@ -112,6 +115,13 @@ pub struct SyncControl {
     session: std::sync::Arc<std::sync::Mutex<Option<koru_sync_control::ControlSessionId>>>,
 }
 
+struct InspectionQueueSlot(Arc<std::sync::atomic::AtomicBool>);
+impl Drop for InspectionQueueSlot {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 enum PairingCommand {
     RefreshAuthorization,
     /// One of control 7's Cloud operations, asked on the Cloud host's behalf
@@ -119,6 +129,7 @@ enum PairingCommand {
     Cloud {
         request: Box<koru_sync_control::ControlRequest>,
         reply: std::sync::mpsc::SyncSender<Result<koru_sync_control::ControlResponse, String>>,
+        _inspection: Option<InspectionQueueSlot>,
     },
     Begin(Box<koru_pairing::PairingInvitationV1>),
     Cancel,
@@ -143,6 +154,31 @@ enum PairingCommand {
 }
 
 impl SyncControl {
+    /// One outstanding inspection frame plus one reserved cancellation frame
+    /// across every cloned handle. The queue permit survives caller timeout.
+    pub(crate) fn inspection_request_pending(
+        &self,
+        request: koru_sync_control::ControlRequest,
+    ) -> Result<std::sync::mpsc::Receiver<Result<koru_sync_control::ControlResponse, String>>, String>
+    {
+        let counter = if matches!(
+            request,
+            koru_sync_control::ControlRequest::CancelCloudInspection { .. }
+        ) {
+            &self.inspection_cancels
+        } else {
+            &self.inspection_requests
+        };
+        counter
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .map_err(|_| "Cloud inspection control is busy".to_owned())?;
+        self.enqueue_cloud(request, Some(InspectionQueueSlot(counter.clone())))
+    }
     /// A handle holding exactly the status a test hands it, with no worker
     /// behind it.
     ///
@@ -159,6 +195,8 @@ impl SyncControl {
     pub(crate) fn for_test(status: koru_sync_control::ControlStatus) -> Self {
         let (commands, _) = std::sync::mpsc::channel();
         Self {
+            inspection_requests: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            inspection_cancels: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commands,
             events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             status: std::sync::Arc::new(std::sync::Mutex::new(status)),
@@ -193,16 +231,35 @@ impl SyncControl {
         &self,
         request: koru_sync_control::ControlRequest,
     ) -> Result<koru_sync_control::ControlResponse, String> {
+        self.cloud_request_pending(request)?
+            .recv_timeout(std::time::Duration::from_secs(45))
+            .map_err(|_| "Store control request timed out".to_owned())?
+    }
+
+    /// Enqueue only; the bounded inspection worker can observe cancellation
+    /// while the existing control owner sends the frame. No event-loop wait.
+    pub(crate) fn cloud_request_pending(
+        &self,
+        request: koru_sync_control::ControlRequest,
+    ) -> Result<std::sync::mpsc::Receiver<Result<koru_sync_control::ControlResponse, String>>, String>
+    {
+        self.enqueue_cloud(request, None)
+    }
+    fn enqueue_cloud(
+        &self,
+        request: koru_sync_control::ControlRequest,
+        inspection: Option<InspectionQueueSlot>,
+    ) -> Result<std::sync::mpsc::Receiver<Result<koru_sync_control::ControlResponse, String>>, String>
+    {
         let (reply, response) = std::sync::mpsc::sync_channel(1);
         self.commands
             .send(PairingCommand::Cloud {
                 request: Box::new(request),
                 reply,
+                _inspection: inspection,
             })
             .map_err(|_| "Store control is unavailable".to_owned())?;
-        response
-            .recv_timeout(std::time::Duration::from_secs(45))
-            .map_err(|_| "Store control request timed out".to_owned())?
+        Ok(response)
     }
 
     pub fn state_history(
@@ -292,6 +349,8 @@ pub fn start_sync_control(
     ));
     let session = std::sync::Arc::new(std::sync::Mutex::new(None));
     let handle = SyncControl {
+        inspection_requests: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        inspection_cancels: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         commands,
         events: std::sync::Arc::clone(&events),
         status: std::sync::Arc::clone(&status),
@@ -741,7 +800,11 @@ fn apply_pairing_command(
             let _ = reply.send(response);
             return Ok(false);
         }
-        PairingCommand::Cloud { request, reply } => {
+        PairingCommand::Cloud {
+            request,
+            reply,
+            _inspection,
+        } => {
             let response = ask_control(stream, request_id, *request);
             // A transport failure ends this control session, so the caller
             // hears it *and* the loop reconnects; a refusal is an answer.
@@ -1260,6 +1323,8 @@ pub fn resolve_link(
                     // A link reuses a window. Opening a new one for every click
                     // in a browser is how a person ends up with nine.
                     new_window: false,
+                    kind: koru_agent_wire::TargetKind::Document,
+                    list: None,
                 })
             })();
             match resolved {

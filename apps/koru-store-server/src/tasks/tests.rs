@@ -332,3 +332,102 @@ fn a_query_may_wait_on_at_most_sixteen_writes() {
     ));
     assert!(requirements(&many[..wire::MAX_COVERING]).is_ok());
 }
+
+// ------------------------------------------------ exactly these tasks (`only`)
+
+fn a_ref() -> wire::TaskRef {
+    wire::TaskRef {
+        document: koru_store_core::ids::DocumentId::new(),
+        node: koru_core::NodeId::new().to_storage(),
+    }
+}
+
+fn selecting(only: Vec<wire::TaskRef>) -> wire::TaskQuery {
+    wire::TaskQuery {
+        workspaces: vec![koru_store_core::ids::WorkspaceId::new()],
+        only: Some(only),
+        ..base()
+    }
+}
+
+/// The selector is exclusive: every filter it would override is refused
+/// beside it rather than quietly dropped.
+#[test]
+fn a_selector_is_refused_beside_any_filter_it_would_override() {
+    assert!(translate(&selecting(vec![a_ref()])).is_ok());
+
+    let refused =
+        |query: wire::TaskQuery| matches!(translate(&query), Err(TaskServiceError::Invalid(_)));
+    assert!(refused(selecting(Vec::new())), "an empty selector");
+    assert!(
+        refused(selecting((0..=wire::MAX_ONLY).map(|_| a_ref()).collect())),
+        "more than fifty"
+    );
+    assert!(
+        refused(selecting(vec![wire::TaskRef {
+            node: "not-a-node".to_owned(),
+            ..a_ref()
+        }])),
+        "an id that does not parse"
+    );
+    assert!(
+        refused(wire::TaskQuery {
+            workspaces: Vec::new(),
+            ..selecting(vec![a_ref()])
+        }),
+        "no workspace"
+    );
+    assert!(
+        refused(wire::TaskQuery {
+            workspaces: vec![
+                koru_store_core::ids::WorkspaceId::new(),
+                koru_store_core::ids::WorkspaceId::new()
+            ],
+            ..selecting(vec![a_ref()])
+        }),
+        "two workspaces"
+    );
+    let with = |edit: fn(&mut wire::TaskQuery)| {
+        let mut query = selecting(vec![a_ref()]);
+        edit(&mut query);
+        query
+    };
+    for (what, query) in [
+        ("bucket", with(|q| q.bucket = Some("today".into()))),
+        (
+            "list",
+            with(|q| q.list = Some(koru_core::ids::ListId::new().to_storage())),
+        ),
+        ("priority", with(|q| q.priority = Some("high".into()))),
+        (
+            "min_priority",
+            with(|q| q.min_priority = Some("high".into())),
+        ),
+        ("tags", with(|q| q.tags = vec!["fun".into()])),
+        ("has", with(|q| q.has = Some("koru.due".into()))),
+        ("missing", with(|q| q.missing = Some("koru.due".into()))),
+        ("after", with(|q| q.after = Some("task:x".into()))),
+        ("group_by", with(|q| q.group_by = Some("list".into()))),
+    ] {
+        assert!(refused(query), "`only` with {what}");
+    }
+}
+
+/// What a selector leaves alone: the lifecycle and the completed windows are
+/// carried but not applied, the trash flag applies as always, and windows are
+/// welcome — they are what fills a row's bucket.
+#[test]
+fn a_selector_carries_what_it_does_not_apply() {
+    let query = wire::TaskQuery {
+        lifecycle: wire::LifecycleFilter::Open,
+        completed_on_or_after: Some("2026-08-07".into()),
+        include_trashed: true,
+        limit: 3,
+        ..selecting(vec![a_ref(), a_ref()])
+    };
+    let translated = translate(&query).unwrap();
+    assert_eq!(translated.only.as_ref().map(Vec::len), Some(2));
+    assert!(translated.include_trashed);
+    // A query that names nothing has no selector.
+    assert!(translate(&base()).unwrap().only.is_none());
+}

@@ -2,7 +2,7 @@
 
 use crate::page::{Block, Target, Widget};
 use crate::state::{AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus};
-use crate::tests::{GLOBALS, koru, page_lines, press, switch};
+use crate::tests::{GLOBALS, koru, page_lines, press, press_on, switch};
 use crate::{PageGroup, PageId, Request, SettingsSurface};
 use koru_draw::geometry::Rect;
 use koru_i18n::{Key, Lang, t};
@@ -95,7 +95,7 @@ fn the_page_lists_every_agent_with_its_status() {
     let surface = on_page(rows());
     let lines = page_lines(&surface);
     for line in [
-        "Agent providers",
+        "Agent runtimes",
         "Choose which coding agents Koru shows, and check their CLI tools.",
         "Restore defaults",
         "Enabled agents",
@@ -160,7 +160,11 @@ fn a_switch_turns_an_agent_off_and_asks_the_host() {
 fn restore_defaults_turns_every_agent_on() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = on_page(rows());
-    assert!(press(&mut surface, "Restore defaults"));
+    assert!(press_on(
+        &mut surface,
+        PageId::AgentProviders,
+        "Restore defaults"
+    ));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert!(surface.agent_providers().iter().all(|row| row.on));
     surface.show_page(PageId::AgentProviders);
@@ -271,9 +275,15 @@ fn the_page_sits_under_the_coding_heading_and_opens_from_the_sidebar() {
     surface.relayout();
     let listed = surface.listed();
     let runs = surface.nav_runs(&listed);
-    assert_eq!(runs.len(), 2, "the ungrouped pages, then Coding");
-    assert_eq!(runs[0].group, None);
-    assert_eq!(runs[1].group, Some(PageGroup::Coding));
+    assert_eq!(runs.len(), 2, "Preferences, then Coding");
+    assert_eq!(
+        runs[0].group,
+        Some(PageGroup::Preferences.label(Lang::En).to_owned())
+    );
+    assert_eq!(
+        runs[1].group,
+        Some(PageGroup::Coding.label(Lang::En).to_owned())
+    );
     let heading = runs[1].heading.expect("a heading over Coding");
     assert!(heading.y >= runs[0].area.y + runs[0].area.h);
     assert!(runs[1].area.y > heading.y);
@@ -331,7 +341,7 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
             .any(|l| l.contains("Yolo means the agent runs everything without asking")),
         "{lines:?}"
     );
-    for word in ["Manual", "Auto", "Yolo"] {
+    for word in ["Manual", "Auto", "Yolo (not recommended)"] {
         let (_, on) = segment(&surface, "Supported agents", word).expect(word);
         assert_eq!(on, word == "Manual", "{word}");
     }
@@ -357,7 +367,11 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
         segment(&surface, "Supported agents", "Auto").map(|(_, on)| on),
         Some(true)
     );
-    assert!(press_segment(&mut surface, "Other agents", "Yolo"));
+    assert!(press_segment(
+        &mut surface,
+        "Other agents",
+        "Yolo (not recommended)"
+    ));
     assert_eq!(
         surface.take_requests(),
         [Request::SetAgentPermission {
@@ -367,11 +381,19 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
     );
     // The same choice again asks for nothing.
     surface.relayout();
-    assert!(press_segment(&mut surface, "Other agents", "Yolo"));
+    assert!(press_segment(
+        &mut surface,
+        "Other agents",
+        "Yolo (not recommended)"
+    ));
     assert!(surface.take_requests().is_empty());
 
     // Restore defaults puts both back on Manual.
-    assert!(press(&mut surface, "Restore defaults"));
+    assert!(press_on(
+        &mut surface,
+        PageId::AgentProviders,
+        "Restore defaults"
+    ));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert_eq!(*surface.agent_defaults(), AgentDefaults::default());
 }
@@ -461,7 +483,11 @@ fn the_default_agent_chips_offer_auto_and_every_agent_that_is_on() {
             .any(|l| l == "Antigravity is turned off.")
     );
 
-    assert!(press(&mut surface, "Restore defaults"));
+    assert!(press_on(
+        &mut surface,
+        PageId::AgentProviders,
+        "Restore defaults"
+    ));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert_eq!(surface.agent_defaults().agent, None);
 }

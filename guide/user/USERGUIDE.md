@@ -146,8 +146,9 @@ returns the Profile to its existing device-to-device connection behavior.
 **The Koru Cloud page.** Click the cloud status at the bottom of the Profile
 popover to open **Manage › Koru Cloud** directly, including when Cloud is not
 set up yet. In the **Manage** tab, **Koru Cloud** under *This
-computer* in the nav (its *On* / *Off* says whether you subscribe) shows the
-subscription for your signed-in Koru account, from top to bottom:
+computer* in the nav (its *On* / *Off* says whether you have Cloud access) shows
+access for your signed-in Koru account, whether you signed in with email,
+Google, or Apple. From top to bottom:
 
 - **When Koru can't connect**, a card at the top says so, with **Try again**
   and **Continue offline**; your local Profiles stay available. A Profile's own
@@ -165,7 +166,7 @@ subscription for your signed-in Koru account, from top to bottom:
   you signed in with, a card under Account says *This device has Profiles from
   another account*, with **Create a new Profile with** your email, **Sign in
   with another Google Account**, and **Continue offline**.
-- **Not subscribed:** *One subscription covers every profile on this computer.
+- **No Cloud access or current subscription:** *One subscription covers every profile on this computer.
   Each signed-in profile chooses whether it syncs.*, the list of what Koru Cloud
   includes, **Subscribe to Koru Cloud** (the website's pricing page) and
   **Learn more**.
@@ -173,6 +174,11 @@ subscription for your signed-in Koru account, from top to bottom:
   profiles*, and **Manage subscription**, which opens the website's dashboard,
   where you can sign in and manage the plan. A scheduled cancellation remains
   manageable until it ends.
+- **Complimentary access:** *Subscribed · syncing 1 of 2 profiles*, just like a paid
+  account. An active grant enables desktop sync without a paid subscription. There is no
+  **Manage subscription** button unless you also have a subscription to manage.
+  An unpaid current subscription remains manageable but says *Cloud access is
+  inactive* when neither paid access nor a complimentary grant applies.
 - While the subscription is being checked, could not be checked (**Try
   again**), or you are signed out (**Sign in with Google**), the page says so in
   one line.
@@ -186,8 +192,8 @@ subscription for your signed-in Koru account, from top to bottom:
   says the same. [CONTRIBUTING.md](../../CONTRIBUTING.md) explains how to give a
   build a Koru Cloud.
 
-The subscription is checked again each time the page comes to the front, so
-return to Koru after changing the plan. This page reports billing status, not
+Cloud access is checked again each time the page comes to the front, so
+return to Koru after changing the plan or grant. This page reports access, not
 whether documents have finished syncing through Cloud.
 
 **Turning Cloud sync on.** Under **Which profiles sync** on the Koru Cloud
@@ -196,9 +202,10 @@ signed in as and whether it syncs. A signed-in Profile carries a **Cloud sync**
 switch; switch it on and that Profile's workspaces sync through Koru Cloud:
 another device of yours receives them even when this one is closed. The row
 says what is happening underneath — turning on, connecting, or syncing via Koru
-Cloud — in the same words as the Profile's own page, which has the same switch
-under *Sign-in and sync*. The switch is only live for a Profile of the account
-you are signed in to and only while the subscription is current; otherwise it
+Cloud. The Profile's own *Sign-in and sync* section offers **Sync off | P2P |
+Cloud** for the Profile and each Workspace. Cloud is only live for a Profile of
+the account you are signed in to and only while that account has Cloud access;
+otherwise it
 is shown dimmed with the reason. A Profile that belongs to your account but
 is not linked to the Google Account you are signed in with reads *Not linked
 to this sign-in*: after you unlink a Google Account from a Profile, that is
@@ -211,7 +218,13 @@ is not signed in says *Not
 signed in* and offers **Sign in…**, which opens that Profile's page at its
 *Sign-in and sync*.
 
-**A Profile you create or choose while signed in starts with Cloud sync on.**
+**Linked devices default to P2P; connected Profiles default to Cloud.**
+Linking your devices enables P2P for existing content still using the default
+setting as well as new content. A Profile or Workspace you explicitly set to
+Sync off remains off. Cloud mode also allows P2P transfers with linked devices,
+including files. These choices apply to this device; no files are removed.
+
+**A Profile connected to your Cloud account starts with Cloud sync on.**
 Sign in on a new computer and create your first Profile, choose one your
 account already has, or create another Profile for the account you are signed
 in to, and it syncs through Koru Cloud without the switch being touched and
@@ -219,9 +232,8 @@ without the question below. A Workspace you had switched off on another
 device stays off. It starts once the
 account's subscription is current; if you subscribe afterwards, it starts the
 next time the Koru Cloud page checks the subscription. Switch it off and it
-stays off. A Profile that was already on this computer before you connected it
-to an account is not switched on for you, because it may hold work you have
-not decided to send anywhere. This is on the desktop; a Profile created on a
+stays off. Existing connected Profiles also default to Cloud unless you have
+explicitly selected Sync off or P2P. This is on the desktop; a Profile created on a
 phone still waits for its switch.
 
 **The switch is all there is to it.** Switching Cloud sync on for a Profile
@@ -233,9 +245,13 @@ another device stays off until you switch it on. This switch is on the
 **desktop**; each device decides for itself, so switching this laptop on
 changes nothing on your phone.
 
-**Switching Cloud sync off** stops transfers on this device immediately —
-nothing waits for another device to notice. Nothing already on this device is
-removed, and your other devices keep their own setting.
+**Sync off** stops both peer and Cloud transfers on this device. **P2P** allows
+linked-device transfers without Cloud. Turning off the Koru Cloud page's switch
+selects P2P. A Workspace cannot select a mode above its Profile: choose Cloud
+for the Profile first to allow a Workspace to use it. Workspaces following the
+Profile keep following when its mode changes; direct Workspace choices remain
+exceptions unless the Profile is lowered below them. Nothing already on this
+device is removed, and your other devices keep their own setting.
 
 **How far a Profile has got.** A Profile whose Cloud sync is on has **Show
 sync progress** under its row on the Koru Cloud page. Open it and the row shows
@@ -721,7 +737,7 @@ it.
 
 ## Global search
 
-Press `Ctrl+P` in Koru, click the magnifying glass in the caption, or press
+Press `Ctrl+K` in Koru, click the magnifying glass in the caption, or press
 `Ctrl+Shift+K` anywhere on the machine — Windows and macOS both. On a Mac the
 chord really is Control, not Command: a global shortcut has to dodge the
 *system's* chords, and ⌘⇧K is far likelier to be taken than ⌃⇧K, so this is
@@ -836,7 +852,7 @@ active global search finds nothing, **Search archived workspaces** appears when
 there are archived workspaces to search; it keeps the query and searches only
 those archives. Softly deleted workspaces remain excluded.
 
-`Ctrl+P` and the caption button begin by searching only the workspace in that
+`Ctrl+K` and the caption button begin by searching only the workspace in that
 window. Its empty state and recents are scoped there too, so opening an ordinary
 in-app result stays in the same window. If the workspace has no match, choose
 **Search this profile** to keep the query and widen that search to every active
@@ -890,7 +906,7 @@ without switching the source window. Opening a result also **shows it in the
 library**: every collapsed branch above the document is unfolded and the tree
 scrolls the row into view, so a page found by searching can be found again by
 looking. Enter does not
-clear the query; after an in-app result opens, the next `Ctrl+P` restores the
+clear the query; after an in-app result opens, the next `Ctrl+K` restores the
 same search. Closing and reopening search during the same Koru session also
 restores the current query and focused result in memory, including loading later
 result pages when needed. The result is checked against the refreshed search
@@ -943,13 +959,199 @@ Rest an intentional hover on an icon-only control for 400 ms to see its tooltip.
 It fades and settles toward the control over 100 ms; moving away fades it over
 75 ms. After one tooltip has appeared, adjacent controls explain themselves
 immediately for 300 ms. Keyboard focus shows the same explanation immediately.
-The main-window magnifying glass identifies itself as **Search — Ctrl+P**.
+The main-window magnifying glass identifies itself as **Search — Ctrl+K**.
 
 If the system has already assigned `Ctrl+Shift+K` to another app, Koru falls
 through to `Ctrl+Alt+Space`, then `Ctrl+Shift+O`. **Whichever
 it ended up with is written beside *Search* in the agent's right-click menu** —
 that is the place to look, because a released Koru has no console to print it
-to. `Ctrl+P` always works while Koru is focused.
+to. `Ctrl+K` always works while Koru is focused.
+
+### Words inside pictures, PDFs and text files
+
+The **Files** heading's **…** menu always offers **OCR Settings**, with **On**
+or **Off** once this computer's status is available. It opens Settings at
+**Recognize text and images in PDFs**, where you can turn recognition on or off.
+Opening this link does not change the setting or start a download.
+
+Any picture or PDF you put in Koru can be found by the words inside it, not
+only by its name — a photographed receipt called `IMG_2041.jpg`, a scanned
+contract, a screenshot pasted into a page. You do nothing to make a file
+findable: add it the way you always do, and search the way you always do.
+
+**Everything is read on this computer.** Nothing a file contains is sent
+anywhere to be read, and reading never needs a network. The words then travel
+with the workspace, to the devices it already goes to, so another computer
+finds the file too without reading it again — even before it has downloaded
+the file itself.
+
+**Some things are read straight away, with nothing to download**: a PDF that
+contains real text (most PDFs made by a program rather than a scanner), and a
+`.txt`, `.md`, `.csv` or `.html` file. They are usually findable a moment
+after they are added. An `.html` file is read without its markup.
+
+Some PDFs draw letters as shapes instead of storing text. Those pages need
+OCR too, even though they look like an ordinary typed document.
+
+**Pictures and scanned pages need a one-time download** of the part of Koru
+that reads them — about 26 MB, asked once per computer, and never downloaded
+without asking. Koru offers it where you are when it first matters:
+
+- **In search**, when the workspaces you are searching hold pictures or
+  scanned PDFs that have not been read. One quiet line sits below the results
+  — *"12 pictures and scanned PDFs can be found by the words in them.
+  One-time download, 26 MB."* — or, when the search found nothing, directly
+  below *No results*, saying they have not been read yet. It carries **Turn
+  on** and **Not now**. The number counts only the workspaces being searched.
+  The size is the real size of the download. `Tab` from the results reaches
+  the two buttons; `Enter` or `Space` presses one, and `Esc` leaves the line
+  without clearing your search.
+- **When an import finishes** and brought pictures or PDFs, its summary gains
+  the same line, with the same two buttons.
+
+Adding or pasting a single picture never interrupts you with a question.
+
+**Turn on** shows the download's progress, with **Stop**; if it stops or
+fails, **Try again** carries on from where it was. When it finishes, Koru reads
+the pictures and scanned pages already in your workspaces, smallest first, and
+then everything you add; a file you add now is read before an older backlog.
+Reading runs in a separate, low-priority program, so it stays out of the way
+of your typing.
+
+**Not now** is an answer Koru keeps: the line leaves search on this computer.
+It comes back once, after the next import that brings pictures or PDFs —
+adding or pasting files never brings it back. Until then a search for a word
+that is only in a scan simply finds nothing. You can turn reading on yourself
+at any time in **Settings → Editor → Recognize text and images in PDFs**, without
+waiting to be asked. If this computer is offline when the line would appear,
+it says that it *needs a one-time download* and that Koru will offer it when
+you are online.
+
+**What a result looks like.** A picture inside a document is a result for that
+document, as typed text would be. Its excerpt starts with a small muted picture
+mark, so words that were read are never mistaken for words somebody typed; the
+picture's name follows the mark only if you gave it one. A screen reader says
+*words read from a picture*. Picking the result opens the document, scrolls
+the picture into view, selects it and flashes its frame for about a second. A
+file is a result of its own, with its icon and name; a PDF of more than one
+page starts its excerpt with the page, *Page 3 · …*. Picking it switches
+Explore to **Files** with the file selected, as picking a file by its name
+does; open it and go to that page. Words read from a picture or a file rank
+below a matching title, heading or sentence somebody wrote.
+
+All the words of a search must be on the same page of a PDF, or in the same
+picture: `termination notice` does not find a PDF that says *termination* on
+page 2 and *notice* on page 39.
+
+**Inside one document.** `Ctrl+F` in a document also finds the words read from
+its pictures. Each time the word appears in a picture counts as one match, in
+the order the pictures sit on the page. Landing on one scrolls the picture into
+view and flashes its frame for about a second, as a search result does; no
+words are highlighted, because they are in the picture rather than in your
+text. **Replace** steps past a picture's match and **Replace all** leaves it
+alone. A picture pasted a moment ago is found once it has been read; if it is
+not found yet, close find and open it again.
+
+**Copy a picture's words.** Right-click a picture that has been read and choose
+**Copy text** to put its words on the clipboard as plain text. The item appears
+only when there are words to copy. A screen reader is given the same words as
+the picture's description, *Text in picture: ...*, up to the first 500
+characters. All of this happens on your computer; nothing is sent anywhere.
+
+**While a lot is being read** — after a large import, say — search finds what
+has been read already, and below the results it says how much is left:
+*"Still reading 1,240 of 8,300 pictures and PDFs."* A search that finds
+nothing in the meantime says that instead of *No results*, and adds *Results
+appear as they are read.* A scanned PDF becomes findable a few dozen pages at a
+time. Files whose contents are not on this computer — added on another device
+and not downloaded here — are not fetched only to be read; search and Settings
+say how many there are.
+
+**Long files.** The first 200 pages of a scanned PDF are read, and a PDF with
+real text up to 2,000 pages, so one very long scan never holds up everything
+else. A file that stopped at that limit offers **Read all pages** in its
+right-click menu under **Files**: the rest of that file is read, behind anything
+newly added, and the other devices find the later pages too.
+
+The Files menu offers **Re-scan** to recognize a picture or PDF again. A file
+that stopped at the page limit also offers **Read all pages** to continue the
+existing reading. **Read again** remains available for pictures in documents
+and failed items in Settings; it repeats automatic extraction.
+
+To investigate missing words, right-click one file in **Files** and choose
+**View extracted text**. It opens a tab named **ocr:filename**. Select and copy
+text in the tab, or choose **Refresh** to load the latest reading. Beside Edit
+and Refresh, **Save reading to file…** exports the generated reading and its
+per-page diagnostics to an `.ocr.txt` file. These options are available to
+everyone; no debug setting is required.
+
+In the text tab, choose **Edit**, fix the text, and **Save**. Corrections persist,
+sync with the workspace, and replace generated text in search. They apply to
+references to the same file bytes in that workspace. Re-scanning preserves them;
+**Reset to OCR** returns search to the latest generated text. Original files are
+unchanged. **Cancel** discards an unsaved draft. The tab keeps a draft open if a
+save fails and asks you to save or cancel before closing.
+
+If devices save different corrections while offline, both versions are retained.
+Use **Next saved version** to review them, then edit and save the version you want
+to keep. A stale save is refused; **Refresh** loads the current versions while
+keeping your draft. Saving after that resolves those versions with your draft.
+
+**Re-scan** renders and recognizes every PDF page, bypassing its embedded text
+layer and replacing the generated reading. Saved corrections survive. It is
+offered for supported pictures and PDFs when their
+bytes and an enabled reader are available here, with no request already waiting.
+The request survives restarting Koru. PDFs are processed in small windows,
+yielding to newly imported files between windows; memory and time limits still
+apply. Originals are unchanged. Decorative graphics can also trigger automatic
+OCR so that small screenshots and outlined letters beside typed text are read.
+Failed or timed-out pages are reported as failures, rather than empty pages.
+
+To repeat reading across the workspace, open the **Files** heading’s **…**
+menu and choose **Re-scan OCR for all files**. It queues every eligible file
+in that workspace, regardless of selection, and reports how many were queued,
+skipped or could not be queued. Reading continues in the background. Trashed
+files are excluded; identical files share one reading. Items already waiting,
+not available on this computer, or not offering **Read again** are skipped.
+This repeats automatic text extraction and OCR detection, using the same
+background windows as **Read again**. It does not force OCR. Re-scan is offered
+when OCR is available and on; **OCR Settings** remains visible in either state.
+
+**What is read, and what is not.** Pictures in PNG, JPEG, GIF, WebP, BMP and
+TIFF, inside documents or under **Files**; PDFs; and `.txt`, `.md`, `.csv` and
+`.html` files. The reader reads Latin-script languages, Chinese and Japanese.
+**Arabic and other scripts are not read yet**, and iPhone photos saved as HEIC
+are not read; those are found by their name. Handwriting is not promised:
+whatever is read of it is findable. A photograph with no words in it is simply
+read as having none — that is not an error. A password-protected or damaged
+file is found by its name only, and listed under *Could not be read*. Words
+that were misread show in the excerpt as they were read; they cannot be
+corrected by hand.
+
+**Settings → Editor → Recognize text and images in PDFs** is where reading lives on
+this computer. Before the download it reads *Not downloaded · 26 MB*, with
+**Turn on**. If that action is unavailable, the status explains why: download
+information is still pending, could not be retrieved or verified, the computer
+is offline, or this build has no supported reader. For unavailable download
+information, reopen Settings later to try again. Once it is on, it says how many
+items were read and how many
+could not be, and which languages and kinds of file are read. Below it are two
+lists:
+
+- **Could not be read**: each item with its reason, **Show** to go to where it
+  lives, and **Read again** where trying once more could help.
+- **Partly read**: files that stopped at the page limit, with how far each
+  got and **Read all pages**. A file leaves the list when it is finished.
+
+**Turn off** stops reading pictures and scanned pages and keeps the download:
+what was already read stays findable, PDFs with real text and text files are
+still read, and pictures added meanwhile wait. Nothing offers to turn it back
+on; **Turn on** in the same place does, with nothing to download again.
+**Remove** takes the download off this computer; what has already been read
+stays findable then too. On a computer where reading pictures is not
+available the row says so plainly, and why.
+
+Deleting a file permanently removes its words from search, on every device.
 
 The magnifying-glass status icon at the bottom right reports local indexing
 state; it uses the accent colour while work is queued, running, or needs
@@ -1128,11 +1330,11 @@ wrong.
 | | |
 | --- | --- |
 | `Ctrl+T` | a new tab — a blank page, ready to type in |
-| `Ctrl+Shift+A` | open **Add…** — create a document or import content |
+| tab strip **+** | open the New menu and its submenus |
 | `Ctrl+W` | close this one — not a pinned tab; unpin or right-click Close |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | the next tab, or the previous |
 | `Ctrl+Shift+T` | reopen the tab closed last (a document or a terminal; this window only) |
-| `Ctrl+1` … `Ctrl+9` | the tab in that position |
+| `Ctrl+1` … `Ctrl+9` | the workspace in that position down the rail |
 
 **Open tabs stay when you switch workspace.** Every document you have open remains in the strip, whichever workspace it belongs to. **Selecting a tab only changes the page** — it does not move the active workspace or the Explore pane. To land Explore on the page under a tab, use **`Ctrl+Shift+E`** or right-click the tab → **Reveal in Explore View** (same chord): that switches to the tab's home workspace if needed, focuses the tree, and scrolls the file into view.
 
@@ -1352,10 +1554,10 @@ model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
 waits in the composer. The model picker shows your local agents down its
 left side, one icon each — Claude, OpenCode, Kimi, Grok, Codex,
-Antigravity and Devin, in the order set on Agent providers and less any you have
+Antigravity and Devin, in the order set on Agent runtimes and less any you have
 turned off — on the same colour as the window's own left rail, and a **+** at
 the foot of that
-column, which opens **Settings → Coding → Agent providers**; the selected
+column, which opens **Settings → Coding → Agent runtimes**; the selected
 agent's models sit beside them under
 their own names, one line each, and a **Search models…** box above the
 list. Typing searches the models of every agent in the left column, not only
@@ -1434,7 +1636,7 @@ Favorites** entry heads the picker's left column: it lists your favorites
 from every agent, each beside its agent's icon, and choosing one switches the
 chat to that agent and model. With favorites, the picker opens on this
 list; with none, it opens on your chat's agent. Favorites follow you to your other computers,
-like your theme. An agent you turn off on Agent providers keeps its
+like your theme. An agent you turn off on Agent runtimes keeps its
 favorites, hidden until you turn it back on.
 
 Picking a model only sets it: the chip
@@ -1516,6 +1718,11 @@ even if the document or Explore last held focus;
 `Alt+Down` walks forward again, and one step past the newest question returns
 the caret to the composer.
 
+Messages above the chat composer have a **Dismiss message** (×) button.
+Click it, or press Shift+Tab from the composer and then Enter or Space.
+Dismissal leaves your draft and any running request unchanged. A new request
+can show the same notice again; different notices still appear normally.
+
 The composer shows the open document and attachments as removable context
 chips inside the message box. Use **+ → Recent** to insert a recent document
 or **+ → Koru context** to open the same document picker as `@`. The band wraps
@@ -1540,7 +1747,7 @@ approval mode: its color and icon identify the mode, and its chevron appears
 on hover or keyboard focus. The chevron opens a list above the composer with
 each mode's name, explanation and a check on the current one. The menu footer
 says the choice applies to this chat; **Change default** opens **Settings →
-Coding → Agent providers**. The chevron remains available when Send is
+Coding → Agent runtimes**. The chevron remains available when Send is
 disabled. While Stop shows, the chevron is hidden. Claude Code offers **Ask
 first** (its default: it asks before every change), **Accept edits** (it edits
 files without asking, and still asks before commands), **Plan** (it reads and
@@ -1553,7 +1760,7 @@ more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
 composer steps to the next mode, which the send button then shows; it never steps
 to Full access, which you choose only from the list. The mode is the chat's: a
 change inside a chat applies to that chat only, and a new chat starts from the
-**default permission** you set on **Settings → Coding → Agent providers** —
+**default permission** you set on **Settings → Coding → Agent runtimes** —
 Manual (the agent's asking mode) until you choose otherwise. A mode chosen while a reply is running
 applies to your next message, and the note beside the send button says so. When the
 agent leaves a mode by itself — Claude after you approve its plan — the send button
@@ -2266,7 +2473,7 @@ On a rendered table cell, the same context menu adds **Edit Markdown**, row
 insert/delete and column insert/delete commands. The top-left table button
 switches between Compact and Extended width.
 
-`Ctrl+V` also works in the pickers — a URL pasted into the `Ctrl+K` link prompt,
+`Ctrl+V` also works in the pickers — a URL pasted into the `Ctrl+Shift+L` link prompt,
 a name pasted into a rename. And in a document, `Ctrl+V` pastes a picture that
 is on the clipboard — a screenshot, a browser "copy image", or image file(s)
 copied in Explorer — as a new image block below the line you are on (see
@@ -2472,7 +2679,7 @@ Type a trigger to insert one:
 | --- | --- |
 | `/` | command menu — `/document` among the rest |
 | `@` | document picker, directly |
-| `Ctrl+K` | a link, with a name and a URL — seeded from the selection |
+| `Ctrl+Shift+L` | a link, with a name and a URL — seeded from the selection |
 
 **There is no `/date` any more.** A date on a block is the block's **due
 date** — `/due`, below — rather than an inline pill, because two ways to put
@@ -2484,14 +2691,14 @@ and are still editable by clicking them; nothing was converted.
 
  **A URL you type or paste becomes a link on its own.** Type `https://example.com`
  and a space — or press Enter — and it turns into a link pill whose caption and
- target are both the URL, no `Ctrl+K` needed; pasting one (or several) does the
+ target are both the URL, no `Ctrl+Shift+L` needed; pasting one (or several) does the
  same. Only a URL with a scheme is recognised, so `file.txt`, `v1.2` and a bare
  `example.com` stay text; a trailing period or comma is left as text rather than
  swallowed into the link. `Ctrl+Z` right after brings the raw URL back. A long
  URL is shown as its host — `edgetrade-my.sharepoint.com` — so the pill never
  runs off the edge of the line; hover it (or click to edit) to see the full URL.
 
-**`Ctrl+K` reads what you have selected.** A link is two answers — a caption and
+**`Ctrl+Shift+L` reads what you have selected.** A link is two answers — a caption and
 a target — and a selection is always one of them. Select a URL and it fills the
 URL in, leaving you typing the caption; select a word and it fills the caption
 in, leaving you typing the URL. Either way the field you land in is the one
@@ -2574,7 +2781,7 @@ the selection began.
 
 ### The picker boxes
 
-The `Ctrl+K` link boxes are proper text inputs, and
+The `Ctrl+Shift+L` link boxes are proper text inputs, and
 handle text the way a task does — everything except formatting and pills, which
 a name and a URL have no use for:
 
@@ -3428,7 +3635,7 @@ seconds while you are typing without one. Closing the window writes it too.
 
 ## Appearance
 
-Light and dark are a **welcome page** preference under Preferences:
+Choose the theme under **Settings → Appearance**:
 
 | | |
 | --- | --- |
@@ -3437,7 +3644,7 @@ Light and dark are a **welcome page** preference under Preferences:
 
 The status bar does not show the theme. There is no keyboard shortcut for it.
 
-**Caret colour** is four swatches on the same Preferences section (default
+**Caret color** is four swatches below Text rendering on the same page (default
 neutral, blue, amber, violet). Each is tuned for light and dark, and the text
 **selection** tint follows that colour. **Caret width** is the row under them:
 Thin, Med, Thick, 4×, 8×. **Caret height** is the next row: Short, Med, Tall
@@ -3488,8 +3695,8 @@ Nothing is lost by closing a window: your work is written continuously, and the
 window comes back with its tabs.
 
 **The Settings tab** (`Ctrl+,`) is a list of pages down its left —
-**Appearance**, **Editor**, **Reminders**, **Terminal** and **System**, then
-**Agent providers** under a **Coding** heading, the
+**Account** (Cloud, Devices, Profiles and Workspaces), **Preferences** (Appearance, Editor,
+Reminders, Terminal, System and Shortcuts), then **Agent runtimes** under **Coding**, the
 current one marked by an accent rule — with a search box above them that
 narrows the list by what a page holds (type *microphone* and only Editor is
 left; Enter opens it). In a narrow window or split pane the list becomes a row
@@ -3498,6 +3705,23 @@ of rows: the setting's name on the left, one control on the right. A choice
 among a few short words is a segmented control; a longer list — fonts,
 languages, microphones, tones, the renderer — is a dropdown showing the value
 in force, opened with a click or Enter and stepped with the arrow keys.
+
+Welcome’s **turn on text recognition** and **Customize your terminal** links
+open the relevant Settings section. Back returns to Welcome at its previous
+scroll position; Forward returns to Settings. This also works when the
+Settings tab was already open.
+
+**Settings → Shortcuts** lists the shortcut registry by context: Window,
+Tabs and columns, Document, Editing, Terminal and AI chat. Chords use this
+platform’s modifier labels; internal-only bindings are marked. Search a
+command or chord to narrow the list. The Zoom row in App fonts also teaches
+zoom in, zoom out, reset, and holding the primary modifier while scrolling.
+
+Welcome’s **Access your Koru workspace via MCP** section retains each local
+client’s registration command. Below it, the Cloud option explains that a
+subscription includes Cloud MCP and 100 GB of cloud storage, shows the remote
+endpoint `https://mcp.koru.do/mcp`, and links **Subscribe** to
+[Koru pricing](https://koru.do/pricing).
 
 **Icon style** is under **Settings → Appearance → Interface**. Choose
 **Phosphor**, **Tabler**, **Lucide**, or **Remix** to change the app's icons immediately.
@@ -3508,25 +3732,70 @@ uses its default style, Tabler, and follows it if a later version changes it.
 Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
 own artwork.
 
-**Scroll speed** is on the same page, under *Interface*: how far one notch
-of the mouse wheel moves a page, **1×** to **4×**. It starts at **2×**, twice
+**Scroll speed** is on the same page, under *Interface*, after the font sections: how far one notch
+of the mouse wheel moves a page: **1×, 2×, 3×, 4×, 8× or 16×**. It starts at **2×**, twice
 the step Koru used before the setting existed. A trackpad that scrolls by
 pixels follows your fingers and is not changed by it.
+
+The Settings search filters the navigation and keeps only matching preference
+sections on the right. Matches in labels, explanations and choice values are
+highlighted in yellow. **Escape** clears the query and restores the page even
+after focus has left the search field. An open dropdown closes first.
+
+In **Editor → Documents**, **Page background** shows all available color
+swatches together, including the default. Choose a swatch directly. It is
+available for Page width; Narrow and Full do not have a page background.
+Agent permission choices mark **Yolo (not recommended)** in red; selecting it
+retains the same full-access behavior as before.
+
+**Text rendering** is on **Settings → Appearance**, below the theme's base and
+accent colors. These rows say **Base color** and **Accent color**; they show
+the active theme's choices. Light and dark keep separate choices; **System** uses the set for
+your operating system's current theme. The window's **…** menu also offers
+**System / Light / Dark**. **Caret** comes directly after Text rendering, with
+an independent color for each theme and a shared shape. Its selection tint
+follows that theme's caret color. **App fonts** follows Caret,
+with App font, Zoom, Chat font and Density. Its **Editor → See editor settings**
+link opens **Settings → Editor**, where **Document fonts** comes first.
+Document links use your chosen accent color.
+**Heading weight** offers **500** or **600 (default)** for document titles and
+all heading levels. A font without the requested weight uses its nearest face.
+Changing this weight refreshes layout; body text and app labels keep their weights.
+
+Windows defaults are **font hinting on**, **MSAA16**, **0 physical pixels of
+offset on both axes**, **gamma 1.75**, and **5% faint-edge cutoff** in light mode.
+Dark mode defaults to **hinting on, MSAA16, offset 0, gamma 0.75 and cutoff 15%**.
+Hovering a dropdown option previews it immediately; clicking saves it and
+dismissing the dropdown restores your saved choice. **Restore defaults** resets
+only the current theme. Existing explicit rendering choices remain light-theme
+overrides. Larger gamma values reduce faint edge coverage; cutoff removes it
+below the chosen threshold, so excessive values can make small text jagged.
+The offset changes where glyphs meet the screen's pixels without changing font
+size, wrapping or line spacing. Antialiasing affects the whole window's sampling.
+The other controls affect glyphs, preserving images and UI backgrounds.
+Other desktop platforms offer the same controls but begin with hinting on,
+Area antialiasing, zero offset, gamma 1 and zero cutoff. Judge changes at normal
+zoom, including accented letters and both light and dark themes.
 
 **Fonts and density** are on the **Appearance** page: a density control
 (Compact / Normal) and five font dropdowns — the **app** font
 (tabs, sidebar, pills, panels), the **chat** font, and three document roles,
 **body**, **headings** and **code**. Each dropdown lists every family set in that
-family's own face, so you see what you are choosing. While a font list is
+family's own face, so you see what you are choosing. On Windows, **Segoe UI**
+appears directly in these lists when installed; it does not require opening
+**More fonts…**. It remains an installed font, so another device without it
+uses the existing missing-font fallback. While a font list is
 open, the family under the pointer, or reached with the arrow keys, is shown
 across the whole app at once: point down the list to compare. Only a click
 or Enter keeps it; Escape, a click elsewhere or scrolling away puts your
 chosen font back. **Preview in sample document**, at the right of the
-*Document fonts* title, opens a short read-only sample page — headings, a
-paragraph with bold, italic, code and a link, three kinds of list, a quote
-and a code block — beside Settings, so you choose fonts on the left and see
+*Document fonts* title, opens an editable sample page — headings, a
+paragraph with bold, italic, code and a link, three kinds of list, a quote,
+code block, callout, table and bundled Koru logo — beside Settings, so you
+choose fonts on the left and see
 them on the right as you go; the sample also follows the size and the theme.
-It is not saved anywhere and is not in your library, and pressing the link
+Try typing and formatting in the sample. Its callout explains that edits reset
+when you close it: it is not saved and is not in your library. Pressing the link
 again brings the open sample forward. The theme is chosen from
 three preview tiles at the top of the same page. A document's page menu
 also has a **Typography** group whose Body / Headings / Code rows cycle a
@@ -3535,8 +3804,9 @@ heading carries a **Global settings** link that opens this tab on its
 **Editor** page, where the defaults for new documents live. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
-**Base color** is two rows of swatches on the same **Appearance** page, one
-for the light theme and one for the dark. It tints the window's frame — the
+**Base color** and **Accent color** sit directly below Theme on the
+**Appearance** page. Only the active theme's swatches are shown; switching
+themes reveals its saved choices. Base color tints the window's frame — the
 title bar, the rails and the margins around your pages. The first swatch is
 the theme's own color; the others are a few tints chosen for that theme. Each
 theme keeps its own choice, so switching between light and dark shows the
@@ -3554,6 +3824,8 @@ no size of its own; the chat follows the app's text size.
 **Any font installed on your computer** can be chosen for the app, chat, body,
 headings or code: every font list ends with **More fonts…**, which opens a
 searchable list of your installed fonts, each name shown in its own face.
+The list scrolls by wheel or its draggable scrollbar. Search and the
+**Show all fonts** footer remain separate from the scrolling rows.
 Type to filter; the arrow keys preview the lit font across the app, and
 Enter or a click keeps it. For **code** the list starts with monospaced
 fonts — press Tab, or tick *Show all fonts*, to see every font. The first
@@ -3564,8 +3836,9 @@ and the list shows *Name (not installed)*; your choice is kept for the
 computers that have it. The terminal's own **More fonts…**, on a terminal
 tab's font menu, uses the same list.
 
-**Document text size** is the **Size** row at the end of *Document fonts*:
-14 to 22 px, 16 by default. Every document follows it — headings, code
+**Document text size** is the **Size** row in *Document fonts*:
+14 to 22 px, 14 by default to match app text. Explicitly chosen sizes stay as
+chosen. Every document follows it — headings, code
 blocks, checkboxes and the space between blocks grow with the text, so a
 page reads the same at any size — while the app's own text, the chat box and
 the terminal keep theirs. Point down the list to preview a size in this
@@ -3823,15 +4096,23 @@ nothing behind.
 ## Shells and agents
 
 Koru runs terminal shells and coding agents as tabs, right beside your
-documents. Press **+** at the end of the tab strip (or **Ctrl+Shift+A**) and
+documents. Press **+** at the end of the tab strip and
 pick **Shell** or **Agents**. **Active** lists running sessions of that kind
 you can switch to; below it are the same new-profile rows as before
 (System, PowerShell, Bash; Claude, OpenCode, Codex, Grok, Kimi). The session
 opens as its own tab and starts running. **Agents** lists only the agents
 that are turned on and installed on this computer, then **Manage…**, which
-opens **Settings → Coding → Agent providers** to turn the others on or
+opens **Settings → Coding → Agent runtimes** to turn the others on or
 install them; with none installed it is **Manage…** alone. A shell that is
 not installed is shown greyed out with *Not installed*.
+
+The **+** opens a popover beneath the button. It lists **Welcome**,
+**Documents**, **Canvases**, **Shell**, **Agents**, **Delegate**, **Chats**,
+**Socials**, and **Import**, where those features are available. Submenus
+offer recent documents, running sessions, installed profiles, and import
+formats. Welcome reuses its existing tab. Opening the menu creates nothing.
+**Ctrl+N** opens the separate New launcher, with the same dimmed background
+as Search; **Ctrl+T** creates a document tab.
 
 The left navigator's fourth mode — the robot icon, beside Documents, Files
 and Tasks — is **Agents**: every running session, grouped by project. Click one to open or
@@ -4045,7 +4326,7 @@ column is not visible.
 
 ### Finding scheduled work
 
-Open the **Agents** column (`Ctrl+4`) and look under **Schedules**, beside the
+Open the **Agents** column and look under **Schedules**, beside the
 Projects and Runs sections. Each schedule is labeled by the name you gave it.
 Open its fold to see its rule in ordinary words — for example, *Every weekday
 at 09:00* — when it will fire next, which device owns it, and whether
@@ -4100,7 +4381,7 @@ are also named separately.
 ### Following a run you handed to an agent
 
 You handed a piece of work to an agent and walked away. **The Agents column
-(`Ctrl+4`) lists the runs of the workspace you are in**, under *Runs*,
+lists the runs of the workspace you are in**, under *Runs*,
 newest first, named by what you asked for. Choose one and it opens in a tab
 with four views:
 newest first.
@@ -4441,7 +4722,7 @@ for you.
   output node, and connect them in that order. An agent node asks for its
   instruction when you add it, and starts with the agent you last delegated
   to; its header opens a menu of the agents ready on this computer, in the
-  order set on **Settings → Coding → Agent providers** and without any you
+  order set on **Settings → Coding → Agent runtimes** and without any you
   have turned off there (a node already set to one still runs it). An output
   node asks for the title of the page it will write. Press **Run** on the start
   node to run the chain; each node shows where it is, and **Stop** stops it.
@@ -4460,6 +4741,16 @@ for you.
   canvas does not make a card yet.
 
 ## Documents
+
+Choose **Document** in the **+** launcher to begin a new page. The first text
+you type or paste is kept in its draft while Koru creates the saved document.
+Native composition finishes before that handoff; you do not need to type an
+extra character to save the completed input. If creation fails, the draft stays
+open. Closing it, hiding the window, or switching workspace/profile waits for
+that writing to be transferred. A message explains the refusal; retry the
+action after creation succeeds. An untouched draft can be closed immediately.
+The content present at that first handoff becomes the document's opening
+baseline; later edits use ordinary undo.
 
 Type `@` and start writing a document title. The text beside the caret filters
 the shared search index while the popover lists every matching document as a
@@ -4683,6 +4974,12 @@ it is never stored, so it follows the theme and never bloats a sync.
 
 ### Diagrams
 
+AI chat replies also draw fenced `mermaid` blocks inline, in both chat tabs
+and the side pane. While a reply is streaming, the code stays visible until
+the fence closes. A diagram that is loading or cannot be drawn keeps its
+readable source. **Copy as Markdown** and **Save as document** preserve the
+original Mermaid text.
+
 A code block whose language is **Mermaid** is a diagram: Koru draws it in
 place of the text. Write a flowchart or a sequence diagram in
 [Mermaid](https://mermaid.js.org) notation inside a fence that opens with
@@ -4739,6 +5036,10 @@ allows. The view's copy control puts a picture on the
 clipboard and its save control saves one; `Esc`, the `×`, or a click
 anywhere on the dimmed window closes it. A screen reader hears the
 drawing's title (or *Diagram*), the zoom, and each control's name.
+
+A rendered Mermaid diagram in an AI chat opens the same viewer with a single
+click, in either a chat tab or the AI pane. Zoom, pan, copy, save and dismissal
+work as above. A diagram that has not rendered keeps its readable source.
 
 **Copying and saving.** Copy on a selected drawing copies the whole block;
 it arrives as a diagram wherever it is pasted in Koru, and as a fenced
@@ -5186,8 +5487,9 @@ Type `/attach` (or use the `+` menu's Attachment row) to pick one or several
 files. Each becomes an attachment pill on the page and a row under Explore's
 **Files** mode. You can also type `@` and search for a file already in the
 workspace — or restrict the search with `file:` (files only) or `doc:` (pages
-only). Clicking an attachment pill opens it in the app the operating system
-associates with that type. Right-click it for **Open in app**, **Reveal in
+only). Clicking an image attachment pill opens Koru's image viewer; other
+files open in the app the operating system associates with that type.
+Right-click it for **Open in app**, **Reveal in
 File Explorer** (switches Explore to Files and scrolls to the row), **Save
 as…**, or **Remove** (deletes the pill from the page; the file stays in
 Files). If a file is in the Trash, the pill shows the same trashed treatment
@@ -5199,12 +5501,15 @@ The two icon buttons at the top of Explore switch between **Documents** and
 pills in their pages. File rows use the file's MIME type (and its extension for older
 entries) to distinguish PDFs, Office documents, Markdown, media, archives and
 source files at a glance. Files are listed newest first. Clicking selects a
-file; it does not open or save it. **Double-click** opens it in the app the
-operating system associates with that type — a shared web link opens in the
-browser. `Ctrl+click` toggles individual files, `Shift+click` selects a range,
-and a drag moves the whole selection just as it does in Documents. Right-click a
-selection and choose **Open in app** to use the operating system's associated
-application, **Rename…** (`F2`) to change the name, or **Save as…** to write
+file; it does not open or save it. **Double-click** opens an image in Koru's
+image viewer. Other files open in the app the operating system associates
+with that type — a shared web link opens in the browser.
+`Ctrl+click` toggles individual files, `Shift+click` selects a range,
+and a drag moves the whole selection just as it does in Documents. Following a
+file from search or **Show in Files** selects it normally: clicking another
+file replaces that selection, and `Ctrl+click` can clear it. Right-click a
+selection and choose **Open in app** to open it, **Rename…** (`F2`) to change
+the name, or **Save as…** to write
 another copy. With several files selected, **Open in
 app** opens every selected file and **Save as…** asks for one destination
 folder, then writes every selected file into it. With one file selected,
@@ -5212,6 +5517,19 @@ folder, then writes every selected file into it. With one file selected,
 and the import icon in the Files heading accept one or several arbitrary files
 through the same batch path as drag-and-drop. File bytes are copied into the
 workspace, so moving or deleting the original does not break the attachment.
+Opening an image search result opens the viewer directly, switches to Files,
+and selects that image. The viewer offers zoom, pan, fit, **Save as** and
+**Open in external app**. Escape closes it and leaves the file selected.
+GIFs use the shared viewer's still preview. Opening several selected files
+together continues to use their system applications.
+On Windows, you can also copy files in Explorer and paste them into Koru.
+Koru asks **Import the following files?** before importing anything. In an
+open document, choose **Attach to document** to add attachment links at the
+start of the document, or **Import as files only** to add them to Files.
+In Welcome, choose **Import**. **Cancel** or Escape leaves everything unchanged.
+The question previews up to three names and counts any additional files;
+your answer applies to the whole copied selection. Chat and terminal paste
+keep their own behavior.
 If the workspace already has a live file with the same BLAKE3 content hash,
 Koru keeps the existing row and reports that the file is already known instead
 of adding a duplicate. In a page, type `/attach` to pick a file and insert an
@@ -5467,10 +5785,9 @@ nothing than tell you the wrong person deleted your page.
 ## More than one window
 
 A tab is a thing you opened; a **window is a whole workspace**. Most of the time
-a tab is what you want — `Ctrl+N` is for when you want two of them on screen at
-once.
+a tab is what you want; another window lets you keep two views on screen at once.
 
-`Ctrl+N` opens another window on the same workspace. Both show the same work,
+When two windows open the same workspace, both show the same work,
 each keeps its own tabs, caret and scroll position, and typing in either shows up
 in the other straight away — there is nothing to save or refresh.
 
@@ -5715,7 +6032,7 @@ two channels running, whichever agent started first has it; the second falls bac
 to `Ctrl+Alt+Space`, then `Ctrl+Shift+O`. **Right-click each
 agent's icon to see which chord it settled on** — the *Search* row names it, so
 you do not have to work it out by pressing things. If a build could not get any
-of them, that row says *Search (no global shortcut)* and `Ctrl+P` inside its
+of them, that row says *Search (no global shortcut)* and `Ctrl+K` inside its
 window is the way in. Registration happens once, when an agent
 starts: quitting the one that holds `Ctrl+Shift+K` does not hand it over, so
 restart the agent you want to have it. Everything else about both installations
@@ -5783,29 +6100,43 @@ as *Manage workspace* and names the pin action or its refusal reason.
 
 In a workspace window, click the **Profile tile** at the bottom of the rail,
 or press **`Ctrl+Alt+P`**, to open the Profile menu. The shortcut works with
-Explore folded and leaves it open or closed as you set it. Each Profile is
+Explore folded and leaves it open or closed as you set it. The tile's hover
+hint shows only the shortcut. Each Profile is
 one line; hover its name to see its email, or *On this computer*. Screen
 readers receive the same description. Selecting a different Profile closes
 the menu and opens its usable workspace, or its waiting/recovery screen.
 
 Each profile's **Manage** control works as a workspace's does: point at the
 row to show it, or press `→` on the lit profile to move onto it and `←` to
-come back; `Enter` or `Space` opens the **Manage** tab on that Profile. A
-screen reader announces it as *Manage profile*. **Manage profiles** in the
-heading opens Manage on the current Profile.
+come back; `Enter` or `Space` opens **Settings** on that Profile. A
+screen reader announces it as *Manage profile*. The config icon at the right
+of the Profiles heading opens Settings on the current Profile. The matching
+icon in the Workspaces heading opens Manage workspaces.
 
-The fixed rows below the Profiles are **Add new profile**, **Global sync**
-and **App settings**. Add opens the combined Profile/workspace creation form.
-Global sync opens **Linked devices** in Manage. In both menus,
-the device icon opens **Linked devices** and the cloud icon opens **Koru Cloud**.
-When both channels are configured, each icon is a separate control. With neither
-configured, the computer icon opens Linked devices. These destinations reuse
-the existing Manage tab. The glyphs show configured channels independently of
-their health. App settings opens Settings and carries its shortcut in the tooltip.
-Each row is its own keyboard stop and closes the menu when activated.
+Sync and Profile management live in **Settings**. Its navigation starts with
+**Account**: Cloud where available, Devices, Profiles and Workspaces, followed by
+**Preferences** and **Coding**. The Profiles page has profile buttons and a
+**+** button at the top. Choose a profile to see its sync and workspace details
+below; **+** opens the new-profile form. Profile gears open that profile in this
+same Settings tab. Selecting a profile button inspects it without switching
+your open workspace.
+**Workspaces**, directly below Profiles, opens the workspace catalog for the
+profile being inspected. The Workspaces menu's settings button and
+`Ctrl+Shift+O` open it for your current profile. It includes New workspace,
+Import, the workspace menus, archived workspaces and trash.
+The compact Profile menu contains profile choices and their management gears.
+The heading's config button highlights only when the pointer reaches the
+button itself or the keyboard selects it.
 
-The rail's **Help (`?`)** opens **What's new** with a release timeline. The
-current version opens its GitHub release page in your browser; local builds open
+The rail's **Help (`?`)** opens directly onto the release timeline. The
+nightly row shows the date of its latest completed release-file upload, in
+your date format, followed by the stable releases and their publication dates.
+Release subtitles truncate to fit the menu. If a date is unavailable, it is omitted.
+If GitHub's API is unavailable or rate limited, Help reads its public release
+feed instead. In that fallback, nightly shows its latest release update date;
+stable dates are omitted because the feed does not give publication dates.
+If both sources fail, reopening Help retries the list.
+The current version opens its GitHub release page in your browser; local builds open
 the GitHub releases list. A build without bundled notes says
 *Not shipped with this build*. An offered update appears above it with its
 current stage and one available action: **Download**, **Download manually**,
@@ -5814,11 +6145,22 @@ progress without another action. Restart retains the existing separate install
 consent and terminal-session warning.
 
 Choosing **Later** in the update banner keeps the offer in Help and clears
-that offer's dot. Unread release notes can keep the dot lit; opening Help does
-not read them. Opening the release clears the notes' contribution for this
+that offer's dot. Opening Help clears the unread release-notes dot for this
 window, while an active update offer still contributes its own dot. **View all
 releases**, **Send feedback**, **Star us on GitHub** and
-**Follow on X** are the remaining Help rows.
+**Follow on X** are the remaining Help rows. The last three use feedback,
+GitHub and X icons.
+
+The release rows, **View all releases**, **Star us on GitHub** and **Follow on
+X** open through `www.koru.do/go/...`, which counts which row was opened and
+by which version, channel and operating system, then forwards to the release
+page, `koru.do/releases`, GitHub or X. **Send feedback** is not counted. The
+Help release list and the update check also go through `www.koru.do`: the
+site counts the version, channel and operating system asking, and the app
+marks its first check of the day so daily use can be counted without any
+install id. The site then serves the same list or the same manifest. If the
+site cannot be reached, the app asks the update server or GitHub directly, so
+an update is never missed.
 
 The account chooser —
 **Accounts…** on Manage's **Koru Cloud** page — switches between held accounts; **Add Account** starts
@@ -5923,6 +6265,12 @@ not move out of reach.
 
 `↑` and `↓` walk the list, `Enter` picks, `Esc` closes it and leaves the
 keyboard where it was.
+
+Workspace and Profile menus leave four pixels between rows, including fixed
+workspace actions. Row highlights have vertical padding and equal side insets.
+A divider separates the Workspaces heading from its list; the Profiles heading
+has space below it. Workspaces stay in one list without a divider after pinned
+entries or before the bottom actions.
 
 Each row wears a small tile carrying that workspace's colour and emoji, so a
 list of six is something you recognise rather than something you read. A
@@ -6119,7 +6467,10 @@ If Koru opens empty when it should not, check that the Koru Store is running and
 that you are in the profile and workspace you expect (the explore pane's
 switchers). Content lives in the store, not in a profile folder you once picked.
 
-Everything saves continuously; there is no save command.
+Document edits and task changes save continuously. A
+[task/document mini app](TASK-DOCUMENT.md) has a separate **Save mini app**
+action for its arrangement and linked choices; source content keeps saving
+normally whether or not that arrangement is saved or pinned.
 
 ## Usage data
 
@@ -6360,7 +6711,7 @@ paragraph ready for typing. The title remains unchanged.
 | --- | --- |
 | `/` | command menu |
 | `@` | document entity picker |
-| `Ctrl+K` | link |
+| `Ctrl+Shift+L` | link |
 | click a date pill | re-open its picker |
 | click a document pill | follow it in this tab |
 | `Ctrl+click` a document pill | open in a background tab (reuse if already open) |
@@ -6390,7 +6741,7 @@ paragraph ready for typing. The title remains unchanged.
 
 | | |
 | --- | --- |
-| `Ctrl+P` / `Ctrl+Shift+F` | open global search inside Koru |
+| `Ctrl+K` / `Ctrl+Shift+F` | open global search inside Koru |
 | `Ctrl+F` | find text in the current document |
 | `Ctrl+H` | open local search with Replace expanded |
 | `Ctrl+Alt+F` | alternate Replace shortcut when the keyboard layout delivers it |
@@ -6411,7 +6762,7 @@ paragraph ready for typing. The title remains unchanged.
 | `F7` | document only — page layout: Page → Narrow → Full |
 | `Ctrl+Shift+P` `N` `G` | document only — Page, Narrow, Full width |
 | `Ctrl+Shift+W` | close every tab — one welcome tab is left, never an empty window. Not listed in the tab menu |
-| `Ctrl+N` | open another window on this workspace |
+| `Ctrl+N` | open the New launcher |
 | `Alt+←` / `Alt+→` (macOS: `⌘[` / `⌘]`) | back / forward through the places you have been (or the mouse's thumb buttons) |
 | click a document pill | follow it in this tab |
 | `Ctrl+click` a document pill | open in a background tab |
@@ -6449,7 +6800,7 @@ restart.
 | `Enter` | open the row the keyboard is on |
 | `Ctrl+W` | close this tab — or the window, when it *is* one document |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | next tab / previous tab |
-| `Ctrl+1` … `Ctrl+9` | the tab in that position |
+| `Ctrl+1` … `Ctrl+9` | the workspace in that position down the rail |
 | drag a tab | reorder it |
 | right-click a tab → Move to New Window | move it into its own window |
 | the two arrows in `LIBRARY` | fold / unfold the whole tree |

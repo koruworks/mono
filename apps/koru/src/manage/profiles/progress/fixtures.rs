@@ -59,6 +59,7 @@ pub(crate) fn controller_with(work_on: bool) -> ProfilesController {
         AccountOperationResult::CloudSubscription {
             request_id,
             current: Some(true),
+            access: Some(true),
             subscription_kind: None,
         }
     ));

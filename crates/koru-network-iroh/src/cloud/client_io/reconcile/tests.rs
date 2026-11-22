@@ -240,6 +240,7 @@ async fn download_during_retained_verification_is_rechecked_after_original_read(
         verify_again: false,
         uploaded_version: None,
         upload_acked: false,
+        local_version: None,
     });
     sync.transport_event(super::super::Event::Downloaded(unit))
         .unwrap();
@@ -308,6 +309,7 @@ async fn an_edit_after_the_acknowledged_export_is_not_claimed_as_synced() {
         verify_again: false,
         uploaded_version: Some(acknowledged),
         upload_acked: true,
+        local_version: None,
     });
     let event = tokio::time::timeout(Duration::from_secs(1), sync.next())
         .await
@@ -382,6 +384,7 @@ async fn an_upload_the_worker_refuses_ends_the_pass_with(refusal: Error) {
         verify_again: false,
         uploaded_version: Some(doc.oplog_vv()),
         upload_acked: false,
+        local_version: None,
     });
     sync.client.upload(unit, seed.clone(), ()).unwrap();
     let worker = async {
@@ -431,4 +434,63 @@ async fn an_upload_the_worker_refuses_ends_the_pass_with(refusal: Error) {
     assert_eq!(sync.start(unit).err(), Some(refusal));
     drop(sync);
     assert_eq!(budget.used(), 0);
+}
+
+#[tokio::test]
+async fn every_session_sharing_the_holds_hears_a_release_and_a_resource_hold_hears_none() {
+    use koru_account_core::cloud_plan::CloudAllowance;
+    // A Profile session and its authority Workspace's session are handed the
+    // same holds. One stored permit woke only whichever asked first.
+    let now = 1_700_000_000_000;
+    let holds = UploadAdmissionHolds::with_clock(move || now);
+    let (profile, workspace) = (holds.session(), holds.session());
+    let unit = Unit::Identity {
+        profile_id: koru_device::cloud::CloudId::from_bytes([1; 16]),
+    };
+    let hold = |reason| HeldUpload {
+        head: VersionVector::default(),
+        hold: Hold::unobserved(reason, None, now),
+    };
+    let observation = |usage_revision| Observation {
+        binding: koru_account_core::cloud_admission::Binding {
+            owner: uuid::Uuid::from_u128(1),
+            workspace: uuid::Uuid::from_u128(2),
+            incarnation: uuid::Uuid::from_u128(3),
+            account_generation: 1,
+            authority_generation: 1,
+        },
+        usage_revision,
+        policy_revision: 1,
+        generation: Some(uuid::Uuid::from_u128(4)),
+        observed_at_millis: now,
+        valid_until_millis: now + 60_000,
+        allowance: CloudAllowance::Unbounded,
+        read: true,
+        ordinary_write: true,
+        remove: true,
+        complete_usage: true,
+        used_bytes: Some(0),
+        reserved_bytes: Some(0),
+    };
+    holds.state().held.insert(unit, hold(Reason::AccountQuota));
+    holds.observe(observation(1));
+    tokio::time::timeout(Duration::from_secs(1), async {
+        profile.changed().await;
+        workspace.changed().await;
+    })
+    .await
+    .expect("both sessions wake");
+
+    // Logical usage says nothing about a resource: only its cycle retries it.
+    holds.state().held.insert(unit, hold(Reason::PhysicalBytes));
+    holds.observe(observation(2));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), workspace.changed())
+            .await
+            .is_err()
+    );
+    // A session that ended is forgotten, not notified forever.
+    drop(profile);
+    let _renewed = holds.session();
+    assert_eq!(holds.state().wakes.len(), 2);
 }

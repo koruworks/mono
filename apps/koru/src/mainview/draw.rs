@@ -155,6 +155,7 @@ impl MainView {
         self.reminder_preferences
             .set_client(workspace.store_client());
         self.reminders.set_client(workspace.store_client());
+        self.task_events.set_client(workspace.store_client());
         // The Welcome ticks come off a worker thread too; no request here.
         self.welcome_progress.set_client(workspace.store_client());
         // A Welcome tab made anywhere (a closed last tab, + → Welcome, a
@@ -299,25 +300,31 @@ impl MainView {
                 }
 
                 let group = self.panes.group_mut(&path).unwrap();
+                let images = if group.active_tab().is_sample_document() {
+                    super::tab::Tab::sample_images()
+                } else {
+                    images
+                };
                 // A draft draws from its own workspace, which is the whole reason it is
                 // a real editor rather than a picture of one.
                 let (view, ws) = group.active_mut().workspace(workspace);
                 match view {
                     TabView::Welcome(w) => w.draw(scene, ws, images, leaf_root, caret_on, local),
-                    TabView::Manage(w) => {
-                        // The already-discovered client, cloned rather than
-                        // opened: the Profile prompt's answer is a local Store
-                        // write, and this is the seam every other panel uses. No
-                        // request happens on the frame thread.
-                        w.set_client(workspace.store_client());
-                        View::draw(w, scene, workspace, images, leaf_root, caret_on, local)
-                    }
                     TabView::Trash(t) => {
                         View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
                     }
                     TabView::Tasks(t) => {
                         View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
                     }
+                    TabView::MiniApp(app) => View::draw(
+                        app.as_mut(),
+                        scene,
+                        workspace,
+                        images,
+                        leaf_root,
+                        caret_on,
+                        local,
+                    ),
                     TabView::Home(h) => {
                         // The Due today panel's client, as the Tasks page's: the
                         // discovered client cloned, no request on this thread.
@@ -350,6 +357,9 @@ impl MainView {
                         View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
                     }
                     TabView::Result(r) => {
+                        View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
+                    }
+                    TabView::Ocr(r) => {
                         View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
                     }
                     TabView::Canvas(c) => {
@@ -558,13 +568,14 @@ impl MainView {
                 (id, title)
             });
             self.ai_chat.set_context_workspace(current_workspace);
+            self.sync_mini_app_refinement_target();
             self.ai_chat.set_context_document(document_context);
             self.ai_chat
                 .set_recent_documents(recent_chat_documents.clone());
             self.ai_chat.set_viewport(ai);
             self.ai_chat
                 .submit_embedded_when_durable(workspace.owed() == 0);
-            self.ai_chat.draw(scene, root);
+            self.ai_chat.draw_with_caret_phase(scene, root, caret_on);
             // AI occupies Context's right-hand slot, so both panes keep their
             // divider and resize grip on the left edge.
             let edge = ai.x;
@@ -589,7 +600,7 @@ impl MainView {
         // place the client reaches it, and no request is made here.
         let client = workspace.store_client();
         self.each_tab_mut(|tab| {
-            if let TabView::Tasks(t) = &mut tab.view {
+            if let Some(t) = tab.view.tasks_mut() {
                 t.panel_mut().set_client(client.clone());
             }
             false
@@ -669,7 +680,15 @@ impl MainView {
         // Above the update banner, below the modals: a toast is transient and a
         // dialog is not, so a dialog must never end up behind one.
         self.draw_toast(scene, root, now);
+        if let Some(switch) = self.quick_switch.as_mut() {
+            switch.draw(scene, root, &mut self.engine, self.viewport);
+        }
         self.draw_confirm(scene, root);
+        if let Some(offer) = &self.file_paste {
+            offer
+                .dialog
+                .draw(scene, root, &mut self.engine, self.viewport);
+        }
         self.draw_workspace_confirmation(scene, root);
         self.draw_import_dialog(scene, root);
         self.draw_updates_modal(scene, root);
@@ -776,6 +795,11 @@ impl MainView {
     fn draw_lifted_viewer(&mut self, scene: &mut Scene, root: Affine) {
         self.sync_viewer_lift();
         match self.lifted_viewer() {
+            Some(super::LiftedViewer::FileImage) => {
+                if let Some(viewer) = self.file_images.viewer.as_ref() {
+                    viewer.draw(scene, root, &mut self.engine);
+                }
+            }
             Some(super::LiftedViewer::Document(_)) => {
                 if let TabView::Leaf(leaf) = self.active_view() {
                     leaf.draw_lifted_viewer(scene, root);
@@ -792,6 +816,25 @@ impl MainView {
     }
 
     fn draw_menu(&mut self, scene: &mut Scene, root: Affine) {
+        if let Some(menu) = self.mini_app_pins.menu.clone() {
+            let rows = (0..menu.items().len())
+                .map(|i| self.pin_menu_row_instance(i))
+                .collect::<Vec<_>>();
+            let row = |i| rows[i];
+            menu.draw_with_inspection(
+                scene,
+                root,
+                &mut self.engine,
+                self.viewport,
+                &vec![true; menu.items().len()],
+                koru_ui::menu::KoruMenuInspection {
+                    occurrence: Some(self.mini_app_pins.menu_instance),
+                    row_occurrence: Some(&row),
+                    owner_row: None,
+                    trigger: None,
+                },
+            );
+        }
         if let Some(menu) = self.menu.clone() {
             let enabled = self.enabled_items(&menu);
             menu.draw_inspected(scene, root, &mut self.engine, self.viewport, &enabled, None);
@@ -1129,7 +1172,6 @@ impl MainView {
                 crate::format::lang(),
             );
         }
-        self.draw_branch_pill(scene, root);
         self.draw_offline_chip(scene, root);
 
         if WINDOW_BUTTONS {
@@ -1337,7 +1379,7 @@ impl MainView {
         let w = self.sidebar.full();
         // Monospace: the digits hold still while the number changes under them.
         let badge =
-            koru_ui::KoruMeasurementBadge::measure(&mut self.engine, &format!("{w:.0} px"), 1.0);
+            koru_ui::KoruMeasurementBadge::measure(&mut self.engine, &format!("{w:.0}px"), 1.0);
         let (tw, _) = badge.size();
         let edge = self.sidebar_rect();
         let x = (edge.x + edge.w + 8.0).min((self.viewport.0 - tw - 4.0).max(4.0));
@@ -1391,24 +1433,6 @@ impl MainView {
     /// document draws its own caption and needs the same one. For a while only
     /// this window had it, so the window somebody had put a document into was
     /// the one window that never mentioned the store being away.
-    /// The branch pill, when this window came out of a working tree that is
-    /// not on `dev` or `main`.
-    ///
-    /// Several worktrees of this repo are open at once and their windows are
-    /// otherwise identical; Welcome has said which branch for a while, but
-    /// Welcome is a tab somebody closes and the caption is not.
-    ///
-    /// **No hit-testing and no popover.** The name is the whole of what it
-    /// says, so there is nothing to click — which is also what keeps it out of
-    /// `koru_shell_chrome::regions::hit` and its `Hit` enum.
-    fn draw_branch_pill(&mut self, scene: &mut Scene, root: Affine) {
-        let (Some(pill), Some(name)) = (self.branch_pill(), crate::build_stamp::caption_branch())
-        else {
-            return;
-        };
-        koru_shell_chrome::branch::draw(scene, root, &mut self.engine, pill, name);
-    }
-
     fn draw_offline_chip(&mut self, scene: &mut Scene, root: Affine) {
         let Some(chip) = self.offline_chip() else {
             return;

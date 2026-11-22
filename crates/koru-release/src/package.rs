@@ -178,6 +178,9 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     // still comes from the shared release/updater inventory rather than a
     // second literal here.
     ("koru-voice-worker", koru_update::VOICE_EXE),
+    // `crates/koru-read` holds the reading contract, so the read worker takes
+    // the same `-worker` suffix for the same reason.
+    ("koru-read-worker", koru_update::READ_EXE),
 ];
 
 #[cfg(windows)]
@@ -187,17 +190,24 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru-com-notification", koru_update::COM_NOTIFICATION_EXE),
     ("koru-mcp", koru_update::MCP_EXE),
     ("koru-voice-worker", koru_update::VOICE_EXE),
+    ("koru-read-worker", koru_update::READ_EXE),
 ];
 
 /// **Linux ships without the voice worker** until Linux rung 3 builds it
 /// (`docs/features/linux/`). A stub binary was rejected: a binary that
 /// pretends. This arm is deleted when voice lands on Linux, together with the
 /// Linux arm of `koru_update::ALL_EXE`.
+///
+/// **It does ship the read worker**, with recognition on x86_64: its ONNX
+/// Runtime comes from upstream's TTS-free Linux archive, which the reader pins
+/// on its own (`read_runtime`), so reading pictures and scans needs no voice
+/// worker.
 #[cfg(target_os = "linux")]
 pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru", koru_update::APP_EXE),
     ("koru-agent", koru_update::AGENT_EXE),
     ("koru-mcp", koru_update::MCP_EXE),
+    ("koru-read-worker", koru_update::READ_EXE),
 ];
 
 #[cfg(any(target_os = "macos", test))]
@@ -532,6 +542,8 @@ pub fn build(
     // hash still links; an official release links the canonical one or is not
     // packaged.
     crate::native::check_this_build(root, native_rule)?;
+    // The same question for the ONNX Runtime library the read worker linked.
+    crate::read_runtime::check_this_build(root, native_rule)?;
     let channel_binaries = CHANNEL_BINARIES
         .iter()
         .map(|(_, executable)| (*executable, root.join("target/release").join(*executable)))
@@ -886,6 +898,15 @@ fn run_cargo(
         .args(["build", "--release", "--locked"]);
     for package in packages {
         command.args(["-p", package]);
+    }
+    // **The read worker recognizes where its ONNX Runtime is pinned**, linked
+    // from the library fetch-voice-runtime extracted and verified, and checked
+    // again after the build (`read_runtime::check_this_build`).
+    if let Some(features) = crate::read_runtime::features_for_this_build(packages) {
+        command.args(["--features", features]);
+        if let Some(dir) = crate::read_runtime::lib_dir(root) {
+            command.env(koru_read_paddle::artifacts::ORT_LIB_PATH, dir);
+        }
     }
     command
         .env("KORU_VERSION", version)
@@ -1501,6 +1522,14 @@ fn mac_verify_seal(stage: &Path) -> Result<(), String> {
 /// `#[allow(dead_code)]` rather than a `cfg`: the only caller is macOS-only,
 /// and the whole reason this is a separate item is that the check has to run
 /// where there is no Mac.
+/// **The oldest macOS the package runs on**: every plist's
+/// `LSMinimumSystemVersion` and the share extension's `swiftc -target`. The
+/// Rust binaries are built for the same version through
+/// `MACOSX_DEPLOYMENT_TARGET` in `.cargo/config.toml`, which a test holds
+/// equal. 13.4 because the ONNX Runtime library the read worker and voice both
+/// link, from the pinned sherpa-onnx archive, is built for 13.4.
+pub(crate) const MACOS_MINIMUM: &str = "13.4";
+
 #[allow(dead_code)]
 pub(crate) fn info_plist(core: &str, version: &str, build_number: u64) -> String {
     format!(
@@ -1517,7 +1546,7 @@ pub(crate) fn info_plist(core: &str, version: &str, build_number: u64) -> String
     <key>CFBundleShortVersionString</key><string>{core}</string>
     <key>CFBundleVersion</key><string>{build_number}</string>
     <key>CFBundleGetInfoString</key><string>Koru {version}</string>
-    <key>LSMinimumSystemVersion</key><string>12.0</string>
+    <key>LSMinimumSystemVersion</key><string>{MACOS_MINIMUM}</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Koru uses the microphone for voice input. Speech is transcribed on this Mac and never leaves it.</string>
     <key>CFBundleURLTypes</key>
@@ -1555,7 +1584,7 @@ pub(crate) fn notification_owner_info_plist(
     <key>CFBundleShortVersionString</key><string>{core}</string>
     <key>CFBundleVersion</key><string>{build_number}</string>
     <key>CFBundleGetInfoString</key><string>Koru Agent {version}</string>
-    <key>LSMinimumSystemVersion</key><string>12.0</string>
+    <key>LSMinimumSystemVersion</key><string>{MACOS_MINIMUM}</string>
     <key>LSUIElement</key><true/>
 </dict>
 </plist>
@@ -1848,8 +1877,8 @@ fn mac_share_extension(
     let appex = stage.join("Koru.app/Contents/PlugIns/KoruShare.appex/Contents");
     fs::create_dir_all(appex.join("MacOS")).map_err(|error| error.to_string())?;
 
-    // One arch, matching the rest of the package. `macos12.0` is
-    // `LSMinimumSystemVersion` in both plists; they are the same claim.
+    // One arch, matching the rest of the package. The target's version is
+    // `LSMinimumSystemVersion` in every plist; they are the same claim.
     let arch = match std::env::consts::ARCH {
         "aarch64" => "arm64",
         other => other,
@@ -1857,7 +1886,7 @@ fn mac_share_extension(
     let compiled = Command::new("swiftc")
         .args(["-O", "-swift-version", "5", "-module-name", "KoruShare"])
         .arg("-target")
-        .arg(format!("{arch}-apple-macos12.0"))
+        .arg(format!("{arch}-apple-macos{MACOS_MINIMUM}"))
         .arg("-o")
         .arg(appex.join("MacOS/KoruShare"))
         // The extension entry point; see this function's note.
@@ -1909,7 +1938,7 @@ fn mac_share_extension(
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleShortVersionString</key><string>{core}</string>
     <key>CFBundleVersion</key><string>{build_number}</string>
-    <key>LSMinimumSystemVersion</key><string>12.0</string>
+    <key>LSMinimumSystemVersion</key><string>{MACOS_MINIMUM}</string>
     <key>KoruChannelSegment</key><string>{segment}</string>
     <key>NSExtension</key>
     <dict>
@@ -2106,6 +2135,22 @@ pub(crate) fn ensure_under(root: &Path, target: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **One macOS minimum.** The plists, the share extension's target and the
+    /// Rust binaries' `MACOSX_DEPLOYMENT_TARGET` all say the same version.
+    #[test]
+    fn every_plist_and_the_rust_build_claim_the_same_macos_minimum() {
+        let claim = format!("<key>LSMinimumSystemVersion</key><string>{MACOS_MINIMUM}</string>");
+        assert!(info_plist("1.0.0", "1.0.0", 1).contains(&claim));
+        assert!(notification_owner_info_plist("1.0.0", "1.0.0", 1).contains(&claim));
+        let config = include_str!("../../../.cargo/config.toml");
+        assert!(
+            config.contains(&format!(
+                "\nMACOSX_DEPLOYMENT_TARGET = \"{MACOS_MINIMUM}\"\n"
+            )),
+            ".cargo/config.toml builds for another macOS"
+        );
+    }
 
     /// A community `dist-local` with nothing of ours says, per feature, what
     /// stays unconfigured; an official one has nothing to say.
@@ -2582,6 +2627,11 @@ mod tests {
                 "the voice worker package and its shipped executable must stay paired"
             );
         }
+        // The read worker ships on every platform, Linux included.
+        assert!(
+            CHANNEL_BINARIES.contains(&("koru-read-worker", koru_update::READ_EXE)),
+            "the read worker package and its shipped executable must stay paired"
+        );
         // **Every retired executable, by constant rather than by literal.**
         // Each of these is a name `koru_update::exe` still carries so the
         // updater can stop the process and move the file aside; none of them
@@ -2641,7 +2691,8 @@ mod tests {
     }
 
     /// The Linux arm is the Windows/mac inventory minus the voice worker and
-    /// the Windows-only COM broker — no more, no less.
+    /// the Windows-only COM broker — no more, no less. The read worker is
+    /// pure Rust and ships there.
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_packages_everything_but_the_voice_worker() {
@@ -2651,6 +2702,7 @@ mod tests {
                 ("koru", koru_update::APP_EXE),
                 ("koru-agent", koru_update::AGENT_EXE),
                 ("koru-mcp", koru_update::MCP_EXE),
+                ("koru-read-worker", koru_update::READ_EXE),
             ]
         );
         assert_eq!(crate::host_target(), "linux-x86_64");

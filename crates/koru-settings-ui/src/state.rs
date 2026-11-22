@@ -208,7 +208,7 @@ pub struct DictionaryRow {
     pub action: Option<String>,
 }
 
-/// **One coding agent on *Agent providers***, as the host read it: which
+/// **One coding agent on *Agent runtimes***, as the host read it: which
 /// agent, whether its CLI is ready, where its setup guide is, and whether it
 /// is on. The host owns every part of it — the agent list, the probe, the
 /// stored switch — and this crate only draws it and says what was pressed.

@@ -1155,3 +1155,62 @@ fn the_installation_id_is_minted_once_and_dies_with_consent() {
         "opting out deletes it, so opting back in is a rotation and not a resumption"
     );
 }
+
+/// `projection.tasks.changed` is the workspace and nothing else: no task,
+/// document or node rides on it, it never leaves as telemetry, it stays
+/// quiet before the baseline is seeded like every derived wake, and a
+/// workspace that is not an id derives nothing.
+#[test]
+fn a_tasks_changed_note_becomes_one_content_free_workspace_event() {
+    let workspace = "22222222-2222-4222-8222-222222222222";
+    let note = |workspace: &str| FeedNote::TasksChanged {
+        workspace: workspace.into(),
+    };
+
+    let mut unseeded = Journal::in_memory().unwrap();
+    assert!(
+        unseeded
+            .apply_notes(&[note(workspace)], &ctx(), T0)
+            .unwrap()
+            .is_empty(),
+        "quiet until the baseline is seeded"
+    );
+
+    // A workspace the journal already knows, so its first sight is not what
+    // this derives.
+    let mut journal = Journal::in_memory().unwrap();
+    journal
+        .seed_baseline(&[BaselineEntry {
+            workspace: workspace.into(),
+            document: "33333333-3333-4333-8333-333333333333".into(),
+            revision: Vec::new(),
+            trashed: false,
+        }])
+        .unwrap();
+    let derived = journal
+        .apply_notes(&[note(workspace), note("not-an-id")], &ctx(), T0)
+        .unwrap();
+    assert_eq!(derived.len(), 1);
+    let event = &derived[0];
+    assert_eq!(event.name.as_str(), "projection.tasks.changed");
+    assert_eq!(event.scope.workspace_id.unwrap().to_string(), workspace);
+    assert_eq!(event.subject.as_ref().unwrap().id, workspace);
+    assert!(event.attrs.is_empty());
+    assert!(journal.telemetry_pending(100).unwrap().is_empty());
+
+    // A reader filtering on the workspace finds it; another workspace's
+    // reader does not.
+    let mine = journal
+        .read_after(0, 100, Some("projection.tasks."), Some(workspace))
+        .unwrap();
+    assert_eq!(mine.events.len(), 1);
+    let theirs = journal
+        .read_after(
+            0,
+            100,
+            Some("projection.tasks."),
+            Some("55555555-5555-4555-8555-555555555555"),
+        )
+        .unwrap();
+    assert!(theirs.events.is_empty());
+}

@@ -18,9 +18,7 @@ use super::panes;
 use super::tab::{Tab, TabView};
 use super::tab_rules::KoruTabs;
 
-/// The air between two things parked at the right-hand end of the tab strip —
-/// the branch pill and the offline chip — and between the leftmost of them and
-/// the tabs, so nothing ends up touching.
+/// The air between the offline chip and the title-bar tabs.
 const CHIP_GAP: f32 = 6.0;
 
 /// How wide the pane may be dragged.
@@ -143,10 +141,7 @@ impl MainView {
             super::reminder_bell(),
             self.leading(),
         );
-        let taken = self
-            .branch_pill()
-            .map(|pill| pill.x)
-            .or_else(|| self.offline_chip().map(|chip| chip.x));
+        let taken = self.offline_chip().map(|chip| chip.x);
         match taken {
             Some(x) => Rect::new(full.x, full.y, (x - CHIP_GAP - full.x).max(0.0), full.h),
             None => full,
@@ -313,6 +308,17 @@ impl MainView {
     /// while it is arriving or leaving.
     pub(super) fn sidebar_rect(&self) -> Rect {
         let r = self.regions.sidebar;
+        // **At rest the column is drawn where it is hit-tested**: in the
+        // settled region. The panel's own width is the one that was *asked
+        // for*, and the two differ whenever the window is too narrow to give
+        // it (`regions::solve` takes the pane's width back to protect the
+        // content). Drawn at the asked-for width there, every control in the
+        // pane sat to one side of where it answered the pointer — the heading
+        // button lit with the pointer some way off it (owner, 2026-11-16).
+        // Only a drag or a slide draws anywhere else, and both end here.
+        if self.sidebar_drag.is_none() && !self.sidebar.animating() && r.w > 0.0 {
+            return r;
+        }
         Rect::new(
             -self.sidebar.slide_offset(),
             r.y,
@@ -464,6 +470,7 @@ impl MainView {
         if !self.tab_widths().is_empty() {
             self.ensure_tab_visible(active);
         }
+        self.sync_mini_app_refinement_target();
     }
 
     /// `Ctrl+Shift+E`: **focus the tree, or toggle the pane.**
@@ -837,6 +844,7 @@ impl MainView {
             self.ai_chat.clear_context_document_dismissal();
         }
         let open = self.ai_panel.toggle(now);
+        self.ai_chat.offer_mini_apps(open);
         self.ai_focused = open;
         if open {
             self.ai_chat.activate();
@@ -969,11 +977,12 @@ impl MainView {
                 .iter_mut()
                 .enumerate()
                 .find_map(|(index, tab)| {
-                    if let TabView::Socials(view) = &mut tab.view {
-                        view.request_close().then_some((path.clone(), index))
-                    } else {
-                        None
-                    }
+                    let refused = match &mut tab.view {
+                        TabView::Socials(view) => view.request_close(),
+                        TabView::Ocr(view) => view.request_close(),
+                        _ => false,
+                    };
+                    refused.then_some((path.clone(), index))
                 })
         });
         if let Some((path, index)) = blocked {
@@ -992,14 +1001,15 @@ impl MainView {
             .iter_mut()
             .enumerate()
             .find_map(|(index, tab)| {
-                if targets(index)
-                    && !tab.is_pinned()
-                    && let TabView::Socials(view) = &mut tab.view
-                {
-                    view.request_close().then_some(index)
-                } else {
-                    None
+                if !targets(index) || tab.is_pinned() {
+                    return None;
                 }
+                let refused = match &mut tab.view {
+                    TabView::Socials(view) => view.request_close(),
+                    TabView::Ocr(view) => view.request_close(),
+                    _ => false,
+                };
+                refused.then_some(index)
             });
         if let Some(index) = blocked {
             self.select(index);
@@ -1102,57 +1112,11 @@ impl MainView {
             super::reminder_bell(),
             self.leading(),
         );
-        let taken = self
-            .branch_pill()
-            .map(|pill| pill.x)
-            .or_else(|| self.offline_chip().map(|chip| chip.x));
+        let taken = self.offline_chip().map(|chip| chip.x);
         match taken {
             Some(x) => Rect::new(full.x, full.y, (x - CHIP_GAP - full.x).max(0.0), full.h),
             None => full,
         }
-    }
-
-    /// Where the branch pill sits, when this build came off a branch worth
-    /// naming at all.
-    ///
-    /// **Left of the offline chip when both are up.** The chip is the one that
-    /// says something is wrong, so it keeps the end of the band; a pill that
-    /// jumped position depending on whether the store was reachable would be
-    /// worse than either order.
-    ///
-    /// `None` on `dev` and `main`, and in every released build — see
-    /// [`koru_shell_chrome::branch::worth_showing`].
-    pub(super) fn branch_pill(&self) -> Option<Rect> {
-        self.branch_pill_for(crate::build_stamp::caption_branch(), self.branch_pill_w)
-    }
-
-    /// Split from [`branch_pill`](Self::branch_pill) so both arms are reachable
-    /// in a test. This suite runs on whatever branch somebody is on — usually
-    /// `dev`, where there is no pill at all — and the arrangement worth pinning
-    /// is the one with a pill *and* an offline chip up, which no test could
-    /// otherwise reach without a rebuild on another branch.
-    pub(super) fn branch_pill_for(&self, name: Option<&str>, w: f32) -> Option<Rect> {
-        name?;
-        if w <= 0.0 {
-            return None;
-        }
-        let full = koru_shell_chrome::caption::tab_strip_with_leading(
-            self.regions.caption,
-            super::WINDOW_BUTTONS,
-            super::CONTEXT_TOGGLE,
-            super::reminder_bell(),
-            self.leading(),
-        );
-        let band = match self.offline_chip() {
-            Some(chip) => Rect::new(
-                full.x,
-                full.y,
-                (chip.x - CHIP_GAP - full.x).max(0.0),
-                full.h,
-            ),
-            None => full,
-        };
-        (band.w > 0.0).then(|| koru_shell_chrome::branch::pill(band, w))
     }
 
     /// Where the offline chip sits, if there is anything to say.
@@ -1248,10 +1212,6 @@ impl MainView {
             })
             .collect();
         *self.tab_widths_mut() = widths;
-        self.branch_pill_w = match crate::build_stamp::caption_branch() {
-            Some(name) => koru_shell_chrome::branch::width(&mut self.engine, name),
-            None => 0.0,
-        };
         self.set_tab_widths_stale(false);
         self.clamp_tab_scroll();
     }

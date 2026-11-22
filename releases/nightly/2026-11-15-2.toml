@@ -1,0 +1,29 @@
+title = "Stricter checks when turning on Cloud sync and linking a device"
+
+summary = [
+  "Koru checks the request to turn Cloud sync on for a workspace more strictly before approving it.",
+  "A device accepts connections for linking only while you have a link invitation open.",
+]
+
+body = """
+This build tightens two things that happen behind the scenes. Nothing looks
+or works differently when they go well.
+
+## Cloud sync
+
+When you turn Cloud sync on for a workspace, your device approves the request
+with its own key. It now checks that the request is exactly the one it asked
+for (this workspace, this Profile, this device, this account) before
+approving it. If the check fails, that workspace does not start syncing and
+the others are unaffected.
+
+## Linking a device
+
+A device now accepts connections for linking only while you have an
+invitation open, and puts a short time limit and a small size limit on a
+request to join. Linking a device with a QR code or a link works as before,
+including with a device on an older build.
+
+If turning Cloud sync on or linking a device fails on this build where it
+worked before, please report it.
+"""

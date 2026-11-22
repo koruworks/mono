@@ -54,7 +54,7 @@ pub struct EntityDocument {
     pub node: Option<String>,
     pub title: String,
     pub breadcrumb: String,
-    /// Manifest kind of the hit (`document` / `file`). Defaults to document
+    /// Manifest kind of the hit (`page`, `file`, `canvas`, etc.). Defaults to `document`
     /// when the store left it blank (older indexes).
     pub kind: String,
     pub mime: Option<String>,
@@ -307,6 +307,8 @@ impl EntitySearch {
                 // An entity picker completes no `#tag` and no `/key`; it
                 // never asks for either table.
                 SearchReadResult::ScopeTables { .. } => {}
+                // The picker asks nothing about the reader.
+                SearchReadResult::Reader(_) => {}
                 SearchReadResult::DocumentFaces(faces) => self.pending_faces.extend(faces),
                 SearchReadResult::Catalog(catalog) => {
                     // A failed read is distinguishable from an empty store
@@ -650,6 +652,10 @@ mod tests {
             score: 1.0,
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
+            page: None,
+            picture_name: None,
+            list: None,
+            task: None,
         }
     }
 
@@ -739,6 +745,7 @@ mod tests {
                     updating_workspaces: Vec::new(),
                     request_seq: seq,
                     corrected_query: None,
+                    reading: None,
                 },
                 facets: None,
                 recent_queries: None,

@@ -22,9 +22,10 @@ use zeroize::Zeroizing;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+mod cloud_plan;
 mod diagnostics;
 mod subscription;
-pub use subscription::{CloudSubscriptionSummary, SubscriptionKind};
+pub use subscription::{CloudSubscriptionStatus, SubscriptionKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpMethod {

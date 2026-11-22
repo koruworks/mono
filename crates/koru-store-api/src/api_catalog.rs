@@ -62,6 +62,8 @@ use koru_store_wire::attributes::{AttributeQuery, AttributeQueryResponse};
 use koru_store_wire::internal::{
     CloudSyncStatus, DocumentReport, Metrics, StoreReport, WorkspaceReport,
 };
+use koru_store_wire::reader::{ImportFinished, InstallReader, ReaderItems, ReaderState};
+use koru_store_wire::readings::{ReadRequested, ReadingAnswer};
 use koru_store_wire::reminders::{
     ActionRequest, ClearedHistory, ReminderQuery, ReminderQueryResponse, ReminderSnapshot,
     RevisionRequest, RuleRequest, SettingsPatch,
@@ -839,6 +841,28 @@ pub const ROUTES: &[Route] = &[
     Route {
         method: "GET",
         audience: Audience::Public,
+        path: "/v1/workspaces/trashed-in-account",
+        handler: || get(routes::workspaces::trashed_in_account::list),
+        request: None,
+        response: Some(|g| g.subschema_for::<Vec<koru_store_wire::TrashedInAccount>>()),
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Workspaces in this device's trash that the account still holds live",
+        returns: "each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Public,
+        path: "/v1/workspaces/{id}/trashed-in-account/acknowledge",
+        handler: || post(routes::workspaces::trashed_in_account::acknowledge),
+        request: None,
+        response: None,
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Record that the person was told a trashed workspace is still in the account",
+        returns: "null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error",
+    },
+    Route {
+        method: "GET",
+        audience: Audience::Public,
         path: "/v1/workspaces",
         handler: || get(routes::workspaces::list_workspaces),
         request: None,
@@ -934,6 +958,17 @@ pub const ROUTES: &[Route] = &[
         scope: Some(Scope::DestroyWorkspaces),
         summary: "Restore a soft-deleted workspace",
         returns: "the workspace with deleted_at cleared. The same scope the delete takes: whoever decides what the trash contains decides both ways",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Public,
+        path: "/v1/workspaces/{id}/restore-to",
+        handler: || post(routes::workspaces::restore_workspace_to),
+        request: Some(|g| g.subschema_for::<MoveWorkspace>()),
+        response: Some(|g| g.subschema_for::<Workspace>()),
+        scope: Some(Scope::DestroyWorkspaces),
+        summary: "Restore a soft-deleted workspace into a profile",
+        returns: "the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes",
     },
     Route {
         method: "POST",
@@ -1203,6 +1238,39 @@ pub const ROUTES: &[Route] = &[
         returns: "what was written; a Workspace somebody already chose for is never in the group",
     },
     Route {
+        method: "GET",
+        audience: Audience::Internal,
+        path: "/v1/profiles/{id}/transport-mode",
+        handler: || get(routes::workspaces::get_profile_transport_mode),
+        request: None,
+        response: Some(|g| g.subschema_for::<koru_store_wire::ProfileTransportSettings>()),
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Read this device's Profile and Workspace sync choices",
+        returns: "saved modes and revisions for the Profile and its Workspaces",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/profiles/{id}/transport-default",
+        handler: || post(routes::workspaces::initialize_profile_transport_mode),
+        request: Some(|g| g.subschema_for::<SetProfileTransportMode>()),
+        response: Some(|g| g.subschema_for::<koru_store_wire::ProfileTransportSettings>()),
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Promote default sync modes without changing explicit choices",
+        returns: "the saved Profile and Workspace choices",
+    },
+    Route {
+        method: "PUT",
+        audience: Audience::Internal,
+        path: "/v1/workspaces/{id}/transport-mode",
+        handler: || put(routes::workspaces::set_workspace_transport_mode),
+        request: Some(|g| g.subschema_for::<koru_store_wire::SetWorkspaceTransportMode>()),
+        response: Some(|g| g.subschema_for::<koru_store_wire::ProfileTransportSettings>()),
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Choose this device's sync mode for one Workspace",
+        returns: "the saved choices, or a stale revision or Profile ceiling refusal",
+    },
+    Route {
         method: "POST",
         audience: Audience::Public,
         path: "/v1/workspaces/{id}/history/{entry}/label",
@@ -1387,6 +1455,209 @@ pub const ROUTES: &[Route] = &[
                   A query earns a place in the history only by leading somewhere, which \
                   is why the text arrives here rather than on the search",
     },
+    // ---- the reader that finds words in pictures (OCR Plan 2.4). Internal:
+    // a model on this computer and this computer's answer to an offer are
+    // facts about this installation, not a promise to a third party — the
+    // reasoning the blob pause and the transport mode are internal by.
+    Route {
+        method: "GET",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader",
+        handler: || get(routes::reader::get),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "The reader that finds words in pictures, on this computer",
+        returns: "whether a reader is installed, why this computer cannot use one (if it \
+                  cannot), the offer's terms from the reader's catalog (model, size, \
+                  licence, attribution, languages), how far a download has got, whether \
+                  the person said Not now, and this computer's reading counts: read, \
+                  partly read, could not be read by reason, unread, waiting for the reader, \
+                  not on this computer. Answered from memory",
+    },
+    Route {
+        method: "DELETE",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader",
+        handler: || delete(routes::reader::remove),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Remove the reader's model from this computer",
+        returns: "the reader's state, removing. Readings already made stay, synced and \
+                  findable; pictures added afterwards wait for the reader again",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/install",
+        handler: || post(routes::reader::install),
+        request: Some(|g| g.subschema_for::<InstallReader>()),
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Turn the reader on: record the consent and download it",
+        returns: "the reader's state, starting. Carries the terms the person was shown; \
+                  refused reader_terms_changed when the catalog now offers something else \
+                  and reader_unavailable where no reader can be used. Progress is polled \
+                  on GET; the download survives a closed window and resumes after Stop",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/stop",
+        handler: || post(routes::reader::stop),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Stop the reader's download",
+        returns: "the reader's state, stopping. The partial download is kept, so turning \
+                  the reader on again carries on from where it stopped",
+    },
+    // Off and on (OCR Plan 3.5): whether the reader is on is machine-local,
+    // like the consent it follows — internal for the reason the rest are.
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/off",
+        handler: || post(routes::reader::turn_off),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Turn the reader off on this computer, keeping the download",
+        returns: "the reader's state, turned_off. Nothing more is recognized and nothing is \
+                  offered; text layers and plain-text files are still read, and readings \
+                  already made stay, synced and findable. Kept across a restart. Nothing \
+                  installed: nothing to turn off, and the state as it was",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/on",
+        handler: || post(routes::reader::turn_on),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Turn a downloaded reader on again",
+        returns: "the reader's state, on. No download: what waited for the reader is queued \
+                  as after an install. Already on, or not downloaded (use install): the state \
+                  as it was",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/decline",
+        handler: || post(routes::reader::decline),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Not now: search stops offering the reader on this computer",
+        returns: "the reader's state, declined. Search answers carry no offer until an \
+                  import brings a picture or a scanned PDF; the Settings row can still \
+                  turn the reader on",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/imported",
+        handler: || post(routes::reader::imported),
+        request: Some(|g| g.subschema_for::<ImportFinished>()),
+        response: Some(|g| g.subschema_for::<ReaderState>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "An import finished, and this is how many pictures and scanned PDFs it brought",
+        returns: "the reader's state. A non-zero count clears Not now, so Koru offers once \
+                  more; adding or pasting single files never calls this",
+    },
+    Route {
+        method: "GET",
+        // Internal for the reason the reader's state is: this computer's
+        // failures, for this computer's Settings row (OCR Plan 2.5).
+        audience: Audience::Internal,
+        path: "/v1/readings/reader/items",
+        handler: || get(routes::readings::items),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReaderItems>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "What could not be read, and what was partly read, on this computer",
+        returns: "each item behind the Settings row's could-not-be-read and partly-read lists: \
+                  its workspace, the entry it belongs to (the file, or the page holding the \
+                  picture), the blob's hash, its kind and reason token, how far a partly read \
+                  item got, whether a request for it is waiting, and what a person may ask of it \
+                  here now (offers: read_all, read_again — the decision a menu gets). Ids, \
+                  tokens and counts only — a surface names each item from the workspace listing. \
+                  At most 1,000, with `truncated` when there are more; `projection_unavailable` \
+                  when this store runs no readings mirror",
+    },
+    Route {
+        method: "GET",
+        // Ours until a rung that reads it for a person ships (*Copy text*, an
+        // assistant's reading tool): used by our per-file inspection surfaces.
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}",
+        handler: || get(routes::readings::reading),
+        request: None,
+        response: Some(|g| g.subschema_for::<Option<ReadingAnswer>>()),
+        scope: Some(Scope::ReadDocuments),
+        summary: "The words read out of one file or picture in a workspace",
+        returns: "the winning reading of those bytes there — reader, generation, status, \
+                  reason, source, confidence, how far it got, and each page's words — with \
+                  current device facts and available requests (read_all, read_again, force_ocr). \
+                  failed_here names a local failure. Live unread items return local facts \
+                  with no status or pages; null means no known live item. One item at a time; \
+                  `projection_unavailable` when this store runs no readings mirror",
+    },
+    // ---- a person's requests on one item (OCR Plan 3.2). Internal, like the
+    // reading they act on: a request is a fact about this computer, and the
+    // surfaces asking are ours.
+    Route {
+        method: "PUT",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/correction",
+        handler: || put(routes::readings::correct),
+        request: Some(|g| g.subschema_for::<koru_store_wire::readings::CorrectReading>()),
+        response: Some(|g| g.subschema_for::<koru_store_wire::readings::ReadingCorrections>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Save a correction or reset to generated OCR without replacing its history",
+        returns: "current correction heads; stale writes are refused",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/read-all",
+        handler: || post(routes::readings::read_all),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReadRequested>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Read all pages: finish a file that stopped at a page limit",
+        returns: "the request, recorded on this computer and met behind anything freshly \
+                  added, a page at a time, until the file is read to its end. Refused \
+                  blob_not_here when its bytes are not on this computer, reader_unavailable \
+                  when finishing it needs recognition and the reader is not installed, and \
+                  invalid_request when it did not stop at a limit or a request is waiting",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/read-again",
+        handler: || post(routes::readings::read_again),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReadRequested>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Read again: read a file or picture that was read, or failed, once more",
+        returns: "the request, recorded on this computer; the item is read again and its \
+                  reading written again at the same generation. Refused as read-all is, and \
+                  invalid_request when it has not been read and has not failed",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/force-ocr",
+        handler: || post(routes::readings::force_ocr),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReadRequested>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Force OCR: recognize rendered pages, ignoring embedded text",
+        returns: "a persistent local request; requires local bytes, a supported picture or PDF, and an enabled reader",
+    },
     Route {
         method: "GET",
         audience: Audience::Internal,
@@ -1455,6 +1726,18 @@ pub const ROUTES: &[Route] = &[
         scope: Some(Scope::ReadDocuments),
         summary: "What the search index is doing",
         returns: "queue depth, indexed, removed, failed, counts — or null if none runs",
+    },
+    Route {
+        method: "GET",
+        audience: Audience::Internal,
+        path: "/v1/debug/readings",
+        handler: || get(routes::debug::readings),
+        request: None,
+        response: None,
+        scope: Some(Scope::ReadDocuments),
+        summary: "What reading words out of files is doing",
+        returns: "queued by reason, the current job's stage, read and failed by code, the \
+                  worker's state, how far the readings mirror is behind — or null if none runs",
     },
     Route {
         method: "GET",

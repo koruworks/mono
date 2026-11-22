@@ -105,6 +105,7 @@ where
         None
     };
     let recovery = Instant::now() + RECOVERY;
+    let admission = sync.admission_holds();
     // Only bounded in-memory viewer interest is sampled. Document reads run on
     // join or a durable commit wake, never on this timer.
     let mut fence = tokio::time::interval(Duration::from_millis(100));
@@ -127,6 +128,7 @@ where
                 _ => return Err(Error::Invalid),
             },
             _ = changes.changed() => { due.get_or_insert(Instant::now() + DEBOUNCE); },
+            _ = admission.changed() => { due.get_or_insert(Instant::now() + DEBOUNCE); },
             command = next_command(&mut commands) => {
                 if let Some(command) = command {
                     return Ok(Wake::Command(command));

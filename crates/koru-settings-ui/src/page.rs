@@ -31,12 +31,15 @@ use crate::action::Action;
 /// The pages, in sidebar order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageId {
+    /// A host-owned page, identified without coupling Settings to its domain.
+    Host(u128),
     Appearance,
     Editor,
     Reminders,
     Terminal,
     System,
-    /// *Coding → Agent providers*: which coding agents Koru shows, and
+    Shortcuts,
+    /// *Coding → Agent runtimes*: which coding agents Koru shows, and
     /// whether their CLIs are ready. The host fills its rows.
     AgentProviders,
 }
@@ -45,24 +48,27 @@ pub enum PageId {
 /// with none sits in the ungrouped run at the top.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageGroup {
+    Preferences,
     Coding,
 }
 
 impl PageGroup {
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
+            Self::Preferences => koru_i18n::t(lang, Key::SettingsPreferences),
             Self::Coding => koru_i18n::t(lang, Key::SettingsCoding),
         }
     }
 }
 
 impl PageId {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Appearance,
         Self::Editor,
         Self::Reminders,
         Self::Terminal,
         Self::System,
+        Self::Shortcuts,
         Self::AgentProviders,
     ];
 
@@ -71,30 +77,38 @@ impl PageId {
     pub fn group(self) -> Option<PageGroup> {
         match self {
             Self::AgentProviders => Some(PageGroup::Coding),
-            Self::Appearance | Self::Editor | Self::Reminders | Self::Terminal | Self::System => {
-                None
-            }
+            Self::Host(_) => None,
+            Self::Appearance
+            | Self::Editor
+            | Self::Reminders
+            | Self::Terminal
+            | Self::System
+            | Self::Shortcuts => Some(PageGroup::Preferences),
         }
     }
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
+            Self::Host(_) => "",
             Self::Appearance => koru_i18n::t(lang, Key::SettingsAppearance),
             Self::Editor => koru_i18n::t(lang, Key::SettingsEditor),
             Self::Reminders => koru_i18n::t(lang, Key::ReminderTitle),
             Self::Terminal => koru_i18n::t(lang, Key::SettingsTerminal),
             Self::System => koru_i18n::t(lang, Key::SettingsSystem),
+            Self::Shortcuts => koru_i18n::t(lang, Key::SettingsShortcuts),
             Self::AgentProviders => koru_i18n::t(lang, Key::SettingsAgentProviders),
         }
     }
 
     pub(crate) fn description(self, lang: Lang) -> &'static str {
         match self {
+            Self::Host(_) => "",
             Self::Appearance => koru_i18n::t(lang, Key::SettingsAppearanceDescription),
             Self::Editor => koru_i18n::t(lang, Key::SettingsEditorDescription),
             Self::Reminders => koru_i18n::t(lang, Key::SettingsRemindersDescription),
             Self::Terminal => koru_i18n::t(lang, Key::SettingsTerminalDescription),
             Self::System => koru_i18n::t(lang, Key::SettingsSystemDescription),
+            Self::Shortcuts => koru_i18n::t(lang, Key::SettingsShortcutsDescription),
             Self::AgentProviders => koru_i18n::t(lang, Key::SettingsAgentProvidersDescription),
         }
     }
@@ -103,16 +117,18 @@ impl PageId {
     /// the page holds, in the words a person would type for them.
     pub(crate) fn keywords(self) -> &'static str {
         match self {
+            Self::Host(_) => "",
             Self::Appearance => {
-                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix sample preview"
+                "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix sample preview rendering hinting antialiasing msaa gamma cutoff offset pixels"
             }
             Self::Editor => {
-                "page width layout background canvas spelling spell check language dictionary voice dictation microphone speech model quality shortcut consent"
+                "font fonts body headings code size weight sample preview page width layout background canvas spelling spell check language dictionary voice dictation microphone speech model quality shortcut consent"
             }
             Self::Reminders => {
                 "reminder notification notifications sound tone week day end of day deliver test"
             }
-            Self::Terminal => "shell cursor zoom font theme input blink composer",
+            Self::Terminal => "shell cursor zoom font theme blink",
+            Self::Shortcuts => "keyboard shortcuts keys hotkeys bindings",
             Self::System => {
                 "login startup start quit background close window app menu launcher dock desktop entry renderer graphics vulkan directx opengl advanced privacy telemetry usage data analytics diagnostics"
             }
@@ -124,13 +140,22 @@ impl PageId {
 
     fn localized_keywords(self, lang: Lang) -> String {
         let keys: &[Key] = match self {
+            Self::Host(_) => &[],
+            Self::Shortcuts => &[Key::SettingsShortcuts, Key::SettingsShortcutsDescription],
             Self::Appearance => &[
                 Key::SettingsTheme,
                 Key::SettingsIconStyle,
                 Key::SettingsDensity,
                 Key::SettingsPinnedTabs,
                 Key::SettingsAppFont,
-                Key::SettingsDocumentFonts,
+                Key::SettingsAppFonts,
+                Key::SettingsZoom,
+                Key::SettingsTextRendering,
+                Key::SettingsTextHinting,
+                Key::SettingsTextAntialiasing,
+                Key::SettingsTextOffset,
+                Key::SettingsTextGamma,
+                Key::SettingsTextCutoff,
                 Key::SettingsCaret,
                 Key::TerminalCursorColor,
                 Key::SettingsShape,
@@ -138,6 +163,8 @@ impl PageId {
                 Key::SettingsDark,
             ],
             Self::Editor => &[
+                Key::SettingsDocumentFonts,
+                Key::SettingsHeadingWeight,
                 Key::DocumentsHeading,
                 Key::SettingsPageWidthForNewDocuments,
                 Key::SettingsPageBackground,
@@ -165,12 +192,10 @@ impl PageId {
                 Key::SettingsTerminal,
                 Key::SettingsFont,
                 Key::SettingsTheme,
-                Key::AiToolInput,
                 Key::SettingsMatchTheEditorCaret,
                 Key::TerminalCursor,
                 Key::TerminalCursorBlink,
                 Key::SettingsZoom,
-                Key::SettingsSeparateInputArea,
             ],
             Self::System => &[
                 Key::SettingsStartupAndWindows,
@@ -200,6 +225,9 @@ impl PageId {
         if query.is_empty() {
             return true;
         }
+        if self == Self::Shortcuts && crate::shortcuts::matches(&query) {
+            return true;
+        }
         let haystack = format!(
             "{} {} {} {}",
             self.label(lang),
@@ -217,6 +245,7 @@ impl PageId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Anchor {
     Voice,
+    Reader,
 }
 
 /// Where the page's title sits under the window's top edge — the shared
@@ -271,6 +300,11 @@ pub(crate) struct DropdownLaid {
 /// The control at a row's right end.
 pub(crate) enum Widget {
     None,
+    Link {
+        rect: Rect,
+        label: String,
+        hit: usize,
+    },
     Segmented {
         control: Segmented,
         labels: Vec<String>,
@@ -339,7 +373,7 @@ pub(crate) struct RowLaid {
     /// A key chip beside the name.
     pub(crate) chip: Option<String>,
     /// A brand mark before the name, by profile key — an agent's row on
-    /// *Agent providers*. The text then starts [`MARK_SLOT`] further in.
+    /// *Agent runtimes*. The text then starts [`MARK_SLOT`] further in.
     pub(crate) mark: Option<String>,
     /// A row that can be dragged to a new place: its index among the
     /// page's draggable rows, and its move handle, in the card's left inset.
@@ -462,11 +496,13 @@ pub(crate) struct Builder<'a> {
     /// Set by [`next_row_draggable`](Self::next_row_draggable); taken by
     /// the next row.
     pending_drag: Option<usize>,
+    query: String,
 }
 
 /// What a row asks for before it knows where it is.
 enum Spec {
     None,
+    Link(Action, String),
     Segmented(Vec<(Action, String, bool)>),
     Dropdown(Vec<(Action, DropdownOption)>),
     Toggle(bool, Action),
@@ -494,6 +530,7 @@ impl<'a> Builder<'a> {
             pending_chip: None,
             pending_mark: None,
             pending_drag: None,
+            query: String::new(),
         }
     }
 
@@ -517,6 +554,10 @@ impl<'a> Builder<'a> {
     /// Put a key chip beside the next row's name.
     pub(crate) fn next_row_chip(&mut self, text: &str) {
         self.pending_chip = Some(text.to_owned());
+    }
+
+    pub(crate) fn search(&mut self, query: &str) {
+        self.query = query.to_owned();
     }
 
     pub(crate) fn finish(mut self) -> Laid {
@@ -580,6 +621,9 @@ impl<'a> Builder<'a> {
 
     pub(crate) fn note(&mut self, text: &str) {
         self.end_card();
+        if !search_matches(text, &self.query) {
+            return;
+        }
         let h = self
             .engine
             .simple_layout_wrapped(text, theme::role::meta(), self.w)
@@ -615,6 +659,18 @@ impl<'a> Builder<'a> {
         items: Vec<(Action, String, TilePreview, bool)>,
     ) {
         self.end_card();
+        let words = format!(
+            "{} {}",
+            title.unwrap_or(""),
+            items
+                .iter()
+                .map(|(_, l, _, _)| l.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        if !search_matches(&words, &self.query) {
+            return;
+        }
         let header = Card::new(title).header_h();
         let rects = PreviewTile::row(self.x, self.y + header, self.w, items.len());
         let mut tiles = Vec::with_capacity(items.len());
@@ -681,6 +737,44 @@ impl<'a> Builder<'a> {
         if card.rows.is_empty() {
             // A card with nothing in it is not drawn, and gives back its title.
             self.y = card.top;
+            return;
+        }
+        let text = format!(
+            "{} {} {}",
+            card.title.as_deref().unwrap_or(""),
+            card.aside.as_deref().unwrap_or(""),
+            card.rows
+                .iter()
+                .map(|r| format!(
+                    "{} {} {}",
+                    r.label,
+                    r.hint.as_deref().unwrap_or(""),
+                    widget_words(&r.widget)
+                ))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let caption = match self.laid.blocks.last() {
+            Some(Block::Caption { title, .. }) => title.as_str(),
+            _ => "",
+        };
+        if !search_matches(&format!("{caption} {text}"), &self.query) {
+            let mut top = card.top;
+            if let Some(Block::Caption { y, .. }) = self.laid.blocks.last() {
+                top = *y;
+                self.laid.blocks.pop();
+            }
+            for hit in &mut self.laid.hits {
+                if hit.rect.y >= top {
+                    hit.rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+                }
+            }
+            for row in &mut self.laid.drag_rows {
+                if row.y >= top {
+                    *row = Rect::new(0.0, 0.0, 0.0, 0.0);
+                }
+            }
+            self.y = top;
             return;
         }
         let rect = Rect::new(self.x, card.top, self.w, self.y - card.top);
@@ -808,6 +902,11 @@ impl<'a> Builder<'a> {
         );
     }
 
+    /// A navigation link, painted like the existing caption links.
+    pub(crate) fn row_link(&mut self, label: &str, action: Action, link: &str) {
+        self.row(label, None, Spec::Link(action, link.to_owned()));
+    }
+
     /// A quiet text button — *Clear…* — for an action the row offers but does
     /// not recommend.
     pub(crate) fn row_text_button(
@@ -821,6 +920,34 @@ impl<'a> Builder<'a> {
             label,
             hint,
             Spec::Button(action, button.to_owned(), koru_ui::ActionStyle::Ghost),
+        );
+    }
+
+    /// Two quiet text buttons — *Read again* and *Show* — side by side: the
+    /// existing [`Spec::Pair`] of the button [`row_text_button`](Self::row_text_button)
+    /// draws, so no control is new.
+    pub(crate) fn row_text_buttons(
+        &mut self,
+        label: &str,
+        hint: Option<&str>,
+        (first, first_action): (&str, Action),
+        (second, second_action): (&str, Action),
+    ) {
+        self.row(
+            label,
+            hint,
+            Spec::Pair(
+                Box::new(Spec::Button(
+                    first_action,
+                    first.to_owned(),
+                    koru_ui::ActionStyle::Ghost,
+                )),
+                Box::new(Spec::Button(
+                    second_action,
+                    second.to_owned(),
+                    koru_ui::ActionStyle::Ghost,
+                )),
+            ),
         );
     }
 
@@ -973,6 +1100,12 @@ impl<'a> Builder<'a> {
     fn measure(&mut self, spec: &Spec) -> (f32, f32) {
         match spec {
             Spec::None => (0.0, 0.0),
+            Spec::Link(_, label) => (
+                self.engine
+                    .simple_layout(label, theme::role::meta())
+                    .width(),
+                theme::role::meta().metrics.line_height,
+            ),
             Spec::Segmented(items) => {
                 let labels: Vec<&str> = items.iter().map(|(_, l, _)| l.as_str()).collect();
                 (Segmented::width(self.engine, &labels), Segmented::H)
@@ -1030,7 +1163,13 @@ impl<'a> Builder<'a> {
                     first,
                 }
             }
-            Spec::Dropdown(options) => {
+            Spec::Dropdown(mut options) => {
+                for (action, option) in &mut options {
+                    option.dangerous = matches!(
+                        action,
+                        Action::AgentPermission(_, koru_settings::AgentPermission::Yolo)
+                    );
+                }
                 let (value, face) = options
                     .iter()
                     .find(|(_, option)| option.selected)
@@ -1073,6 +1212,14 @@ impl<'a> Builder<'a> {
                     colors,
                     selected,
                     first,
+                }
+            }
+            Spec::Link(action, label) => {
+                let hit = self.push_hit(slot, Target::Action(action));
+                Widget::Link {
+                    rect: slot,
+                    label,
+                    hit,
                 }
             }
             Spec::Button(action, label, style) => {
@@ -1119,3 +1266,26 @@ impl<'a> Builder<'a> {
 
 #[cfg(test)]
 mod tests;
+
+fn search_matches(text: &str, query: &str) -> bool {
+    let text = text.to_lowercase();
+    query
+        .split_whitespace()
+        .all(|word| text.contains(&word.to_lowercase()))
+}
+
+fn widget_words(widget: &Widget) -> String {
+    match widget {
+        Widget::Segmented { labels, .. } => labels.join(" "),
+        Widget::Dropdown { value, .. } => value.clone(),
+        Widget::Button { label, .. } | Widget::Link { label, .. } => label.clone(),
+        Widget::Stepper { value, .. } => value.clone(),
+        Widget::Pair(a, b) => format!("{} {}", widget_words(a), widget_words(b)),
+        Widget::Chips(chips) => chips
+            .iter()
+            .map(|c| c.label.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => String::new(),
+    }
+}

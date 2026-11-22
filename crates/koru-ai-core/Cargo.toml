@@ -9,7 +9,7 @@ description = "Provider-neutral Koru AI chat models, behavior, and ports."
 
 [features]
 default = []
-schema = ["dep:schemars", "koru-store-core/schema"]
+schema = ["dep:schemars", "schemars/uuid1", "koru-store-core/schema"]
 
 [dependencies]
 koru-link = { path = "../koru-link" }

@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, mpsc};
 
 use koru_core::ids::{DocumentId, ListId, PageKey, TagId};
-use koru_core::system::{ListEntry, PageTitle, SystemDoc, TagEntry};
+use koru_core::system::{ListCreation, ListEntry, ListTree, PageTitle, SystemDoc, TagEntry};
 
 use crate::{Workspace, explore, open, store};
 
@@ -418,7 +418,20 @@ impl SystemSession {
             .unwrap_or_default()
     }
 
-    fn create_list(&mut self, name: &str, color: Option<&str>) -> Option<ListId> {
+    fn list_tree(&self) -> ListTree {
+        self.active
+            .as_ref()
+            .map(|live| live.doc.list_tree())
+            .or_else(|| self.local.as_ref().map(SystemDoc::list_tree))
+            .unwrap_or_default()
+    }
+
+    fn create_list_under(
+        &mut self,
+        parent: Option<ListId>,
+        name: &str,
+        color: Option<&str>,
+    ) -> Option<ListCreation> {
         let doc = match &mut self.active {
             Some(live) => &mut live.doc,
             None => {
@@ -428,11 +441,16 @@ impl SystemSession {
                 self.local.as_mut()?
             }
         };
-        let id = doc.create_list(name, color, open::now_ms()).ok()?;
-        if let Some(active) = &mut self.active {
+        let made = doc
+            .create_list_under(parent, name, color, open::now_ms())
+            .ok()?;
+        // An existing sibling answered: nothing was written, nothing to send.
+        if made.created()
+            && let Some(active) = &mut self.active
+        {
             let _ = active.session.publish(&active.doc);
         }
-        Some(id)
+        Some(made)
     }
 
     /// The shared shape of the three list edits: run `edit` over the live (or
@@ -466,6 +484,21 @@ impl SystemSession {
 
     fn delete_list(&mut self, list: ListId) -> bool {
         self.edit_list(|doc| doc.delete_list(list, open::now_ms()).unwrap_or(false))
+    }
+
+    fn move_list(&mut self, list: ListId, parent: Option<ListId>, before: Option<ListId>) -> bool {
+        self.edit_list(|doc| doc.move_list(list, parent, before).unwrap_or(false))
+    }
+
+    fn delete_list_tree(&mut self, list: ListId, inside: &[ListId]) -> Vec<ListId> {
+        let mut gone = Vec::new();
+        self.edit_list(|doc| {
+            gone = doc
+                .delete_list_tree(list, inside, open::now_ms())
+                .unwrap_or_default();
+            !gone.is_empty()
+        });
+        gone
     }
 
     // ------------------------------------------------------------------ pages
@@ -1034,20 +1067,80 @@ impl Workspace {
             .unwrap_or_default()
     }
 
-    /// Create a list — creating and registering the system document first if
-    /// this workspace has none — and answer its id for the caller to apply to
-    /// tasks.
+    /// The live lists as the repaired tree every surface draws
+    /// ([`SystemDoc::list_tree`]). Empty for the reasons
+    /// [`lists_snapshot`](Self::lists_snapshot) is.
+    pub fn list_tree_snapshot(&mut self) -> ListTree {
+        self.ensure_system(false);
+        self.system
+            .as_ref()
+            .map(SystemSession::list_tree)
+            .unwrap_or_default()
+    }
+
+    /// Create a list under `parent` (`None` is the top level) — creating and
+    /// registering the system document first if this workspace has none — and
+    /// say whether one was made or a live sibling already had the name
+    /// ([`SystemDoc::create_list_under`]).
     ///
     /// `color` is an `AccentColor` token from the swatch set the rest of the
     /// app already offers, never an RGB value: a colour picked on one theme is
     /// read on the other, and on another machine.
-    pub fn create_list(&mut self, name: &str, color: Option<&str>) -> Option<ListId> {
+    pub fn create_list_under(
+        &mut self,
+        parent: Option<ListId>,
+        name: &str,
+        color: Option<&str>,
+    ) -> Option<ListCreation> {
         if !self.ensure_system(true) {
             return None;
         }
-        let id = self.system.as_mut()?.create_list(name, color)?;
-        self.lists_changed = true;
-        Some(id)
+        let made = self
+            .system
+            .as_mut()?
+            .create_list_under(parent, name, color)?;
+        if made.created() {
+            self.lists_changed = true;
+        }
+        Some(made)
+    }
+
+    /// Move a list under `parent` and before the sibling `before`
+    /// ([`SystemDoc::move_list`]). `false` for every refusal the model makes.
+    pub fn move_list(
+        &mut self,
+        list: ListId,
+        parent: Option<ListId>,
+        before: Option<ListId>,
+    ) -> bool {
+        if !self.ensure_system(false) {
+            return false;
+        }
+        let Some(system) = &mut self.system else {
+            return false;
+        };
+        let moved = system.move_list(list, parent, before);
+        if moved {
+            self.lists_changed = true;
+        }
+        moved
+    }
+
+    /// Delete a list and exactly the lists the person was shown inside it
+    /// ([`SystemDoc::delete_list_tree`]); answers the ids that went. **No
+    /// task and no page note is touched.**
+    pub fn delete_list_tree(&mut self, list: ListId, inside: &[ListId]) -> Vec<ListId> {
+        if !self.ensure_system(false) {
+            return Vec::new();
+        }
+        let Some(system) = &mut self.system else {
+            return Vec::new();
+        };
+        let gone = system.delete_list_tree(list, inside);
+        if !gone.is_empty() {
+            self.lists_changed = true;
+        }
+        gone
     }
 
     /// Rename a list. `false` for an id this table has never held, or one that
@@ -1073,7 +1166,7 @@ impl Workspace {
     /// reason.
     ///
     /// The token is an `AccentColor` from the shared swatch set, never an RGB
-    /// value: `create_list`'s rule, and the one that makes a colour chosen on
+    /// value: `create_list_under`'s rule, and the one that makes a colour chosen on
     /// one theme readable on the other.
     /// Where a list sits in the rail. `None` puts it after every ranked one,
     /// which is where a list a peer made arrives.

@@ -126,58 +126,50 @@ fn checkout_handoff_route_is_admitted_by_transport_path_guard() {
 }
 
 #[test]
-fn subscription_summary_reports_kind_and_complimentary_access() {
-    let run_summary = |pages| {
-        let transport = script(pages);
-        let cancel = transport.cancel.clone();
-        AccountClient::with_transport(transport)
-            .cloud_subscription_summary(
-                &AccountAuthorization::Bearer(&AccessToken("secret".into())),
-                &|| cancel.load(Ordering::SeqCst),
-            )
-            .unwrap()
-    };
-
-    assert_eq!(
-        run_summary(vec![json!({
-            "subscriptions": [{"status": "trialing"}],
-            "next_cursor": null
-        })]),
-        CloudSubscriptionSummary {
-            has_subscription: true,
-            kind: Some(SubscriptionKind::Trialing),
-        }
-    );
-    assert_eq!(
-        run_summary(vec![json!({
-            "subscriptions": [{"status": "trialing"}, {"status": "active"}],
-            "next_cursor": null
-        })]),
-        CloudSubscriptionSummary {
-            has_subscription: true,
-            kind: Some(SubscriptionKind::Active),
-        }
-    );
-    assert_eq!(
-        run_summary(vec![json!({
-            "subscriptions": [],
-            "next_cursor": null,
-            "cloud_access": true
-        })]),
-        CloudSubscriptionSummary {
-            has_subscription: true,
-            kind: Some(SubscriptionKind::Complimentary),
-        }
-    );
-    assert_eq!(
-        run_summary(vec![json!({
-            "subscriptions": [{"status": "canceled"}],
-            "next_cursor": null,
-            "cloud_access": false
-        })]),
-        CloudSubscriptionSummary {
-            has_subscription: false,
-            kind: None,
-        }
-    );
+fn cloud_access_is_independent_of_a_purchase_to_manage_and_reports_kind() {
+    for (subscriptions, access, current, kind) in [
+        (json!([]), true, false, Some(SubscriptionKind::Complimentary)),
+        (json!([]), false, false, None),
+        (
+            json!([{"status":"past_due"}]),
+            false,
+            true,
+            Some(SubscriptionKind::PastDue),
+        ),
+        (
+            json!([{"status":"trialing"}]),
+            true,
+            true,
+            Some(SubscriptionKind::Trialing),
+        ),
+        (
+            json!([{"status":"trialing"},{"status":"active"}]),
+            true,
+            true,
+            Some(SubscriptionKind::Active),
+        ),
+        (
+            json!([{"status":"canceled"}]),
+            false,
+            false,
+            None,
+        ),
+    ] {
+        let client = AccountClient::with_transport(script(vec![json!({
+            "subscriptions": subscriptions, "next_cursor": null, "cloud_access": access
+        })]));
+        assert_eq!(
+            client
+                .cloud_subscription_status(
+                    &AccountAuthorization::Bearer(&AccessToken("memory-only".into())),
+                    &|| false
+                )
+                .unwrap(),
+            CloudSubscriptionStatus {
+                current,
+                cloud_access: access,
+                kind,
+            }
+        );
+    }
 }

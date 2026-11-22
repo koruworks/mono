@@ -26,6 +26,7 @@ pub struct KoruTextParagraph<'a> {
     style: theme::TextStyle,
     role: &'static str,
     color: Color,
+    highlight: &'a str,
 }
 
 impl<'a> KoruTextParagraph<'a> {
@@ -40,7 +41,13 @@ impl<'a> KoruTextParagraph<'a> {
             style,
             role,
             color,
+            highlight: "",
         }
+    }
+
+    pub fn highlight(mut self, query: &'a str) -> Self {
+        self.highlight = query;
+        self
     }
 
     /// The height the text takes wrapped to `width`, without drawing it.
@@ -95,6 +102,15 @@ impl<'a> KoruTextParagraph<'a> {
                 r.property("docs", "docs/features/koruui/COMPONENTS.md", "catalog");
             },
         );
+        highlight_layout(
+            canvas,
+            root,
+            &layout,
+            self.text,
+            self.highlight,
+            rect.x,
+            rect.y,
+        );
         scene::draw_layout(canvas, root, &layout, rect.x, rect.y, Some(self.color));
         height
     }
@@ -119,5 +135,60 @@ pub fn draw_line(
     crate::typography::line("Text line", canvas, root, &layout, x, y, style, role, color);
 }
 
+/// Highlight text without changing its layout or baseline.
+#[allow(clippy::too_many_arguments)]
+pub fn highlight_layout(
+    canvas: &mut Scene,
+    root: Affine,
+    layout: &parley::Layout<koru_draw::theme::Brush>,
+    text: &str,
+    query: &str,
+    x: f32,
+    y: f32,
+) {
+    if query.trim().is_empty() {
+        return;
+    }
+    for range in highlight_ranges(text, query) {
+        scene::fill_text_range(
+            canvas,
+            root,
+            layout,
+            range,
+            x,
+            y,
+            Color::from_rgba8(255, 220, 0, if theme::is_dark() { 85 } else { 110 }),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests;
+
+/// Case-insensitive search ranges mapped back to original UTF-8 boundaries.
+/// Lowercasing may expand a character, so folded byte offsets are never used
+/// directly as offsets into the displayed string.
+pub fn highlight_ranges(text: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    let mut folded = String::new();
+    let mut boundaries = Vec::new();
+    for (start, ch) in text.char_indices() {
+        for lower in ch.to_lowercase() {
+            for _ in 0..lower.len_utf8() {
+                boundaries.push((start, start + ch.len_utf8()));
+            }
+            folded.push(lower);
+        }
+    }
+    let mut ranges = Vec::new();
+    for word in query.split_whitespace().map(str::to_lowercase) {
+        for (start, found) in folded.match_indices(&word) {
+            let end = start + found.len();
+            if end > start {
+                ranges.push(boundaries[start].0..boundaries[end - 1].1);
+            }
+        }
+    }
+    ranges.sort_by_key(|r| r.start);
+    ranges.dedup();
+    ranges
+}

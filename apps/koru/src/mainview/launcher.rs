@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **The `+` button's New… dialog** — the window's half of the launcher.
+//! The tab strip's New menu and the Ctrl+N launcher.
 //!
-//! The tab strip's `+`, the lane's New and Ctrl+N all open one centred grid
+//! The lane's New and Ctrl+N open one centred grid
 //! of what can be made here: a document, a task, an agent, a shell. Each
 //! tile has a letter (D, T, A, S) that chooses it the moment the dialog is
 //! up, and two modifiers that ask one question more:
@@ -27,10 +27,10 @@ use vello::kurbo::Affine;
 use winit::keyboard::{Key as WKey, ModifiersState};
 use winit::window::CursorIcon;
 
-use super::MainView;
 use super::context_menu::{self, Anchor as MenuAnchor, ContextMenu, MenuSubject};
 use super::place_chooser::PlaceTarget;
 use super::tab::{Tab, TabView};
+use super::{MainView, tabs};
 use crate::panes::explore::rail::{Bucket, RailTarget};
 
 #[cfg(test)]
@@ -47,6 +47,8 @@ pub(crate) enum NewKind {
     /// Never made on its own: it always asks what — files, or content in
     /// one of the import formats.
     Import,
+    /// The bounded task/document fixture opens as one transient tab.
+    MiniApp,
 }
 
 impl NewKind {
@@ -66,6 +68,9 @@ impl NewKind {
         }
         kinds.push(Self::Shell);
         kinds.push(Self::Import);
+        if koru_features::tasks() {
+            kinds.push(Self::MiniApp);
+        }
         kinds
     }
 
@@ -78,6 +83,9 @@ impl NewKind {
             Self::Agent => 'a',
             Self::Shell => 's',
             Self::Import => 'i',
+            // No mnemonic: retain the existing letters and use the launcher's
+            // arrows/Enter, pointer or accessible activation for this tile.
+            Self::MiniApp => '\0',
         }
     }
 
@@ -90,6 +98,7 @@ impl NewKind {
             Self::Agent => icons::ROBOT,
             Self::Shell => icons::TERMINAL,
             Self::Import => icons::IMPORT,
+            Self::MiniApp => icons::CHECK_SQUARE,
         }
     }
 
@@ -101,6 +110,7 @@ impl NewKind {
             Self::Agent => I18nKey::TerminalKindAgent,
             Self::Shell => I18nKey::TerminalKindShell,
             Self::Import => I18nKey::LauncherImport,
+            Self::MiniApp => I18nKey::MiniAppTitle,
         }
     }
 
@@ -145,6 +155,34 @@ pub(crate) struct LauncherAsk {
 }
 
 impl MainView {
+    /// Restore the list under the tab strip's `+`, using the existing flyouts.
+    pub(super) fn open_new_tab_menu(&mut self) -> bool {
+        self.dismiss_settings_menus();
+        self.nested = None;
+        self.submenu = None;
+        self.launcher = None;
+        self.place_chooser = None;
+        self.tooltip.clear();
+        self.ensure_tab_widths();
+        let button = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
+        self.profile_probe.refresh(self.agent.wake_proxy());
+        if koru_features::ai() {
+            self.ai_chat.activate();
+        }
+        self.snapshot_plus_menu();
+        let mut menu = ContextMenu::aligned(
+            &mut self.engine,
+            MenuSubject::NewTab,
+            (button.x, button.y + button.h),
+            context_menu::new_tab_items(),
+            MenuAnchor::Cursor,
+        );
+        let enabled = self.enabled_items(&menu);
+        menu.step(&enabled, 1);
+        self.menu = Some(menu);
+        true
+    }
+
     /// Open the launcher. Any menu, chooser or tooltip goes: it is the
     /// newest thing asked for.
     pub(crate) fn open_launcher(&mut self) -> bool {
@@ -162,7 +200,8 @@ impl MainView {
         let tiles = kinds.iter().map(|kind| kind.tile(lang)).collect();
         self.launcher = Some(LauncherAsk {
             launcher: Launcher::open(t(lang, I18nKey::LauncherTitle), tiles)
-                .with_hint(t(lang, I18nKey::LauncherHint)),
+                .with_hint(t(lang, I18nKey::LauncherHint))
+                .with_hint_emphasis(&["Alt", "Shift", "Mayús", "Umschalt", "Maj"]),
             kinds,
         });
         true
@@ -202,6 +241,9 @@ impl MainView {
         if kind == NewKind::Import {
             return self.open_import_list(at);
         }
+        if kind == NewKind::MiniApp {
+            return self.open_mini_app_fixture();
+        }
         if alt {
             return self.open_place_chooser(PlaceTarget::New(kind), at.point());
         }
@@ -217,11 +259,17 @@ impl MainView {
     /// The Tasks pages a new task can be written on, under the Task tile:
     /// the queues, then the person's lists.
     fn open_task_destinations(&mut self, at: AskAt) -> bool {
-        context_menu::set_task_list_names(
+        context_menu::set_task_lists(
             self.list_table
                 .iter()
-                .filter(|entry| entry.deleted_ms.is_none())
-                .map(|entry| (entry.id, entry.name.clone()))
+                .map(|node| {
+                    (
+                        node.entry.id,
+                        node.entry.name.clone(),
+                        context_menu::static_accent_token(node.entry.color.as_deref()),
+                        node.depth,
+                    )
+                })
                 .collect(),
         );
         let mut menu = ContextMenu::aligned(
@@ -297,6 +345,7 @@ impl MainView {
             NewKind::Task => self.new_task(split),
             NewKind::Chat => self.new_chat(split),
             NewKind::Import => self.open_import_list(self.next_ask_at(false)),
+            NewKind::MiniApp => self.open_mini_app_fixture(),
             NewKind::Agent | NewKind::Shell => match self.default_profile(kind) {
                 Some(index) => self.open_session_tab_where(index, None, split),
                 // Nothing of that kind is installed: the list says so — a
@@ -309,6 +358,9 @@ impl MainView {
 
     /// A draft document, in a new tab or a split.
     fn new_document_tab(&mut self, split: Option<SplitSide>) -> bool {
+        if self.current_workspace().is_none() {
+            return self.new_tab();
+        }
         let Some(side) = split else {
             return self.new_tab();
         };
@@ -452,6 +504,9 @@ impl MainView {
             return;
         };
         let launcher = ask.launcher.clone();
-        launcher.draw(scene, root, &mut self.engine, self.viewport);
+        let viewport = self.viewport;
+        koru_ui::modal::draw(scene, root, viewport, |scene| {
+            launcher.draw(scene, root, &mut self.engine, viewport);
+        });
     }
 }

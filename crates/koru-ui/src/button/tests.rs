@@ -5,6 +5,24 @@
 use super::*;
 
 #[test]
+fn compact_action_elision_respects_allocation_without_changing_its_name() {
+    let mut engine = TextEngine::new();
+    let name = "A very long document selection label that must remain accessible";
+    for glyph in [None, Some(koru_draw::icons::ENTER)] {
+        let button = ActionButton::new(name, ActionStyle::Secondary, glyph);
+        for width in [0.0, 8.0, 30.0, 100.0, 500.0] {
+            let (label, icon) = button.elided_content(&mut engine, width);
+            let content = engine.simple_layout(&label, theme::role::row()).width()
+                + icon.map_or(0.0, |glyph| {
+                    engine.icon_layout(glyph, ActionButton::ICON_SIZE).width() + ActionButton::GAP
+                });
+            assert!(content <= (width - ActionButton::PAD_X * 2.0).max(0.0));
+            assert_eq!(button.label, name);
+        }
+    }
+}
+
+#[test]
 fn a_row_is_laid_out_from_the_right() {
     let rects = row_from_right(400.0, 100.0, &[90.0, 120.0]);
     assert_eq!(rects.len(), 2);

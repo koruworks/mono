@@ -240,6 +240,15 @@ pub struct ListLookup {
     /// question is *what colour*, asked per row, and the picker's is *what
     /// is there*, asked once.
     listed: Vec<(ListId, String, Option<String>)>,
+    /// For a list whose name another live list shares: the lists it is
+    /// inside, ready to be put ahead of its name (*"Top 3 / "*). A name alone
+    /// no longer identifies a list once two may share one under different
+    /// parents. Never part of the name the picker filters on.
+    paths: HashMap<ListId, String>,
+    /// The lists that are inside another list. What the picker's *New list*
+    /// row needs: it creates at the top level, so only a top-level namesake
+    /// makes the name taken.
+    nested: std::collections::HashSet<ListId>,
     /// Bumped on every replace, so a view can cheaply ask "did anything move".
     pub generation: u64,
 }
@@ -265,6 +274,41 @@ impl ListLookup {
             .filter_map(|(id, _, color)| color.clone().map(|c| (*id, c)))
             .collect();
         self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Say where the lists sit: the path prefix of each list whose name is
+    /// shared, and which lists are nested. Pushed beside
+    /// [`replace_named`](Self::replace_named) whenever the table moves, so a
+    /// parent's rename or a move changes the paths shown and no membership.
+    pub fn set_places(
+        &mut self,
+        paths: HashMap<ListId, String>,
+        nested: impl IntoIterator<Item = ListId>,
+    ) {
+        self.paths = paths;
+        self.nested = nested.into_iter().collect();
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// The path prefix shown ahead of this list's name, when its name alone
+    /// would not say which list it is.
+    pub fn path(&self, id: ListId) -> Option<&str> {
+        self.paths.get(&id).map(String::as_str)
+    }
+
+    /// Whether this list sits at the top level.
+    pub fn is_top_level(&self, id: ListId) -> bool {
+        !self.nested.contains(&id)
+    }
+
+    /// What a chip says for this list: its name, behind its path when
+    /// another list shares the name.
+    pub fn label(&self, id: ListId) -> Option<String> {
+        let name = self.name(id)?;
+        Some(match self.path(id) {
+            Some(path) => format!("{path}{name}"),
+            None => name.to_owned(),
+        })
     }
 
     /// Every list, in the rail's order: id, name, swatch.
@@ -387,7 +431,7 @@ fn face_of<'a>(
         // The list's name in the list's colour — the Tasks page's list chip.
         ChipSpec::List(id) => (
             ChipKind::Tag,
-            lists.name(*id).unwrap_or("List").to_owned(),
+            lists.label(*id).unwrap_or_else(|| "List".to_owned()),
             lists.resolve(*id).map(str::to_owned),
             None,
         ),

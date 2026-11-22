@@ -222,18 +222,18 @@ impl SharingEvidence {
 /// together", and a subject created afterwards starts by admitting the peer
 /// path rather than refusing it.
 ///
-/// Three things this deliberately is **not**:
+/// The seed's boundaries:
 ///
 /// - **Not the platform.** `Linked` is about what the person did, not what the
 ///   subject runs on. An unlinked phone seeds exactly as an unlinked desktop
 ///   does, and a linked desktop seeds exactly as a linked phone does.
 /// - **Not Cloud.** [`Self::seeded_mode`] stops at [`TransportMode::P2p`]:
 ///   linking two of your own devices is consent for them to talk to each
-///   other, not consent to put the data on somebody's server. Cloud still
-///   comes from the Profile prompt and nothing else (D258).
-/// - **Not retroactive.** It is read when a row is *created*. Rows that
-///   already exist are untouched, whatever happens to the linkage afterwards —
-///   promoting them would reverse D258 for data the person already has.
+///   other, not consent to put the data on somebody's server. Connected Cloud
+///   defaults are applied separately through the Store initializer.
+/// - Existing defaults are also promoted when a scope is bound. This seed
+///   handles new rows; `Store::enable_linked_defaults` handles older rows,
+///   preserving explicit choices (ADR-498-syncchoices).
 ///
 /// It lands as a default (`explicit_choice = false`), so a person who then
 /// sets that subject Local-only outranks it exactly as they outrank every

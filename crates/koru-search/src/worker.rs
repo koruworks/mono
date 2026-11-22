@@ -48,6 +48,17 @@
 //! carrying an id whose **name** moved". A colour, a new attribute definition
 //! and a merge onto the same spelling all reproject the same document and
 //! enqueue nothing, because none of them changes a byte of any fragment.
+//!
+//! ## Readings do not ride it, and say so through the queue
+//!
+//! The words read out of a picture or a file come through the [`Readings`]
+//! seam, asked whenever a document holding one is indexed. But a reading lives
+//! in a document the projector never walks (TECHNICAL D14), so a reading that
+//! *lands* reaches nobody here by itself. The daemon's readings mirror says so
+//! through two public doors on [`Queue`]: [`Queue::enqueue_document`] for the
+//! reading's parent, and [`Queue::enqueue_hashes`] for every other document in
+//! the workspace carrying a changed hash, which this module turns into
+//! documents with one read of the projection.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -56,7 +67,9 @@ use koru_projection::model::DocumentProjection;
 use koru_projection::{Consumer, Projections};
 use koru_store_core::ids::{DocumentId, WorkspaceId};
 
+use crate::lists::ListNames;
 use crate::model::{IndexStats, SearchResult};
+use crate::readings::{ReadingText, Readings};
 use crate::storage::{SEARCH_SCHEMA_VERSION, SearchIndex};
 use crate::tags::{KIND_SYSTEM, TAG_ROLE, TagNames, TagTable};
 
@@ -86,6 +99,10 @@ struct Inner {
     documents: Vec<(WorkspaceId, DocumentId)>,
     removed: Vec<DocumentId>,
     listings: Vec<WorkspaceId>,
+    /// Blob hashes whose reading changed, per workspace, not yet turned into
+    /// the documents that carry them. That turn is a read of `projection.db`,
+    /// so it happens on the indexer's thread rather than the caller's.
+    hashes: HashMap<WorkspaceId, HashSet<String>>,
     stats: IndexStats,
 }
 
@@ -94,7 +111,8 @@ impl Queue {
         let inner = self.lock();
         let mut stats = inner.stats.clone();
         stats.schema_version = SEARCH_SCHEMA_VERSION;
-        stats.pending = inner.documents.len() + inner.removed.len() + inner.listings.len();
+        stats.pending =
+            inner.documents.len() + inner.removed.len() + inner.listings.len() + inner.hashes.len();
         stats
     }
 
@@ -106,6 +124,7 @@ impl Queue {
             .iter()
             .map(|(w, _)| *w)
             .chain(inner.listings.iter().copied())
+            .chain(inner.hashes.keys().copied())
             .collect();
         all.sort_by_key(|w| w.to_storage());
         all.dedup();
@@ -114,7 +133,54 @@ impl Queue {
 
     pub fn is_empty(&self) -> bool {
         let inner = self.lock();
-        inner.documents.is_empty() && inner.removed.is_empty() && inner.listings.is_empty()
+        inner.documents.is_empty()
+            && inner.removed.is_empty()
+            && inner.listings.is_empty()
+            && inner.hashes.is_empty()
+    }
+
+    /// **Re-index one document**, as though the projector had announced it.
+    ///
+    /// For a caller outside the projector that knows a document's *search
+    /// text* moved while its projection did not — the Store daemon's readings
+    /// mirror, when a reading lands for a file or a page (TECHNICAL §7 "Never
+    /// walked, never versioned, and still heard"). The reading document is
+    /// never projected, so nothing else would ever tell the index.
+    ///
+    /// Cheap and safe from any thread: it takes this queue's mutex for a push
+    /// and does no I/O. A document already queued is not queued twice. A
+    /// document no listing names is dropped by the indexer, as any other is.
+    pub fn enqueue_document(&self, workspace: WorkspaceId, document: DocumentId) {
+        self.push_document(workspace, document);
+    }
+
+    /// **Re-index every document in `workspace` that carries one of
+    /// `hashes`** — a picture or a file whose reading changed.
+    ///
+    /// The hashes are recorded and the call returns. The indexer turns them
+    /// into documents on its own thread, with one read of `projection.db`
+    /// ([`Projections::documents_carrying`]), and queues exactly those: one
+    /// picture pasted into ten pages re-indexes ten documents, and nothing
+    /// else in the workspace.
+    ///
+    /// Cheap and safe from any thread, as [`enqueue_document`](Self::enqueue_document)
+    /// is: a mutex and a set insert. Hashes for one workspace accumulate until
+    /// the indexer takes them, so a burst of readings landing costs one query.
+    /// `b3:<hex>`, as `ProjectedNode::blob` spells them.
+    pub fn enqueue_hashes<I, S>(&self, workspace: WorkspaceId, hashes: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let fresh: Vec<String> = hashes.into_iter().map(Into::into).collect();
+        if fresh.is_empty() {
+            return;
+        }
+        self.lock()
+            .hashes
+            .entry(workspace)
+            .or_default()
+            .extend(fresh);
     }
 
     fn push_document(&self, workspace: WorkspaceId, document: DocumentId) {
@@ -208,6 +274,25 @@ pub struct Indexer {
     /// same reason `failed` dedupes by message.
     unlisted: usize,
     said_unlisted: Option<usize>,
+    /// Where the words read out of a workspace's pictures and files come from.
+    /// `None` in a host that wired none — a picture and a file are then found
+    /// by their names alone, which is what the index did before readings.
+    readings: Option<Box<dyn Readings>>,
+    /// Documents indexed while the readings source could not answer, with the
+    /// hashes they asked about, by workspace.
+    ///
+    /// **The `TagNames` lesson, applied before it had to be learned again.**
+    /// `None` means *not now*, so such a document is indexed without words —
+    /// and nothing else would ever ask again, because no reading changed and
+    /// the document did not either. The reconcile asks the source once per
+    /// workspace whether it can answer yet, and re-queues these when it can.
+    /// In memory, bounded by the documents that hold a picture or a file.
+    unread: HashMap<WorkspaceId, HashMap<DocumentId, Vec<String>>>,
+    /// Where a workspace's task lists come from. `None` indexes no list.
+    lists: Option<Box<dyn ListNames>>,
+    /// Workspaces whose lists and page-task markers this process has brought
+    /// up to date once ([`bootstrap`](Self::bootstrap)).
+    bootstrapped: HashSet<WorkspaceId>,
 }
 
 impl Indexer {
@@ -221,7 +306,19 @@ impl Indexer {
             tag_tables: HashMap::new(),
             unlisted: 0,
             said_unlisted: None,
+            readings: None,
+            unread: HashMap::new(),
+            lists: None,
+            bootstrapped: HashSet::new(),
         }
+    }
+
+    /// Install the task-list source, as [`with_tag_names`](Self::with_tag_names)
+    /// installs the tag table's. Without one no list is indexed and nothing
+    /// else changes.
+    pub fn with_list_names(mut self, lists: Box<dyn ListNames>) -> Self {
+        self.lists = Some(lists);
+        self
     }
 
     /// Install the tag-name source. The daemon does this in `search::spawn`,
@@ -229,6 +326,18 @@ impl Indexer {
     /// before there is one.
     pub fn with_tag_names(mut self, tags: Box<dyn TagNames>) -> Self {
         self.tags = Some(tags);
+        self
+    }
+
+    /// Install the readings source, as [`with_tag_names`](Self::with_tag_names)
+    /// installs the tag table's: the daemon's readings mirror implements
+    /// [`Readings`], and this is the only door it comes in by.
+    ///
+    /// With one installed, indexing a document asks it for the hashes of that
+    /// document's own live pictures and files, so a picture pasted into a page
+    /// is findable by words read elsewhere the moment the page is indexed.
+    pub fn with_readings(mut self, readings: Box<dyn Readings>) -> Self {
+        self.readings = Some(readings);
         self
     }
 
@@ -245,12 +354,16 @@ impl Indexer {
     /// Order matters: removals first, because indexing a document the store has
     /// dropped is work whose only result is a hit nobody can open; then
     /// listings, because a title a document is about to be indexed under should
-    /// be the current one; then documents.
+    /// be the current one; then changed readings, because they only ever turn
+    /// into documents; then documents.
     pub fn tick(&mut self, now_millis: i64) -> bool {
         if self.remove_due() {
             return true;
         }
         if self.listing_due(now_millis) {
+            return true;
+        }
+        if self.hashes_due() {
             return true;
         }
         if self.index_due(now_millis) {
@@ -263,6 +376,9 @@ impl Indexer {
         let Some(document) = self.queue.lock().removed.pop() else {
             return false;
         };
+        for documents in self.unread.values_mut() {
+            documents.remove(&document);
+        }
         match self.index.remove_document(&document.to_storage()) {
             Ok(()) => {
                 self.queue.lock().stats.removed += 1;
@@ -304,6 +420,50 @@ impl Indexer {
             }
             Err(why) => self.failed(why.0),
         }
+    }
+
+    /// Turn one workspace's changed hashes into the documents that carry them,
+    /// and queue those.
+    ///
+    /// **One query, and only the documents it names.** A reading landing must
+    /// not cost a workspace walk; the read model already knows which nodes
+    /// hold which blob. A failed read is counted and the hashes are dropped
+    /// rather than retried in a loop: the parent document was enqueued by
+    /// name beside them, and the next change to any carrier re-indexes it.
+    fn hashes_due(&mut self) -> bool {
+        let taken = {
+            let mut inner = self.queue.lock();
+            let Some(workspace) = inner.hashes.keys().next().copied() else {
+                return false;
+            };
+            inner
+                .hashes
+                .remove(&workspace)
+                .map(|hashes| (workspace, hashes))
+        };
+        let Some((workspace, hashes)) = taken else {
+            return false;
+        };
+        let hashes: Vec<String> = hashes.into_iter().collect();
+        match self.projections.documents_carrying(workspace, &hashes) {
+            Ok(documents) => {
+                // **Counts and ids only.** A hash is not a word anybody wrote,
+                // but it is the identity of somebody's file, and the count is
+                // all a reader of the log needs.
+                tracing::debug!(
+                    target: "koru_search",
+                    %workspace,
+                    hashes = hashes.len(),
+                    documents = documents.len(),
+                    "readings changed; re-indexing the documents that carry them"
+                );
+                for document in documents {
+                    self.queue.push_document(workspace, document);
+                }
+            }
+            Err(why) => self.failed(why.0),
+        }
+        true
     }
 
     fn index_due(&mut self, now_millis: i64) -> bool {
@@ -359,8 +519,15 @@ impl Indexer {
         // is subscribed to, and nothing else needs to be.
         if listed.kind == KIND_SYSTEM {
             self.refresh_tags(workspace);
+            // The list table is in the same document, and this is it changing.
+            self.refresh_lists(workspace);
         }
         let tags = self.tag_table(workspace);
+        // **The `TagNames` shape, for the words read out of this document's
+        // own pictures and files.** Asked on every index of the document, so a
+        // picture pasted into a page that was already read elsewhere is
+        // findable the moment the page is.
+        let read = self.readings_for(workspace, document, &projection);
 
         // Timed in three. Reading the read model, turning it into fragments and
         // writing them are three different things to be slow at, and
@@ -368,7 +535,9 @@ impl Indexer {
         let read_millis = reading.elapsed().as_millis() as u64;
 
         let building = std::time::Instant::now();
-        let fragments = crate::fragments::fragments(&projection, &listed.title, tags.as_deref());
+        let mut fragments =
+            crate::fragments::fragments(&projection, &listed.title, tags.as_deref());
+        fragments.extend(crate::fragments::reading_fragments(&projection, &read));
         // The typed half of the same walk. Counted inside `build_millis` on
         // purpose: it is one pass over the projection either way, and a second
         // number would suggest a second read that does not happen.
@@ -401,6 +570,89 @@ impl Indexer {
         inner.stats.read_millis = read_millis;
         inner.stats.build_millis = build_millis;
         inner.stats.write_millis = write_millis;
+    }
+
+    // ---------------------------------------------------------- readings
+
+    /// The readings of one document's own live pictures and files, by hash.
+    ///
+    /// Empty when there is nothing to ask about, when no source is wired, and
+    /// when the source answers `None` — *not now*. In that last case the
+    /// document is indexed with its names and titles and no words, exactly as
+    /// before readings existed, and remembered in [`unread`](Self::unread) so
+    /// the words are not lost for want of somebody asking again.
+    ///
+    /// A hash missing from a `Some` answer has no reading, so a reading that
+    /// disappears takes its fragments with it on this document's next index.
+    fn readings_for(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        projection: &DocumentProjection,
+    ) -> HashMap<String, ReadingText> {
+        if let Some(documents) = self.unread.get_mut(&workspace) {
+            documents.remove(&document);
+        }
+        let Some(source) = self.readings.as_ref() else {
+            return HashMap::new();
+        };
+        let hashes = crate::fragments::read_hashes(projection);
+        if hashes.is_empty() {
+            return HashMap::new();
+        }
+        match source.readings(workspace, &hashes) {
+            Some(found) => {
+                let asked: HashSet<&str> = hashes.iter().map(String::as_str).collect();
+                found
+                    .into_iter()
+                    .filter(|reading| asked.contains(reading.hash.as_str()))
+                    .map(|reading| (reading.hash.clone(), reading))
+                    .collect()
+            }
+            None => {
+                self.unread
+                    .entry(workspace)
+                    .or_default()
+                    .insert(document, hashes);
+                HashMap::new()
+            }
+        }
+    }
+
+    /// Ask the readings source, once per workspace, whether it can answer yet
+    /// for the documents indexed while it could not; re-queue those it now
+    /// can. Returns how many were re-queued.
+    ///
+    /// **One probe per workspace, not one per document**: the question is
+    /// whether the source is answering at all, and one document's hashes ask
+    /// it. Each re-queued document then asks properly when it is indexed.
+    fn retry_unread(&mut self) -> usize {
+        let Some(source) = self.readings.as_ref() else {
+            return 0;
+        };
+        let mut ready = Vec::new();
+        for (workspace, documents) in &self.unread {
+            let Some(hashes) = documents.values().next() else {
+                continue;
+            };
+            if source.readings(*workspace, hashes).is_some() {
+                ready.push(*workspace);
+            }
+        }
+        let mut requeued = 0;
+        for workspace in ready {
+            for document in self
+                .unread
+                .remove(&workspace)
+                .unwrap_or_default()
+                .into_keys()
+            {
+                self.queue.push_document(workspace, document);
+                requeued += 1;
+            }
+        }
+        self.unread.retain(|_, documents| !documents.is_empty());
+        requeued
     }
 
     // ------------------------------------------------------------- tags
@@ -484,6 +736,92 @@ impl Indexer {
         );
     }
 
+    /// Re-read one workspace's task lists and replace what the index holds
+    /// for them. Answers whether the source answered.
+    ///
+    /// **A read that fails is not an empty table.** With no source, or one
+    /// that says *not now*, nothing is written: the list rows already indexed
+    /// stay, and the next reconcile asks again. No other document is touched
+    /// — a list is not in any document's fragments.
+    fn refresh_lists(&mut self, workspace: WorkspaceId) -> bool {
+        let Some(lists) = self
+            .lists
+            .as_ref()
+            .and_then(|source| source.list_names(workspace))
+        else {
+            return false;
+        };
+        match self.index.refresh_lists(&workspace.to_storage(), &lists) {
+            Ok(changed) => {
+                if changed {
+                    // **Counts and ids only**, the tag refresh's rule: a
+                    // list's name is something a person wrote.
+                    tracing::debug!(
+                        target: "koru_search",
+                        %workspace,
+                        lists = lists.len(),
+                        "the task lists changed; their names were re-indexed"
+                    );
+                }
+                true
+            }
+            Err(why) => {
+                self.failed(why.0);
+                false
+            }
+        }
+    }
+
+    /// **What an index built before lists and task results existed is owed**,
+    /// once per workspace per process, whether or not any document is due.
+    ///
+    /// An index caught up to a revision is not re-read, so an upgrade alone
+    /// would leave it with no list rows and no root-task markers until
+    /// somebody edited a list or a page. So the first reconcile that sees a
+    /// workspace reads its lists, and queues **only** the pages that are
+    /// tasks and carry no marker yet — bounded by the number of such pages,
+    /// never a workspace walk. A read that fails does nothing and is tried
+    /// again at the next reconcile.
+    fn bootstrap(&mut self, workspace: WorkspaceId) -> usize {
+        if self.bootstrapped.contains(&workspace) {
+            return 0;
+        }
+        // No source wired at all: nothing will ever answer, and asking every
+        // two seconds for ever is the loop `compare` warns about.
+        let lists_done = self.lists.is_none() || self.refresh_lists(workspace);
+        let roots = match self.projections.task_root_documents(workspace) {
+            Ok(roots) => roots,
+            Err(why) => {
+                self.failed(why.0);
+                return 0;
+            }
+        };
+        let mut queued = 0;
+        for document in roots {
+            match self.index.has_root_task_marker(&document.to_storage()) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.queue.push_document(workspace, document);
+                    queued += 1;
+                }
+                Err(why) => {
+                    self.failed(why.0);
+                    return queued;
+                }
+            }
+        }
+        if lists_done {
+            self.bootstrapped.insert(workspace);
+            tracing::debug!(
+                target: "koru_search",
+                %workspace,
+                pages = queued,
+                "bootstrapped task lists and page-task markers"
+            );
+        }
+        queued
+    }
+
     /// Compare what the index consumed against what the projection holds, and
     /// enqueue the difference.
     ///
@@ -497,8 +835,11 @@ impl Indexer {
             return false;
         }
         self.reconciled_at = Some(now_millis);
+        // Not counted in `behind`: these are not the index trailing the read
+        // model, they are the readings source catching up.
+        let requeued = self.retry_unread();
         let Ok(found) = self.compare() else {
-            return false;
+            return requeued > 0;
         };
         // **This is the number that says search is stale.** It is the same
         // comparison the reconcile was already doing, so it costs nothing to
@@ -530,7 +871,7 @@ impl Indexer {
                 tracing::info!("search index: every projected document is listed");
             }
         }
-        found > 0
+        found > 0 || requeued > 0
     }
 
     fn compare(&mut self) -> SearchResult<usize> {
@@ -538,11 +879,20 @@ impl Indexer {
         let mut unlisted = 0;
 
         let ours = self.index.digests()?;
+        let mut mirrored = Vec::new();
         for (workspace, digest) in self.projections.listings()? {
             if ours.get(&workspace.to_storage()).map(Vec::as_slice) != Some(digest.as_slice()) {
                 self.queue.push_listing(workspace);
                 found += 1;
+            } else {
+                mirrored.push(workspace);
             }
+        }
+        // Only a workspace whose listing the index already holds: a page
+        // queued before its listing row exists would be abandoned, and the
+        // listing refresh that is queued above comes round again.
+        for workspace in mirrored {
+            found += self.bootstrap(workspace);
         }
 
         let cursors = self.index.cursors()?;

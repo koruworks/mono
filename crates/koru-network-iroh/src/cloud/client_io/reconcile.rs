@@ -4,6 +4,7 @@
 //! Catalog traversal supplies admitted units; this does not invent discovery,
 //! authorize a scope, persist progress, or turn a completed pass into coverage.
 use super::*;
+use koru_account_core::cloud_admission::{Hold, Observation, Reason};
 use koru_replication::cloud::client_store::{Export, ExportRequest};
 use koru_store_core::errors::Code;
 use loro::VersionVector;
@@ -84,6 +85,10 @@ pub enum Event {
         unit: Unit,
         code: Code,
     },
+    AdmissionHeld {
+        unit: Unit,
+        reason: Reason,
+    },
     /// This captured exchange is finished, possibly with held directions.
     /// This is NOT DocumentCoverageV1 or a persistent/whole-catalog synced flag.
     Settled {
@@ -123,6 +128,120 @@ struct Pass<'a> {
     verify_again: bool,
     uploaded_version: Option<VersionVector>,
     upload_acked: bool,
+    local_version: Option<VersionVector>,
+}
+
+#[derive(Debug)]
+struct HeldUpload {
+    head: VersionVector,
+    hold: Hold,
+}
+
+/// Retained by the Workspace host across ordinary carrier renewal. Scope
+/// replacement drops the old handle; no hold survives account/incarnation loss.
+#[derive(Clone)]
+pub struct UploadAdmissionHolds {
+    state: Arc<std::sync::Mutex<AdmissionState>>,
+    /// This holder's own wake. A Profile session and its authority
+    /// Workspace's session share one state, and each must hear a release:
+    /// one shared permit would wake whichever of them happened to ask first.
+    wake: Arc<tokio::sync::Notify>,
+    clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+}
+
+#[derive(Debug, Default)]
+struct AdmissionState {
+    observation: Option<Observation>,
+    held: std::collections::HashMap<Unit, HeldUpload>,
+    wakes: Vec<std::sync::Weak<tokio::sync::Notify>>,
+}
+
+impl Default for UploadAdmissionHolds {
+    fn default() -> Self {
+        Self::with_clock(epoch_millis)
+    }
+}
+
+impl std::fmt::Debug for UploadAdmissionHolds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UploadAdmissionHolds")
+            .field("state", &self.state)
+            .finish_non_exhaustive()
+    }
+}
+
+impl UploadAdmissionHolds {
+    /// Wall-clock milliseconds from `clock`, so a test can cross the
+    /// 60-second resource cycle without waiting for it.
+    pub fn with_clock(clock: impl Fn() -> i64 + Send + Sync + 'static) -> Self {
+        Self {
+            state: Default::default(),
+            wake: Default::default(),
+            clock: Arc::new(clock),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, AdmissionState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The same holds with a wake of its own, for one session's reconciler.
+    fn session(&self) -> Self {
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let mut state = self.state();
+        state.wakes.retain(|wake| wake.strong_count() != 0);
+        state.wakes.push(Arc::downgrade(&wake));
+        drop(state);
+        Self {
+            state: self.state.clone(),
+            wake,
+            clock: self.clock.clone(),
+        }
+    }
+
+    pub fn observe(&self, observation: Observation) {
+        let now = (self.clock)();
+        if !observation.current(now) {
+            return;
+        }
+        let mut state = self.state();
+        if state
+            .observation
+            .is_some_and(|old| old.binding != observation.binding)
+        {
+            state.held.clear();
+        }
+        state.observation = Some(observation);
+        // A resource hold is released by its 60-second cycle alone, never by
+        // an observation: logical usage says nothing about that resource.
+        let ready = state.held.values().any(|held| {
+            !held.hold.reason.resource() && held.hold.clone().retry(Some(observation), now)
+        });
+        if ready {
+            state
+                .wakes
+                .retain(|wake| wake.upgrade().map(|wake| wake.notify_one()).is_some());
+        }
+    }
+
+    pub async fn changed(&self) {
+        self.wake.notified().await;
+    }
+
+    pub fn active(&self) -> bool {
+        !self.state().held.is_empty()
+    }
+
+    pub fn reason(&self, unit: Unit) -> Option<Reason> {
+        self.state().held.get(&unit).map(|held| held.hold.reason)
+    }
+}
+
+fn epoch_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or(0)
 }
 
 pub struct Reconciler<'a, R, W> {
@@ -130,6 +249,7 @@ pub struct Reconciler<'a, R, W> {
     pass: Option<Pass<'a>>,
     rooms: std::collections::HashSet<Unit>,
     leaves: std::collections::HashSet<Unit>,
+    admission: UploadAdmissionHolds,
     read: Box<dyn FnMut(Unit) -> Result<Read<'a>, Error> + Send + 'a>,
     export: Box<dyn FnMut(ExportRequest) -> Result<ExportJob<'a>, Error> + Send + 'a>,
 }
@@ -155,6 +275,7 @@ where
             pass: None,
             rooms: Default::default(),
             leaves: Default::default(),
+            admission: Default::default(),
             read: Box::new(move |unit| read(unit).map(|f| Box::pin(f) as Read<'a>)),
             export: Box::new(move |request| export(request).map(|f| Box::pin(f) as ExportJob<'a>)),
         }
@@ -179,8 +300,30 @@ where
             verify_again: false,
             uploaded_version: None,
             upload_acked: false,
+            local_version: None,
         });
         Ok(())
+    }
+
+    pub fn with_admission_holds(mut self, holds: UploadAdmissionHolds) -> Self {
+        self.admission = holds.session();
+        self
+    }
+
+    pub fn admission_holds(&self) -> UploadAdmissionHolds {
+        self.admission.clone()
+    }
+
+    /// Transfer an actually idle carrier to a bounded user inspection. A busy
+    /// reconciler is returned unchanged, including its original pending I/O,
+    /// Store ownership and deadlines; rejection never cancels a normal transfer.
+    pub fn try_inspection(self) -> Result<super::inspection::InspectionCarrier<'a, R, W>, Self> {
+        if self.pass.is_some() || !super::inspection::idle(&self.client) {
+            return Err(self);
+        }
+        Ok(super::inspection::InspectionCarrier {
+            client: self.client,
+        })
     }
 
     pub fn status(&self) -> Status {
@@ -266,6 +409,11 @@ where
         }
     }
 
+    /// [`Client::upload_decision_required`] for the unit scheduler: the only
+    /// condition under which a timed resource retry may offer its start.
+    pub fn upload_decision_required(&self) -> bool {
+        self.client.upload_decision_required()
+    }
     pub fn change_policy(&mut self, limit: usize) -> Result<(), Error> {
         self.client.change_policy(limit).map_err(|e| self.cancel(e))
     }
@@ -350,6 +498,37 @@ where
                 version,
                 _messages: messages,
             });
+            // A timed resource retry may offer its start only while this
+            // stream's current policy answers every start before any body
+            // (M2.TRANSFER-DECISION §4). Any other worker would be sent the
+            // whole document again, so there the hold stays and its cycle is
+            // not spent. Quota and plan holds wait for their own evidence.
+            let deciding = self.client.upload_decision_required();
+            let held = {
+                let now = (self.admission.clock)();
+                let mut state = self.admission.state();
+                let observation = state.observation;
+                state.held.get_mut(&unit).is_some_and(|held| {
+                    // Still the refused candidate while nothing local lies
+                    // beyond its head and what Cloud already holds: a download
+                    // merged since then moves the local version without adding
+                    // anything to offer. With nothing left to offer, the export
+                    // below answers `None` and retires the hold.
+                    let mut covered = held.head.clone();
+                    covered.merge(&remote.version);
+                    pass.local_version.as_ref().is_some_and(|local| {
+                        covered.includes_vv(local)
+                            && koru_replication::reconcile::missing(local, &remote.version).upload
+                    }) && ((held.hold.reason.resource() && !deciding)
+                        || !held.hold.retry(observation, now))
+                })
+            };
+            if held {
+                pass.upload_deferred = true;
+                pass.remote = Some(remote);
+                self.verify()?;
+                return Ok(Event::Progress);
+            }
             let request = ExportRequest::new(
                 self.client.scope,
                 unit,
@@ -388,6 +567,7 @@ where
                 Event::Downloaded(unit)
             }
             super::Event::Uploaded { unit, batch } => {
+                self.admission.state().held.remove(&unit);
                 let pass = self.pass.as_mut().ok_or(Error::Invalid)?;
                 if pass.unit != unit || !matches!(pass.step, Step::Upload) {
                     return Err(Error::Invalid);
@@ -420,6 +600,30 @@ where
                 Event::Deferred {
                     start,
                     upload: true,
+                }
+            }
+            super::Event::UploadRefused { start, reason } => {
+                let pass = self.pass.as_mut().ok_or(Error::Invalid)?;
+                if pass.unit != start.unit || !matches!(pass.step, Step::Upload) {
+                    return Err(Error::Invalid);
+                }
+                let head = pass.uploaded_version.clone().ok_or(Error::Invalid)?;
+                {
+                    let now = (self.admission.clock)();
+                    let mut state = self.admission.state();
+                    let hold = match state.observation {
+                        Some(observation) => {
+                            Hold::new(reason, observation.binding, Some(observation), None, now)
+                        }
+                        None => Hold::unobserved(reason, None, now),
+                    };
+                    state.held.insert(start.unit, HeldUpload { head, hold });
+                }
+                pass.upload_deferred = true;
+                self.verify()?;
+                Event::AdmissionHeld {
+                    unit: start.unit,
+                    reason,
                 }
             }
         })
@@ -477,6 +681,10 @@ where
                     pass.uploaded_version = Some(export.version().clone());
                     pass.step = Step::Send(export);
                 } else {
+                    // Cloud already holds everything here, so a hold on this
+                    // unit names a candidate that no longer exists.
+                    let unit = self.pass.as_ref().ok_or(Error::Invalid)?.unit;
+                    self.admission.state().held.remove(&unit);
                     self.verify()?;
                 }
                 Ok(Event::Progress)
@@ -500,7 +708,10 @@ where
                 };
                 let pass = self.pass.as_mut().ok_or(Error::Invalid)?;
                 match pass.step {
-                    Step::Read(_) => pass.step = Step::Join(version),
+                    Step::Read(_) => {
+                        pass.local_version = Some(version.clone());
+                        pass.step = Step::Join(version);
+                    }
                     Step::Verify(_) => {
                         if pass.verify_again {
                             self.verify()?;

@@ -881,7 +881,7 @@ fn a_hosted_delete_that_needs_a_fresh_sign_in_asks_for_one_and_resumes() {
 
 /// **No account id on a Profile's line** (2026-11-10): an account Profile
 /// says how it connects and syncs, not *Account 02e1519b*; one on no
-/// account still says *Local only*.
+/// account does not infer a transport mode from that absence.
 #[test]
 fn a_profiles_status_line_never_shows_its_account_id() {
     let c = ProfilesController::new();
@@ -894,7 +894,7 @@ fn a_profiles_status_line_never_shows_its_account_id() {
     );
     assert!(!line.starts_with(" · "), "no leading dot: {line}");
     let local = offline_profile("Mine");
-    assert!(c.status_line(&local).starts_with(koru_i18n::t(
+    assert!(!c.status_line(&local).contains(koru_i18n::t(
         crate::format::lang(),
         koru_i18n::Key::AccountSwitcherLocalOnly
     )));

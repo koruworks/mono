@@ -2,11 +2,31 @@
 
 use super::*;
 
+#[test]
+fn admission_refusals_preserve_exact_error_report_and_header_grammar() {
+    for code in &BlobCode::ALL[17..] {
+        assert_eq!(code.status(), Some(422));
+        assert_eq!(BlobCode::parse(code.as_str()), Some(*code));
+        assert_eq!(
+            serde_json::to_value(crate::wire::BlobErrorV1::from(*code)).unwrap(),
+            serde_json::json!({"code":code.as_str(), "message":"Cloud admission refused"})
+        );
+        let report = crate::wire::ReportOutcomeV1::Fenced { reason: *code };
+        let json = serde_json::json!({"state":"fenced", "reason":code.as_str()});
+        assert_eq!(serde_json::to_value(report).unwrap(), json);
+        assert_eq!(
+            serde_json::from_value::<crate::wire::ReportOutcomeV1>(json).unwrap(),
+            report
+        );
+    }
+    assert!(BlobCode::parse("feedback_due").is_none());
+}
+
 /// The registry is §7's, whole and in its order. A code that is added to the
 /// contract and not here — or here and not in the contract — is a vocabulary a
 /// person meets in one place and not the other.
 #[test]
-fn the_registry_is_exactly_the_contracts_seventeen_codes() {
+fn the_registry_is_exactly_the_contracts_codes() {
     let expected = [
         "malformed_range",
         "range_conflict",
@@ -25,6 +45,16 @@ fn the_registry_is_exactly_the_contracts_seventeen_codes() {
         "storage_unavailable",
         "mode_refuses_transport",
         "relay_path_refused",
+        "cloud_policy_unavailable",
+        "cloud_plan_required",
+        "cloud_document_count_limit",
+        "cloud_stored_document_bytes_limit",
+        "cloud_physical_bytes_limit",
+        "cloud_staging_bytes_limit",
+        "cloud_removal_capacity_limit",
+        "file_exceeds_plan_allowance",
+        "usage_unknown",
+        "account_over_quota",
     ];
     let actual: Vec<_> = BlobCode::ALL.iter().map(|code| code.as_str()).collect();
     assert_eq!(actual, expected);

@@ -67,14 +67,6 @@ pub(crate) fn lay_out(b: &mut Builder<'_>, lang: Lang, section: &TerminalSetting
     zoom_row(b, lang, section);
 
     cursor_card(b, lang, section);
-
-    b.card(Some(koru_i18n::t(lang, Key::AiToolInput)));
-    b.row_toggle(
-        t(lang, Key::SettingsSeparateInputArea),
-        Some(koru_i18n::t(lang, Key::SettingsComposerHint)),
-        section.composer_default,
-        Action::TerminalComposerDefault(!section.composer_default),
-    );
 }
 
 /// The mono families, each set in its own face.

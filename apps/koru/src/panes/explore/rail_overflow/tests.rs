@@ -1,6 +1,55 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+fn app_pin(n: u128) -> koru_settings::pins::Pin {
+    koru_settings::pins::Pin {
+        id: koru_settings::pins::PinId(n),
+        family: "33333333-3333-4333-8333-333333333333".into(),
+        version: format!("44444444-4444-4444-8444-{n:012x}"),
+        title: format!("App {n}"),
+    }
+}
+#[test]
+fn pin_group_preserves_footer_builtin_slots_and_cancels_obsolete_drag() {
+    testing::with(Features::ALL_ON, || {
+        let mut view = ExploreView::new();
+        view.replace_mini_app_pins((1..=20).map(app_pin).collect());
+        let modes = view.rail_modes();
+        let slots = modes
+            .iter()
+            .map(|m| view.rail_shortcut(*m))
+            .collect::<Vec<_>>();
+        for height in [350.0, 400.0, 554.0, 700.0, 1000.0] {
+            let band = Rect::new(0.0, 46.0, theme::RAIL_W, height);
+            let rects = view.apps_rail_rects(band);
+            assert!(rects.profile.y + rects.profile.h <= band.y + band.h);
+            assert!(rects.pin_overflow.y + rects.pin_overflow.h <= rects.help.y);
+            assert!(rects.pins.iter().all(|(_, r)| r.y + r.h <= rects.help.y));
+        }
+        assert_eq!(view.rail_modes(), modes);
+        assert_eq!(view.rail_order_storage(), "");
+        assert_eq!(
+            modes
+                .iter()
+                .map(|m| view.rail_shortcut(*m))
+                .collect::<Vec<_>>(),
+            slots
+        );
+        let band = Rect::new(0.0, 46.0, theme::RAIL_W, 1000.0);
+        let (_, r) = view.apps_rail_rects(band).pins[0];
+        let (x, y) = r.centre();
+        view.apps_rail_mouse_down(band, x, y);
+        assert!(view.rail_dragging());
+        view.rail_drag_move(band, -1000.0);
+        assert_eq!(view.mini_app_pins[0].id, koru_settings::pins::PinId(1));
+        let refreshed = vec![app_pin(99)];
+        view.replace_mini_app_pins(refreshed.clone());
+        assert!(!view.cancel_rail_drag(band));
+        assert_eq!(view.mini_app_pins, refreshed);
+        assert!(!view.nudge_pin(band, koru_settings::pins::PinId(99), true));
+        assert!(!view.nudge_pin(band, koru_settings::pins::PinId(99), false));
+    });
+}
 use koru_features::{Features, testing};
 
 #[test]

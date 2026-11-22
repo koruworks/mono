@@ -585,6 +585,50 @@ impl MobileAccount {
                 profile_id: request.profile_id.clone(),
                 enabled: request.cloud_sync_enabled.unwrap_or(false),
             },
+            wire::AccountAction::InspectCloudUsageWorkspaces => {
+                AccountCommand::InspectCloudUsageWorkspaces {
+                    request_id: request.requester,
+                    cursor: request.cloud_cursor.clone(),
+                }
+            }
+            wire::AccountAction::InspectCloudDocument => AccountCommand::InspectCloudDocument {
+                request_id: request.requester,
+                selection: koru_agent_wire::CloudDocumentSelectionPayload::new(
+                    request
+                        .cloud_document_selection_json
+                        .clone()
+                        .unwrap_or_default(),
+                )
+                .map_err(|_| "account_payload_invalid")?,
+            },
+            wire::AccountAction::RemoveCloudFile => AccountCommand::RemoveCloudFile {
+                request_id: request.requester,
+                selection: koru_agent_wire::CloudDocumentSelectionPayload::new(
+                    request
+                        .cloud_document_selection_json
+                        .clone()
+                        .unwrap_or_default(),
+                )
+                .map_err(|_| "account_payload_invalid")?,
+                node_id: request.cloud_file_node_id.clone().unwrap_or_default(),
+            },
+            wire::AccountAction::InspectCloudUsageDocuments => {
+                AccountCommand::InspectCloudUsageDocuments {
+                    request_id: request.requester,
+                    workspace_id: request
+                        .cloud_workspace_id
+                        .clone()
+                        .ok_or("account_payload_invalid")?,
+                    incarnation_id: request
+                        .cloud_incarnation_id
+                        .clone()
+                        .ok_or("account_payload_invalid")?,
+                    cursor: request.cloud_cursor.clone(),
+                }
+            }
+            wire::AccountAction::InspectCloudPlan => AccountCommand::InspectCloudPlan {
+                request_id: request.requester,
+            },
             wire::AccountAction::InspectCloudSync => AccountCommand::InspectCloudSync {
                 request_id: request.requester,
             },
@@ -890,6 +934,59 @@ fn operation_result(
             result.selected_scope = Some(scope_id);
             result.selected_account_id = account_id;
             "account_selected"
+        }
+        AccountOperationResult::CloudDocumentInspection {
+            selection,
+            payload,
+            failure,
+            ..
+        } => {
+            result.cloud_document_selection_json = Some(selection.as_str().to_owned());
+            result.cloud_document_inspection_json = payload.map(|p| p.as_str().to_owned());
+            result.error_code = failure.map(|f| f.code().to_owned());
+            "cloud_document_inspection"
+        }
+        AccountOperationResult::CloudFileRemoval {
+            selection,
+            node_id,
+            removed,
+            failure,
+            ..
+        } => {
+            result.cloud_document_selection_json = Some(selection.as_str().to_owned());
+            result.cloud_file_node_id = Some(node_id);
+            result.cloud_file_removed = removed;
+            result.error_code = failure.map(|f| f.code().to_owned());
+            "cloud_file_removal"
+        }
+        AccountOperationResult::CloudUsageWorkspaces {
+            payload, failure, ..
+        } => {
+            result.cloud_inventory_json = payload.map(|payload| payload.as_str().to_owned());
+            result.error_code = failure.map(|failure| failure.code().to_owned());
+            "cloud_usage_workspaces"
+        }
+        AccountOperationResult::CloudUsageDocuments {
+            workspace_id,
+            incarnation_id,
+            payload,
+            failure,
+            ..
+        } => {
+            result.cloud_inventory_json = payload.map(|payload| payload.as_str().to_owned());
+            result.error_code = failure.map(|failure| failure.code().to_owned());
+            result.cloud_workspace_id = Some(workspace_id);
+            result.cloud_incarnation_id = Some(incarnation_id);
+            "cloud_usage_documents"
+        }
+        AccountOperationResult::CloudPlan {
+            payload,
+            request_elapsed_millis,
+            ..
+        } => {
+            result.cloud_plan_json = payload.map(|payload| payload.as_str().to_owned());
+            result.cloud_plan_request_elapsed_millis = request_elapsed_millis;
+            "cloud_plan"
         }
         AccountOperationResult::SignedIn => "signed_in",
         // Desktop-only card query has no mobile command or projection yet.

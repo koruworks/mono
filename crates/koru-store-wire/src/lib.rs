@@ -63,8 +63,10 @@ pub use profile_deletion::*;
 pub mod bundle;
 mod creation;
 pub use creation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
+pub mod cloud_document;
 pub mod internal;
 pub mod profile_lifecycle;
+pub mod readings;
 pub mod search;
 pub mod tasks;
 
@@ -76,6 +78,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub mod reminders;
+
+/// The reader that finds words in pictures: `/v1/readings/reader` (OCR Plan
+/// 2.4).
+pub mod reader;
 
 // ------------------------------------------------------------------ profiles
 
@@ -628,6 +634,30 @@ pub struct ProfileTransportModeOutcome {
     /// Workspaces held out because somebody had already chosen for them.
     /// **Not a failure**: their choice is untouched, and that is the point.
     pub workspaces_left_alone: u32,
+}
+
+/// Device-local synchronization choices, as read from the Store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProfileTransportSettings {
+    pub mode: String,
+    pub explicit_choice: bool,
+    pub revision: i64,
+    pub workspaces: Vec<WorkspaceTransportSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceTransportSettings {
+    pub id: String,
+    pub name: String,
+    pub mode: String,
+    pub explicit_choice: bool,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SetWorkspaceTransportMode {
+    pub mode: String,
+    pub expected_revision: i64,
 }
 
 /// Rename a history marker. `label: None` clears the name; the marker then

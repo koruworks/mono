@@ -38,6 +38,8 @@ pub(super) const TITLE_TILE_GAP: f32 = 12.0;
 pub enum Page {
     /// One Profile on this device.
     Profile(ProfileId),
+    /// The workspace catalog for one Profile.
+    Workspaces(ProfileId),
     /// The create form.
     NewProfile,
     /// This computer's linked devices.
@@ -83,22 +85,46 @@ impl ManageView {
 
     /// The nav's region: its column, or the compact band of chips.
     pub(super) fn sidebar(&self) -> Rect {
+        if self.embedded.is_some() {
+            return self.embedded_sidebar;
+        }
         SHELL.sidebar(self.viewport, self.band_h)
     }
 
     /// Whether a point in the tab is the nav's.
     pub(super) fn in_nav(&self, x: f32, y: f32) -> bool {
         self.sidebar().contains(x, y)
+            || self
+                .profile_tabs
+                .iter()
+                .any(|(_, _, rect)| rect.contains(x, y))
     }
 
     /// The page's region: right of the nav, or under the compact band.
     pub(super) fn page_area(&self) -> Rect {
-        SHELL.page_area(self.viewport, self.band_h)
+        self.embedded.map_or_else(
+            || SHELL.page_area(self.viewport, self.band_h),
+            |(area, _)| {
+                let offset = self.profile_tabs_offset();
+                Rect::new(area.x, area.y + offset, area.w, (area.h - offset).max(0.0))
+            },
+        )
     }
 
     /// The page's column, unscrolled: the shared shell's.
     pub(super) fn column(&self) -> Rect {
-        SHELL.column(self.viewport, self.band_h)
+        self.embedded.map_or_else(
+            || SHELL.column(self.viewport, self.band_h),
+            |(_, column)| {
+                let offset = self.profile_tabs_offset();
+                Rect::new(
+                    column.x,
+                    column.y + offset,
+                    column.w,
+                    (column.h - offset).max(0.0),
+                )
+            },
+        )
     }
 
     /// Measure a page's head at the column's top: `title` from `indent` in,
@@ -189,6 +215,7 @@ impl ManageView {
     /// The page heading's text — what the accessibility tree calls the page.
     pub(super) fn page_title(&self) -> String {
         match self.page {
+            Some(Page::Workspaces(_)) => workspaces::TITLE.to_owned(),
             Some(Page::Profile(profile)) => self
                 .c
                 .profiles()
@@ -197,9 +224,15 @@ impl ManageView {
                 .map_or_else(|| "Profile".to_owned(), |row| row.name.clone()),
             Some(Page::NewProfile) => new_profile::TITLE.to_owned(),
             Some(Page::Devices) => self.devices_title(),
-            Some(Page::Cloud) => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::CloudTitle).to_owned()
-            }
+            Some(Page::Cloud) => koru_i18n::t(
+                crate::format::lang(),
+                if self.c.cloud_inventory().visible {
+                    koru_i18n::Key::CloudInventoryTitle
+                } else {
+                    koru_i18n::Key::CloudTitle
+                },
+            )
+            .to_owned(),
             None => "Manage".to_owned(),
         }
     }
@@ -208,6 +241,19 @@ impl ManageView {
     /// accessibility tree. One title line tall: the tree wants a place to
     /// point at, not a second measurement of the wrap.
     pub(super) fn heading_rect(&self) -> Rect {
+        if let Some(inventory) = &self.laid.inventory
+            && let Some(node) = inventory
+                .frame
+                .borrow()
+                .node(koru_draw::el::Key::surface("manage", "inventory-title"))
+        {
+            return Rect::new(
+                node.rect.x,
+                node.rect.y - self.page_scroll,
+                node.rect.w,
+                node.rect.h,
+            );
+        }
         let column = self.column();
         let line = theme::role::title().metrics.line_height;
         let y = column.y - self.page_scroll;
@@ -216,7 +262,7 @@ impl ManageView {
                 let name = self.laid.header.name;
                 Rect::new(name.x, y, self.laid.header.text_w.max(1.0), line)
             }
-            Some(Page::NewProfile) => Rect::new(column.x, y, column.w, line),
+            Some(Page::NewProfile | Page::Workspaces(_)) => Rect::new(column.x, y, column.w, line),
             None => self.page_area(),
             Some(Page::Devices | Page::Cloud) => Rect::new(column.x, y, column.w, line),
         }
@@ -226,7 +272,7 @@ impl ManageView {
     /// below the last thing, with Settings' air under it.
     pub(super) fn page_content_height(&self) -> f32 {
         match self.page {
-            Some(Page::Profile(_) | Page::Devices | Page::Cloud) => {
+            Some(Page::Profile(_) | Page::Workspaces(_) | Page::Devices | Page::Cloud) => {
                 self.column().y + self.laid.height + PageShell::BOTTOM_PAD
             }
             Some(Page::NewProfile) => {
@@ -245,6 +291,7 @@ impl ManageView {
         let scrolled = root * Affine::translate((0.0, -(self.page_scroll as f64)));
         match self.page {
             Some(Page::Profile(_)) => self.paint_profile_page(canvas, scrolled),
+            Some(Page::Workspaces(_)) => self.paint_workspaces_page(canvas, scrolled),
             Some(Page::NewProfile) => self.paint_new_profile(canvas, scrolled),
             Some(Page::Devices) => self.paint_devices_page(canvas, scrolled),
             Some(Page::Cloud) => self.paint_cloud_page(canvas, scrolled),

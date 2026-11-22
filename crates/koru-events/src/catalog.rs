@@ -652,6 +652,20 @@ payload!(DueChanged, "due.changed", |self| {
         .attr("entity_id", AttrValue::Id(self.entity_id))
 });
 
+/// A workspace's tasks changed, as the Store's read model now answers them:
+/// one appeared or went, was ticked, dated, renamed, moved in its list or
+/// filed under another — on this device or arriving from another. The
+/// Tasks surfaces' one outside trigger; they ask the read model again.
+pub struct TasksChanged {
+    pub workspace_id: Uuid,
+}
+
+payload!(TasksChanged, "projection.tasks.changed", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+        .workspace(WorkspaceId(self.workspace_id))
+        .subject(Subject::workspace(self.workspace_id.to_string()))
+});
+
 pub struct EntityRemoved {
     pub workspace_id: Uuid,
     pub document_id: Uuid,
@@ -884,6 +898,19 @@ payload!(
     }
 );
 
+/// The Store's list of Workspaces that are in this device's Trash while the
+/// account still holds them live changed (trash-recovery): one was first
+/// seen, stopped being listed, or was acknowledged. No subject on purpose:
+/// the list is replaced as a set, and a surface reads it back rather than
+/// following it off the bus.
+pub struct WorkspaceTrashedInAccountChanged;
+
+payload!(
+    WorkspaceTrashedInAccountChanged,
+    "workspace.catalog.trashed_in_account_changed",
+    |self| Draft::new(EventName::from_static(Self::NAME))
+);
+
 // ------------------------------------------ the settings authority's facts
 //
 // One producer: `koru-settings`, through the sink the Gateway hands it, after
@@ -925,6 +952,15 @@ fn settings_changed(name: &'static str, section: SettingsSection) -> Draft {
 }
 
 pub struct SettingsGlobalChanged;
+pub struct SettingsMiniAppPinsChanged;
+payload!(
+    SettingsMiniAppPinsChanged,
+    "settings.mini_app_pins_changed",
+    |self| {
+        let _ = self;
+        Draft::new(EventName::from_static(Self::NAME))
+    }
+);
 
 payload!(SettingsGlobalChanged, "settings.global_changed", |self| {
     let _ = self;
@@ -1377,6 +1413,35 @@ payload!(VoiceModelInstalled, "voice.model.installed", |self| {
         .attr("engine", AttrValue::Token(self.engine.token().to_string()))
         .attr("version", AttrValue::Version(self.version))
         .attr("size_mb_bucket", AttrValue::Bucket(self.size_mb_bucket))
+});
+
+// ----------------------------------------------------------------- reading
+//
+// The reader that finds words in pictures and scanned PDFs (OCR TECHNICAL
+// §10, §14), from the Store's reader installer. Counts only: no model id, no
+// path, nothing about any file — and, as for voice, no field that could carry
+// a word.
+
+/// The reader was installed — `reading.reader.installed`.
+pub struct ReadingReaderInstalled {
+    /// Megabytes, already bucketed — see [`bucket`].
+    pub size_mb_bucket: u32,
+}
+
+payload!(
+    ReadingReaderInstalled,
+    "reading.reader.installed",
+    |self| {
+        Draft::new(EventName::from_static(Self::NAME))
+            .attr("size_mb_bucket", AttrValue::Bucket(self.size_mb_bucket))
+    }
+);
+
+/// The reader's download was removed — `reading.reader.removed`.
+pub struct ReadingReaderRemoved;
+
+payload!(ReadingReaderRemoved, "reading.reader.removed", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
 });
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

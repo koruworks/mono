@@ -24,7 +24,7 @@ use koru_draw::text::TextEngine;
 use koru_draw::theme::preview::{Preview, PreviewSlot};
 use koru_draw::{icons, scene, theme};
 use koru_i18n::{Key as I18n, Lang, t};
-use koru_ui::selectable_list::SelectableList;
+use koru_ui::selectable_list::{ListScrollbar, SelectableList};
 use koru_ui::text_input::{InputStyle, TextInput};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -78,6 +78,7 @@ pub struct FontPickerSurface {
     lang: Lang,
     query: TextInput,
     list: SelectableList,
+    scrollbar_grab: Option<f32>,
     viewport: (f32, f32),
 }
 
@@ -142,6 +143,7 @@ impl FontPickerSurface {
             lang,
             query: TextInput::new(engine, theme::role::row()),
             list: SelectableList::new(ROW_H),
+            scrollbar_grab: None,
             viewport: (1.0, 1.0),
         };
         surface.light_current();
@@ -195,6 +197,15 @@ impl FontPickerSurface {
 
     fn list_height(&self) -> f32 {
         (self.viewport.1 - HEADER_H - FOOTER_H).max(0.0)
+    }
+
+    fn scrollbar(&self) -> Option<ListScrollbar> {
+        self.list
+            .scrollbar(self.rows().len(), self.list_height(), HEADER_H, 24.0)
+    }
+
+    fn list_rect(&self) -> Rect {
+        Rect::new(0.0, HEADER_H, self.viewport.0, self.list_height())
     }
 
     fn query_rect(&self) -> Rect {
@@ -325,6 +336,19 @@ impl FontPickerSurface {
     }
 
     pub fn mouse_down(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> Action {
+        if self.list_rect().contains(x, y)
+            && x >= self.viewport.0 - 14.0
+            && let Some(bar) = self.scrollbar()
+        {
+            let grab = if y >= bar.thumb_top && y < bar.thumb_top + bar.thumb_height {
+                y - bar.thumb_top
+            } else {
+                bar.thumb_height * 0.5
+            };
+            self.scrollbar_grab = Some(grab);
+            self.list.scroll = bar.scroll_for_pointer(y, grab);
+            return Action::Keep;
+        }
         let query = self.query_rect();
         if self.query.click(engine, query, x, y) {
             return Action::Keep;
@@ -336,7 +360,7 @@ impl FontPickerSurface {
             return self.moved(before);
         }
         let rows = self.rows();
-        if y < HEADER_H || y > HEADER_H + self.list_height() {
+        if !self.list_rect().contains(x, y) {
             return Action::Keep;
         }
         match self.list.row_at(HEADER_H, y, rows.len()) {
@@ -353,6 +377,14 @@ impl FontPickerSurface {
         self.list.scroll_by(delta, len, self.list_height());
     }
 
+    fn mouse_move(&mut self, y: f32) {
+        if let Some(grab) = self.scrollbar_grab
+            && let Some(bar) = self.scrollbar()
+        {
+            self.list.scroll = bar.scroll_for_pointer(y, grab);
+        }
+    }
+
     /// The rows a client can see, in surface coordinates: each row's label,
     /// whether it is in force, whether it is lit, and where it is drawn.
     fn visible_rows(&self) -> Vec<(usize, String, bool, bool, Rect)> {
@@ -363,7 +395,7 @@ impl FontPickerSurface {
         (first..last)
             .filter_map(|index| {
                 let y = self.list.row_y(HEADER_H, index);
-                if y + ROW_H < HEADER_H || y > HEADER_H + list_h {
+                if y + ROW_H <= HEADER_H || y >= HEADER_H + list_h {
                     return None;
                 }
                 let row = &rows[index];
@@ -397,6 +429,11 @@ impl FontPickerSurface {
             true,
         );
 
+        scene.push_clip_layer(
+            vello::peniko::Fill::NonZero,
+            root,
+            &scene::rect(0.0, HEADER_H, w - 14.0, self.list_height()),
+        );
         for (index, name, current, lit, rect) in self.visible_rows() {
             let y = rect.y;
             if lit {
@@ -424,14 +461,21 @@ impl FontPickerSurface {
                 )
             };
             let colour = if is_default { p.text_dim } else { p.text };
-            scene::draw_layout_first_line(scene, root, &label, PAD + 4.0, y + 6.0, Some(colour));
+            scene::draw_layout_first_line(
+                scene,
+                root,
+                &label,
+                PAD + 4.0,
+                scene::centre_y_in(&label, rect),
+                Some(colour),
+            );
             if current {
                 let tick = engine.icon_layout(icons::CHECK, 14.0);
                 scene::draw_layout(
                     scene,
                     root,
                     &tick,
-                    w - PAD - tick.width() - 2.0,
+                    w - PAD - tick.width() - 8.0,
                     y + (ROW_H - tick.height()) * 0.5,
                     Some(p.text_dim),
                 );
@@ -450,7 +494,17 @@ impl FontPickerSurface {
             scene::draw_layout_first_line(scene, root, &none, PAD + 4.0, y, Some(p.text_dim));
         }
 
-        // Footer: the toggle on the left, the keys on the right.
+        scene.pop_layer();
+        if let Some(bar) = self.scrollbar() {
+            scene::fill(
+                scene,
+                root,
+                p.scrollbar_thumb,
+                &scene::rrect(w - 9.0, bar.thumb_top, 5.0, bar.thumb_height, 2.5),
+            );
+        }
+
+        // Footer is outside the list clip, so a partial row cannot paint over it.
         let y = h - FOOTER_H + 7.0;
         let glyph = engine.icon_layout(
             if self.show_all {
@@ -694,6 +748,19 @@ impl super::MainView {
         }
     }
 
+    pub(super) fn font_picker_mouse_move(&mut self, y: f32) {
+        let bounds = self.font_picker_bounds();
+        if let Some(open) = self.font_picker.as_mut() {
+            open.surface.mouse_move(y - bounds.y);
+        }
+    }
+
+    pub(super) fn font_picker_mouse_up(&mut self) {
+        if let Some(open) = self.font_picker.as_mut() {
+            open.surface.scrollbar_grab = None;
+        }
+    }
+
     pub(super) fn draw_font_picker(&mut self, scene: &mut Scene, root: Affine) {
         let bounds = self.font_picker_bounds();
         let Some(open) = self.font_picker.as_mut() else {
@@ -750,6 +817,10 @@ impl super::MainView {
         let mut list: Vec<SemanticNode> = rows
             .into_iter()
             .map(|(index, label, current, lit, rect)| {
+                let list = open.surface.list_rect();
+                let top = rect.y.max(list.y);
+                let bottom = (rect.y + rect.h).min(list.y + list.h);
+                let rect = Rect::new(rect.x, top, rect.w, (bottom - top).max(0.0));
                 SemanticNode::new(
                     cx.instance(
                         super::accessibility::FONT_PICKER,
@@ -863,8 +934,8 @@ fn preview_lit(open: &mut Open, role: koru_settings_ui::FontRole, lit: &Lit) {
     };
     let value = theme::font_preview_value(face);
     match open.preview.as_mut() {
-        Some(preview) => preview.set(value),
-        None => open.preview = Some(Preview::new(PreviewSlot::Font(slot), value)),
+        Some(preview) => preview.set(u32::from(value)),
+        None => open.preview = Some(Preview::new(PreviewSlot::Font(slot), u32::from(value))),
     }
 }
 

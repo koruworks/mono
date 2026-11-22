@@ -363,38 +363,70 @@ impl FilterState {
 /// several fragments — its body, and one per labelled attribute — and without
 /// the field they collided, so restoring a selection onto an attribute hit
 /// silently landed on its body instead.
+/// What one result is, for remembering a selection and animating a row out.
+///
+/// **The page is part of it** when the hit names one: words read from page 3
+/// and from page 39 of one PDF are two different results, though they share a
+/// document, a node and a field. A hit with no page keeps the key it always
+/// had, so nothing remembered before this changes meaning.
 pub(super) fn hit_key(hit: &SearchHit) -> String {
-    format!(
+    let mut key = format!(
         "{}/{}/{}/{}",
         hit.workspace,
         hit.document.as_deref().unwrap_or("@workspace"),
         hit.node.as_deref().unwrap_or("@document"),
         hit.field,
-    )
+    );
+    if let Some(page) = hit.page {
+        key.push_str(&format!("/page:{page}"));
+    }
+    key
 }
 
-/// One row per document (or per workspace, when the hit *is* the workspace).
+/// One row per **target**: a task list, a task, or a document (or the
+/// workspace, when the hit *is* the workspace).
 ///
 /// The index matches fragments, so two paragraphs in the same page produce two
 /// hits with the same title. The surface shows only the best one — query order
 /// is already best-first — matching how the entity picker collapses.
-pub(super) fn keep_top_hit_per_document(hits: &mut Vec<SearchHit>) {
+///
+/// **A list and a task are targets of their own.** Two lists live in one
+/// system document and two tasks can live in one page; keyed by document they
+/// would each have been one row. So a list is keyed by its id and a task by
+/// the node that makes it one — several fragments of one task (its text and
+/// two attributes, or a page-task's title and its root line) are still one
+/// row, two tasks in one document are two, and the ordinary paragraphs of
+/// that document are still one more.
+///
+/// **Pages are fragments too.** Words read from page 3 and page 39 of one PDF
+/// are two hits with two keys ([`hit_key`]) but one document, so the file is
+/// still one row, and the row is the better-ranked page. The key below names
+/// the target and never the page, which is what keeps it so.
+pub(super) fn keep_top_hit_per_target(hits: &mut Vec<SearchHit>) {
     let mut seen = HashSet::with_capacity(hits.len());
-    hits.retain(|hit| {
-        let key = if hit.workspace.starts_with("ai:chat:") {
-            format!(
-                "{}/response/{}",
-                hit.workspace,
-                hit.node.as_deref().unwrap_or("@block")
-            )
-        } else {
-            match hit.document.as_deref() {
-                Some(document) => format!("{}/doc/{document}", hit.workspace),
-                None => format!("{}/ws", hit.workspace),
-            }
-        };
-        seen.insert(key)
-    });
+    hits.retain(|hit| seen.insert(target_key(hit)));
+}
+
+/// What a hit opens, as a key for grouping rows. Not the selection key:
+/// [`hit_key`] still tells two fragments of one target apart.
+pub(super) fn target_key(hit: &SearchHit) -> String {
+    if hit.workspace.starts_with("ai:chat:") {
+        return format!(
+            "{}/response/{}",
+            hit.workspace,
+            hit.node.as_deref().unwrap_or("@block")
+        );
+    }
+    if let Some(list) = &hit.list {
+        return format!("{}/list/{}", hit.workspace, list.id);
+    }
+    match (hit.document.as_deref(), &hit.task) {
+        (Some(document), Some(task)) => {
+            format!("{}/task/{document}/{}", hit.workspace, task.node)
+        }
+        (Some(document), None) => format!("{}/doc/{document}", hit.workspace),
+        (None, _) => format!("{}/ws", hit.workspace),
+    }
 }
 
 /// The manifest kind of a canvas document — `koru_core::explore::KIND_CANVAS`,
@@ -493,8 +525,51 @@ mod tests {
         other.document = Some("doc-2".into());
         other.snippet = "other document".into();
         let mut hits = vec![first.clone(), second, other.clone()];
-        keep_top_hit_per_document(&mut hits);
+        keep_top_hit_per_target(&mut hits);
         assert_eq!(hits, vec![first, other]);
+    }
+
+    /// Words read from one PDF's file node, as the index answers them.
+    fn a_read_hit(page: Option<u32>) -> SearchHit {
+        let mut hit = a_hit();
+        hit.document = Some("doc-pdf".into());
+        hit.node = Some("doc-pdf".into());
+        hit.document_kind = "file".into();
+        hit.kind = "file".into();
+        hit.field = koru_store_wire::search::field::READ.into();
+        hit.page = page;
+        hit
+    }
+
+    /// TECHNICAL §7 "The index": `hit_key` gains the page, so page 3 and page
+    /// 39 of one file are two results.
+    #[test]
+    fn two_pages_of_one_file_are_two_keys() {
+        let three = a_read_hit(Some(3));
+        let thirty_nine = a_read_hit(Some(39));
+        assert_ne!(hit_key(&three), hit_key(&thirty_nine));
+        assert_eq!(hit_key(&three), "ws-1/doc-pdf/doc-pdf/read/page:3");
+        // A read hit with no page — a picture, a one-page PDF, a text file —
+        // and every other hit keep the key they always had.
+        assert_eq!(hit_key(&a_read_hit(None)), "ws-1/doc-pdf/doc-pdf/read");
+        assert_eq!(hit_key(&a_hit()), "ws-1/doc-1/node-1/body");
+    }
+
+    /// …and still one row per file, and the row is the better page. Query
+    /// order is best-first, so the better page is the one that arrived first,
+    /// whichever page number it has.
+    #[test]
+    fn one_file_matching_on_several_pages_is_one_row_showing_the_best_page() {
+        let mut best = a_read_hit(Some(39));
+        best.score = 900.0;
+        let mut worse = a_read_hit(Some(3));
+        worse.score = 100.0;
+        let mut also = a_read_hit(Some(12));
+        also.score = 50.0;
+        let page_note = a_hit();
+        let mut hits = vec![best.clone(), worse, page_note.clone(), also];
+        keep_top_hit_per_target(&mut hits);
+        assert_eq!(hits, vec![best, page_note]);
     }
 
     fn a_hit() -> SearchHit {
@@ -518,6 +593,10 @@ mod tests {
             score: 1.0,
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
+            page: None,
+            picture_name: None,
+            list: None,
+            task: None,
         }
     }
 

@@ -1,0 +1,95 @@
+{
+  "format": "cloud-transfer-v1-decision-amendment",
+  "note": "The decision_required policy amendment. `valid` is the amended strict decoder's result; `baseline_valid` is the decoder as it stood before the field existed, which refuses every policy that carries the property.",
+  "cases": [
+    {
+      "name": "legacy-max-unchanged",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216}",
+      "valid": true,
+      "mode": "automatic",
+      "baseline_valid": true
+    },
+    {
+      "name": "explicit-false-normalizes-to-absence",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":false}",
+      "valid": true,
+      "mode": "automatic",
+      "baseline_valid": false
+    },
+    {
+      "name": "required-max",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":true}",
+      "valid": true,
+      "mode": "decision_required",
+      "baseline_valid": false
+    },
+    {
+      "name": "required-restricted",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":200000,\"decision_required\":true}",
+      "valid": true,
+      "mode": "decision_required",
+      "baseline_valid": false
+    },
+    {
+      "name": "zero-still-pauses",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":0,\"decision_required\":true}",
+      "valid": true,
+      "mode": "paused",
+      "baseline_valid": false
+    },
+    {
+      "name": "null-is-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":null}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "string-is-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":\"true\"}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "number-is-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":1}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "unknown-property-is-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":true,\"probe\":true}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "invented-one-byte-ceiling-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":1,\"decision_required\":true}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "unapproved-version-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":2,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":true}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "zero-generation-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":0,\"automatic_limit_bytes\":16777216,\"decision_required\":true}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "overflow-generation-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":9223372036854775808,\"automatic_limit_bytes\":16777216,\"decision_required\":true}",
+      "valid": false,
+      "baseline_valid": false
+    },
+    {
+      "name": "duplicate-property-invalid",
+      "json": "{\"kind\":\"transfer_policy\",\"version\":1,\"policy_generation\":1,\"automatic_limit_bytes\":16777216,\"decision_required\":true,\"decision_required\":false}",
+      "valid": false,
+      "baseline_valid": false
+    }
+  ]
+}

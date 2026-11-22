@@ -11,6 +11,10 @@
 # How to change an entry: README.md beside this file.
 
 # Build-time icon generator inputs. No Python or archive access at runtime.
+# A2UI 1.0 schema references, Apache-2.0; bounded first-party runtime subset.
+file third-party/a2ui/v1_0/agent_to_renderer.json 2f575f783fdda0e4d175fe5d331661655e4a4901613262322792dae7e823761d https://raw.githubusercontent.com/a2ui-project/a2ui/84474c34f151f19eaebd1f416065b027722adc15/specification/v1_0/json/agent_to_renderer.json
+file third-party/a2ui/v1_0/common_types.json c4e78305be1de73eecb37f8179ba169730250611703683af291b18135a6430dc https://raw.githubusercontent.com/a2ui-project/a2ui/84474c34f151f19eaebd1f416065b027722adc15/specification/v1_0/json/common_types.json
+file third-party/a2ui/v1_0/catalog_definition.json 836a48b2deb7ae76c3b68cb4e79c2faa24cba36d4d5396474894796797364d44 https://raw.githubusercontent.com/a2ui-project/a2ui/84474c34f151f19eaebd1f416065b027722adc15/specification/v1_0/json/catalog_definition.json
 file third-party/icons/lucide-static-0.477.0.tgz d6aae3a0e1303679ff4fea360ee74a662a8bd27500cb20fb43b75825be3bbce6 https://registry.npmjs.org/lucide-static/-/lucide-static-0.477.0.tgz
 file third-party/icons/tabler-icons-3.31.0.tgz ff1057024d11d9eb36e2292433aa4c1488a7c29f2378dd42d8a0be2623cc3819 https://registry.npmjs.org/@tabler/icons/-/icons-3.31.0.tgz
 file third-party/icons/remixicon-4.6.0.tgz dfbfcaadee403404d541d96d5e041f99197dce462e563a48c110e0877d9c3a53 https://registry.npmjs.org/remixicon/-/remixicon-4.6.0.tgz
@@ -19,6 +23,8 @@ crate onenote_parser 2.0.0 d9850dc986316a0f729457917284a8e63ff06a359be2ba1ce0512
 crate sherpa-onnx 1.13.6 93440301c4240bd5d83496ab9adeee889be48d9428f9c01c37e5ae4ef33ba9e2 daa9fd560d3d8df2bb790e63388b1819299fbeca327ab79a830b0843c38bfad0
 crate sherpa-onnx-sys 1.13.6 4d627abc4624c845e628ad87cca4ff9ac265fc643021d155f2721ac589eeb324 014eff842ac5132713e57809442e1cdf07842988bde6bc2d7fe54d770cebd0ec
 crate merman-render 0.9.0 c714e6ca6057d9132227d5d6ff9f20f85044a60dc8e4d24bce2dcd8a3b2fc60f 9f1c44344c6e78246b9e48a5373b33590099d9fa8eab940e787b8d83b4dcd1be
+crate winit 0.30.13 a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d 418f5299d92c32680c705fd6d7bf9c18a8f7baca4d0b60b6e27a01d1f993c6fc
+crate oar-ocr 0.10.2 5efb1b5c83d5e18cf0082b4222b420b3c193694bbd2d27e78fbad5ee29ab517d 1090d0c582f790557c4bad857d0e5c1ccc28fb7a1b4f3f043f022585874a43de
 
 # The TypeScript grammar koru-blocks compiles in (include_str!): Microsoft's
 # TypeScript-Sublime-Plugin as machine-converted by bat, from bat v0.24.0.
@@ -34,3 +40,12 @@ file crates/koru-blocks/assets/TypeScript.sublime-syntax 28ee3a665973468be16e44c
 file apps/android/gradle/wrapper/gradle-wrapper.jar 3b8a25775a69158b5ad2b1d17a80a88dc7b40a352a73eb27d06c612a7ce68e98 https://raw.githubusercontent.com/gradle/gradle/dcc5ee0ec88270575344e6afd490f96d96f84ab3/gradle/wrapper/gradle-wrapper.jar
 file apps/android/gradlew e01b5c97892572c82405c02b96a3382379100e7d825ce7c48883d95c26928750 https://raw.githubusercontent.com/gradle/gradle/dcc5ee0ec88270575344e6afd490f96d96f84ab3/gradlew exec
 file apps/android/gradlew.bat ad2fac6060c5b929bed15d428e09483e52747d0120874346861ad4ec324af64c https://raw.githubusercontent.com/gradle/gradle/dcc5ee0ec88270575344e6afd490f96d96f84ab3/gradlew.bat crlf
+# Glyph-only coverage controls; see patches/vello.md.
+crate vello 0.8.0 7484a935acbced16ca6b2a7e6c8d6aa2b32ca0aff269c1b95f62be9b8f672c41 19dd929d5cd51942493b2df88e88cb22d8b82002bc73018995d64b97bf860f53
+crate vello_encoding 0.8.0 d53d864987821f40431e62608bf0f58342db57f2f2860628c8cfc28e16a1cc39 1328dd8545f85e5ac926d2c5ac360422d3694cd5c1fe513649879aa8d971a1bf
+crate vello_shaders 0.8.0 c455e04d570129212ecc4c0fdaa051ad66e5be15781a75b38c519d08120db374 609b869017f860784a0680b739c6d01fb142dd112f74938e4a7db1db27255873
+
+# Parley v0.11.1 reference editor; patched by apps/koru-font-test/build.rs.
+file third-party/parley-reference/main.rs 3e4177437bfee39d2efd162d1032666dbaceb2edbc4a7f6793a8352f27797ee8 https://raw.githubusercontent.com/linebender/parley/eea3503dd6cf17130cbb07348e0ff2c918300e94/examples/vello_editor/src/main.rs
+file third-party/parley-reference/text.rs 28f5e1f1bdeee4bf44e47d9ec4bf0b97bcfb41d4e90675eb5dea90b4e8d04d33 https://raw.githubusercontent.com/linebender/parley/eea3503dd6cf17130cbb07348e0ff2c918300e94/examples/vello_editor/src/text.rs
+file third-party/parley-reference/access_ids.rs 0a73c7cd753dd2b66e9238185b88378e85ec7e7ad73989bbc7217be5f81f4ccf https://raw.githubusercontent.com/linebender/parley/eea3503dd6cf17130cbb07348e0ff2c918300e94/examples/vello_editor/src/access_ids.rs

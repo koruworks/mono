@@ -224,6 +224,8 @@ pub const MAX_TRACKED_UNITS: usize = 256;
 /// a restart would start to look like a durable verdict about a document.
 #[derive(Debug, Default)]
 pub struct Deferrals {
+    pub admissions:
+        HashMap<WorkspaceId, koru_network_iroh::cloud::client_io::reconcile::UploadAdmissionHolds>,
     units: HashMap<Unit, u32>,
 }
 
@@ -632,7 +634,13 @@ where
                 store_answer(store_result(Ok(reply)).await?)
             })))
         },
-    );
+    )
+    .with_admission_holds(ledger(&deferrals, |held| {
+        held.admissions
+            .entry(scope.eligibility_workspace)
+            .or_default()
+            .clone()
+    }));
 
     // Viewer rooms carry document bodies, which a manifest-stage credential
     // does not admit.
@@ -766,31 +774,87 @@ where
             Plan::Workspace { workspace_id } => Some(*workspace_id),
             Plan::Profile { .. } => None,
         };
-        match wait_or_serve(
-            &mut sync,
-            &mut live,
-            &outcome,
-            &authorize,
-            scope,
-            &mut rooms,
-            &deferrals,
-            &versions,
-            &mut progress,
-            &mut hooks,
-            &worker,
-            workspace,
-        )
-        .await?
-        {
-            Next::Pass => {}
-            Next::Done => return Ok(Ended::Finished(outcome)),
-            Next::Advance(stage) => return Ok(Ended::Advance(stage, outcome)),
+        loop {
+            match wait_or_serve(
+                &mut sync,
+                &mut live,
+                &outcome,
+                &authorize,
+                scope,
+                &mut rooms,
+                &deferrals,
+                &versions,
+                &mut progress,
+                &mut hooks,
+                &worker,
+                workspace,
+            )
+            .await?
+            {
+                Next::Pass => break,
+                Next::Done => return Ok(Ended::Finished(outcome)),
+                Next::Advance(stage) => return Ok(Ended::Advance(stage, outcome)),
+                Next::Inspect(mut job) => {
+                    use koru_store_wire::cloud_document::{
+                        CloudDocumentAction, CloudDocumentFailure,
+                    };
+                    let denied = *job.cancelled.borrow()
+                        || !(job.live)()
+                        || Instant::now() >= job.deadline
+                        || hooks.stage != Stage::Full
+                        || job.session.scope.principal != scope.principal
+                        || job.session.scope.eligibility_workspace != scope.eligibility_workspace
+                        || job.session.scope.profile != scope.profile
+                        || job.session.scope.manifest != scope.manifest;
+                    if denied {
+                        let _ = job.reply.send(Err(CloudDocumentFailure::Unavailable));
+                        continue;
+                    }
+                    let carrier = match sync.try_inspection() {
+                        Ok(carrier) => carrier,
+                        Err(busy) => {
+                            sync = busy;
+                            let _ = job.reply.send(Err(CloudDocumentFailure::Unavailable));
+                            continue;
+                        }
+                    };
+                    let removal =
+                        matches!(job.request.action, CloudDocumentAction::RemoveFile { .. });
+                    let uncertain = if removal {
+                        CloudDocumentFailure::OutcomeUnknown
+                    } else {
+                        CloudDocumentFailure::Unavailable
+                    };
+                    let run = crate::cloud_inspection::run(
+                        carrier,
+                        scope,
+                        job.session.account,
+                        job.request.selection,
+                        job.request.action,
+                        Timestamp::now().millis(),
+                        job.request.can_write,
+                        job.retention,
+                    );
+                    let answer = tokio::select! {
+                        biased;
+                        _ = job.cancelled.changed() => Err(uncertain),
+                        _ = tokio::time::sleep_until(job.deadline) => Err(uncertain),
+                        answer = run => answer,
+                    };
+                    let answer = if (job.live)() { answer } else { Err(uncertain) };
+                    let _ = job.reply.send(answer);
+                    // Inspection owns and closes this carrier. The normal host
+                    // observes session completion and reconnects in its usual way.
+                    return Ok(Ended::Finished(outcome));
+                }
+            }
         }
     }
 }
 
 /// What a session does after a pass.
 enum Next {
+    Inspect(crate::cloud_inspection_host::Job),
     Pass,
     Done,
     Advance(Stage),
@@ -848,6 +912,7 @@ where
         // Whatever was pending before the command still is.
         hinted = true;
         match command {
+            driver::Command::Inspect(job) => return Ok(Next::Inspect(job)),
             driver::Command::Advance(stage) if stage != hooks.stage => {
                 return Ok(Next::Advance(stage));
             }
@@ -1082,6 +1147,15 @@ where
                     upload_deferred,
                     download_deferred,
                 });
+            }
+            Event::AdmissionHeld { unit, reason } => {
+                outcome.deferred.push(unit);
+                tracing::info!(
+                    ?unit,
+                    code = reason.code(),
+                    "cloud upload admission held; reads continue"
+                );
+                progress(Progress::Deferred { unit, upload: true });
             }
             Event::Refused { unit, code } => {
                 refused = true;

@@ -568,6 +568,8 @@ fn target(profile: &str, workspace: &str) -> Target {
         trashed: false,
         match_text: None,
         new_window: false,
+        kind: koru_agent_wire::TargetKind::Document,
+        list: None,
     }
 }
 

@@ -25,6 +25,16 @@ pub struct UpdateClient {
 
 impl UpdateClient {
     pub fn new(base_url: &str, user_agent: &str) -> Result<Self, String> {
+        Self::with_connect_timeout(base_url, user_agent, Duration::from_secs(5))
+    }
+
+    /// [`Self::new`] with its own connect timeout, for the site leg of a check
+    /// ([`crate::site`]), which should give up sooner than the origin.
+    pub fn with_connect_timeout(
+        base_url: &str,
+        user_agent: &str,
+        connect_timeout: Duration,
+    ) -> Result<Self, String> {
         let base_url = Url::parse(base_url).map_err(|e| e.to_string())?;
         if base_url.scheme() != "https" && !debug_override_allowed(&base_url) {
             return Err("the update origin must use HTTPS".into());
@@ -43,7 +53,7 @@ impl UpdateClient {
         });
         let client = Client::builder()
             .user_agent(user_agent)
-            .connect_timeout(Duration::from_secs(5))
+            .connect_timeout(connect_timeout)
             .timeout(Duration::from_secs(15))
             .redirect(policy)
             .build()
@@ -57,6 +67,21 @@ impl UpdateClient {
         etag: Option<&str>,
     ) -> Result<FetchResult, String> {
         let url = target.manifest_url(&self.base_url)?;
+        self.fetch_manifest_at(url, target, etag)
+    }
+
+    /// Fetch the manifest for `target` from exactly `url`. The site's route
+    /// carries a query the origin's layout cannot express, so its URL is
+    /// built by [`crate::site`] rather than from the base.
+    pub fn fetch_manifest_at(
+        &self,
+        url: Url,
+        target: &UpdateTarget,
+        etag: Option<&str>,
+    ) -> Result<FetchResult, String> {
+        if url.scheme() != "https" && !debug_override_allowed(&url) {
+            return Err("the update origin must use HTTPS".into());
+        }
         let mut request = self.client.get(url);
         if let Some(value) = etag {
             request = request.header(IF_NONE_MATCH, value);

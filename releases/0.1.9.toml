@@ -1,0 +1,117 @@
+title = "A New menu on Ctrl+T, words in pictures on every computer, and workspaces back from the Trash"
+
+summary = [
+  "Ctrl+T opens a New menu with a key for every row, your task lists, and a Move flyout that splits a tab into its own pane.",
+  "Koru reads the words in pictures and scans on Linux and Apple silicon Macs too, and Ctrl+F finds them in a document.",
+  "A workspace in this device's Trash that your Koru account still has can be restored in one step, and tasks changed elsewhere show up at once.",
+  "Koru for Mac now needs macOS 13.4 or later: on an older Mac, don't install this update.",
+]
+
+body = """
+## The New menu
+
+The `+` beside the tabs is now the New menu, and **Ctrl+T** (⌘T on a Mac)
+opens it instead of making a document straight away. *New document* is still
+its first row.
+
+- Every row has an underlined letter that opens it: **D** for Documents, **T**
+  for Tasks, **C** for Chats, **I** for Import and so on, so Ctrl+T then D
+  opens the document list.
+- A **Tasks** flyout lists your task lists, nested and in their colours.
+  Choosing one opens it ready for *Add a task*; *New list* starts a new one.
+- A **Move** flyout splits the pane and moves the current tab to the top,
+  right, bottom or left. The arrow keys pick the side directly. It is dimmed
+  when the pane has only one tab.
+- With the panes split, pressing Ctrl+T again moves the menu to the next
+  pane's `+`.
+
+## Tabs and shortcuts
+
+- **Ctrl+Tab** now works like a tab switcher: hold Ctrl to show the open tabs
+  and press Tab to step through them, then let go to switch. Hover a row to
+  close that tab with its ✕. *View open tabs* in the New menu opens the same
+  list and keeps it open.
+- The **command bar** moves from Ctrl+P to **Ctrl+K** (⌘K).
+- **Insert link** moves from Ctrl+K to **Ctrl+Shift+L** (⇧⌘L). Some Windows
+  utilities take Ctrl+Shift+L for themselves; if yours does, insert a link
+  from the format menu.
+- The `+` on a document in the sidebar now opens a new, empty child page right
+  away instead of asking for a name first. Type to keep it; Esc drops it.
+- Pressing a task list's colour dot in the sidebar opens its colour picker.
+
+## Words in pictures, on every computer
+
+On Linux (x86_64) and on Macs with Apple silicon, Koru can now read the words
+in pictures and scanned pages, as it already did on Windows, so search finds
+them. Search and Settings (Editor, "Text in pictures and PDFs") offer to turn
+it on: it downloads a small model once, and the reading happens on your
+computer, not in the cloud. On Mac and Linux, reading does not yet slow down
+or pause while your computer is on battery.
+
+Find in page (Ctrl+F) now also finds those words in a document's pictures.
+Landing on a match scrolls the picture into view and flashes its frame, and
+Replace leaves pictures alone. Once a picture's words are read, its
+right-click menu offers **Copy text**, and screen readers read the words as
+the picture's description.
+
+## macOS 13.4 or later
+
+Koru for Mac now needs macOS 13.4 (Ventura) or later. A Mac on macOS 12, or
+on macOS 13 before 13.4, cannot open this version. Koru does not yet check
+this before it updates, so on such a Mac, don't install this update and keep
+0.1.8. If it has already updated, download 0.1.8 again from the releases page.
+
+## A workspace in the Trash here, still in your account
+
+A workspace can end up in this device's Trash while your Koru account still
+keeps it under one of your Profiles, for example after the Profile it was in
+was removed from this device. Koru now tells you once when it finds one, and
+lists it under "In the Trash on this device": in Manage, on the page of the
+Profile your account keeps it in, and in the Workspace menu.
+
+"Restore to" that Profile brings it back here, under that Profile, in one
+step, and it syncs again. Until you decide, its row in the Trash says "Still
+in your account under" the Profile, the Profile's sync progress counts it,
+and it is not removed from this device after 30 days.
+
+## Sync choices in Manage
+
+- A Profile's page has Sync off, P2P and Cloud at its top right: this
+  device's choice for all of that Profile's workspaces, with a link to the
+  Koru Cloud settings.
+- Each workspace row has the same choice for that workspace alone.
+- Sign-in and sync sits right under the Profile's name. In the sidebar,
+  "Sync options" (Koru Cloud, then Linked devices) comes before the Profiles.
+
+## Koru Free
+
+Turning on Cloud sync for the first time is now how an account without Koru
+Cloud asks for a place on **Koru Free**. If Koru Free has no open place, Koru
+says so on the Profile's sync row and your work stays on this device. It does
+not ask again on its own, and it never adds you to the waitlist for you.
+
+## Tasks update as they change, and a quieter Koru
+
+A task moved, ticked or dated on another device, or in another window, now
+shows on the task list and in the sidebar's counts at once, without switching
+views.
+
+Koru no longer re-reads your account and every Profile's sync settings every
+half minute. It checks when something changes on this device, and every few
+minutes otherwise. A workspace created, moved or deleted on another device
+can take up to five minutes to appear here; edits inside documents sync as
+they did.
+
+## Fixes
+
+- A workspace moved to another Profile on another device now moves here too,
+  including when that Profile reaches this device later.
+- "A Profile on this device was deleted from Koru" no longer comes back every
+  time Koru checks.
+- Two split panes showing the same document stay in step while you edit.
+- Escape clears the sidebar filter even when it matched nothing.
+- Koru's MCP server no longer reports, now and then, that a document changed
+  when nothing had happened to it.
+- On Windows, the taskbar's Jump List no longer fails to update when Koru
+  starts.
+"""
