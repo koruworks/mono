@@ -266,7 +266,13 @@ const MENU_CONTROL: OptionSet = values(
     "koru_ui::menu::Control",
     "crates/koru-ui/src/menu.rs",
     Declared::Enum,
-    &[literal("Button"), literal("Readout"), literal("Segment")],
+    &[
+        literal("Button"),
+        literal("Readout"),
+        literal("Segment"),
+        literal("Toggle"),
+        literal("Link"),
+    ],
 );
 
 const PROGRESS_MODE: OptionSet = values(
@@ -956,6 +962,8 @@ const OVERLAY_RECORDS: [Entry; 11] = [
             widget("koru_ui::menu::MenuCard"),
             support("koru_ui::menu::KoruMenuInspection"),
             support("koru_ui::menu::measure_width"),
+            support("koru_ui::menu::ActionRow"),
+            support("koru_ui::menu::MenuDivider"),
         ],
     ),
     record(

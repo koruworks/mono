@@ -137,8 +137,8 @@ impl Metrics {
         icon_size: theme::CAPTION_ICON,
         padding_x: 0.0,
         padding_y: 0.0,
-        inset_top: theme::TAB_INSET_TOP,
-        inset_bottom: theme::TAB_INSET_BOTTOM,
+        inset_top: theme::CAPTION_INSET_TOP,
+        inset_bottom: theme::CAPTION_INSET_BOTTOM,
         radius: 6.0,
     };
 

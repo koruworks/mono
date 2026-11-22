@@ -146,20 +146,22 @@ impl ExploreView {
                 self.with_rail_frame(cx.rail, |_, frame| self.element_semantics(cx, frame)),
             );
         }
-        children.extend(self.heading_semantics(cx));
-        if self.showing_home() {
-            children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
-        } else if self.showing_tasks() {
-            children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
-            children.push(self.rail.lists_semantics(cx, self.rows_top(cx.area)));
-        } else if self.showing_chats() {
-            // The Chats view replaces the tree, on the rail's model: a list
-            // of rows that are chats, each with Open and Delete.
-            children.push(chats::semantics(&self.chats, cx, self.rows_top(cx.area)));
-        } else if !self.showing_socials() {
-            children.push(self.tree_semantics(cx));
+        if cx.area.w > 0.0 {
+            children.extend(self.heading_semantics(cx));
+            if self.showing_home() {
+                children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
+            } else if self.showing_tasks() {
+                children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
+                children.push(self.rail.lists_semantics(cx, self.rows_top(cx.area)));
+            } else if self.showing_chats() {
+                // The Chats view replaces the tree, on the rail's model: a list
+                // of rows that are chats, each with Open and Delete.
+                children.push(chats::semantics(&self.chats, cx, self.rows_top(cx.area)));
+            } else if !self.showing_socials() {
+                children.push(self.tree_semantics(cx));
+            }
+            children.extend(self.footer_semantics(cx));
         }
-        children.extend(self.footer_semantics(cx));
         children.extend(self.popover_semantics(cx));
         SemanticNode::new(cx.surface(EXPLORE, parts::COLUMN), Role::Group)
             .with_label(t(cx.lang, Key::A11yNavigator))

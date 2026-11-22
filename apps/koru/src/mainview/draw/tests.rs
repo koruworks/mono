@@ -198,10 +198,12 @@ fn the_header_row_parents_the_strip_and_the_caption_furniture() {
                 .collect();
             // The explore column's `…` buttons are icon buttons too (E76).
             let sidebar = records.iter().position(|r| r.name == "Explore sidebar");
+            let lane = records.iter().position(|r| r.name == "KoruLane");
             assert!(
                 inside(&records, header, i)
                     || panes.iter().any(|&p| inside(&records, p, i))
-                    || sidebar.is_some_and(|s| inside(&records, s, i)),
+                    || sidebar.is_some_and(|s| inside(&records, s, i))
+                    || lane.is_some_and(|s| inside(&records, s, i)),
                 "a KoruIconButton answers to neither the HeaderRow, a Content pane nor the sidebar"
             );
         }
@@ -280,15 +282,9 @@ fn the_rail_ground_runs_under_the_lane_so_no_seam_shows_under_the_mark() {
     );
 }
 
-/// **No notch between the pane and the document** (2026-11-03, the user's
-/// screenshot). The document's top-left corner, where it meets the pane,
-/// was masked in the ground like an outer corner: a wedge of the header's
-/// colour opened into the pane's top-right, with no border on the pane's
-/// side and the header's hairline broken over it. Outside that arc is the
-/// pane, so the mask is the pane's fill and the hairline runs on across the
-/// corner; the outer corners still mask in the ground.
+/// The document joins the explorer with one arc, without a stray straight line.
 #[test]
-fn the_document_corner_beside_the_pane_is_masked_in_the_pane_and_keeps_the_hairline() {
+fn the_document_corner_beside_the_pane_has_one_clean_arc() {
     let (mut view, workspace) = crate::mainview::harness::on_document();
     view.viewport = (1200.0, 700.0);
     view.show_navigator(crate::panes::explore::NavigatorMode::Documents);
@@ -329,17 +325,13 @@ fn the_document_corner_beside_the_pane_is_masked_in_the_pane_and_keeps_the_hairl
             .unwrap_or_else(|| panic!("a card corner at x = {x}"))
     };
     let sb = view.sidebar_rect();
-    let top = view.content().y - 1.0;
-    let r = theme::PAGE_RADIUS;
+    let top = view.content().y - 0.5;
     let pane_fill = inspect::color(crate::panes::explore::pane_fill());
     let ground = inspect::color(theme::base_fill());
-    assert_ne!(
-        pane_fill, ground,
-        "the notch only shows when the two differ"
-    );
+    assert_eq!(pane_fill, ground, "the explorer shares the rail's ground");
 
     // The document's top-left, on the pane's inside hairline.
-    let inner = corner_at(sb.x + sb.w - 1.0);
+    let inner = corner_at(sb.x + sb.w - 0.5);
     assert_eq!(records[inner].rect().y0, top as f64);
     let fills = fills_of(inner);
     assert_eq!(
@@ -347,21 +339,25 @@ fn the_document_corner_beside_the_pane_is_masked_in_the_pane_and_keeps_the_hairl
         pane_fill,
         "masked in the pane, not the ground"
     );
-    let run = fills
-        .iter()
-        .copied()
-        .find(|&i| records[i].rect() == scene::rect(sb.x + sb.w - 1.0, top, r, 1.0))
-        .expect("the header's hairline runs across the corner");
-    assert_eq!(colour(run), inspect::color(theme::p().panel_border));
+    assert_eq!(fills.len(), 1, "only the corner mask, no crossing hairline");
 
-    // The pane's own top-left is an outer corner: still the ground, and no
-    // hairline drawn across it.
-    let outer = corner_at(MainView::pane_of(sb).x - 1.0);
-    let fills = fills_of(outer);
-    assert_eq!(colour(fills[0]), ground);
-    assert_eq!(
-        fills.len(),
-        1,
-        "only the mask is a fill; the arc is a stroke"
+    // The docked explorer has a straight divider rather than outer corners.
+    assert!(
+        !records.iter().any(|record| record.name == "CardCorner"
+            && record.rect().x0 == (MainView::pane_of(sb).x - 1.0) as f64),
+        "the docked explorer has a straight divider, not card corners"
     );
+}
+
+#[test]
+fn floating_outline_stays_on_one_device_pixel_at_fractional_scales() {
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+        let root = Affine::translate((0.3, 0.7)) * Affine::scale(scale);
+        let outline = preview_outline(root, Rect::new(46.0, 46.0, 270.0, 600.0));
+        let bounds = outline.rect();
+        for edge in [bounds.x0, bounds.y0, bounds.x1, bounds.y1] {
+            assert_eq!((edge - 0.5).fract(), 0.0);
+            assert_eq!((edge + 0.5).fract(), 0.0);
+        }
+    }
 }

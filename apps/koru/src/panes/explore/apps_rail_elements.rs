@@ -59,13 +59,6 @@ impl ExploreView {
             selected: self.current.is_some(),
             dimmed: self.current.is_none(),
         };
-        let glyph = |hit, name: &str, glyph| Item {
-            hit,
-            name: name.to_owned(),
-            contents: Contents::Glyph(glyph),
-            selected: false,
-            dimmed: false,
-        };
         let views = self
             .rail_modes()
             .into_iter()
@@ -130,44 +123,19 @@ impl ExploreView {
                     dimmed: false,
                 })
                 .collect(),
-            foot: vec![
-                Item {
-                    contents: if self.help.projection().dot {
-                        Contents::NotifiedGlyph(icons::QUESTION)
-                    } else {
-                        Contents::Glyph(icons::QUESTION)
-                    },
-                    selected: self.popover_is(PopoverKind::Help),
-                    name: if self.help.projection().dot {
-                        format!("{} · {}", t(lang, Key::Help), t(lang, Key::WhatsNew))
-                    } else {
-                        t(lang, Key::Help).to_owned()
-                    },
-                    ..glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION)
+            foot: vec![Item {
+                hit: apps_rail::Hit::Profile,
+                name: profile
+                    .map_or(t(lang, Key::FloorChipAction), |p| p.name.as_str())
+                    .to_owned(),
+                contents: Contents::Profile {
+                    name: profile.map_or("", |p| p.name.as_str()).to_owned(),
+                    icon: profile.and_then(|p| p.icon.clone()),
+                    color: profile.and_then(|p| p.color.clone()),
                 },
-                // App settings are the app's, not a Profile's: they sat at
-                // the foot of the Profile menu, behind a press on a square
-                // that says nothing about settings. Here they are one press
-                // away, between Help and the profile square.
-                glyph(
-                    apps_rail::Hit::Settings,
-                    t(lang, Key::ProfileAppSettings),
-                    icons::FADERS,
-                ),
-                Item {
-                    hit: apps_rail::Hit::Profile,
-                    name: profile
-                        .map_or(t(lang, Key::FloorChipAction), |p| p.name.as_str())
-                        .to_owned(),
-                    contents: Contents::Tile {
-                        name: profile.map_or("", |p| p.name.as_str()).to_owned(),
-                        icon: profile.and_then(|p| p.icon.clone()),
-                        color: profile.and_then(|p| p.color.clone()),
-                    },
-                    selected: self.live().is_some_and(|p| p.kind == PopoverKind::Profiles),
-                    dimmed: false,
-                },
-            ],
+                selected: self.live().is_some_and(|p| p.kind == PopoverKind::Profiles),
+                dimmed: false,
+            }],
         }
     }
 

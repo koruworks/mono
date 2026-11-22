@@ -23,8 +23,8 @@ fn pin_group_preserves_footer_builtin_slots_and_cancels_obsolete_drag() {
             let band = Rect::new(0.0, 46.0, theme::RAIL_W, height);
             let rects = view.apps_rail_rects(band);
             assert!(rects.profile.y + rects.profile.h <= band.y + band.h);
-            assert!(rects.pin_overflow.y + rects.pin_overflow.h <= rects.help.y);
-            assert!(rects.pins.iter().all(|(_, r)| r.y + r.h <= rects.help.y));
+            assert!(rects.pin_overflow.y + rects.pin_overflow.h <= rects.profile.y);
+            assert!(rects.pins.iter().all(|(_, r)| r.y + r.h <= rects.profile.y));
         }
         assert_eq!(view.rail_modes(), modes);
         assert_eq!(view.rail_order_storage(), "");
@@ -115,14 +115,14 @@ fn short_rail_keeps_fixed_controls_and_promotion_does_not_save_or_drag() {
                 .collect();
             assert_eq!(controls[..5], squares[..]);
             assert_eq!(controls.last(), Some(&apps_rail::Hit::Profile));
-            assert!(controls.contains(&apps_rail::Hit::Help));
+            assert!(!controls.contains(&apps_rail::Hit::Help));
             let rects = view.apps_rail_rects(rail);
             assert!(rects.profile.y + rects.profile.h <= rail.y + rail.h);
             assert!(
                 rects
                     .apps
                     .iter()
-                    .all(|(_, rect)| rect.y + rect.h < rects.help.y)
+                    .all(|(_, rect)| rect.y + rect.h < rects.profile.y)
             );
             assert_eq!(view.rail_modes(), original);
             assert_eq!(view.rail_order_storage(), "");

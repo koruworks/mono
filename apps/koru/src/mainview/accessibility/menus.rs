@@ -267,6 +267,9 @@ impl MainView {
                 let live = match control {
                     koru_ui::Control::Button { enabled, .. } => *enabled,
                     koru_ui::Control::Segment { .. } => true,
+                    koru_ui::Control::Toggle { .. } => true,
+                    koru_ui::Control::Link { visible: true, .. } => true,
+                    koru_ui::Control::Link { visible: false, .. } => continue,
                     koru_ui::Control::Readout(_) => continue,
                 };
                 let Some((label, _)) = context_menu::control_tooltip(*action, c) else {
@@ -275,16 +278,22 @@ impl MainView {
                 let Some(bounds) = menu.control_rect(cx.viewport, i, c) else {
                     continue;
                 };
-                children.push(
-                    SemanticNode::new(
-                        cx.instance(MENU, menu.control_instance(i, c), ITEM),
-                        Role::Button,
-                    )
-                    .with_label(label)
-                    .with_bounds(bounds)
-                    .with_actions([Action::Click])
-                    .disabled(!live),
-                );
+                let mut node = SemanticNode::new(
+                    cx.instance(MENU, menu.control_instance(i, c), ITEM),
+                    if matches!(control, koru_ui::Control::Toggle { .. }) {
+                        Role::CheckBox
+                    } else {
+                        Role::Button
+                    },
+                )
+                .with_label(label)
+                .with_bounds(bounds)
+                .with_actions([Action::Click])
+                .disabled(!live);
+                if let koru_ui::Control::Toggle { on } = control {
+                    node = node.with_toggled(*on);
+                }
+                children.push(node);
             }
         }
         SemanticNode::new(cx.instance(MENU, menu.instance, parts::ROOT), Role::Menu)
@@ -329,7 +338,10 @@ impl MainView {
         let live = action.controls().get(c).is_some_and(|control| {
             matches!(
                 control,
-                koru_ui::Control::Button { enabled: true, .. } | koru_ui::Control::Segment { .. }
+                koru_ui::Control::Button { enabled: true, .. }
+                    | koru_ui::Control::Segment { .. }
+                    | koru_ui::Control::Toggle { .. }
+                    | koru_ui::Control::Link { visible: true, .. }
             )
         });
         if !live {

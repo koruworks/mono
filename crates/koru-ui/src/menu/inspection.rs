@@ -205,10 +205,33 @@ pub(super) fn row<T: MenuItem>(
             rect_property(
                 r,
                 "hover paint bounds (x y w h)",
-                Rect::new(bounds.x + 4.0, bounds.y, bounds.w - 8.0, bounds.h),
+                {
+                    let inset = if item.padded_action() { PAD } else { 4.0 };
+                    Rect::new(bounds.x + inset, bounds.y, bounds.w - inset * 2.0, bounds.h)
+                },
                 "Menu::draw inset shape; local logical units, not hit target",
             );
-            r.property("hover paint radius", 5, "Menu::draw current recipe");
+            let radius = if item.padded_action() {
+                ActionRow::RADIUS.px(theme::Profile::Desktop, bounds.w, bounds.h)
+            } else {
+                5.0
+            };
+            r.property("hover paint radius", radius, "Menu::draw current recipe");
+            r.property(
+                "content inset",
+                row_pad(item),
+                "MenuItem::padded_action / ActionRow::PAD",
+            );
+            r.property(
+                "icon size",
+                row_icon(item),
+                "MenuItem::padded_action / ActionRow::ICON",
+            );
+            r.property(
+                "icon gap",
+                icon_gap(item),
+                "MenuItem::padded_action / ActionRow::GAP",
+            );
         },
     ))
 }
@@ -268,6 +291,8 @@ pub(super) fn control(
         Control::Button { .. } => "Menu control button",
         Control::Readout(_) => "Menu readout",
         Control::Segment { .. } => "Menu segment",
+        Control::Toggle { .. } => "Menu toggle",
+        Control::Link { .. } => "Menu link",
     };
     Some(inspect::scope(
         name,

@@ -658,6 +658,29 @@ fn focusing_the_search_box_selects_its_query_for_the_next_one() {
 }
 
 #[test]
+fn scroll_search_keeps_appearance_and_shows_the_speed_control() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.show_page(PageId::Editor);
+    surface.focus_search();
+    assert!(surface.key(
+        &WinitKey::Character("Scroll".into()),
+        Some("Scroll"),
+        ModifiersState::empty()
+    ));
+    surface.relayout();
+    assert_eq!(surface.listed(), vec![PageId::Appearance]);
+    let lines = page_lines(&surface);
+    assert!(lines.iter().any(|line| line == "Scroll speed"));
+    assert!(!lines.iter().any(|line| line == "Text rendering"));
+    for lang in Lang::ALL {
+        for key in [Key::SettingsScrollSpeed, Key::SettingsScrollSpeedHint] {
+            assert!(PageId::Appearance.matches(lang, koru_i18n::t(lang, key)));
+        }
+    }
+}
+
+#[test]
 fn quick_search_filters_cards_and_escape_restores_them_after_focus_moves() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();

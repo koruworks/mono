@@ -9977,6 +9977,19 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::SwitchProfile(id) => {
                 self.begin_profile_switch(source, id, None);
             }
+            PaneRequest::OpenProfileInNewWindow(id) => {
+                if let Err(error) =
+                    startup::launch_profile_new_window(&self.runtime.profile_dir, id)
+                {
+                    self.report(
+                        ErrorReport::new(
+                            "Couldn't open profile in a new window",
+                            "The current window was not changed.",
+                        )
+                        .with_details(error),
+                    );
+                }
+            }
             PaneRequest::LandIn {
                 profile,
                 workspace,
@@ -19113,6 +19126,22 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.persist_if_changed();
                 }
                 self.wake(id);
+            }
+
+            WindowEvent::CursorLeft { .. } => {
+                let Some(pane) = self.panes.get_mut(&id) else {
+                    return;
+                };
+                // A captured drag owns its real coordinates until release.
+                // Resting hover surfaces must also dismiss when leaving the window.
+                if !pane.pressed {
+                    pane.cursor = (-1.0, -1.0);
+                    let shown = AppearanceShown::now();
+                    let changed = pane.view.mouse_move(-1.0, -1.0);
+                    if !self.show_appearance_change(&shown) && changed {
+                        self.request_redraw(id);
+                    }
+                }
             }
 
             // **Losing focus ends any press in flight.**

@@ -698,6 +698,8 @@ pub struct MainView {
 
     /// The explore column, and whether it is in or out.
     sidebar: Panel,
+    explore_preview: bool,
+    explore_preview_fade: Option<Instant>,
     explore: ExploreView,
     /// Whether the tree needs rebuilding before it is next drawn. Set by
     /// `adopt` and by anything that expands a row, so a rebuild costs one walk
@@ -1927,6 +1929,8 @@ impl MainView {
             // Shut by default: an empty tree beside an empty workspace is worse
             // than no tree, and the toggle is one keystroke away.
             sidebar: Panel::new(theme::SIDEBAR_W + theme::RAIL_W, false),
+            explore_preview: false,
+            explore_preview_fade: None,
             explore: ExploreView::new(),
             explore_stale: true,
             naming: None,
@@ -5014,7 +5018,6 @@ impl MainView {
                         | MenuAction::WindowUnpinTop
                         | MenuAction::HeaderSupport
                         | MenuAction::HeaderSettings
-                        | MenuAction::HeaderFeedback
                         | MenuAction::HeaderUpdates
                         // The row is never *chosen* — its controls are pressed —
                         // but this is what colours the word "Zoom", and a live
@@ -5732,7 +5735,6 @@ impl MainView {
                     self.ask_pane(PaneRequest::Zoom(ZoomIntent::ActualSize))
                 }
                 MenuAction::HeaderSettings => self.open_settings_tab(),
-                MenuAction::HeaderFeedback => self.open_send_feedback_tab(),
                 MenuAction::HeaderSupport => {
                     self.ask_pane(PaneRequest::OpenSupport);
                     true
@@ -6930,11 +6932,8 @@ impl MainView {
     /// `context_menu` — and the third was written without it, which is exactly
     /// the drift a fourth hand-rolled copy would repeat.
     fn popover_hit(&self, x: f32, y: f32) -> bool {
-        self.explore.popover_open()
-            && self
-                .explore
-                .popover_panel(self.explore_popover_area(), self.viewport)
-                .is_some_and(|r| r.contains(x, y))
+        self.explore
+            .popover_contains(self.explore_popover_area(), self.viewport, x, y)
     }
 
     /// Begin renaming a workspace in place — over its Manage row, where the
@@ -8305,11 +8304,14 @@ impl MainView {
     /// its top; the menu lifts itself to stay on screen at the window's
     /// foot.
 
-    /// The help popover beside the rail's `?`, its foot level with the
-    /// control's.
+    /// Help opens beside its Profile-menu row, or beside the rail when
+    /// invoked independently. A keyboard-opened Profile menu also works
+    /// while the navigation pane is folded.
     fn open_help_beside(&mut self) -> bool {
         use crate::panes::explore::PopoverKind;
-        if self.support_only || self.rail_area().w <= 0.0 {
+        if self.support_only
+            || (self.rail_area().w <= 0.0 && !self.explore.popover_is(PopoverKind::Profiles))
+        {
             return false;
         }
         self.refresh_help();
@@ -8321,7 +8323,8 @@ impl MainView {
             if self.help_releases.is_none() && self.help_releases_rx.is_none() {
                 self.help_releases_asked = false;
             }
-            let opened = self.explore.open_popover(PopoverKind::Help);
+            let opened =
+                self.explore.open_help_flyout() || self.explore.open_popover(PopoverKind::Help);
             self.refresh_help();
             opened
         }
@@ -8611,6 +8614,9 @@ impl MainView {
             // artboard). The window lands on the workspace that Profile
             // last had open — each Profile keeps its own window settings.
             Outcome::SwitchProfile(id) => self.ask_pane(PaneRequest::SwitchProfile(id)),
+            Outcome::OpenProfileInNewWindow(id) => {
+                self.ask_pane(PaneRequest::OpenProfileInNewWindow(id))
+            }
             Outcome::NewWorkspace => self.prompt_new_workspace(),
             Outcome::NewProfile => self.open_profile_creation(),
             Outcome::SubscribeCloud => {
@@ -11303,6 +11309,14 @@ impl MainView {
             self.explore.rail_drag_release(self.rail_area());
         }
         if hit == Hit::Sidebar && self.rail_area().contains(x, y) {
+            if !self.sidebar.is_open()
+                && matches!(
+                    self.explore.rail_hit(self.rail_area(), x, y),
+                    Some(crate::panes::sidebar::apps_rail::Hit::App(_))
+                )
+            {
+                self.toggle_sidebar();
+            }
             // The rail: an app, Settings, Help or the profile square. A press
             // on it is a press outside the popover, so the popover shuts
             // first (the review's note: the Profiles list stayed up beside the
@@ -12739,7 +12753,9 @@ impl View for MainView {
                 .scroll_popover(self.explore_popover_area(), self.viewport, dy);
             return;
         }
-        if self.regions.sidebar.w > 0.0 && self.regions.sidebar.contains(px, py) {
+        if (self.regions.sidebar.w > 0.0 && self.regions.sidebar.contains(px, py))
+            || (self.explore_preview && self.explore_preview_rect().contains(px, py))
+        {
             let dy = Self::wheel_lines(delta);
             self.explore.scroll_by(self.explore_area(), dy);
             return;
@@ -12888,6 +12904,24 @@ impl View for MainView {
 
     fn set_pinned(&mut self, pinned: bool) {
         self.pinned = pinned;
+        if let Some(menu) = self
+            .menu
+            .as_mut()
+            .filter(|menu| menu.subject == MenuSubject::Window)
+        {
+            for action in menu.items_mut() {
+                if matches!(
+                    action,
+                    MenuAction::WindowAlwaysOnTop | MenuAction::WindowUnpinTop
+                ) {
+                    *action = if pinned {
+                        MenuAction::WindowUnpinTop
+                    } else {
+                        MenuAction::WindowAlwaysOnTop
+                    };
+                }
+            }
+        }
     }
 
     fn set_mods(&mut self, mods: ModifiersState) {
@@ -13332,6 +13366,7 @@ impl View for MainView {
         self.tooltip.animating(Instant::now())
             || self.reminder_shell.animating()
             || self.sidebar.animating()
+            || self.explore_preview_fade.is_some()
             || self.ai_panel.animating()
             || (self.ai_visible() && self.ai_chat.animating())
             || self.context.animating()
@@ -14806,12 +14841,13 @@ impl View for MainView {
         counts: std::collections::HashMap<ProfileId, usize>,
     ) -> bool {
         self.profile_workspace_counts = counts.clone();
+        let changed = self.explore.set_profile_workspace_counts(counts.clone());
         self.each_tab_mut(|tab| match &mut tab.view {
             TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
                 view.delegate(|c| c.set_workspace_counts(counts.clone()))
             }
             _ => false,
-        })
+        }) | changed
     }
     fn set_profile_workspaces(
         &mut self,
@@ -17398,6 +17434,16 @@ impl MainView {
         {
             return self.explore.cancel_rail_drag(self.rail_area());
         }
+        if matches!(key, Key::Named(winit::keyboard::NamedKey::Escape))
+            && self.explore_preview
+            && self.menu.is_none()
+            && !self.explore.popover_open()
+        {
+            self.explore_preview = false;
+            self.explore_preview_fade = None;
+            self.explore.clear_focus();
+            return true;
+        }
         // **A recovery pill that `F6` has landed on**, asked beside the bell
         // because it is the same kind of thing: window chrome that owns no
         // blocker, standing while the document still has everything else. The
@@ -17486,7 +17532,7 @@ impl MainView {
         // **The quick filter, while the sidebar holds the keyboard**: what
         // types narrows its rows (`explore/quick_filter.rs`). Ahead of the
         // navigation keys, which it leaves alone.
-        if self.sidebar.is_open()
+        if (self.sidebar.is_open() || self.explore_preview)
             && self.explore.has_focus()
             && !self.tabs().active_tab().view.is_prompting()
             && self
@@ -17506,7 +17552,7 @@ impl MainView {
         // you are writing in. It is checked before the chords only in the sense
         // of being checked at all: `keys::resolve` claims no arrow, so Ctrl+E
         // still shuts the pane out from under it.
-        if self.sidebar.is_open()
+        if (self.sidebar.is_open() || self.explore_preview)
             && self.explore.has_focus()
             // ...but never over a prompt. A panel asking a question owns Enter,
             // whoever else has the arrows.
@@ -19305,7 +19351,7 @@ impl MainView {
             // No New in the lane (the review's note, E44): the tab strip's `+`
             // is the Add… menu's one door. E21's lane `+` is superseded.
             new: false,
-            folded: !self.sidebar.is_open(),
+            folded: cfg!(target_os = "macos") && !self.sidebar.is_open(),
         }
     }
 
@@ -19858,12 +19904,7 @@ impl MainView {
         // pointer is actually on. That is what made a profile's remove box
         // vanish as you moved towards it: the ✕ only draws on the hovered row,
         // and the hover was being cleared by the very move that approached it.
-        if self.explore.popover_open()
-            && self
-                .explore
-                .popover_panel(self.explore_popover_area(), self.viewport)
-                .is_some_and(|r| r.contains(x, y))
-        {
+        if self.popover_hit(x, y) {
             // The leaf under it must let go too, or a row stays lit behind a
             // menu — the same rule the tab menu follows a few lines above.
             let left_content = self.pointer_in_content;
@@ -19877,6 +19918,7 @@ impl MainView {
             self.hover = Some(Hit::Sidebar);
             let area = self.explore_popover_area();
             let moved = self.explore.mouse_move(area, self.viewport, x, y);
+            let opened_help = self.explore.hovering_profile_help() && self.open_help_beside();
             let tip = self.explore.menu_tooltip(area, self.viewport, x, y).map(
                 |(rect, text, shortcut)| {
                     TooltipContent::new(38, rect, text).with_optional_shortcut(
@@ -19886,11 +19928,12 @@ impl MainView {
                 },
             );
             let tip_changed = self.tooltip.set_hover(tip, Instant::now());
-            return moved || left_content || reminder_moved || tip_changed;
+            return moved || opened_help || left_content || reminder_moved || tip_changed;
         }
 
+        let preview_changed = self.preview_pointer(x, y);
         let hit = self.hit_at(x, y);
-        let hover_changed = self.hover != Some(hit);
+        let hover_changed = preview_changed || self.hover != Some(hit);
         self.hover = Some(hit);
         // Leaving the toggle re-arms its hint: pointing at it again is a fresh
         // question, and deserves a fresh answer.

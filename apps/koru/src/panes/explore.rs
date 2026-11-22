@@ -375,6 +375,7 @@ pub enum PopoverKind {
 /// `popover.is_some()` — a menu on its way out must not answer for a click meant
 /// for what is behind it, which is precisely the bug an "is it there" test would
 /// miss.
+#[derive(Clone)]
 struct Popover {
     kind: PopoverKind,
     /// Which row the pointer or the keyboard is on.
@@ -724,6 +725,7 @@ pub struct RowParts {
 
 #[derive(Default)]
 pub struct ExploreView {
+    floating: bool,
     mode: NavigatorMode,
     /// Which rail control the pointer is on, if any.
     rail_hover: Option<apps_rail::Hit>,
@@ -962,9 +964,13 @@ pub struct ExploreView {
     /// Every Profile's workspaces from the Store catalog, so the switcher can
     /// list a Profile that is not open. The open one reads `workspaces`.
     catalog: HashMap<ProfileId, Vec<WorkspaceEntry>>,
+    profile_workspace_counts: HashMap<ProfileId, usize>,
     current: Option<WorkspaceId>,
     /// Which popover is open, and which of its rows is highlighted.
     popover: Option<Popover>,
+    /// The profile menu retained behind its Help flyout. The active popover
+    /// continues to own Help's existing input, scroll and accessibility.
+    help_parent: Option<Popover>,
     /// The Workspaces page's own text engine and shaping cache, for the
     /// frame that answers input and the accessibility tree.
     page_layout: RefCell<popover_elements::PageLayout>,
@@ -3406,12 +3412,15 @@ impl ExploreView {
                 .map(|(index, _)| *index);
             if let Some(popover) = self.popover.as_mut() {
                 popover.hover = next.or_else(|| {
-                    rows.iter()
-                        .position(|row| *row == PopoverRow::ProfilesHeading)
+                    rows.iter().position(|row| {
+                        *row == PopoverRow::ProfileAction(
+                            popover_elements::profiles::MenuAction::New,
+                        )
+                    })
                 });
             }
-            if next.is_none() {
-                self.popover_part = Some(PopoverPart::Gear);
+            if next.is_none() || next.is_some_and(|index| matches!(rows[index], PopoverRow::Profile(i) if Some(self.profiles[i].id) == self.current_profile)) {
+                self.popover_part = None;
             }
         }
         changed
@@ -3499,6 +3508,14 @@ impl ExploreView {
             return false;
         }
         self.catalog = workspaces;
+        true
+    }
+
+    pub fn set_profile_workspace_counts(&mut self, counts: HashMap<ProfileId, usize>) -> bool {
+        if self.profile_workspace_counts == counts {
+            return false;
+        }
+        self.profile_workspace_counts = counts;
         true
     }
 
@@ -3684,6 +3701,11 @@ impl ExploreView {
     /// It stays in `Some` until the fade finishes, but stops taking input on
     /// this call — so the press that dismissed it cannot also choose a row.
     pub fn close_popover(&mut self) -> bool {
+        // A cascade opens and closes as one unit. Removing its anchor while
+        // fading the child would relocate Help to the standalone position.
+        if self.help_parent.take().is_some() {
+            return self.popover.take().is_some();
+        }
         let Some(p) = self.popover.as_mut() else {
             return false;
         };
@@ -3751,6 +3773,7 @@ impl ExploreView {
     /// closing — one panel, two pages — and moves the panel to the other
     /// anchor.
     fn toggle_popover_from(&mut self, kind: PopoverKind, anchor: PopoverAnchor) {
+        self.help_parent = None;
         let now = Instant::now();
         let switcher = |k: PopoverKind| k != PopoverKind::LibraryActions;
         match self.popover.as_mut() {
@@ -3872,9 +3895,19 @@ impl ExploreView {
             // its tick, as the chip's page lists workspaces — and the foot
             // (the review's note, E78).
             PopoverKind::Profiles => {
-                let mut out = vec![PopoverRow::ProfilesHeading];
+                let mut out = Vec::new();
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
-
+                use popover_elements::profiles::MenuAction;
+                out.extend(
+                    [
+                        MenuAction::New,
+                        MenuAction::Sync,
+                        MenuAction::Settings,
+                        MenuAction::Help,
+                    ]
+                    .into_iter()
+                    .map(PopoverRow::ProfileAction),
+                );
                 out
             }
             PopoverKind::LibraryActions => actions::available(self.mode)
@@ -3927,6 +3960,13 @@ impl ExploreView {
 
     fn panel_at(&self, area: Rect, viewport: (f32, f32), page: f32) -> Option<Rect> {
         let p = self.popover.as_ref()?;
+        self.panel_for(area, viewport, page, p)
+    }
+
+    fn panel_for(&self, area: Rect, viewport: (f32, f32), page: f32, p: &Popover) -> Option<Rect> {
+        if p.kind == PopoverKind::Help && self.help_parent.is_some() {
+            return self.help_flyout_panel(area, viewport);
+        }
         if area.w <= 0.0 && p.anchor == PopoverAnchor::Heading {
             return None;
         }
@@ -3951,6 +3991,8 @@ impl ExploreView {
             p.kind != PopoverKind::LibraryActions && p.anchor != PopoverAnchor::Heading;
         let w = if p.kind == PopoverKind::LibraryActions {
             ACTIONS_POPOVER_W
+        } else if p.kind == PopoverKind::Profiles {
+            theme::metrics::PROFILE_MENU_W.value
         } else if beside_rail {
             POPOVER_W
         } else {
@@ -4004,11 +4046,7 @@ impl ExploreView {
             }
             PopoverKind::Profiles | PopoverKind::Help => {
                 let rects = self.apps_rail_rects(rail);
-                let square = if p.kind == PopoverKind::Help {
-                    rects.help
-                } else {
-                    rects.profile
-                };
+                let square = rects.profile;
                 let foot = (square.y + square.h).min(viewport.1 - POPOVER_EDGE);
                 h = h.min((foot - POPOVER_EDGE).max(POPOVER_ROW_H));
                 (foot - h).max(POPOVER_EDGE)
@@ -4283,6 +4321,7 @@ impl ExploreView {
             PopoverRow::ProfilesHeading => part != PopoverPart::Gear,
             // The foot's words do nothing; each button is a destination —
             // Settings, the Manage tab, the website, a creator.
+            PopoverRow::ProfileAction(popover_elements::profiles::MenuAction::Help) => true,
             PopoverRow::ProfileAction(_) | PopoverRow::Help(_) => false,
             PopoverRow::Profile(_) | PopoverRow::Workspace(_) | PopoverRow::LibraryAction(_) => {
                 false
@@ -4370,13 +4409,13 @@ impl ExploreView {
                 }
             }
             // The host resolves the Profile's usable remembered workspace.
-            // Its gear opens Manage on that Profile instead.
+            // The trailing action opens it separately without switching here.
             PopoverRow::Profile(i) => {
                 let Some(id) = self.profiles.get(i).map(|p| p.id) else {
                     return Outcome::Consumed;
                 };
                 if part == PopoverPart::Gear {
-                    return Outcome::ManageProfile(id);
+                    return Outcome::OpenProfileInNewWindow(id);
                 }
                 if self.current_profile == Some(id) {
                     Outcome::Consumed
@@ -4562,6 +4601,22 @@ impl ExploreView {
     }
 
     pub fn popover_key(&mut self, key: &winit::keyboard::Key) -> Option<Outcome> {
+        if matches!(
+            key,
+            winit::keyboard::Key::Named(
+                winit::keyboard::NamedKey::Escape | winit::keyboard::NamedKey::ArrowLeft
+            )
+        ) && self.restore_help_parent()
+        {
+            return Some(Outcome::Consumed);
+        }
+        if matches!(
+            key,
+            winit::keyboard::Key::Named(winit::keyboard::NamedKey::ArrowRight)
+        ) && self.hovering_profile_help()
+        {
+            return Some(Outcome::OpenHelp);
+        }
         use winit::keyboard::{Key, NamedKey};
         self.live()?;
         let rows = self.popover_rows();
@@ -4606,7 +4661,8 @@ impl ExploreView {
                 if matches!(
                     hovered,
                     Some(PopoverRow::Workspace(_) | PopoverRow::Profile(_))
-                ) && self.popover_part.is_none() =>
+                ) && self.popover_part.is_none()
+                    && !matches!(hovered, Some(PopoverRow::Profile(i)) if self.profiles.get(i).is_some_and(|p| Some(p.id) == self.current_profile)) =>
             {
                 self.popover_part = Some(PopoverPart::Gear);
                 Some(Outcome::Consumed)
@@ -4721,13 +4777,21 @@ impl ExploreView {
     ///
     /// Zero-width in a collapsed column, so heading actions decline it — the same
     /// guard `row_rects` and `header_at` use, and for the same reason.
+    pub(crate) fn set_floating(&mut self, floating: bool) {
+        self.floating = floating;
+    }
+
+    fn lane_height(&self) -> f32 {
+        if self.floating { 0.0 } else { WORKSPACE_ROW_H }
+    }
+
     fn heading_band(&self, area: Rect) -> Rect {
         if area.w <= 0.0 {
             return Rect::new(area.x, area.y, 0.0, 0.0);
         }
         Rect::new(
             area.x,
-            area.y + WORKSPACE_ROW_H + HEADER_PAD,
+            area.y + self.lane_height() + HEADER_PAD,
             area.w,
             HEADER_H,
         )
@@ -4921,17 +4985,23 @@ impl ExploreView {
         scene::fill(
             scene,
             root,
-            // The theme's ground, or the base colour chosen for this theme.
-            theme::base_fill(),
+            // Collapsed rails use the floating surface's neutral background.
+            if self.floating {
+                p.panel_bg
+            } else {
+                theme::base_fill()
+            },
             &scene::rect(r.band.x, r.band.y - lane_h, r.band.w, r.band.h + lane_h),
         );
-        // Hairline between the rail and the pane.
-        scene::fill(
-            scene,
-            root,
-            p.panel_border,
-            &scene::rect(r.band.x + r.band.w - 1.0, r.band.y, 1.0, r.band.h),
-        );
+        // Hairline between the rail and the docked pane.
+        if !self.floating {
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(r.band.x + r.band.w - 0.5, r.band.y, 0.5, r.band.h),
+            );
+        }
         self.paint_rail_elements(scene, root, engine, rail);
     }
 
@@ -5303,6 +5373,10 @@ impl ExploreView {
         mods: PressMods,
     ) -> Outcome {
         let PressMods { ctrl, shift, .. } = mods;
+        self.help_pointer_to_parent(area, viewport, x, y);
+        if self.help_parent_or_bridge_contains(area, viewport, x, y) {
+            return Outcome::Consumed;
+        }
         // The popover first: it floats *over* the pane, so a row underneath it
         // would otherwise answer for a press meant for a menu item — the same
         // ordering a tab's close box needs against the tab it sits in.
@@ -6081,6 +6155,10 @@ impl ExploreView {
     }
 
     pub fn mouse_move(&mut self, area: Rect, viewport: (f32, f32), x: f32, y: f32) -> bool {
+        let returned_to_parent = self.help_pointer_to_parent(area, viewport, x, y);
+        if returned_to_parent {
+            self.popover_part = None;
+        }
         // A grabbed thumb follows the pointer outside its narrow lane, exactly
         // like the document scrollbar and the row drag below.
         if let Some(grab) = self.scroll_drag {
@@ -6190,7 +6268,8 @@ impl ExploreView {
                     if blocked { -1. } else { y },
                 )
             });
-        let mut moved = socials_moved
+        let mut moved = returned_to_parent
+            || socials_moved
             || rail_moved
             || artifacts_moved
             || chats_moved
@@ -7045,7 +7124,9 @@ impl ExploreView {
     }
 
     pub fn clear_hover(&mut self) -> bool {
+        let restored_parent = self.restore_help_parent();
         let had = self.rail.clear_hover()
+            || restored_parent
             || self.hover.is_some()
             || self.rail_hover.is_some()
             || self.actions_hover
@@ -7278,24 +7359,32 @@ impl ExploreView {
         scene::fill(
             scene,
             root,
-            pane_fill(),
+            if self.floating {
+                p.panel_bg
+            } else {
+                pane_fill()
+            },
             &scene::rect(area.x, area.y, area.w, area.h),
         );
         // Hairline down the inside edge, separating the column from the view
         // — from under the lane, which is the header's ground and has no
         // seam in it (the review's artboard); the card's corner meets it there.
-        let lane_h = theme::CAPTION_H.min(area.h);
-        scene::fill(
-            scene,
-            root,
-            p.panel_border,
-            &scene::rect(
-                area.x + area.w - 1.0,
-                area.y + lane_h,
-                1.0,
-                (area.h - lane_h).max(0.0),
-            ),
-        );
+        let lane_h = self.lane_height().min(area.h);
+        if !self.floating {
+            // The document's rounded corner owns the join below the header.
+            let border_top = lane_h + theme::PAGE_RADIUS - 0.5;
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(
+                    area.x + area.w - 0.5,
+                    area.y + border_top,
+                    0.5,
+                    (area.h - border_top).max(0.0),
+                ),
+            );
+        }
 
         // The explore shell is one section structure for every tab: the
         // lane, the heading band, and the nodes band. Only the nodes band's
@@ -7311,7 +7400,7 @@ impl ExploreView {
                 "KoruLane",
                 "container",
                 root,
-                scene::rect(area.x, area.y, area.w.max(0.0), WORKSPACE_ROW_H.max(0.0)),
+                scene::rect(area.x, area.y, area.w.max(0.0), self.lane_height()),
                 |r| {
                     r.property("drawn by", "MainView::draw_lane", "window chrome");
                 },
@@ -7326,7 +7415,7 @@ impl ExploreView {
                 "Gap",
                 "part",
                 root,
-                scene::rect(area.x, area.y + WORKSPACE_ROW_H, area.w, HEADER_PAD),
+                scene::rect(area.x, area.y + self.lane_height(), area.w, HEADER_PAD),
                 |r| {
                     r.property("height", HEADER_PAD, "the rail's pad");
                     r.property("separates", "KoruLane / ExploreTabs", "shell stack");
@@ -8092,7 +8181,26 @@ impl ExploreView {
         viewport: (f32, f32),
         avatar: Option<&peniko::ImageBrush>,
     ) {
-        let Some(panel) = self.popover_panel(area, viewport) else {
+        if let Some(parent) = self.help_parent.as_ref() {
+            self.draw_popover_state(scene, root, engine, area, viewport, avatar, parent);
+        }
+        if let Some(state) = self.popover.as_ref() {
+            self.draw_popover_state(scene, root, engine, area, viewport, avatar, state);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_popover_state(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        area: Rect,
+        viewport: (f32, f32),
+        avatar: Option<&peniko::ImageBrush>,
+        state: &Popover,
+    ) {
+        let Some(panel) = self.panel_for(area, viewport, state.page, state) else {
             return;
         };
         // **It appears and goes rather than blinking.** Two things at once, both
@@ -8103,7 +8211,7 @@ impl ExploreView {
         // Shadowing `root` is deliberate: everything below draws under the same
         // transform the group is clipped by, so nothing can be left behind by
         // the motion.
-        let t = self.popover.as_ref().map_or(0.0, |x| x.progress);
+        let t = state.progress;
         if t <= 0.0 {
             return;
         }
@@ -8145,9 +8253,6 @@ impl ExploreView {
             &scene::Panel::popover(POPOVER_RADIUS),
         );
 
-        let Some(state) = self.popover.as_ref() else {
-            return;
-        };
         if state.slide.is_some() {
             // **Both pages, side by side, sliding together.** The main page
             // leaves to the left as the Profiles page arrives from the right,
@@ -8310,7 +8415,7 @@ impl ExploreView {
 /// window reads it too: the document's top-left corner, where it meets the
 /// pane, is masked in it (`MainView::draw_cards`).
 pub(crate) fn pane_fill() -> peniko::Color {
-    theme::p().pane_bg
+    theme::base_fill()
 }
 
 /// The trailing lane of a popover row: the tick, the gear, a caret.

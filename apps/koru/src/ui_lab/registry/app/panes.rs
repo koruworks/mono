@@ -85,7 +85,7 @@ pub(super) const RECORDS: &[Entry] = &[
                     "koru::panes::sidebar::rail_elements::Contents",
                     RAIL_ELEMENTS,
                     Declared::Enum,
-                    &[literal("Tile"), literal("Glyph"), literal("NotifiedGlyph")],
+                    &[literal("Profile"), literal("Tile"), literal("Glyph")],
                 )],
             ),
             support("koru::panes::sidebar::apps_rail::Hit"),

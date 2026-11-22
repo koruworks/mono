@@ -90,7 +90,7 @@ left `NotAudited` with its reason: `C-TASKS-VIEW` on Android and iOS,
 
 **What is machine-checked**, by the tests beside the records, all in memory:
 the module lists of `koru-ui`, `koru-draw` and its theme, 21 crate roots
-and 23 app files, each module a record or a reason; the token tables, read
+and 24 app files, each module a record or a reason; the token tables, read
 as values; every option set against its Rust, Kotlin or Swift declaration;
 every symbol against a declaration where its path says; every component
 identity a compiled-in painter registers, claimed exactly once; the A2UI
@@ -250,10 +250,10 @@ batch's counts.
 | domain crate lib.rs public modules | 125 |
 | domain crate modules excluded | 78 |
 | app crates baselined | 5 |
-| app source files | 369 |
-| app files baselined | 23 |
-| app modules classified | 280 |
-| app modules excluded | 144 |
+| app source files | 370 |
+| app files baselined | 24 |
+| app modules classified | 281 |
+| app modules excluded | 145 |
 | records: app crates | 65 |
 | native files: Android | 24 |
 | native files: iOS | 10 |
@@ -274,8 +274,8 @@ batch's counts.
 | kind: domain composition | 57 |
 | kind: app-local | 60 |
 | kind: native adapter | 35 |
-| token values listed | 175 |
-| symbols | 2400 |
+| token values listed | 177 |
+| symbols | 2402 |
 | symbols with typed recipes | 22 |
 | inspector identities | 62 |
 | inspector identity registration sites | 65 |
@@ -286,14 +286,14 @@ batch's counts.
 | disposition: boundary | 25 |
 | symbol story: available | 21 |
 | symbol story: no story yet | 433 |
-| symbol story: nonvisual | 1684 |
+| symbol story: nonvisual | 1686 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2348 |
+| A2UI: not supported | 2350 |
 <!-- counts:end -->
 
 Platform cells, by platform and availability: each record says one thing

@@ -97,18 +97,15 @@ impl MainView {
     /// is toggled — so the content reflows once per toggle rather than once per
     /// animation frame. The sliding is entirely in where a column is *drawn*.
     pub(super) fn resolve_regions(&mut self) {
-        let sidebar_w = self.sidebar.layout_width();
+        let sidebar_w = self.sidebar.layout_width().max(theme::RAIL_W);
+        self.explore.set_floating(!self.sidebar.is_open());
         let ai_w = self.ai_panel.layout_width();
         self.regions = regions::solve(
             self.viewport.0,
             self.viewport.1,
             sidebar_w,
             ai_w.max(self.context.layout_width()),
-        )
-        // The ground's lanes at the right edge and the foot, in the rail's
-        // colour (the review's artboard and note): the cards stop short of
-        // the window.
-        .with_ground(koru_draw::theme::EDGE_LANE_W);
+        );
     }
 
     pub(super) fn content(&self) -> Rect {
@@ -308,6 +305,9 @@ impl MainView {
     /// while it is arriving or leaving.
     pub(super) fn sidebar_rect(&self) -> Rect {
         let r = self.regions.sidebar;
+        if !self.sidebar.is_open() {
+            return Rect::new(0.0, r.y, theme::RAIL_W.min(self.viewport.0), r.h);
+        }
         // **At rest the column is drawn where it is hit-tested**: in the
         // settled region. The panel's own width is the one that was *asked
         // for*, and the two differ whenever the window is too narrow to give
@@ -320,9 +320,9 @@ impl MainView {
             return r;
         }
         Rect::new(
-            -self.sidebar.slide_offset(),
+            0.0,
             r.y,
-            self.sidebar.drawn_width(),
+            (self.sidebar.drawn_width() - self.sidebar.slide_offset()).max(theme::RAIL_W),
             r.h,
         )
     }
@@ -379,7 +379,87 @@ impl MainView {
 
     /// The settled pane — what the explore view is hit-tested against.
     pub(super) fn explore_area(&self) -> Rect {
+        if self.explore_preview && !self.sidebar.is_open() {
+            return self.explore_preview_rect();
+        }
         Self::pane_of(self.regions.sidebar)
+    }
+
+    pub(super) fn explore_preview_rect(&self) -> Rect {
+        let gap = theme::Space::S1.px(theme::Profile::Desktop);
+        let x = theme::RAIL_W + gap;
+        let y = theme::CAPTION_H + gap;
+        Rect::new(
+            x,
+            y,
+            (self.sidebar.full() - theme::RAIL_W).min((self.viewport.0 - x - gap).max(0.0)),
+            (self.viewport.1 - y - gap).max(0.0),
+        )
+    }
+
+    pub(super) fn preview_pointer(&mut self, x: f32, y: f32) -> bool {
+        if self.sidebar.is_open() || self.carrying() {
+            return false;
+        }
+        if let Some(crate::panes::sidebar::apps_rail::Hit::App(mode)) =
+            self.explore.rail_hit(self.rail_area(), x, y)
+        {
+            let changed = !self.explore_preview
+                || self.explore.navigator_mode() != mode
+                || self.explore_preview_fade.is_some();
+            if changed {
+                use crate::panes::explore::NavigatorMode as Mode;
+                match mode {
+                    Mode::Home => self.explore.show_home(),
+                    Mode::Documents => self.explore.show_documents(),
+                    Mode::Files => self.explore.show_files(),
+                    Mode::Tasks => self.explore.show_tasks(),
+                    Mode::Chats => self.explore.show_chats(),
+                    Mode::Agents => self.explore.show_agents(),
+                    Mode::Artifacts => self.explore.show_artifacts(),
+                    Mode::Canvases => self.explore.show_canvases(),
+                    Mode::Socials => self.explore.show_socials(),
+                }
+                self.explore_stale = true;
+            }
+            self.explore_preview = true;
+            self.explore_preview_fade = None;
+            return changed;
+        }
+        // Include the narrow bridge so the pointer can enter the floating pane.
+        let panel = self.explore_preview_rect();
+        let bridge = Rect::new(
+            theme::RAIL_W,
+            panel.y,
+            panel.x + panel.w - theme::RAIL_W,
+            panel.h,
+        );
+        if self.explore_preview && (bridge.contains(x, y) || self.explore.popover_open()) {
+            return self.explore_preview_fade.take().is_some();
+        }
+        if self.explore_preview && self.explore_preview_fade.is_none() {
+            if self.reduced_motion {
+                self.explore_preview = false;
+                self.explore.clear_focus();
+            } else {
+                self.explore_preview_fade = Some(Instant::now());
+            }
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn preview_alpha(&mut self) -> f32 {
+        let Some(started) = self.explore_preview_fade else {
+            return 1.0;
+        };
+        let alpha = (1.0 - started.elapsed().as_secs_f32() / 0.14).max(0.0);
+        if alpha == 0.0 {
+            self.explore_preview = false;
+            self.explore_preview_fade = None;
+            self.explore.clear_focus();
+        }
+        alpha
     }
 
     /// The settled rail.
@@ -703,6 +783,8 @@ impl MainView {
 
     /// Open or shut the pane. What the logo and the toggle button do.
     pub(super) fn toggle_sidebar(&mut self) -> bool {
+        self.explore_preview = false;
+        self.explore_preview_fade = None;
         let now = Instant::now();
         // **The fold** (`theme::motion::pane_fold`): the panel's own slide,
         // reversed from where it is on interrupt, with the contents' fade
@@ -777,7 +859,8 @@ impl MainView {
     /// pane is shut, and through the fold either way — it rides the drawn
     /// pane's edge out to the corner and back (frame 9's blue note).
     pub(super) fn chain_drawn(&self) -> bool {
-        !self.sidebar.is_open() || (self.fold.is_some() && self.sidebar.animating())
+        cfg!(target_os = "macos")
+            && (!self.sidebar.is_open() || (self.fold.is_some() && self.sidebar.animating()))
     }
 
     /// Show the workspaces switcher without changing the Explore pane.
@@ -1226,6 +1309,9 @@ impl MainView {
     /// furniture (it is called with empty tab widths) and the lanes answer for
     /// themselves below.
     pub(super) fn hit_at(&mut self, x: f32, y: f32) -> koru_shell_chrome::regions::Hit {
+        if self.explore_preview && self.explore_preview_rect().contains(x, y) {
+            return koru_shell_chrome::regions::Hit::Sidebar;
+        }
         // Ask the shared chrome resolver with empty tab widths so the old caption
         // strip never answers with tab hits. Any tab-like answer there is just the
         // drag window area.

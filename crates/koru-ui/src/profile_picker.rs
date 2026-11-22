@@ -19,7 +19,6 @@ pub const PAD: f32 = theme::PANEL_PAD;
 /// The profile switcher's outer cap in every host.
 pub const MAX_H: f32 = 300.0;
 const AVATAR_SIZE: f32 = 20.0;
-const AVATAR_RADIUS: f32 = 6.0;
 pub const TRAILING_W: f32 = 20.0;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -186,15 +185,50 @@ pub fn draw_avatar(
     at: Rect,
     avatar: Option<&ImageBrush>,
     name: &str,
-    palette_key: &str,
+    _palette_key: &str,
     style: theme::TextStyle,
+) {
+    draw_identity(
+        canvas,
+        root,
+        engine,
+        at,
+        ProfileIdentity {
+            avatar,
+            name,
+            icon: None,
+            color: None,
+        },
+        style,
+        theme::p(),
+    );
+}
+
+/// Circular identity shared by the profile rail and profile menu. Workspace
+/// tiles remain square. An explicit icon takes precedence over a photo.
+pub struct ProfileIdentity<'a> {
+    pub avatar: Option<&'a ImageBrush>,
+    pub name: &'a str,
+    pub icon: Option<&'a str>,
+    pub color: Option<&'a str>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn draw_identity(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    at: Rect,
+    identity: ProfileIdentity<'_>,
+    style: theme::TextStyle,
+    p: &theme::Palette,
 ) {
     if at.w <= 0.0 || at.h <= 0.0 {
         return;
     }
     let (cx, cy) = at.centre();
-    let chip = scene::rrect(at.x, at.y, at.w, at.h, AVATAR_RADIUS);
-    if let Some(brush) = avatar {
+    let chip = scene::rrect(at.x, at.y, at.w, at.h, at.w.min(at.h) * 0.5);
+    if let Some(brush) = identity.avatar.filter(|_| identity.icon.is_none()) {
         canvas.push_clip_layer(Fill::NonZero, root, &chip);
         let img = &brush.image;
         let scale = (at.w / img.width.max(1) as f32).max(at.h / img.height.max(1) as f32);
@@ -208,20 +242,31 @@ pub fn draw_avatar(
         canvas.pop_layer();
         return;
     }
-    let palette = chip_palette(palette_key);
-    scene::fill(canvas, root, palette.bg, &chip);
-    let layout = engine.simple_layout(&initials(name), style);
-    let line_h = layout
-        .lines()
-        .next()
-        .map_or(0.0, |line| line.metrics().line_height);
+    // Match the profile editor's tile: unset means the panel surface, not
+    // an automatically assigned identity color. Unknown saved colors use
+    // the neutral chip surface, just as workspace/profile tiles do.
+    let background = match identity.color {
+        None => p.panel_bg,
+        Some(name) => p
+            .workspace_colors
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map_or(p.chip_bg, |(_, color)| *color),
+    };
+    scene::fill(canvas, root, background, &chip);
+    if identity.color.is_none() {
+        scene::stroke(canvas, root, p.panel_border, theme::BORDER_W, &chip);
+    }
+    let letters = initials(identity.name);
+    let layout = engine.simple_layout(identity.icon.unwrap_or(&letters), style);
+    let (x, y) = scene::centre_in(&layout, at);
     scene::draw_layout(
         canvas,
         root,
         &layout,
-        cx - layout.width() * 0.5,
-        cy - line_h * 0.5,
-        Some(palette.fg),
+        x,
+        y,
+        identity.icon.is_none().then_some(p.text),
     );
 }
 
@@ -264,16 +309,6 @@ pub fn initials(name: &str) -> String {
         "?".into()
     } else {
         letters
-    }
-}
-
-fn chip_palette(key: &str) -> &'static theme::PillPalette {
-    let p = theme::p();
-    match chip_slot(key) {
-        0 => &p.document,
-        1 => &p.contact,
-        2 => &p.date,
-        _ => &p.link,
     }
 }
 

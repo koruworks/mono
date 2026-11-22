@@ -474,8 +474,12 @@ fn pressing_a_tab_in_the_title_bar_focuses_its_pane() {
 #[test]
 fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
     let (mut v, mut workspace) = container();
-    assert_eq!(v.regions.sidebar.w, 0.0, "shut by default");
-    assert_eq!(v.content().x, theme::EDGE_LANE_W, "the left lane's width");
+    assert_eq!(
+        v.regions.sidebar.w,
+        theme::RAIL_W,
+        "only the rail by default"
+    );
+    assert_eq!(v.content().x, theme::RAIL_W, "the rail remains");
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
@@ -491,33 +495,36 @@ fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(!v.sidebar.is_open());
-    assert_eq!(v.content().x, theme::EDGE_LANE_W, "and took it back");
+    assert_eq!(
+        v.content().x,
+        theme::RAIL_W,
+        "and took the explorer space back"
+    );
 }
 
 /// The pane runs the full height of the window and pushes the caption — logo,
 /// tabs and all — to the right of it. That is the whole of the redesign, in
 /// terms of geometry.
 #[test]
-fn opening_the_pane_pushes_the_caption_and_its_toggle_right() {
+fn opening_the_pane_pushes_the_caption_but_keeps_the_toggle_over_the_rail() {
     let (mut v, mut workspace) = container();
-    let shut_toggle = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption);
-    assert_eq!(v.regions.caption.x, 0.0, "nothing to start after yet");
+    let shut_toggle = v.settled_lane_controls().toggle;
+    assert_eq!(v.regions.caption.x, theme::RAIL_W, "the rail stays visible");
     assert_eq!(shut_toggle.x, 0.0);
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
 
     assert_eq!(v.regions.sidebar.y, 0.0, "the pane starts at the top");
     assert_eq!(
-        v.regions.sidebar.h,
-        v.viewport.1 - theme::EDGE_LANE_W,
+        v.regions.sidebar.h, v.viewport.1,
         "and runs to the foot lane"
     );
     assert_eq!(v.regions.caption.x, theme::SIDEBAR_W + theme::RAIL_W);
-    let open_toggle = koru_shell_chrome::caption::sidebar_toggle(v.regions.caption);
+    let open_toggle = v.settled_lane_controls().toggle;
     assert_eq!(
         open_toggle.x - shut_toggle.x,
-        theme::SIDEBAR_W + theme::RAIL_W,
-        "the toggle moved"
+        0.0,
+        "the toggle stays in the top-left corner"
     );
 }
 
@@ -574,13 +581,16 @@ fn the_fold_reflows_once_and_settles_with_the_slide() {
     use std::time::Duration;
     let (mut v, mut workspace) = container();
     assert!(!v.sidebar.is_open());
-    assert!(v.chain_drawn(), "shut: the chain is there");
+    assert!(!v.chain_drawn(), "the controls stay in the rail lane");
     let before = v.relayouts;
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert_eq!(v.relayouts, before + 1, "one reflow at the toggle");
     assert!(v.sidebar.animating());
     assert!(v.fold.is_some_and(|(_, opening)| opening));
-    assert!(v.chain_drawn(), "opening: the chain rides the edge");
+    assert!(
+        !v.chain_drawn(),
+        "opening does not duplicate the lane controls"
+    );
     assert_eq!(
         v.fold_content_alpha(),
         0.0,
@@ -913,7 +923,7 @@ fn both_columns_open_together_and_the_offset_still_holds() {
     assert_eq!(c.x, theme::SIDEBAR_W + theme::RAIL_W);
     assert_eq!(
         c.w,
-        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W - theme::EDGE_LANE_W
+        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W
     );
 
     let view = v.focused_view_rect();
@@ -1111,16 +1121,8 @@ fn the_content_rect_sits_below_the_caption() {
     let (v, _w) = container();
     let r: Rect = v.content();
     assert_eq!(r.y, v.regions.caption.h);
-    assert_eq!(
-        r.x,
-        theme::EDGE_LANE_W,
-        "both columns are collapsed for now: the left lane is the window's"
-    );
-    assert_eq!(
-        r.w,
-        1200.0 - 2.0 * theme::EDGE_LANE_W,
-        "and so is the right"
-    );
+    assert_eq!(r.x, theme::RAIL_W, "the collapsed explorer leaves its rail");
+    assert_eq!(r.w, 1200.0 - theme::RAIL_W, "and so is the right");
 }
 
 // ============================================================ drag-to-move
@@ -1326,30 +1328,25 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
     );
 }
 
-/// **The window keeps a lane at its right edge and along its foot** (the
-/// review's artboard and note), **and at its left while the pane is shut**
-/// (his note, E71): the content stops `EDGE_LANE_W` short of the window on
-/// every side it reaches, the caption does not, and the context column,
-/// when open, ends where the lanes begin. Open the pane and the left lane
-/// goes: the pane's card is the window's left.
+/// Content and side panels reach the right and bottom window edges.
 #[test]
-fn the_window_keeps_an_edge_lane() {
+fn the_window_content_is_flush_with_its_edges() {
     let (mut v, mut workspace) = on_document();
     let edge = v.regions.edge;
-    assert_eq!(edge.w, theme::EDGE_LANE_W);
+    assert_eq!(edge.w, 0.0);
     assert_eq!(edge.x + edge.w, v.viewport.0);
     assert_eq!(v.content().x + v.content().w, edge.x);
     let verge = v.regions.left_edge;
-    assert_eq!(verge, Rect::new(0.0, edge.y, theme::EDGE_LANE_W, edge.h));
-    assert_eq!(v.content().x, verge.x + verge.w, "the same air on the left");
+    assert_eq!(verge, Rect::new(0.0, edge.y, 0.0, edge.h));
+    assert_eq!(v.content().x, theme::RAIL_W, "the rail owns the left edge");
     assert!(v.toggle_sidebar());
     assert_eq!(v.regions.left_edge.w, 0.0, "the pane is the window's left");
     assert_eq!(v.content().x, v.regions.sidebar.w);
     assert!(v.toggle_sidebar());
-    assert_eq!(v.regions.left_edge.w, theme::EDGE_LANE_W);
+    assert_eq!(v.regions.left_edge.w, 0.0);
     v.adopt(&mut workspace.ws);
     let foot = v.regions.foot;
-    assert_eq!(foot.h, theme::EDGE_LANE_W);
+    assert_eq!(foot.h, 0.0);
     assert_eq!(foot.y + foot.h, v.viewport.1);
     assert_eq!(v.content().y + v.content().h, foot.y);
     assert_eq!(edge.y + edge.h, foot.y);

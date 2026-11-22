@@ -90,7 +90,7 @@ fn arrows_move_within_a_stop_enter_activates_and_escape_leaves() {
         );
         // Past the last app are Help, App settings and the profile square,
         // then it wraps. ↓ walks the rail as → does.
-        for _ in 0..shown.len() + lead + 2 {
+        for _ in 0..shown.len() + lead {
             press(&mut v, &mut workspace.ws, NamedKey::ArrowDown);
         }
         assert_eq!(
@@ -322,13 +322,8 @@ fn the_move_chords_leave_the_rail_alone_without_the_keyboard_on_it() {
     });
 }
 
-/// **Enter on the rail's foot does what a press on it does**, on each of the
-/// three, and on the control the ring is drawn on: Help opens the help
-/// popover beside its `?`, the profile square its Profiles page, and the
-/// settings square between them the Settings tab. Enter and the ring read the foot from one place
-/// (`rail_focus`); Enter used to read a copy that still counted *Manage
-/// apps* first, so Enter on Help did nothing and on the profile square
-/// opened Help (found in D96).
+/// Enter and the focus ring read the same rail controls. The sole footer
+/// control now opens the Profile menu, including Settings and Help.
 #[test]
 fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
     use crate::panes::explore::PopoverKind;
@@ -340,71 +335,20 @@ fn enter_on_the_rails_foot_activates_the_control_the_ring_is_on() {
             Some("e"),
             PRIMARY_SHIFT
         ));
-        // Lane, then the rail, on the active view.
         press(&mut v, &mut workspace.ws, NamedKey::F6);
         press(&mut v, &mut workspace.ws, NamedKey::F6);
-        let apps = v.explore.rail_modes().len() + lead(&v);
-        let onto = |v: &mut MainView, ws: &mut WorkspaceDoc, foot: usize| {
-            for _ in 0..apps + 3 {
-                if v.chrome_focus == Some(ChromeStop::Apps(apps + foot)) {
-                    return;
-                }
-                press(v, ws, NamedKey::ArrowDown);
+        let index = v.explore.rail_modes().len() + lead(&v);
+        for _ in 0..=index {
+            if v.chrome_focus == Some(ChromeStop::Apps(index)) {
+                break;
             }
-            panic!("never reached the foot's {foot}: {:?}", v.chrome_focus);
-        };
-
-        onto(&mut v, &mut workspace.ws, 0);
+            press(&mut v, &mut workspace.ws, NamedKey::ArrowDown);
+        }
         assert_eq!(
             v.explore_chrome_focus(),
-            Some(ExploreChromeFocus::RailHelp),
-            "the ring is on Help"
+            Some(ExploreChromeFocus::RailProfile)
         );
         assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
-        assert!(
-            v.explore.popover_is(PopoverKind::Help),
-            "Enter on Help opens the help popover"
-        );
-        v.explore.close_popover();
-        v.explore
-            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-
-        onto(&mut v, &mut workspace.ws, 2);
-        assert_eq!(
-            v.explore_chrome_focus(),
-            Some(ExploreChromeFocus::RailProfile),
-            "the ring is on the profile square"
-        );
-        assert!(!v.explore.popover_open());
-        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
-        assert!(
-            v.explore.popover_open(),
-            "Enter on the profile square opens its page"
-        );
         assert!(v.explore.popover_is(PopoverKind::Profiles));
-        assert!(
-            !v.explore.popover_is(PopoverKind::Help),
-            "and not the help popover"
-        );
-        v.explore.close_popover();
-        v.explore
-            .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-
-        // Last, because it takes the keyboard to the tab it opens.
-        onto(&mut v, &mut workspace.ws, 1);
-        assert_eq!(
-            v.explore_chrome_focus(),
-            Some(ExploreChromeFocus::RailSettings),
-            "the ring is on the settings square, between the two"
-        );
-        assert!(press(&mut v, &mut workspace.ws, NamedKey::Enter));
-        assert!(
-            matches!(
-                v.tabs().active_tab().view,
-                crate::mainview::TabView::Settings(_)
-            ),
-            "Enter on the settings square opens Settings"
-        );
-        assert!(!v.explore.popover_open(), "and no popover");
     });
 }

@@ -14,6 +14,8 @@ use koru_i18n::{Key as Words, fill, t};
 use super::popover_elements::{PAGE, SURFACE, WORKSPACE_ROW_STATES};
 use super::{ExploreView, PopoverKind, PopoverRow};
 
+mod flyout;
+
 pub(crate) const LIST: &str = "Help timeline and links";
 
 struct TimelineMark {
@@ -418,13 +420,8 @@ impl ExploreView {
                 list = list.child(super::workspace_menu_elements::rule());
             }
             let label = self.help.action_label(action);
-            let mut link = row("Help link")
+            let mut link = super::popover_elements::menu_action_row("Help link")
                 .id(action.key())
-                .min_h(metrics::ROW_MIN)
-                .pad_x(alias::NAV_PAD)
-                .gap(Space::S2)
-                .radius(Radius::M)
-                .states(&WORKSPACE_ROW_STATES)
                 .hit()
                 .focusable()
                 .action(ElAction::Click)
@@ -438,15 +435,19 @@ impl ExploreView {
                 _ => None,
             };
             if let Some(glyph) = glyph {
-                link = link.child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary));
+                link = link.child(
+                    icon(glyph, koru_ui::menu::ActionRow::ICON)
+                        .decorative()
+                        .ink(Ink::Secondary),
+                );
             }
-            list = list.child(link.child(text(label).role(roles::ROW).fill()));
+            list = list.child(link.child(text(label).role(roles::ROW).fill().truncate()));
         }
         col("Help page")
             .id(PAGE)
             .semantics(Role::Menu)
             .name(Words::Help)
-            .pad_y(alias::PANEL_PAD)
+            .pad(alias::PANEL_PAD)
             .child(list)
     }
 
@@ -462,8 +463,7 @@ impl ExploreView {
         let mut item = row("Help release row")
             .id(action.key())
             .min_h(metrics::PROFILE_ROW_MIN)
-            .pad_x(alias::NAV_PAD)
-            .pad_y(Space::S1)
+            .pad_x(Space::S2)
             .gap(Space::S2)
             .radius(Radius::M)
             .states(&WORKSPACE_ROW_STATES)
@@ -495,7 +495,7 @@ impl ExploreView {
         item = item.child(
             col("Release details")
                 .fill()
-                .gap(Space::S1)
+                .gap(Space::S0_5)
                 .child(
                     text(version)
                         .role(roles::ROW)
@@ -505,7 +505,7 @@ impl ExploreView {
                 )
                 .child(
                     text(description)
-                        .role(roles::HINT)
+                        .role(roles::META)
                         .ink(Ink::Secondary)
                         .fill()
                         .truncate(),
@@ -513,7 +513,7 @@ impl ExploreView {
         );
         if enabled {
             item = item.child(if matches!(action, Action::Current | Action::Release(_)) {
-                icon(koru_draw::icons::CARET_RIGHT, IconSize::L)
+                icon(koru_draw::icons::CARET_RIGHT, IconSize::M)
                     .decorative()
                     .ink(Ink::Secondary)
             } else {

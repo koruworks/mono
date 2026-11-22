@@ -1990,7 +1990,7 @@ pub const BUNDLED_FAMILIES: &[BundledFamily] = &[
 ];
 
 /// Icon size in the document toolbar, where an icon *is* the control.
-/// The caption row uses the smaller [`CAPTION_ICON`].
+/// The caption row has its own [`CAPTION_ICON`] size.
 #[allow(dead_code)]
 pub const ICON_SIZE: f32 = 17.0;
 
@@ -3132,13 +3132,15 @@ pub const ROW_H: f32 = text_metrics::SM.line_height + ROW_PAD_V; // 18 + 8 = 26
 // view, and a collapsible context column on the right. Per-site constants rather
 // than a scale, the same as the toolbar above.
 
-/// The caption row: tabs and the window buttons share it, so it is taller than
-/// a toolbar and about the height of a native title bar.
+/// The caption row: tabs and the window buttons share its 42 px height.
 ///
 /// A literal, **not** derived from a text tier: it is sized by the window
 /// buttons, the drag area, and the tab shape, not by the label inside it. Do
 /// not rewrite it as label-metrics + pad — the exemption is on purpose.
 pub const CAPTION_H: f32 = 42.0;
+/// Width of a caption icon control. Independent of the lane height so a
+/// taller tab lane keeps Search and the other controls visible in the sidebar.
+pub const CAPTION_CONTROL_W: f32 = 42.0;
 /// A window button (minimise, maximise, close). Square, and full caption height
 /// so the pointer can slam into the top-right corner and still hit close.
 pub const CAPTION_BTN: f32 = 44.0;
@@ -3182,10 +3184,8 @@ pub const PANEL_SLIDE_MS: f32 = 140.0;
 /// Icons in the caption row — the tab close box, the `+`, the two panel
 /// toggles and the window buttons.
 ///
-/// Smaller than [`ICON_SIZE`]: the caption is a title bar, where an icon is a
-/// small affordance beside a label, rather than a command surface where it is
-/// the whole control.
-pub const CAPTION_ICON: f32 = 15.0;
+/// Matches the 18 px icons in the app rail.
+pub const CAPTION_ICON: f32 = 18.0;
 
 /// The optical inset either side of a caption's contents.
 ///
@@ -3230,10 +3230,15 @@ pub const TAB_SCROLLBAR_H: f32 = SCROLLBAR_W;
 /// two apart is what makes the label's padding even — centring it in the row
 /// while drawing the pill lower is what made the text look like it was sitting
 /// on the floor of its tab.
-pub const TAB_INSET_TOP: f32 = 4.0;
-/// Deeper than the top by the caption's hairline plus a visible gap, so a tab
-/// never sits *on* the line that separates the caption from the content.
-pub const TAB_INSET_BOTTOM: f32 = 5.0;
+/// The original 33 px pill left 15 px around its 18 px content. Halving
+/// that internal padding gives a 25.5 px pill within the unchanged 42 px lane.
+pub const TAB_INSET_TOP: f32 = 7.75;
+/// One extra pixel below keeps the pill clear of the caption hairline.
+pub const TAB_INSET_BOTTOM: f32 = 8.75;
+
+/// The caption's icon controls and identity chips keep their existing padding.
+pub const CAPTION_INSET_TOP: f32 = 4.0;
+pub const CAPTION_INSET_BOTTOM: f32 = 5.0;
 
 /// How long a tab takes to slide into a new slot after a reorder.
 ///
