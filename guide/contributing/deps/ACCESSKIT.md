@@ -108,6 +108,12 @@ Closing the blocker changes the chrome revision and restores the body beneath
 its content region. Integration fixtures prune disconnected nodes and reject
 new unattached nodes to cover this transition.
 
+The Profile waiting pane also replaces the document body. It must withhold
+body deltas for as long as it is visible, using the same visibility predicate
+as the full projection. Otherwise a repeated update while Cloud is preparing
+publishes an orphan `s:body#root` and crashes the Windows provider. Clearing
+the wait restores the complete document through the chrome update.
+
 ## Which UIA property a Koru locator lands on
 
 This is the mapping the roadmap required to be established rather than assumed.

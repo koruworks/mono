@@ -835,6 +835,42 @@ fn a_document_vanishes_beneath_a_modal_and_comes_back() {
     assert_eq!(window.pane.counters().unresolved_focus, 0);
 }
 
+#[test]
+fn profile_wait_withholds_body_deltas_and_restores_the_document() {
+    use koru_workspace_host::profile_wait::{ProfileWait, WaitAttempt, WaitReading};
+
+    let (mut w, doc) = workspace_with(&["Waiting for Cloud"]);
+    let mut slots = Slots::default();
+    let mut window = Window::open(&mut w, &mut slots, doc);
+    let body = window.shell().surface("body", super::parts::ROOT);
+    assert!(window.client.holds(&body.locator()));
+
+    View::set_profile_wait(
+        &mut window.v,
+        Some(ProfileWait {
+            attempt: WaitAttempt {
+                window: winit::window::WindowId::from(1),
+                profile: koru_core::ProfileId::new(),
+                sequence: 1,
+            },
+            reading: WaitReading::Preparing,
+        }),
+    );
+    assert_eq!(window.service(), Some(Scope::Delta));
+    assert!(!window.client.holds(&body.locator()));
+    for _ in 0..3 {
+        window.pane.invalidate();
+        assert_eq!(window.service(), Some(Scope::Delta));
+        assert_eq!(window.client.last_size(), 0);
+        assert!(!window.client.holds(&body.locator()));
+    }
+
+    View::set_profile_wait(&mut window.v, None);
+    assert_eq!(window.service(), Some(Scope::Delta));
+    assert!(window.client.holds(&body.locator()));
+    assert_eq!(window.pane.counters().unresolved_focus, 0);
+}
+
 /// The reported Move to crash was a second publish while the same modal was
 /// standing: its first publish had already removed the document body.
 #[test]

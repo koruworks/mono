@@ -192,12 +192,12 @@ impl MainView {
         let whole = scope == Scope::Whole || !self.bodies.borrow().holds_chrome(chrome);
         let blockers = self.blockers();
         if !whole {
-            // A blocker removed the body and its parent from the client's
+            // A blocker or Profile wait removed the body from the client's
             // tree. A later publish with unchanged chrome must keep it absent:
             // publishing a loose body here would graft it onto no parent and
-            // panic in AccessKit. Closing the blocker changes chrome and
+            // panic in AccessKit. Ending the blocker or wait changes chrome and
             // restores the complete body through ordinary_semantics below.
-            if blockers.is_blocking() {
+            if blockers.is_blocking() || self.profile_wait_visible() {
                 return Vec::new();
             }
             // The chrome is exactly what the client already holds, so this
