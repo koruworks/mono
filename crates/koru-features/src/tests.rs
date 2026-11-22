@@ -83,11 +83,17 @@ fn a_set_variable_wins_in_both_directions_and_an_unset_one_keeps_the_baked_defau
 }
 
 #[test]
-fn agent_views_need_agents_and_are_on_by_default() {
-    assert!(switch_value_or(None, true));
+fn agent_views_need_agents_and_are_off_by_default() {
+    // Hidden again after the A2UI merge (maintainers, 2026-11-20).
+    if option_env!("KORU_ENABLE_AGENT_VIEWS").is_none() {
+        assert!(
+            !Features::BAKED.agent_views,
+            "the Agents and Artifacts views are hidden when unset"
+        );
+    }
     assert!(
-        !switch_value_or(Some("0"), true),
-        "an explicit opt-out still wins"
+        switch_value(Some("1")),
+        "an explicit opt-in still shows them"
     );
     let tabs_only = Features {
         agents: true,

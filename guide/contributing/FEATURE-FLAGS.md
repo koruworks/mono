@@ -5,11 +5,12 @@ Koru shows documents, files and terminal/shell session tabs — plus Welcome,
 Settings, Manage, Trash, Feedback, Search, Updates, What's New, Linked devices
 and Voice. Eight larger surfaces are built and tested behind flags — the
 first five from 2026-10-08, canvases and Socials from 2026-10-10, agent views
-from 2026-10-16. **Cloud sync, agent sessions, agent views, Tasks and Koru AI ship on by
+from 2026-10-16. **Cloud sync, agent sessions, Tasks and Koru AI ship on by
 default**. Cloud sync defaults on in every build (maintainers, 2026-11-07).
-Explore's Agents and Artifacts views default on as of 2026-11-15, including
-access to saved mini apps. Reminders, canvases and Socials are
-**hidden** until switched on. Nothing was deleted, and the flags are **UI only**:
+Explore's Agents and Artifacts views were on from 2026-11-15 and are hidden
+again after the A2UI merge (maintainers, 2026-11-20); saved mini apps stay
+reachable, since their discovery runs with Koru AI on as well. Agent views,
+reminders, canvases and Socials are **hidden** until switched on. Nothing was deleted, and the flags are **UI only**:
 every background worker (reminders, sync, the delegate runner, the session
 host) starts exactly as it does with the flag on. **The one exception is the
 Socials publisher**, which Koru Agent starts only while `ENABLE_SOCIALS` is on
@@ -20,7 +21,7 @@ decision record is ADR-450.
 | --- | --- | --- | --- |
 | `ENABLE_CLOUD_SYNC` | `KORU_ENABLE_CLOUD_SYNC` | **on** | Koru Cloud: account sign-in (email, Google, Apple), the Cloud page, every Cloud pointer |
 | `ENABLE_AGENTS` | `KORU_ENABLE_AGENTS` | **on** | Agent sessions as tabs: the `+` menu's *Agents ▸*, agent tabs and their restore, the tray's Agents submenu. **Shell sessions are always shown** |
-| `ENABLE_AGENT_VIEWS` | `KORU_ENABLE_AGENT_VIEWS` | **on** | Explore's *Agents* and *Artifacts* views and every way into them — **and every way to start Delegate** (with `ENABLE_AI` on). Needs `ENABLE_AGENTS` on as well |
+| `ENABLE_AGENT_VIEWS` | `KORU_ENABLE_AGENT_VIEWS` | off | Explore's *Agents* and *Artifacts* views and every way into them — **and every way to start Delegate** (with `ENABLE_AI` on). Needs `ENABLE_AGENTS` on as well |
 | `ENABLE_TASKS` | `KORU_ENABLE_TASKS` | **on** | The Tasks view and every way into it. **`/due` stays** and still creates a task |
 | `ENABLE_AI` | `KORU_ENABLE_AI` | **on** | Koru AI chat **and Delegate** (runs, results, schedules) — grouped by the maintainers. *Starting* a delegation also needs `ENABLE_AGENT_VIEWS` |
 | `ENABLE_REMINDERS` | `KORU_ENABLE_REMINDERS` | off | The reminders UI. The reminder worker still runs, so an existing reminder can still notify |
@@ -38,7 +39,7 @@ more than one flag: `agent_views()` is `agents && agent_views`, and
 
 1. **Baked in.** Each `ENABLE_*` constant is `option_env!("KORU_ENABLE_*")`
    read through koru-env's truthiness rule when `koru-features` is compiled.
-   Cloud sync, agents, agent views, Tasks and Koru AI are **on** when unset; the other three
+   Cloud sync, agents, Tasks and Koru AI are **on** when unset; the other four
    flags are **off**. This applies to development and release builds on every
    platform.
 2. **Overridden at run time.** A `KORU_ENABLE_*` variable that is **set** in the
