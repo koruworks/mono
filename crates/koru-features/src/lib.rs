@@ -3,7 +3,7 @@
 //! **Which product surfaces this build shows.**
 //!
 //! Koru shows documents, files and terminal/shell sessions. Cloud sync, agent
-//! sessions, agent views, Tasks and Koru AI are on by default; reminders,
+//! sessions, Tasks and Koru AI are on by default; agent views, reminders,
 //! canvases and Socials are hidden until switched on. Each flag can be overridden:
 //!
 //! | Flag | Env var | Hides |
@@ -22,8 +22,8 @@
 //! ## Baked in, with an environment override
 //!
 //! A flag's default is decided when *this crate* is compiled, from
-//! `option_env!` on each `KORU_ENABLE_*` name: Cloud sync, agents, agent views,
-//! Tasks and Koru AI are **on** when unset; the other three flags are **off**. The release
+//! `option_env!` on each `KORU_ENABLE_*` name: Cloud sync, agents, Tasks and
+//! Koru AI are **on** when unset; the other four flags are **off**. The release
 //! tool forwards each of the eight that is set, as `1` or `0`, to
 //! `cargo build` (`koru-release::package::run_cargo`), so a release bakes a
 //! surface on or off by setting it in its environment or in
@@ -194,10 +194,13 @@ pub const ENABLE_CLOUD_SYNC: bool = switch_value_or(option_env!("KORU_ENABLE_CLO
 /// Agent sessions and artifacts, as baked into this build. **On when unset**
 /// (ADR-450's 2026-10-15 amendment); `KORU_ENABLE_AGENTS=0` bakes it off.
 pub const ENABLE_AGENTS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENTS"), true);
-/// Explore's Agents and Artifacts views, as baked into this build. On when
-/// unset (maintainer request, 2026-11-15), including saved mini-app discovery.
-/// `KORU_ENABLE_AGENT_VIEWS=0` hides them. Starting Delegate follows it too.
-pub const ENABLE_AGENT_VIEWS: bool = switch_value_or(option_env!("KORU_ENABLE_AGENT_VIEWS"), true);
+/// Explore's Agents and Artifacts views, as baked into this build. **Off when
+/// unset**: hidden again after the A2UI merge (maintainers, 2026-11-20), as
+/// they were before the 2026-11-15 request turned them on.
+/// `KORU_ENABLE_AGENT_VIEWS=1` shows them. Starting Delegate and the
+/// "Delete project" menu item follow it too. Saved mini-app discovery does
+/// not need it: it runs with Koru AI on as well (`ai() || agent_views()`).
+pub const ENABLE_AGENT_VIEWS: bool = switch_value(option_env!("KORU_ENABLE_AGENT_VIEWS"));
 /// The Tasks view and its entry points, as baked into this build. **On when
 /// unset** (the review's note, 2026-10-26, QUESTIONS.md E52): the view ships;
 /// `KORU_ENABLE_TASKS=0` bakes it off.
