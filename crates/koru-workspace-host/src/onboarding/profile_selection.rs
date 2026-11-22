@@ -161,6 +161,7 @@ impl OnboardingView {
         match command {
             C::StartGoogle { .. }
             | C::StartApple { .. }
+            | C::StartEmailBrowser { .. }
             | C::ContinueWithEmail { .. }
             | C::Cancel { .. } => self.browser_submission(command),
             C::SelectProfiles { .. } | C::CancelEnrollment => self.selection.submission,
@@ -305,11 +306,11 @@ impl OnboardingView {
             .map(|row| row.profile_id.clone())
             .collect()
     }
-    fn selection_ids(&self) -> Vec<String> {
+    pub(super) fn selection_ids(&self) -> Vec<String> {
         self.selection
             .choice(&self.authorized_selection_ids(), &BTreeSet::new())
     }
-    fn enrollment_selection_ids(&self) -> Vec<String> {
+    pub(super) fn enrollment_selection_ids(&self) -> Vec<String> {
         self.selection.choice(
             &self.authorized_selection_ids(),
             &self.completed_selection_ids(),
@@ -323,7 +324,7 @@ impl OnboardingView {
                 .iter()
                 .any(|row| row.state != koru_agent_wire::EnrollmentState::Complete)
     }
-    fn member_retry(&self, index: usize) -> bool {
+    pub(super) fn member_retry(&self, index: usize) -> bool {
         !self.selection.locked()
             && self.account_profiles.get(index).is_some_and(|profile| {
                 self.account_state.enrollments.iter().any(|row| {
@@ -340,6 +341,9 @@ impl OnboardingView {
     }
     pub(super) fn selection_controls(&self) -> Vec<Hit> {
         let mut controls = Vec::new();
+        if self.workspace_modal {
+            controls.push(Hit::SwitchAccount);
+        }
         let authorized = self.authorized_selection_ids();
         for (index, profile) in self.account_profiles.iter().enumerate() {
             if !self.selection.locked() && authorized.contains(&profile.profile_id) {
@@ -615,6 +619,9 @@ impl OnboardingView {
     }
 
     pub(super) fn selection_hit(&mut self, x: f32, y: f32) -> Option<Hit> {
+        if self.workspace_modal {
+            return self.profiles_modal_hit(x, y);
+        }
         let layout = self.selection_layout();
         let controls = self.selection_controls();
         for (hit, rect, _, enabled) in layout.footer {

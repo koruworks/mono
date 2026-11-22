@@ -93,12 +93,25 @@ use crate::accessibility::{
     ViewSlot, WindowSlot,
 };
 
-use super::setup::{
-    KEY_BACK, KEY_CARD, KEY_COLORS, KEY_EMOJI, KEY_LEAD, KEY_NAME, KEY_NOTE, KEY_PRIMARY,
-    KEY_RECOVERY, KEY_RESUME, KEY_STATUS, KEY_TILE, KEY_WORKSPACE_NAME, KEY_WORKSPACE_ROW,
-    KEY_YOU_ROW, SETUP_EMOJI, SWATCH_COUNT, emoji_geometry, swatch_geometry,
+use super::checkout_modal::{
+    KEY_BACK as CM_BACK, KEY_BILLING_MONTHLY as CM_BILLING_MONTHLY,
+    KEY_BILLING_YEARLY as CM_BILLING_YEARLY, KEY_BODY as CM_BODY, KEY_CANCEL as CM_CANCEL,
+    KEY_CARD as CM_CARD, KEY_OFFLINE as CM_OFFLINE, KEY_REOPEN as CM_REOPEN,
+    KEY_RETRY as CM_RETRY,
 };
-use super::{Hit, OnboardingView, Screen};
+use super::setup::{
+    KEY_AVATAR, KEY_BACK, KEY_CARD, KEY_LEAD, KEY_NAME, KEY_NOTE, KEY_PRIMARY, KEY_RECOVERY,
+    KEY_RESUME, KEY_STATUS, KEY_TILE, KEY_WORKSPACE_NAME, KEY_WORKSPACE_ROW, KEY_YOU_ROW,
+};
+use super::welcome_modal::{
+    KEY_ACCOUNT_CARD as WM_ACCOUNT_CARD, KEY_APPLE as WM_APPLE,
+    KEY_BILLING_MONTHLY as WM_BILLING_MONTHLY, KEY_BILLING_YEARLY as WM_BILLING_YEARLY,
+    KEY_CARD as WM_CARD, KEY_COMPARE_PLANS as WM_COMPARE_PLANS, KEY_CONTINUE as WM_CONTINUE,
+    KEY_EMAIL_LINK as WM_EMAIL_LINK, KEY_EXISTING_CARD as WM_EXISTING_CARD,
+    KEY_GOOGLE as WM_GOOGLE, KEY_LEAD as WM_LEAD, KEY_OFFLINE_CARD as WM_OFFLINE_CARD,
+    KEY_RECOVERY as WM_RECOVERY, KEY_STATUS as WM_STATUS,
+};
+use super::{Hit, OnboardingView, Screen, WelcomeBillingInterval, WelcomePath};
 
 /// The object kind every first-run control belongs to. A locator reads
 /// `koru:w1/v1/onb:3#primary` — the `3` is the screen instance, and a person
@@ -128,6 +141,15 @@ pub mod parts {
     pub const GOOGLE: ControlPart = ControlPart::new("google");
     pub const APPLE: ControlPart = ControlPart::new("apple");
     pub const CONTINUE_OFFLINE: ControlPart = ControlPart::new("continue-offline");
+    pub const COMPARE_PLANS: ControlPart = ControlPart::new("compare-plans");
+    pub const WELCOME_OFFLINE: ControlPart = ControlPart::new("welcome-offline");
+    pub const WELCOME_ACCOUNT: ControlPart = ControlPart::new("welcome-account");
+    pub const WELCOME_EXISTING: ControlPart = ControlPart::new("welcome-existing");
+    pub const BILLING_MONTHLY: ControlPart = ControlPart::new("billing-monthly");
+    pub const BILLING_YEARLY: ControlPart = ControlPart::new("billing-yearly");
+    pub const REOPEN_CHECKOUT: ControlPart = ControlPart::new("reopen-checkout");
+    pub const CANCEL_CHECKOUT: ControlPart = ControlPart::new("cancel-checkout");
+    pub const RETRY_CHECKOUT: ControlPart = ControlPart::new("retry-checkout");
     /// *Try again* in the welcome screen's failure banner.
     pub const RETRY: ControlPart = ControlPart::new("retry");
     pub const TERMS: ControlPart = ControlPart::new("terms");
@@ -149,46 +171,14 @@ pub mod parts {
     /// steps' keep their keywords, so a surviving control's locator does not
     /// change.
     pub const RESUME_ACCOUNT: ControlPart = ControlPart::new("resume-account");
-    /// The *You* (or *Profile*) group, and the name field in it.
+    /// The *You* (or *Profile*) group: the profile tile and the name field.
     pub const YOU: ControlPart = ControlPart::new("you");
+    pub const PROFILE_ICON: ControlPart = ControlPart::new("profile-icon");
     pub const OWNER_NAME: ControlPart = ControlPart::new("owner-name");
     /// The *First workspace* group: the tile and the workspace's name.
     pub const FIRST_WORKSPACE: ControlPart = ControlPart::new("first-workspace");
     pub const WORKSPACE_NAME: ControlPart = ControlPart::new("workspace-name");
     pub const WORKSPACE_ICON: ControlPart = ControlPart::new("workspace-icon");
-    /// The swatch row, and one cell per named color. Keyed by the color's
-    /// stored name, never its position, so a reordering keeps every locator;
-    /// in the palette's order (`theme::workspace_color_names`), which a test
-    /// holds this to.
-    pub const COLORS: ControlPart = ControlPart::new("colors");
-    pub const COLOR: [ControlPart; 10] = [
-        ControlPart::new("color-blue"),
-        ControlPart::new("color-purple"),
-        ControlPart::new("color-teal"),
-        ControlPart::new("color-green"),
-        ControlPart::new("color-olive"),
-        ControlPart::new("color-orange"),
-        ControlPart::new("color-red"),
-        ControlPart::new("color-magenta"),
-        ControlPart::new("color-slate"),
-        ControlPart::new("color-stone"),
-    ];
-    /// The emoji row, and one cell per emoji. Keyed by a fixed word for each
-    /// emoji, never its position, so a reordering keeps every locator; in the
-    /// order of the card's `SETUP_EMOJI`, which a test holds this to.
-    pub const EMOJI: ControlPart = ControlPart::new("emoji");
-    pub const EMOJI_PARTS: [ControlPart; 10] = [
-        ControlPart::new("emoji-seedling"),
-        ControlPart::new("emoji-notebook"),
-        ControlPart::new("emoji-briefcase"),
-        ControlPart::new("emoji-graduation-cap"),
-        ControlPart::new("emoji-house"),
-        ControlPart::new("emoji-rocket"),
-        ControlPart::new("emoji-brain"),
-        ControlPart::new("emoji-palette"),
-        ControlPart::new("emoji-books"),
-        ControlPart::new("emoji-target"),
-    ];
 
     /// The card's primary, and the way back.
     pub const PRIMARY: ControlPart = ControlPart::new("primary");
@@ -222,16 +212,27 @@ fn part_of(screen: Screen, hit: Hit) -> Option<ControlPart> {
         (Screen::Entry, Hit::Secondary) => p::GOOGLE,
         (Screen::Entry, Hit::Apple) => p::APPLE,
         (Screen::Entry, Hit::Primary) => p::CONTINUE_OFFLINE,
+        (Screen::Entry, Hit::ComparePlans) => p::COMPARE_PLANS,
+        (Screen::Entry, Hit::WelcomeOffline) => p::WELCOME_OFFLINE,
+        (Screen::Entry, Hit::WelcomeAccount) => p::WELCOME_ACCOUNT,
+        (Screen::Entry, Hit::WelcomeExisting) => p::WELCOME_EXISTING,
+        (Screen::Entry | Screen::CheckoutIncomplete, Hit::BillingMonthly) => p::BILLING_MONTHLY,
+        (Screen::Entry | Screen::CheckoutIncomplete, Hit::BillingYearly) => p::BILLING_YEARLY,
+        (Screen::CheckoutPending, Hit::ReopenCheckout) => p::REOPEN_CHECKOUT,
+        (Screen::CheckoutPending, Hit::CancelCheckout) => p::CANCEL_CHECKOUT,
+        (Screen::CheckoutIncomplete, Hit::RetryCheckout) => p::RETRY_CHECKOUT,
+        (Screen::CheckoutIncomplete, Hit::ContinueOffline) => p::CONTINUE_OFFLINE,
+        (Screen::CheckoutIncomplete, Hit::Back) => p::BACK,
+        (Screen::Entry, Hit::Recovery) => p::RECOVERY,
         (Screen::Entry, Hit::Retry) => p::RETRY,
         (Screen::Entry, Hit::RevealPassword) => p::REVEAL_PASSWORD,
         (Screen::Entry, Hit::Terms) => p::TERMS,
         (Screen::Entry, Hit::Privacy) => p::PRIVACY,
         (Screen::Setup, Hit::ResumeAccount) => p::RESUME_ACCOUNT,
+        (Screen::Setup, Hit::ProfileAppearance) => p::PROFILE_ICON,
         (Screen::Setup, Hit::Name) => p::OWNER_NAME,
         (Screen::Setup, Hit::WorkspaceAppearance) => p::WORKSPACE_ICON,
         (Screen::Setup, Hit::WorkspaceName) => p::WORKSPACE_NAME,
-        (Screen::Setup, Hit::Swatch(index)) => *p::COLOR.get(index)?,
-        (Screen::Setup, Hit::Emoji(index)) => *p::EMOJI_PARTS.get(index)?,
         (Screen::Setup, Hit::Recovery) => p::RECOVERY,
         (Screen::Recovery, Hit::Back) => p::BACK,
         (Screen::EmailCode, Hit::EmailCode) => p::EMAIL_CODE,
@@ -256,6 +257,13 @@ fn hit_of(screen: Screen, part: ControlPart) -> Option<Hit> {
             x if x == p::GOOGLE => Hit::Secondary,
             x if x == p::APPLE => Hit::Apple,
             x if x == p::CONTINUE_OFFLINE => Hit::Primary,
+            x if x == p::COMPARE_PLANS => Hit::ComparePlans,
+            x if x == p::WELCOME_OFFLINE => Hit::WelcomeOffline,
+            x if x == p::WELCOME_ACCOUNT => Hit::WelcomeAccount,
+            x if x == p::WELCOME_EXISTING => Hit::WelcomeExisting,
+            x if x == p::BILLING_MONTHLY => Hit::BillingMonthly,
+            x if x == p::BILLING_YEARLY => Hit::BillingYearly,
+            x if x == p::RECOVERY => Hit::Recovery,
             x if x == p::RETRY => Hit::Retry,
             x if x == p::REVEAL_PASSWORD => Hit::RevealPassword,
             x if x == p::TERMS => Hit::Terms,
@@ -264,16 +272,14 @@ fn hit_of(screen: Screen, part: ControlPart) -> Option<Hit> {
         },
         Screen::Setup => match part {
             x if x == p::RESUME_ACCOUNT => Hit::ResumeAccount,
+            x if x == p::PROFILE_ICON => Hit::ProfileAppearance,
             x if x == p::OWNER_NAME => Hit::Name,
             x if x == p::WORKSPACE_ICON => Hit::WorkspaceAppearance,
             x if x == p::WORKSPACE_NAME => Hit::WorkspaceName,
             x if x == p::PRIMARY => Hit::Primary,
             x if x == p::BACK => Hit::Back,
             x if x == p::RECOVERY => Hit::Recovery,
-            x => match p::COLOR.iter().position(|color| *color == x) {
-                Some(index) => Hit::Swatch(index),
-                None => Hit::Emoji(p::EMOJI_PARTS.iter().position(|emoji| *emoji == x)?),
-            },
+            _ => return None,
         },
         // The rows are model-keyed and routed by `accessibility_action`
         // itself; only *Back* is a form part here.
@@ -292,6 +298,19 @@ fn hit_of(screen: Screen, part: ControlPart) -> Option<Hit> {
             x if x == p::NEW_PASSWORD => Hit::NewPassword,
             x if x == p::CONFIRM_PASSWORD => Hit::ConfirmPassword,
             x if x == p::PRIMARY => Hit::Primary,
+            _ => return None,
+        },
+        Screen::CheckoutPending => match part {
+            x if x == p::REOPEN_CHECKOUT => Hit::ReopenCheckout,
+            x if x == p::CANCEL_CHECKOUT => Hit::CancelCheckout,
+            _ => return None,
+        },
+        Screen::CheckoutIncomplete => match part {
+            x if x == p::BACK => Hit::Back,
+            x if x == p::BILLING_MONTHLY => Hit::BillingMonthly,
+            x if x == p::BILLING_YEARLY => Hit::BillingYearly,
+            x if x == p::RETRY_CHECKOUT => Hit::RetryCheckout,
+            x if x == p::CONTINUE_OFFLINE => Hit::ContinueOffline,
             _ => return None,
         },
         // The Google route, and the wait the email form parks on. Their
@@ -364,6 +383,8 @@ impl OnboardingView {
             Screen::EmailCode => "email-code",
             Screen::EmailPassword => "email-password",
             Screen::AccountStatus => "account",
+            Screen::CheckoutPending => "checkout-pending",
+            Screen::CheckoutIncomplete => "checkout-incomplete",
             Screen::ExistingProfiles => "existing",
             Screen::RestoringProfile => "restoring",
             Screen::Recovery => "recovery",
@@ -400,16 +421,24 @@ impl OnboardingView {
         rev.u64(self.confirm_password.raw_text().chars().count() as u64);
         rev.str(self.owner_name.borrow().raw_text());
         rev.str(self.workspace_name.borrow().raw_text());
-        // The card's choices, its row cursor, whether it is finishing and
-        // what its first field is called all change what it publishes.
+        // The card's choices, whether it is finishing and what its first field
+        // is called all change what it publishes.
+        rev.str(self.profile_icon.as_deref().unwrap_or(""));
+        rev.str(self.profile_color.as_deref().unwrap_or(""));
         rev.str(self.workspace_icon.as_deref().unwrap_or(""));
         rev.str(self.workspace_color.as_deref().unwrap_or(""));
-        rev.u64(self.swatch_cursor as u64);
-        rev.u64(self.emoji_cursor as u64);
         rev.bool(self.setup_finishing);
         rev.bool(self.owner_label == super::SetupOwnerLabel::Profile);
         rev.bool(self.workspace_name_edited);
         rev.bool(self.connect_account);
+        rev.bool(self.workspace_modal);
+        rev.byte(match self.welcome_path {
+            WelcomePath::Offline => 0,
+            WelcomePath::CreateAccount => 1,
+            WelcomePath::ExistingAccount => 2,
+        });
+        rev.bool(self.welcome_billing == WelcomeBillingInterval::Yearly);
+        rev.str(self.account_email.as_deref().unwrap_or(""));
         rev.bool(self.creation_conflict);
         rev.bool(self.can_reopen_account_creation());
         rev.bool(self.workspace_appearance.is_some());
@@ -476,10 +505,14 @@ impl OnboardingView {
             ];
         }
         match self.screen {
+            Screen::Entry if self.workspace_modal => vec![self.welcome_modal_semantics(&cx)],
             Screen::Entry => vec![self.entry_semantics(&cx)],
             Screen::EmailCode => vec![self.email_code_semantics(&cx)],
             Screen::EmailPassword => vec![self.email_password_semantics(&cx)],
             Screen::Setup => vec![self.setup_semantics(&cx)],
+            Screen::CheckoutPending | Screen::CheckoutIncomplete => {
+                vec![self.checkout_modal_semantics(&cx)]
+            }
             Screen::Recovery => vec![self.recovery_semantics(&cx)],
             // The Google route, and the wait between the welcome form and
             // whichever screen follows it: named, and left to a later plan.
@@ -597,38 +630,6 @@ impl OnboardingView {
             return self.accessibility_set_value(hit, value);
         }
         let controls = self.controls();
-        // **A swatch or an emoji is one of its row's options, not a stop of
-        // its own**: focusing one puts the keyboard on the row with its cursor
-        // there, and a click does that and then presses Enter, which chooses
-        // it — so a client's press is the keyboard's.
-        if self.screen == Screen::Setup && matches!(hit, Hit::Swatch(_) | Hit::Emoji(_)) {
-            let same_row = |control: &Hit| {
-                matches!(
-                    (control, hit),
-                    (Hit::Swatch(_), Hit::Swatch(_)) | (Hit::Emoji(_), Hit::Emoji(_))
-                )
-            };
-            let Some(stop) = controls.iter().position(same_row) else {
-                return false;
-            };
-            let before = controls.get(self.focus).copied();
-            self.focus = stop;
-            self.setup_focus_entered(before);
-            match hit {
-                Hit::Swatch(cell) => self.swatch_cursor = cell,
-                Hit::Emoji(cell) => self.emoji_cursor = cell,
-                _ => {}
-            }
-            return match action {
-                Action::Focus => true,
-                Action::Click => self.key(
-                    &winit::keyboard::Key::Named(winit::keyboard::NamedKey::Enter),
-                    None,
-                    winit::keyboard::ModifiersState::empty(),
-                ),
-                _ => false,
-            };
-        }
         let Some(index) = controls.iter().position(|control| *control == hit) else {
             // Drawn but not activatable — a disabled primary, or anything on
             // a finishing card. Published as `disabled`, and
@@ -937,6 +938,171 @@ impl OnboardingView {
             .with_children(children)
     }
 
+    /// **Screen 1 of the workspace-modal onboarding**: the three starting
+    /// paths (*Continue offline*, *Create a Koru account*, *I already have an
+    /// account*) and the action row they reveal.
+    fn welcome_modal_semantics(&mut self, cx: &Context) -> SemanticNode {
+        let (_, frame) = self.welcome_modal_frame();
+        let lang = cx.lang;
+        let none = LogicalRect::new(0.0, 0.0, 0.0, 0.0);
+        let rect = |key| frame.node(key).map_or(none, |node| node.rect);
+        let mut children = vec![
+            label(
+                cx.at(parts::BLURB),
+                t(lang, Key::WelcomeModalLead),
+                rect(WM_LEAD),
+            ),
+            link(
+                cx.at(parts::COMPARE_PLANS),
+                t(lang, Key::WelcomeModalComparePlans),
+                rect(WM_COMPARE_PLANS),
+            ),
+            button(
+                cx.at(parts::WELCOME_OFFLINE),
+                t(lang, Key::WelcomeModalOfflineTitle),
+                rect(WM_OFFLINE_CARD),
+            ),
+            button(
+                cx.at(parts::WELCOME_ACCOUNT),
+                t(lang, Key::WelcomeModalAccountTitle),
+                rect(WM_ACCOUNT_CARD),
+            ),
+        ];
+        if self.welcome_path == WelcomePath::CreateAccount {
+            children.push(button(
+                cx.at(parts::BILLING_MONTHLY),
+                t(lang, Key::WelcomeModalBillingMonthly),
+                rect(WM_BILLING_MONTHLY),
+            ));
+            children.push(button(
+                cx.at(parts::BILLING_YEARLY),
+                t(lang, Key::WelcomeModalBillingYearly),
+                rect(WM_BILLING_YEARLY),
+            ));
+        }
+        children.push(button(
+            cx.at(parts::WELCOME_EXISTING),
+            t(lang, Key::WelcomeModalExistingTitle),
+            rect(WM_EXISTING_CARD),
+        ));
+        if frame.node(WM_STATUS).is_some() {
+            children.extend(self.status_semantics(cx, rect(WM_STATUS)));
+        }
+        match self.welcome_path {
+            WelcomePath::Offline => {
+                children.push(button(
+                    cx.at(parts::CONTINUE_OFFLINE),
+                    t(lang, Key::Continue),
+                    rect(WM_CONTINUE),
+                ));
+            }
+            WelcomePath::CreateAccount | WelcomePath::ExistingAccount => {
+                let email_key = if self.welcome_path == WelcomePath::ExistingAccount {
+                    Key::WelcomeModalEmailSignInLink
+                } else {
+                    Key::WelcomeModalEmailLink
+                };
+                children.push(button(
+                    cx.at(parts::GOOGLE),
+                    t(lang, Key::A11yFirstRunSignInGoogle),
+                    rect(WM_GOOGLE),
+                ));
+                children.push(button(
+                    cx.at(parts::APPLE),
+                    t(lang, Key::A11yFirstRunSignInApple),
+                    rect(WM_APPLE),
+                ));
+                children.push(button(
+                    cx.at(parts::CONTINUE_WITH_EMAIL),
+                    t(lang, email_key),
+                    rect(WM_EMAIL_LINK),
+                ));
+            }
+        }
+        if frame.node(WM_RECOVERY).is_some() {
+            children.push(button(
+                cx.at(parts::RECOVERY),
+                t(lang, Key::OnboardingRecoveryLink),
+                rect(WM_RECOVERY),
+            ));
+        }
+        SemanticNode::new(cx.at(parts::FORM), Role::Dialog)
+            .with_label(t(lang, Key::WelcomeModalTitle))
+            .with_bounds(rect(WM_CARD))
+            .with_children(children)
+            .modal()
+    }
+
+    fn checkout_modal_semantics(&mut self, cx: &Context) -> SemanticNode {
+        let (_, frame) = self.checkout_modal_frame();
+        let lang = cx.lang;
+        let none = LogicalRect::new(0.0, 0.0, 0.0, 0.0);
+        let rect = |key| frame.node(key).map_or(none, |node| node.rect);
+        let pending = self.screen == Screen::CheckoutPending;
+        let mut children = vec![label(
+            cx.at(parts::BLURB),
+            t(
+                lang,
+                if pending {
+                    Key::CheckoutPendingBody
+                } else {
+                    Key::CheckoutIncompleteBody
+                },
+            ),
+            rect(CM_BODY),
+        )];
+        if pending {
+            children.push(button(
+                cx.at(parts::REOPEN_CHECKOUT),
+                t(lang, Key::CheckoutReopenButton),
+                rect(CM_REOPEN),
+            ));
+            children.push(button(
+                cx.at(parts::CANCEL_CHECKOUT),
+                t(lang, Key::CheckoutCancelLink),
+                rect(CM_CANCEL),
+            ));
+        } else {
+            children.push(button(
+                cx.at(parts::BACK),
+                t(lang, Key::Back),
+                rect(CM_BACK),
+            ));
+            children.push(button(
+                cx.at(parts::BILLING_MONTHLY),
+                t(lang, Key::WelcomeModalBillingMonthly),
+                rect(CM_BILLING_MONTHLY),
+            ));
+            children.push(button(
+                cx.at(parts::BILLING_YEARLY),
+                t(lang, Key::WelcomeModalBillingYearly),
+                rect(CM_BILLING_YEARLY),
+            ));
+            children.push(button(
+                cx.at(parts::RETRY_CHECKOUT),
+                t(lang, Key::CheckoutRetryButton),
+                rect(CM_RETRY),
+            ));
+            children.push(button(
+                cx.at(parts::CONTINUE_OFFLINE),
+                t(lang, Key::CheckoutContinueOffline),
+                rect(CM_OFFLINE),
+            ));
+        }
+        SemanticNode::new(cx.at(parts::FORM), Role::Dialog)
+            .with_label(t(
+                lang,
+                if pending {
+                    Key::CheckoutPendingTitle
+                } else {
+                    Key::CheckoutIncompleteTitle
+                },
+            ))
+            .with_bounds(rect(CM_CARD))
+            .with_children(children)
+            .modal()
+    }
+
     // ------------------------------------------------------- the setup card
 
     /// **The setup card** (welcome step 1, PLAN §9), in reading order: the
@@ -978,7 +1144,7 @@ impl OnboardingView {
         if frame.node(KEY_LEAD).is_some() {
             children.push(label(
                 cx.at(parts::BLURB),
-                t(lang, Key::SetupLead),
+                t(lang, self.setup_lead_key()),
                 rect(KEY_LEAD),
             ));
         }
@@ -987,6 +1153,12 @@ impl OnboardingView {
                 .with_label(t(lang, label_key))
                 .with_bounds(rect(KEY_YOU_ROW))
                 .with_children(vec![
+                    button(
+                        cx.at(parts::PROFILE_ICON),
+                        t(lang, Key::A11yFirstRunProfileIcon),
+                        rect(KEY_AVATAR),
+                    )
+                    .disabled(finishing),
                     field(
                         cx.at(parts::OWNER_NAME),
                         t(lang, placeholder_key),
@@ -1016,60 +1188,6 @@ impl OnboardingView {
                     .disabled(finishing),
                 ]),
         );
-        let row = rect(KEY_COLORS);
-        let selected = self.selected_swatch();
-        let cells: Vec<SemanticNode> = swatch_geometry()
-            .wrapped_swatches(row)
-            .into_iter()
-            .take(SWATCH_COUNT)
-            .enumerate()
-            .map(|(index, cell)| {
-                choice(
-                    cx.at(parts::COLOR[index]),
-                    t(lang, COLOR_NAMES[index]),
-                    cell,
-                    selected == Some(index),
-                    index,
-                )
-                .disabled(finishing)
-            })
-            .collect();
-        children.push(
-            SemanticNode::new(cx.at(parts::COLORS), Role::ListBox)
-                .with_label(t(lang, Key::SetupColorRow))
-                .with_bounds(row)
-                // On the container, because that is where an item's total is
-                // read from — see `SemanticNode::size_of_set`.
-                .with_size_of_set(cells.len())
-                .with_children(cells),
-        );
-        // The emoji row: each cell named by its emoji, which a screen reader
-        // speaks by its Unicode name (acceptance A7 confirms it does).
-        let row = rect(KEY_EMOJI);
-        let selected = self.selected_emoji();
-        let cells: Vec<SemanticNode> = emoji_geometry()
-            .cells(row)
-            .into_iter()
-            .zip(SETUP_EMOJI)
-            .enumerate()
-            .map(|(index, (cell, emoji))| {
-                choice(
-                    cx.at(parts::EMOJI_PARTS[index]),
-                    emoji,
-                    cell,
-                    selected == Some(index),
-                    index,
-                )
-                .disabled(finishing)
-            })
-            .collect();
-        children.push(
-            SemanticNode::new(cx.at(parts::EMOJI), Role::ListBox)
-                .with_label(t(lang, Key::SetupEmojiRow))
-                .with_bounds(row)
-                .with_size_of_set(cells.len())
-                .with_children(cells),
-        );
         if frame.node(KEY_NOTE).is_some() {
             children.push(label(
                 cx.at(parts::NOTE),
@@ -1093,11 +1211,12 @@ impl OnboardingView {
         // *Back*, *Resume* and recovery are in the frame exactly when they
         // are offered and the card is not finishing.
         if frame.node(KEY_BACK).is_some() {
-            children.push(button(
-                cx.at(parts::BACK),
-                t(lang, Key::Back),
-                rect(KEY_BACK),
-            ));
+            let back_label = if self.setup_has_change() {
+                t(lang, Key::SetupChange)
+            } else {
+                t(lang, Key::Back)
+            };
+            children.push(button(cx.at(parts::BACK), back_label, rect(KEY_BACK)));
         }
         if frame.node(KEY_RESUME).is_some() {
             children.push(button(
@@ -1115,10 +1234,20 @@ impl OnboardingView {
                 rect(KEY_RECOVERY),
             ));
         }
-        SemanticNode::new(cx.at(parts::FORM), Role::Group)
+        let role = if self.workspace_modal {
+            Role::Dialog
+        } else {
+            Role::Group
+        };
+        let node = SemanticNode::new(cx.at(parts::FORM), role)
             .with_label(t(lang, Key::SetupTitle))
             .with_bounds(rect(KEY_CARD))
-            .with_children(children)
+            .with_children(children);
+        if self.workspace_modal {
+            node.modal()
+        } else {
+            node
+        }
     }
 
     // ---------------------------------------------------- the recovery screen
@@ -1216,10 +1345,20 @@ impl OnboardingView {
             children.push(label(cx.at(parts::STATUS), message, rect).with_live(Live::Polite));
         }
         children.push(button(cx.at(parts::BACK), "Back", layout.back));
-        SemanticNode::new(cx.at(parts::FORM), Role::Group)
+        let role = if self.workspace_modal {
+            Role::Dialog
+        } else {
+            Role::Group
+        };
+        let node = SemanticNode::new(cx.at(parts::FORM), role)
             .with_label(t(lang, Key::OnboardingRecoveryTitle))
             .with_bounds(self.content())
-            .with_children(children)
+            .with_children(children);
+        if self.workspace_modal {
+            node.modal()
+        } else {
+            node
+        }
     }
 
     /// The error the form is showing, if it is showing one.
@@ -1317,30 +1456,6 @@ fn secret(occurrence: Occurrence, name: &str, length: usize) -> SemanticNode {
         .with_actions([Action::Focus, Action::SetValue])
 }
 
-/// One card in a group where choosing *is* the action.
-///
-/// `selected` on every card, true and false alike: these are what selection is
-/// for, "not selected" is worth announcing about one, and a client reaches it
-/// through `SelectionItem`, which `accesskit_windows` turns straight back into
-/// the `Click` below. It costs the card its Invoke pattern — a node carrying
-/// `selected` is excluded from `is_invocable` — which is exactly the trade
-/// ADR-338 took for the navigator's projection buttons.
-fn choice(
-    occurrence: Occurrence,
-    text: &str,
-    bounds: LogicalRect,
-    selected: bool,
-    index: usize,
-) -> SemanticNode {
-    SemanticNode::new(occurrence, Role::ListBoxOption)
-        .with_label(text)
-        .with_bounds(bounds)
-        .with_actions([Action::Click, Action::Focus])
-        .with_selected(selected)
-        // Zero-based: `accesskit_windows` adds the one a person hears.
-        .with_position(index)
-}
-
 /// The span of a set of cards, so the container they sit in has a rectangle
 /// too. A node with no bounds has a zero-size one — in the tree, and
 /// unreachable with a pointer or with spatial navigation.
@@ -1362,21 +1477,6 @@ fn band(nodes: &[SemanticNode]) -> LogicalRect {
         })
         .unwrap_or(LogicalRect::new(0.0, 0.0, 0.0, 0.0))
 }
-
-/// What a screen reader calls each swatch: the color's name, translated, in
-/// the order of [`parts::COLOR`] and of `theme::workspace_color_names`.
-const COLOR_NAMES: [Key; 10] = [
-    Key::WorkspaceColorBlue,
-    Key::WorkspaceColorPurple,
-    Key::WorkspaceColorTeal,
-    Key::WorkspaceColorGreen,
-    Key::WorkspaceColorOlive,
-    Key::WorkspaceColorOrange,
-    Key::WorkspaceColorRed,
-    Key::WorkspaceColorMagenta,
-    Key::WorkspaceColorSlate,
-    Key::WorkspaceColorStone,
-];
 
 #[cfg(test)]
 mod tests;

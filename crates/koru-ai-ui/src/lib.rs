@@ -9883,7 +9883,7 @@ fn draw_surface_button(
         );
     }
     let style = match role {
-        ButtonRole::Primary => ActionStyle::Primary,
+        ButtonRole::Primary | ButtonRole::Inverted => ActionStyle::Primary,
         ButtonRole::Secondary => ActionStyle::Ghost,
         ButtonRole::Destructive => ActionStyle::Destructive,
     };

@@ -39,7 +39,7 @@ impl Interaction {
 }
 
 impl WelcomeView {
-    pub(super) fn draw_page(&mut self, canvas: &mut Scene, vp_root: Affine) {
+    pub(crate) fn draw_page(&mut self, canvas: &mut Scene, vp_root: Affine) {
         let laid = match self.laid.take() {
             Some(laid) => laid,
             None => layout::measure(self),

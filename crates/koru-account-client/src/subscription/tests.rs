@@ -113,3 +113,71 @@ fn cancellation_during_the_final_http_response_discards_the_decision() {
     });
     assert!(run(transport).is_err());
 }
+
+#[test]
+fn checkout_handoff_route_is_admitted_by_transport_path_guard() {
+    assert!(crate::is_allowed_api_path(
+        "/v1/billing/stripe/checkout-handoff"
+    ));
+    assert!(!crate::is_allowed_api_path(
+        "/v1/billing/stripe/checkout-handoff#frag"
+    ));
+    assert!(!crate::is_allowed_api_path("/v1/other"));
+}
+
+#[test]
+fn subscription_summary_reports_kind_and_complimentary_access() {
+    let run_summary = |pages| {
+        let transport = script(pages);
+        let cancel = transport.cancel.clone();
+        AccountClient::with_transport(transport)
+            .cloud_subscription_summary(
+                &AccountAuthorization::Bearer(&AccessToken("secret".into())),
+                &|| cancel.load(Ordering::SeqCst),
+            )
+            .unwrap()
+    };
+
+    assert_eq!(
+        run_summary(vec![json!({
+            "subscriptions": [{"status": "trialing"}],
+            "next_cursor": null
+        })]),
+        CloudSubscriptionSummary {
+            has_subscription: true,
+            kind: Some(SubscriptionKind::Trialing),
+        }
+    );
+    assert_eq!(
+        run_summary(vec![json!({
+            "subscriptions": [{"status": "trialing"}, {"status": "active"}],
+            "next_cursor": null
+        })]),
+        CloudSubscriptionSummary {
+            has_subscription: true,
+            kind: Some(SubscriptionKind::Active),
+        }
+    );
+    assert_eq!(
+        run_summary(vec![json!({
+            "subscriptions": [],
+            "next_cursor": null,
+            "cloud_access": true
+        })]),
+        CloudSubscriptionSummary {
+            has_subscription: true,
+            kind: Some(SubscriptionKind::Complimentary),
+        }
+    );
+    assert_eq!(
+        run_summary(vec![json!({
+            "subscriptions": [{"status": "canceled"}],
+            "next_cursor": null,
+            "cloud_access": false
+        })]),
+        CloudSubscriptionSummary {
+            has_subscription: false,
+            kind: None,
+        }
+    );
+}

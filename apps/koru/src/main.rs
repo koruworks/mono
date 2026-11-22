@@ -102,6 +102,9 @@ struct Manager {
     /// hidden and shown; ended on quit, on a last-document quit, and by
     /// End chat. `None` until Contact support is first chosen.
     support: Option<support::Session>,
+    /// Real workspace chrome, with inert services and no content identity,
+    /// shown only while the required setup modal owns the window.
+    setup_background: Option<Box<MainView>>,
 }
 
 impl Manager {
@@ -128,6 +131,18 @@ impl Manager {
 }
 
 impl Host for Manager {
+    fn draw_profile_setup_background(
+        &mut self,
+        scene: &mut vello::Scene,
+        root: vello::kurbo::Affine,
+        viewport: (f32, f32),
+        maximized: bool,
+    ) {
+        self.setup_background
+            .get_or_insert_with(|| Box::new(MainView::new_for_setup()))
+            .draw_profile_setup_background(scene, root, viewport, maximized);
+    }
+
     fn open_support(&mut self, _ws: &WorkspaceDoc) -> Option<ManagerView> {
         let origin = support::url::origin();
         let fresh = self
@@ -175,6 +190,10 @@ impl Host for Manager {
 
     fn account_state(&self) -> koru_agent_wire::AccountState {
         self.agent.account_state()
+    }
+
+    fn account_browser_url(&self, owner_scope: u64) -> Option<String> {
+        self.agent.account_browser_url(owner_scope)
     }
 
     fn take_account_dirty(&self) -> bool {
@@ -563,6 +582,7 @@ impl Host for Manager {
     // live, so its disk scanner would leave them alone. There is no scanner.
 
     fn initial(&mut self, workspace: &mut Workspace) -> ManagerView {
+        self.setup_background = None;
         koru_editor::prepare(workspace);
         let mut view = MainView::new_with_agent(
             if self.test_upgrade {
@@ -895,6 +915,7 @@ fn main() {
             match_text,
             search_enabled: !no_search,
             support: None,
+            setup_background: None,
             test_upgrade,
             agent,
             wake: None,

@@ -2,13 +2,28 @@
 
 //! The Cloud card needs a purchase-management decision, not subscription IDs.
 use super::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 struct Page {
     subscriptions: Vec<Entry>,
     #[serde(deserialize_with = "required_cursor")]
     next_cursor: Option<String>,
+    #[serde(default)]
+    cloud_access: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct CheckoutHandoffRequest<'a> {
+    plan: &'a str,
+    locale: &'a str,
+    callback_port: u16,
+    client_state: &'a str,
+}
+
+#[derive(Deserialize)]
+struct CheckoutHandoffResponse {
+    checkout_url: String,
 }
 fn required_cursor<'de, D: serde::Deserializer<'de>>(value: D) -> Result<Option<String>, D::Error> {
     Option::<String>::deserialize(value)
@@ -17,7 +32,7 @@ fn required_cursor<'de, D: serde::Deserializer<'de>>(value: D) -> Result<Option<
 struct Entry {
     status: Status,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Status {
     Incomplete,
@@ -30,6 +45,49 @@ enum Status {
     Paused,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SubscriptionKind {
+    Trialing,
+    Active,
+    PastDue,
+    Unpaid,
+    Paused,
+    Incomplete,
+    Complimentary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CloudSubscriptionSummary {
+    pub has_subscription: bool,
+    pub kind: Option<SubscriptionKind>,
+}
+
+impl Status {
+    fn as_kind(self) -> Option<SubscriptionKind> {
+        match self {
+            Self::Trialing => Some(SubscriptionKind::Trialing),
+            Self::Active => Some(SubscriptionKind::Active),
+            Self::PastDue => Some(SubscriptionKind::PastDue),
+            Self::Unpaid => Some(SubscriptionKind::Unpaid),
+            Self::Paused => Some(SubscriptionKind::Paused),
+            Self::Incomplete => Some(SubscriptionKind::Incomplete),
+            Self::Canceled | Self::IncompleteExpired => None,
+        }
+    }
+
+    fn priority(self) -> u8 {
+        match self {
+            Self::Active => 6,
+            Self::Trialing => 5,
+            Self::PastDue => 4,
+            Self::Unpaid => 3,
+            Self::Paused => 2,
+            Self::Incomplete => 1,
+            Self::Canceled | Self::IncompleteExpired => 0,
+        }
+    }
+}
+
 impl AccountClient {
     /// Existing nonterminal purchases go to management, even when access is
     /// unpaid or pending cancellation. Only a complete traversal proves absence.
@@ -40,9 +98,23 @@ impl AccountClient {
         authorization: &AccountAuthorization<'_>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<bool, ClientError> {
+        self.cloud_subscription_summary(authorization, cancelled)
+            .map(|summary| summary.has_subscription)
+    }
+
+    /// Return whether the account holds a manageable Cloud subscription (or
+    /// complimentary access) together with its kind (`Trialing`, `Active`,
+    /// `Complimentary`, etc.) for UI labels.
+    pub fn cloud_subscription_summary(
+        &self,
+        authorization: &AccountAuthorization<'_>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<CloudSubscriptionSummary, ClientError> {
         let started = std::time::Instant::now();
         let mut cursor: Option<String> = None;
         let mut seen = std::collections::HashSet::new();
+        let mut best: Option<Status> = None;
+        let mut complimentary = false;
         for _ in 0..32 {
             if cancelled() || started.elapsed() >= REQUEST_TIMEOUT {
                 return Err(ClientError::Transport(TransportError::Timeout));
@@ -67,10 +139,87 @@ impl AccountClient {
             if page.subscriptions.len() > 25 {
                 return Err(ClientError::InvalidResponse);
             }
+            if page.cloud_access == Some(true) {
+                complimentary = true;
+            }
+            for entry in &page.subscriptions {
+                if entry.status.priority() > best.map_or(0, Status::priority) {
+                    best = Some(entry.status);
+                }
+            }
+            if let Some(status) = best
+                && status.as_kind().is_some()
+            {
+                return Ok(CloudSubscriptionSummary {
+                    has_subscription: true,
+                    kind: status.as_kind(),
+                });
+            }
+            let Some(next) = page.next_cursor else {
+                if complimentary {
+                    return Ok(CloudSubscriptionSummary {
+                        has_subscription: true,
+                        kind: Some(SubscriptionKind::Complimentary),
+                    });
+                }
+                return Ok(CloudSubscriptionSummary {
+                    has_subscription: false,
+                    kind: None,
+                });
+            };
+            if next.is_empty()
+                || next.len() > 2048
+                || !next
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                || !seen.insert(next.clone())
+            {
+                return Err(ClientError::InvalidResponse);
+            }
+            cursor = Some(next);
+        }
+        Err(ClientError::InvalidResponse)
+    }
+
+    /// Whether the account currently has active Cloud access (trialing, active,
+    /// or complimentary grant) as reported by `/v1/account/subscription`.
+    pub fn cloud_subscription_access(
+        &self,
+        authorization: &AccountAuthorization<'_>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<bool, ClientError> {
+        let started = std::time::Instant::now();
+        let mut cursor: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..32 {
+            if cancelled() || started.elapsed() >= REQUEST_TIMEOUT {
+                return Err(ClientError::Transport(TransportError::Timeout));
+            }
+            let mut path = "/v1/account/subscription?limit=25".to_owned();
+            if let Some(cursor) = &cursor {
+                path.push_str("&cursor=");
+                path.push_str(cursor);
+            }
+            let page: Page = self.execute(
+                RouteId::Account,
+                vec![],
+                Some(authorization),
+                false,
+                Some(path),
+            )?;
+            if cancelled() || started.elapsed() >= REQUEST_TIMEOUT {
+                return Err(ClientError::Transport(TransportError::Timeout));
+            }
+            if page.subscriptions.len() > 25 {
+                return Err(ClientError::InvalidResponse);
+            }
+            if let Some(cloud_access) = page.cloud_access {
+                return Ok(cloud_access);
+            }
             if page
                 .subscriptions
                 .iter()
-                .any(|entry| !matches!(entry.status, Status::Canceled | Status::IncompleteExpired))
+                .any(|entry| matches!(entry.status, Status::Trialing | Status::Active))
             {
                 return Ok(true);
             }
@@ -89,6 +238,40 @@ impl AccountClient {
             cursor = Some(next);
         }
         Err(ClientError::InvalidResponse)
+    }
+
+    /// Mint a short-lived signed desktop checkout handoff URL on the website so
+    /// Stripe Embedded Checkout locks to the account's verified email and
+    /// redirects back to the local loopback listener when complete.
+    pub fn create_checkout_handoff(
+        &self,
+        authorization: &AccountAuthorization<'_>,
+        plan: &str,
+        locale: &str,
+        callback_port: u16,
+        client_state: &str,
+    ) -> Result<String, ClientError> {
+        if !matches!(plan, "s1" | "y1") || callback_port == 0 || client_state.is_empty() {
+            return Err(ClientError::InvalidRequest);
+        }
+        let body = serde_json::to_vec(&CheckoutHandoffRequest {
+            plan,
+            locale,
+            callback_port,
+            client_state,
+        })
+        .map_err(|_| ClientError::InvalidRequest)?;
+        let response: CheckoutHandoffResponse = self.execute(
+            RouteId::CreateProfile,
+            body,
+            Some(authorization),
+            false,
+            Some("/v1/billing/stripe/checkout-handoff".to_owned()),
+        )?;
+        if response.checkout_url.is_empty() || response.checkout_url.len() > 8192 {
+            return Err(ClientError::InvalidResponse);
+        }
+        Ok(response.checkout_url)
     }
 }
 

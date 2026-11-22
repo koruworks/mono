@@ -131,6 +131,7 @@ fn reads_account_state(command: &koru_agent_wire::AccountCommand) -> bool {
             | AccountCommand::InspectAccountSession
             | AccountCommand::InspectCloudSync { .. }
             | AccountCommand::InspectCloudSubscription { .. }
+            | AccountCommand::InspectCloudAccess { .. }
     )
 }
 

@@ -43,6 +43,10 @@ pub enum ButtonRole {
     Secondary,
     /// Filled in the accent colour. The obvious next step.
     Primary,
+    /// Filled in the theme's foreground ink (`text` on `bg`). A monochrome
+    /// primary action (such as setup's *Start using Koru*) that leads without
+    /// wearing the accent hue.
+    Inverted,
     /// Outlined and red. **Never made `Primary`**: filling a destructive button
     /// in the accent colour would make "delete everything" look like the
     /// suggested route through the dialog.
@@ -491,6 +495,7 @@ fn draw_button_surface(
     let (fill, fg) = if enabled {
         match role {
             ButtonRole::Primary => (p.accent, p.on_accent),
+            ButtonRole::Inverted => (p.text, p.bg),
             ButtonRole::Secondary => (p.panel_bg, p.text),
             // The one "this is bad" colour in the palette, on the ordinary panel
             // fill — red text on a red button would not survive either theme.
@@ -498,6 +503,11 @@ fn draw_button_surface(
         }
     } else {
         (p.chip_bg, p.text_dim)
+    };
+    let hover = if role == ButtonRole::Inverted {
+        fg.multiply_alpha(0.14)
+    } else {
+        p.hover_tint
     };
     let shape = scene::rrect(r.x, r.y, r.w, r.h, RADIUS);
     koru_draw::inspect::current(|r| {
@@ -513,7 +523,7 @@ fn draw_button_surface(
         );
         let mut background = fill;
         if enabled && hot {
-            let [hr, hg, hb, alpha] = p.hover_tint.components;
+            let [hr, hg, hb, alpha] = hover.components;
             let [br, bg, bb, ba] = fill.components;
             background = vello::peniko::Color::new([
                 hr * alpha + br * (1.0 - alpha),
@@ -530,7 +540,7 @@ fn draw_button_surface(
         );
     });
     scene::fill(scene, root, fill, &shape);
-    if enabled && role != ButtonRole::Primary {
+    if enabled && !matches!(role, ButtonRole::Primary | ButtonRole::Inverted) {
         scene::stroke(
             scene,
             root,
@@ -540,7 +550,7 @@ fn draw_button_surface(
         );
     }
     if enabled && hot {
-        scene::fill(scene, root, p.hover_tint, &shape);
+        scene::fill(scene, root, hover, &shape);
     }
     if enabled && focused {
         // Outside the button, so it reads as a ring around it rather than as a
@@ -624,6 +634,8 @@ fn inspect_dialog(
                     "theme::p().chip_bg"
                 } else if role == ButtonRole::Primary {
                     "theme::p().accent"
+                } else if role == ButtonRole::Inverted {
+                    "theme::p().text"
                 } else {
                     "theme::p().panel_bg"
                 },

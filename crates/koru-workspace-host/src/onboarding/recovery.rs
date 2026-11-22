@@ -252,6 +252,18 @@ impl OnboardingView {
     }
 
     pub(super) fn draw_recovery(&mut self, canvas: &mut Scene, root: Affine) {
+        let _panel = self.workspace_modal.then(|| {
+            let area = self.content();
+            scene::floating_panel_scope(
+                canvas,
+                root,
+                area.x - PAD,
+                area.y - PAD,
+                area.w + PAD * 2.0,
+                area.h + PAD * 2.0,
+                &scene::Panel::popover(theme::overlay::popover().radius),
+            )
+        });
         self.draw_recovery_screen(canvas, root);
     }
 }

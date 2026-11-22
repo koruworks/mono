@@ -3,6 +3,37 @@
 use super::*;
 
 #[test]
+fn removing_the_last_profile_returns_to_setup_despite_stale_history() {
+    let removed = koru_core::ProfileId::new();
+    let stale = koru_core::ProfileId::new();
+    assert_eq!(
+        profile_after_removal(removed, &[removed, stale], [].into_iter()),
+        None
+    );
+    assert_eq!(
+        profile_after_removal(removed, &[removed], [removed].into_iter()),
+        None
+    );
+}
+
+#[test]
+fn removing_one_of_several_profiles_opens_a_remaining_profile() {
+    let removed = koru_core::ProfileId::new();
+    let first = koru_core::ProfileId::new();
+    let recent = koru_core::ProfileId::new();
+    let stale = koru_core::ProfileId::new();
+    let catalog = [removed, first, recent];
+    assert_eq!(
+        profile_after_removal(removed, &[removed, stale, recent], catalog.into_iter()),
+        Some(recent)
+    );
+    assert_eq!(
+        profile_after_removal(removed, &[removed, stale], catalog.into_iter()),
+        Some(first)
+    );
+}
+
+#[test]
 fn lost_completion_reply_can_finish_cleanup_only_after_authoritative_absence() {
     assert_eq!(removal_absence(false, false), Ok(()));
     // A retained workspace contradicts removal even if the Profile listing

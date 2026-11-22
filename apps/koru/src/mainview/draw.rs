@@ -61,6 +61,85 @@ pub(crate) fn store_detail(
 }
 
 impl MainView {
+    /// The ordinary workspace chrome and Welcome page before a Profile exists.
+    /// This path has no Workspace argument, never refreshes content, and never
+    /// drains commands. The host routes all input to the setup modal above it.
+    pub(crate) fn draw_profile_setup_background(
+        &mut self,
+        scene: &mut Scene,
+        root: Affine,
+        viewport: (f32, f32),
+        maximized: bool,
+    ) {
+        let opening_sidebar = !self.sidebar.is_open();
+        if opening_sidebar {
+            self.sidebar.set_immediately(true);
+        }
+        if opening_sidebar || self.viewport != viewport {
+            View::set_viewport(self, viewport.0, viewport.1);
+        }
+        self.maximized = maximized;
+        scene::fill(
+            scene,
+            root,
+            theme::p().bg,
+            &scene::rect(0.0, 0.0, viewport.0, viewport.1),
+        );
+        let content = self.content();
+        for (path, rect) in self.panes.leaf_rects(content) {
+            let area = panes::PaneTree::view_rect_in(content, rect);
+            let _pane = koru_draw::inspect::scope(
+                "Content pane",
+                "container",
+                root,
+                scene::rect(area.x, area.y, area.w, area.h),
+                |_| {},
+            );
+            if let Some(group) = self.panes.group_mut(&path)
+                && let TabView::Welcome(welcome) = &mut group.active_mut().view
+            {
+                welcome.draw_page(
+                    scene,
+                    root * Affine::translate((area.x as f64, area.y as f64)),
+                );
+            }
+        }
+        let cap = self.drawn_caption();
+        {
+            let _header = koru_draw::inspect::scope(
+                "HeaderRow",
+                "container",
+                root,
+                scene::rect(cap.x, cap.y, cap.w, cap.h),
+                |_| {},
+            );
+            self.draw_caption_band(scene, root);
+            for (path, _) in self.panes.leaf_rects(content) {
+                if let Some(lane) = self.lane_rect_for(&path) {
+                    self.draw_group_strip(scene, root, &path, lane, (-1.0, -1.0), None);
+                }
+            }
+            self.draw_caption(scene, root);
+        }
+        let sidebar = self.sidebar_rect();
+        let rail = Self::rail_of(sidebar);
+        let pane = Self::pane_of(sidebar);
+        self.explore
+            .draw_apps_rail(scene, root, &mut self.engine, rail);
+        {
+            let _sidebar = koru_draw::inspect::scope(
+                "Explore sidebar",
+                "container",
+                root,
+                scene::rect(pane.x, pane.y, pane.w, pane.h),
+                |_| {},
+            );
+            self.explore.draw(scene, root, &mut self.engine, pane);
+        }
+        self.draw_lane(scene, root, sidebar);
+        self.draw_cards(scene, root);
+    }
+
     /// One frame. The body of `View::draw`, which is otherwise only a signature.
     pub(super) fn draw_frame(
         &mut self,
@@ -160,7 +239,7 @@ impl MainView {
                 c.h as i32,
             );
             self.draw_caption_band(scene, root);
-            self.draw_caption(scene, root, &workspace.ws);
+            self.draw_caption(scene, root);
             self.draw_reminder_surfaces(scene, root);
             self.draw_menu(scene, root);
             self.draw_tooltip(scene, root);
@@ -216,7 +295,7 @@ impl MainView {
                 // A top-row lane is in the title bar — outside the content clip —
                 // and draws in the second pass, over the caption band.
                 if lane.y >= c.y {
-                    self.draw_group_strip(scene, root, &path, lane, pointer, &workspace.ws);
+                    self.draw_group_strip(scene, root, &path, lane, pointer, Some(&workspace.ws));
                 }
 
                 let group = self.panes.group_mut(&path).unwrap();
@@ -355,10 +434,10 @@ impl MainView {
                     continue;
                 };
                 if lane.y < c.y && lane.w > 0.0 {
-                    self.draw_group_strip(scene, root, &path, lane, pointer, &workspace.ws);
+                    self.draw_group_strip(scene, root, &path, lane, pointer, Some(&workspace.ws));
                 }
             }
-            self.draw_caption(scene, root, &workspace.ws);
+            self.draw_caption(scene, root);
         }
 
         // Pane dividers: over every pane's content (a pane never reaches into
@@ -759,7 +838,7 @@ impl MainView {
         path: &panes::PanePath,
         lane: Rect,
         pointer: (f32, f32),
-        ws: &WorkspaceDoc,
+        ws: Option<&WorkspaceDoc>,
     ) {
         let is_focused = path == self.panes.focused_path();
         let over_header = lane.contains(pointer.0, pointer.1);
@@ -969,10 +1048,7 @@ impl MainView {
         }
     }
 
-    /// Takes the document because a tab's *icon* can depend on it: a document
-    /// that is in the bin wears the trash glyph, so a background tab says so
-    /// without having to be selected.
-    fn draw_caption(&mut self, scene: &mut Scene, root: Affine, _ws: &WorkspaceDoc) {
+    fn draw_caption(&mut self, scene: &mut Scene, root: Affine) {
         let cap = self.drawn_caption();
         // Copied, not borrowed: `ensure_tab_widths` below needs `&mut self`,
         // and a closure holding `self.hover` would keep the whole view frozen

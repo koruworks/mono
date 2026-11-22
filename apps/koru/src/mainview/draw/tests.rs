@@ -3,6 +3,31 @@
 use super::*;
 use koru_draw::inspect;
 
+#[test]
+fn setup_background_draws_the_workspace_without_content_or_commands() {
+    let mut view = MainView::new_for_setup();
+    assert!(!view.entity_search.has_reader());
+    assert!(view.help_headlines_rx.is_none());
+    let mut scene = Scene::new();
+    let capture = inspect::Frame::begin(1, Affine::IDENTITY, scene::rect(0.0, 0.0, 1000.0, 680.0));
+    view.draw_profile_setup_background(&mut scene, Affine::IDENTITY, (1000.0, 680.0), false);
+    let records = capture.finish().records;
+    for name in ["HeaderRow", "Explore sidebar", "Content pane"] {
+        assert!(
+            records.iter().any(|record| record.name == name),
+            "missing {name}"
+        );
+    }
+    assert!(view.current_workspace().is_none());
+    assert!(view.active_document.is_none());
+    let layouts = view.relayouts;
+    view.draw_profile_setup_background(&mut scene, Affine::IDENTITY, (1000.0, 680.0), false);
+    assert_eq!(
+        view.relayouts, layouts,
+        "caret redraws must not relayout the workspace"
+    );
+}
+
 /// Both embedded chat hosts receive the window's resolved document recents.
 /// The composer uses this list for its plus menu; a document missing from the
 /// Store listing is never offered even if an old recent id still names it.

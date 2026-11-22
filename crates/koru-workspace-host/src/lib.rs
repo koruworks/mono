@@ -3409,6 +3409,18 @@ impl ErrorReport {
 pub trait Host {
     type V: View;
 
+    /// Paint the workspace shell behind required Profile setup, without an
+    /// editing runtime or any Profile/Workspace document. Input and semantics
+    /// belong exclusively to the modal; this hook only paints its background.
+    fn draw_profile_setup_background(
+        &mut self,
+        _scene: &mut Scene,
+        _root: Affine,
+        _viewport: (f32, f32),
+        _maximized: bool,
+    ) {
+    }
+
     /// Override the ordinary Koru application icon for this host's windows.
     /// Auxiliary applications use this to keep the Koru mark while adding a
     /// small distinguishing overlay in the taskbar and app switcher.
@@ -3437,6 +3449,13 @@ pub trait Host {
     /// Latest content-light account state reported by Agent.
     fn account_state(&self) -> koru_agent_wire::AccountState {
         koru_agent_wire::AccountState::default()
+    }
+
+    /// Most recent verified browser sign-in URL pushed by Agent for
+    /// `owner_scope` while a browser sign-in is in flight, so the waiting
+    /// modal can reopen or copy it without starting a second flow.
+    fn account_browser_url(&self, _owner_scope: u64) -> Option<String> {
+        None
     }
 
     /// Taken wake flag for account state/completion changes.

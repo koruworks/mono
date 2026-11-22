@@ -893,7 +893,9 @@ fn operation_result(
         }
         AccountOperationResult::SignedIn => "signed_in",
         // Desktop-only card query has no mobile command or projection yet.
-        AccountOperationResult::CloudSubscription { .. } => "completed",
+        AccountOperationResult::CloudSubscription { .. }
+        | AccountOperationResult::CloudAccess { .. }
+        | AccountOperationResult::CheckoutFinished { .. } => "completed",
         AccountOperationResult::AccountCreationRequired => "account_creation_required",
         AccountOperationResult::SignedOut => "signed_out",
         AccountOperationResult::Cancelled => "cancelled",

@@ -5050,6 +5050,13 @@
           "grant": {
             "$ref": "#/$defs/OneUseGrant"
           },
+          "native_redirect": {
+            "description": "Where a native client's loopback or App Link listener is waiting,\nwhen the flow was started via [`RouteId::EmailBrowserStart`].",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "outcome": {
             "const": "completed",
             "type": "string"
@@ -5426,6 +5433,13 @@
           },
           "grant": {
             "$ref": "#/$defs/OneUseGrant"
+          },
+          "native_redirect": {
+            "description": "Where a native client's loopback or App Link listener is waiting,\nwhen the flow was started via [`RouteId::EmailBrowserStart`].",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "outcome": {
             "const": "completed",

@@ -644,6 +644,7 @@ pub(super) fn start(
                             envelope.command,
                             AccountCommand::StartGoogle { .. }
                                 | AccountCommand::StartApple { .. }
+                                | AccountCommand::StartEmailBrowser { .. }
                                 | AccountCommand::ContinueWithEmail { .. }
                         ) {
                             if let Some(h) = held.get(&scope).filter(|h| h.record.is_none()) {

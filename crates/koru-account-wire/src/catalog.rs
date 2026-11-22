@@ -119,6 +119,9 @@ pub enum RouteId {
     IssueCloudSyncTokenV2,
     DescribeCloudWorkspaceV2,
     DiscoverCloudCatalog,
+    // Browser-based email sign-in (`koru.do/login` + loopback OAuth exchange).
+    // Appended: the table is indexed by position.
+    EmailBrowserStart,
 }
 
 impl RouteId {
@@ -191,6 +194,7 @@ impl RouteId {
             Self::IssueCloudSyncTokenV2 => "account.cloud_sync_token_issue_v2",
             Self::DescribeCloudWorkspaceV2 => "account.cloud_workspace_descriptor_read_v2",
             Self::DiscoverCloudCatalog => "account.cloud_discovery_read",
+            Self::EmailBrowserStart => "account.email_browser_start",
         }
     }
 }
@@ -1030,6 +1034,16 @@ pub const ROUTES: &[Route] = &[
         cloud_discovery_receipt,
         None,
         "Read one discovery receipt: scope, authorization generation, projection coverage and results grouped by current placement"
+    ),
+    route!(
+        EmailBrowserStart,
+        Post,
+        "/v1/oauth/email/browser/start",
+        Public,
+        native_start_request,
+        auth_start_response,
+        Body,
+        "Start email sign-in in the system browser for a native client"
     ),
 ];
 

@@ -139,6 +139,16 @@ impl EntitySearch {
         } else {
             SearchReader::start(root).ok()
         };
+        Self::with_reader(reader)
+    }
+
+    /// Identity-free chrome can retain the picker state without discovering
+    /// or listing any content. A content host uses `new_at` instead.
+    pub fn without_reader() -> Self {
+        Self::with_reader(None)
+    }
+
+    fn with_reader(reader: Option<SearchReader>) -> Self {
         if let Some(reader) = &reader {
             reader.request_catalog();
         }

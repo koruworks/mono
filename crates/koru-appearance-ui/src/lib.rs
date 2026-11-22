@@ -760,8 +760,8 @@ impl EmojiColorPanel {
         let explanation = match self.target {
             Target::Workspace(_) => "Icon and color appear in the switcher and the window title.",
             Target::Profile(_) => "Icon and color appear anywhere you choose a profile.",
-            Target::Draft => "Choose how this workspace will appear throughout Koru.",
-            Target::DraftProfile => "Choose how this Profile will appear throughout Koru.",
+            Target::Draft => "Style your workspace",
+            Target::DraftProfile => "Style your profile",
         };
         let sub = engine.simple_layout_wrapped(explanation, BODY, panel.x + panel.w - PAD - tx);
         scene::draw_layout(scene, root, &sub, tx, tile.y + 24.0, Some(p.text_dim));

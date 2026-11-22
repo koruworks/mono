@@ -460,6 +460,7 @@ impl AccountControl {
                 command,
                 AccountCommand::StartGoogle { .. }
                     | AccountCommand::StartApple { .. }
+                    | AccountCommand::StartEmailBrowser { .. }
                     | AccountCommand::ContinueWithEmail { .. }
             ) && routes
                 .accounts
@@ -812,8 +813,17 @@ fn command_failure(command: &AccountCommand, code: &str) -> AccountOperationResu
             AccountOperationResult::CloudSubscription {
                 request_id: *request_id,
                 current: None,
+                subscription_kind: None,
             }
         }
+        AccountCommand::InspectCloudAccess { request_id } => AccountOperationResult::CloudAccess {
+            request_id: *request_id,
+            active: None,
+        },
+        AccountCommand::StartCheckout { .. } => AccountOperationResult::CheckoutFinished {
+            active: false,
+            cancelled: code == "cancelled",
+        },
         _ if code == "cancelled" => AccountOperationResult::Cancelled,
         _ => AccountOperationResult::Failed { code: code.into() },
     }
@@ -1851,11 +1861,11 @@ impl ProductionAccountService {
         }
         Ok(None)
     }
-    /// Which page the browser is sent to — Google's or Apple's, named by the
-    /// `start_command`. Everything else about a browser sign-in — the loopback
-    /// listener, the callback parsing, the collision second leg, the exchange —
-    /// is identical, which is why this is a parameter rather than a second
-    /// copy of the function.
+    /// Which page the browser is sent to — Google's, Apple's, or Koru's
+    /// email login (`koru.do/login`), named by `start_command`. Everything else
+    /// about a browser sign-in — the loopback listener, the callback parsing,
+    /// the collision second leg, the exchange — is identical, which is why this
+    /// is a parameter rather than a second copy of the function.
     fn start_browser(
         &mut self,
         generation: u64,
@@ -1863,9 +1873,18 @@ impl ProductionAccountService {
         cancel: &Cancel,
         progress: &mut dyn FnMut(ServiceProgress),
     ) -> Result<ServiceOutcome, ServiceError> {
-        let (locale, apple) = match &start_command {
-            AccountCommand::StartGoogle { locale } => (locale.clone(), false),
-            AccountCommand::StartApple { locale } => (locale.clone(), true),
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Provider {
+            Google,
+            Apple,
+            EmailBrowser,
+        }
+        let (locale, provider) = match &start_command {
+            AccountCommand::StartGoogle { locale } => (locale.clone(), Provider::Google),
+            AccountCommand::StartApple { locale } => (locale.clone(), Provider::Apple),
+            AccountCommand::StartEmailBrowser { locale } => {
+                (locale.clone(), Provider::EmailBrowser)
+            }
             _ => return Err(ServiceError::terminal("invalid_request")),
         };
         validate_locale(&locale)?;
@@ -1878,10 +1897,9 @@ impl ProductionAccountService {
             }
             return Err(ServiceError::terminal("account_retry_pending"));
         }
-        // The native account sheet is Google's; email never reaches here, because
-        // V2 gave it a journey of its own that opens no browser at all. Apple
-        // has no sheet, so even a phone takes the browser path for it.
-        if self.delivery.supports_native_token() && !apple {
+        // The native account sheet is Google's; Apple and browser email have no
+        // sheet, so even a phone takes the browser path for them.
+        if self.delivery.supports_native_token() && provider == Provider::Google {
             return self.start_native_token(generation, locale, cancel, progress);
         }
         let mut listener = self.delivery.bind()?;
@@ -1907,19 +1925,20 @@ impl ProductionAccountService {
                 locale: locale.clone(),
                 app_link_return: listener.app_link_return(),
             };
-            if apple {
-                self.client.apple_native_start(&request)
-            } else {
-                self.client.google_native_start(&request)
+            match provider {
+                Provider::Google => self.client.google_native_start(&request),
+                Provider::Apple => self.client.apple_native_start(&request),
+                Provider::EmailBrowser => self.client.email_browser_start(&request),
             }
             .map_err(map_client_error)?
         };
         progress(ServiceProgress::State(
             self.state(generation, AccountStage::WaitingForBrowser),
         ));
-        progress(ServiceProgress::Browser(checked_browser_url(
-            start.authorization_url,
-        )?));
+        progress(ServiceProgress::Browser(match provider {
+            Provider::Google | Provider::Apple => checked_browser_url(start.authorization_url)?,
+            Provider::EmailBrowser => checked_koru_browser_url(start.authorization_url, "/login")?,
+        }));
 
         let first = listener.wait(&client_state, cancel)?;
         let (flow_id, grant) = match parse_callback(&first, true, self.clock.as_ref())? {
@@ -1973,6 +1992,111 @@ impl ProductionAccountService {
             },
         });
         self.finish_exchange(generation)
+    }
+
+    /// Launch Koru's Stripe Embedded Checkout in the system browser, wait for
+    /// the local loopback return (or cancellation), and verify Cloud access via
+    /// `GET /v1/account/subscription` before answering.
+    fn start_checkout(
+        &mut self,
+        generation: u64,
+        plan: &str,
+        locale: &str,
+        cancel: &Cancel,
+        progress: &mut dyn FnMut(ServiceProgress),
+    ) -> Result<ServiceOutcome, ServiceError> {
+        let incomplete = |service: &Self, cancelled: bool| ServiceOutcome {
+            state: service.state(generation, AccountStage::SignedIn),
+            credential: CredentialChange::Keep,
+            result: AccountOperationResult::CheckoutFinished {
+                active: false,
+                cancelled,
+            },
+            follow_up: None,
+        };
+        let mut listener = match self.delivery.bind() {
+            Ok(listener) => listener,
+            Err(err) => {
+                tracing::warn!("checkout loopback bind failed: {}", err.code);
+                return Ok(incomplete(self, false));
+            }
+        };
+        if listener.app_link_return() || listener.callback_port() == 0 {
+            tracing::warn!("checkout loopback callback port unavailable");
+            return Ok(incomplete(self, false));
+        }
+        let client_state = random_secret(self.entropy.as_ref());
+        let auth = self.authorization()?;
+        let checkout_url = match self
+            .client
+            .create_checkout_handoff(
+                &auth,
+                plan,
+                locale,
+                listener.callback_port(),
+                &client_state,
+            )
+            .map_err(map_client_error)
+        {
+            Ok(url) => url,
+            Err(err) => {
+                tracing::warn!("checkout handoff request failed: {}", err.code);
+                return Ok(incomplete(self, false));
+            }
+        };
+        let checked = match checked_koru_browser_url(checkout_url, "/subscribe") {
+            Ok(url) => url,
+            Err(err) => {
+                tracing::warn!("checkout handoff URL rejected: {}", err.code);
+                return Ok(incomplete(self, false));
+            }
+        };
+        progress(ServiceProgress::Browser(checked));
+
+        let callback = match listener.wait(&client_state, cancel) {
+            Ok(cb) => cb,
+            Err(err) if err.code == "cancelled" => {
+                return Ok(incomplete(self, true));
+            }
+            Err(_) => {
+                return Ok(incomplete(self, false));
+            }
+        };
+        let outcome = exact(&callback, "outcome").unwrap_or("cancelled");
+        if outcome != "completed" {
+            return Ok(incomplete(self, true));
+        }
+        // Reconcile ran synchronously on /thank-you, but allow brief retries if
+        // replication or webhook processing is still settling.
+        let mut active = false;
+        for attempt in 0..4 {
+            if cancel.cancelled() {
+                break;
+            }
+            if matches!(
+                self.client
+                    .cloud_subscription_access(&self.authorization()?, &|| cancel.cancelled()),
+                Ok(true)
+            ) {
+                active = true;
+                break;
+            }
+            if attempt < 3 {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+        if let Some(owner) = self.durable_owner {
+            self.cloud_subscribed = Some((owner.account, active));
+        }
+        Ok(ServiceOutcome {
+            state: self.state(generation, AccountStage::SignedIn),
+            credential: CredentialChange::Keep,
+            result: AccountOperationResult::CheckoutFinished {
+                active,
+                cancelled: false,
+            },
+            follow_up: None,
+        })
     }
     /// Open a flow this device is bound to, before Koru knows which journey
     /// it is.
@@ -2499,6 +2623,8 @@ impl AccountService for ProductionAccountService {
             &command,
             AccountCommand::InspectAccountSession
                 | AccountCommand::InspectCloudSubscription { .. }
+                | AccountCommand::InspectCloudAccess { .. }
+                | AccountCommand::StartCheckout { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
         ) && restored.is_none()
@@ -2509,6 +2635,8 @@ impl AccountService for ProductionAccountService {
             &command,
             AccountCommand::InspectAccountSession
                 | AccountCommand::InspectCloudSubscription { .. }
+                | AccountCommand::InspectCloudAccess { .. }
+                | AccountCommand::StartCheckout { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
                 | AccountCommand::ListProfiles
@@ -2557,10 +2685,36 @@ impl AccountService for ProductionAccountService {
                 }
             }
             AccountCommand::InspectCloudSubscription { request_id } => {
-                let current = self
+                let summary = self
                     .client
-                    .has_cloud_subscription(&self.authorization()?, &|| cancel.cancelled())
+                    .cloud_subscription_summary(&self.authorization()?, &|| cancel.cancelled())
                     .ok();
+                let current = summary.map(|s| s.has_subscription);
+                let kind = summary.and_then(|s| {
+                    s.kind.map(|k| match k {
+                        koru_account_client::SubscriptionKind::Trialing => {
+                            koru_agent_wire::CloudSubscriptionKind::Trialing
+                        }
+                        koru_account_client::SubscriptionKind::Active => {
+                            koru_agent_wire::CloudSubscriptionKind::Active
+                        }
+                        koru_account_client::SubscriptionKind::PastDue => {
+                            koru_agent_wire::CloudSubscriptionKind::PastDue
+                        }
+                        koru_account_client::SubscriptionKind::Unpaid => {
+                            koru_agent_wire::CloudSubscriptionKind::Unpaid
+                        }
+                        koru_account_client::SubscriptionKind::Paused => {
+                            koru_agent_wire::CloudSubscriptionKind::Paused
+                        }
+                        koru_account_client::SubscriptionKind::Incomplete => {
+                            koru_agent_wire::CloudSubscriptionKind::Incomplete
+                        }
+                        koru_account_client::SubscriptionKind::Complimentary => {
+                            koru_agent_wire::CloudSubscriptionKind::Complimentary
+                        }
+                    })
+                });
                 // Remembered for a Profile waiting to start syncing: this is
                 // the moment a new subscription is first seen.
                 if let (Some(current), Some(owner)) = (current, self.durable_owner) {
@@ -2572,9 +2726,28 @@ impl AccountService for ProductionAccountService {
                     result: AccountOperationResult::CloudSubscription {
                         request_id,
                         current,
+                        subscription_kind: kind,
                     },
                     follow_up: None,
                 })
+            }
+            AccountCommand::InspectCloudAccess { request_id } => {
+                let active = self
+                    .client
+                    .cloud_subscription_access(&self.authorization()?, &|| cancel.cancelled())
+                    .ok();
+                if let (Some(active), Some(owner)) = (active, self.durable_owner) {
+                    self.cloud_subscribed = Some((owner.account, active));
+                }
+                Ok(ServiceOutcome {
+                    state: self.state(generation, AccountStage::SignedIn),
+                    credential: CredentialChange::Keep,
+                    result: AccountOperationResult::CloudAccess { request_id, active },
+                    follow_up: None,
+                })
+            }
+            AccountCommand::StartCheckout { plan, locale } => {
+                self.start_checkout(generation, &plan, &locale, cancel, progress)
             }
             AccountCommand::ConfirmAccountCreation => {
                 self.finish_creation(generation, Some(true), cancel, progress)
@@ -2605,7 +2778,9 @@ impl AccountService for ProductionAccountService {
                     follow_up: None,
                 })
             }
-            start @ (AccountCommand::StartGoogle { .. } | AccountCommand::StartApple { .. }) => {
+            start @ (AccountCommand::StartGoogle { .. }
+            | AccountCommand::StartApple { .. }
+            | AccountCommand::StartEmailBrowser { .. }) => {
                 self.start_browser(generation, start, cancel, progress)
             }
             AccountCommand::ContinueWithEmail {
@@ -3408,9 +3583,9 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
                 .then_some(())
                 .ok_or(ServiceError::terminal("email_address_invalid"))
         }
-        AccountCommand::StartGoogle { locale } | AccountCommand::StartApple { locale } => {
-            validate_locale(locale)
-        }
+        AccountCommand::StartGoogle { locale }
+        | AccountCommand::StartApple { locale }
+        | AccountCommand::StartEmailBrowser { locale } => validate_locale(locale),
         AccountCommand::CreateProfile {
             profile_id,
             owner_display_name,
@@ -3502,6 +3677,12 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
                 .map(|_| ())
                 .map_err(|_| ServiceError::terminal("invalid_request"))
         }
+        AccountCommand::StartCheckout { plan, locale } => {
+            if !matches!(plan.as_str(), "s1" | "y1") {
+                return Err(ServiceError::terminal("invalid_request"));
+            }
+            validate_locale(locale)
+        }
         AccountCommand::Status
         | AccountCommand::Cancel { .. }
         // Carries nothing, so there is nothing to validate; the flow it
@@ -3511,6 +3692,7 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
         | AccountCommand::CancelEnrollment
         | AccountCommand::InspectAccountSession
         | AccountCommand::InspectCloudSubscription { .. }
+        | AccountCommand::InspectCloudAccess { .. }
         | AccountCommand::InspectCloudSync { .. }
         | AccountCommand::ListProfiles
         | AccountCommand::ListProfileChoices
@@ -3549,6 +3731,42 @@ fn checked_browser_url(value: String) -> Result<BrowserUrl, ServiceError> {
         )
         && parsed.port().is_none();
     if !admitted {
+        return Err(ServiceError::terminal("invalid_browser_url"));
+    }
+    Ok(BrowserUrl(value))
+}
+
+/// Admits Koru's own web login (`/login`) and checkout (`/subscribe`) pages on
+/// the official site host or the configured `KORU_SUPPORT_URL` origin.
+fn checked_koru_browser_url(value: String, expected_suffix: &str) -> Result<BrowserUrl, ServiceError> {
+    if value.len() > 8192 {
+        return Err(ServiceError::terminal("invalid_browser_url"));
+    }
+    let parsed =
+        url::Url::parse(&value).map_err(|_| ServiceError::terminal("invalid_browser_url"))?;
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || !parsed.path().ends_with(expected_suffix)
+    {
+        return Err(ServiceError::terminal("invalid_browser_url"));
+    }
+    let configured_origin = koru_env::value(koru_env::name::KORU_SUPPORT_URL)
+        .and_then(|raw| url::Url::parse(raw.trim()).ok())
+        .and_then(|url| {
+            let host = url.host_str()?.to_ascii_lowercase();
+            Some((url.scheme().to_owned(), host, url.port()))
+        });
+    let host = parsed
+        .host_str()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let matches_official = parsed.scheme() == "https"
+        && matches!(host.as_str(), "www.koru.do" | "koru.do")
+        && parsed.port().is_none();
+    let matches_configured = configured_origin.as_ref().is_some_and(|(s, h, p)| {
+        s == parsed.scheme() && *h == host && *p == parsed.port()
+    });
+    if !matches_official && !matches_configured {
         return Err(ServiceError::terminal("invalid_browser_url"));
     }
     Ok(BrowserUrl(value))

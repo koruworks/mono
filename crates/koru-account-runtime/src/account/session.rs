@@ -209,6 +209,7 @@ impl SessionRuntime {
                             }
                             AccountCommand::StartGoogle { .. }
                             | AccountCommand::StartApple { .. }
+                            | AccountCommand::StartEmailBrowser { .. }
                             | AccountCommand::ContinueWithEmail { .. }
                             | AccountCommand::SubmitEmailPassword { .. }
                                 if discovery_pending
@@ -403,6 +404,7 @@ impl SessionRuntime {
                 envelope.command,
                 AccountCommand::StartGoogle { .. }
                     | AccountCommand::StartApple { .. }
+                    | AccountCommand::StartEmailBrowser { .. }
                     // An email sign-in ends in the same stored credential a
                     // Google one does, so it owes the same legacy discovery
                     // before it starts. Leaving it out skipped the migration
@@ -1013,6 +1015,8 @@ fn hosted_command(command: &AccountCommand) -> bool {
         command,
         AccountCommand::InspectAccountSession
             | AccountCommand::InspectCloudSubscription { .. }
+            | AccountCommand::InspectCloudAccess { .. }
+            | AccountCommand::StartCheckout { .. }
             | AccountCommand::SetProfileCloudSync { .. }
             | AccountCommand::InspectCloudSync { .. }
             | AccountCommand::ListProfiles

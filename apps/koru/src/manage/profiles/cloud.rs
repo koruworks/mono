@@ -48,6 +48,7 @@ pub(super) struct SyncPending {
 }
 pub(super) struct State {
     pub(super) status: Status,
+    pub(super) kind: Option<koru_agent_wire::CloudSubscriptionKind>,
     due: bool,
     pending: Option<Pending>,
     /// Per-Profile Cloud sync as the Agent last reported it. `None` until the
@@ -66,6 +67,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             status: Status::Unknown,
+            kind: None,
             due: true,
             pending: None,
             sync: None,
@@ -85,6 +87,26 @@ impl ProfilesController {
     /// What the account's subscription is, as far as this form knows.
     pub fn cloud_status(&self) -> Status {
         self.cloud.status
+    }
+    /// Short user-facing label for the current subscription type.
+    pub fn cloud_subscription_label(&self) -> &'static str {
+        use koru_agent_wire::CloudSubscriptionKind;
+        match self.cloud.kind {
+            Some(CloudSubscriptionKind::Trialing) => "Trial",
+            Some(CloudSubscriptionKind::Complimentary) => "Complimentary",
+            Some(CloudSubscriptionKind::PastDue) => "Past due",
+            Some(CloudSubscriptionKind::Unpaid) => "Unpaid",
+            Some(CloudSubscriptionKind::Paused) => "Paused",
+            Some(CloudSubscriptionKind::Incomplete) => "Incomplete",
+            Some(CloudSubscriptionKind::Active) | None => "Subscribed",
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn set_cloud_subscription_kind(
+        &mut self,
+        kind: Option<koru_agent_wire::CloudSubscriptionKind>,
+    ) {
+        self.cloud.kind = kind;
     }
     pub fn set_cloud_visible(&mut self, visible: bool) {
         if visible && !self.cloud_visible {
@@ -245,6 +267,7 @@ impl ProfilesController {
             AccountOperationResult::CloudSubscription {
                 request_id,
                 current,
+                subscription_kind,
             } => {
                 let Some(pending) = self.cloud.pending.as_ref() else {
                     return false;
@@ -260,6 +283,11 @@ impl ProfilesController {
                     Some(true) => Status::Manage,
                     Some(false) => Status::Subscribe,
                     None => Status::Unavailable,
+                };
+                self.cloud.kind = if self.cloud.status == Status::Manage {
+                    *subscription_kind
+                } else {
+                    None
                 };
                 self.cloud.pending = None;
                 // A confirmed subscription is what makes the per-Profile state
@@ -380,11 +408,27 @@ impl ProfilesController {
     }
     pub fn cloud_body_text(&self, lang: Lang) -> String {
         let key = self.cloud_message();
+        let specific_kind = self
+            .cloud
+            .kind
+            .filter(|kind| !matches!(kind, koru_agent_wire::CloudSubscriptionKind::Active));
         match (key, self.cloud_profile_counts()) {
-            (TextKey::CloudSubscribedSyncing, Some((on, total))) => koru_i18n::fill(
-                koru_i18n::t(lang, key),
-                &[&on.to_string(), &total.to_string()],
-            ),
+            (TextKey::CloudSubscribedSyncing, Some((on, total))) => {
+                if specific_kind.is_some() {
+                    format!(
+                        "{} \u{b7} syncing {on} of {total} profiles",
+                        self.cloud_subscription_label()
+                    )
+                } else {
+                    koru_i18n::fill(
+                        koru_i18n::t(lang, key),
+                        &[&on.to_string(), &total.to_string()],
+                    )
+                }
+            }
+            (TextKey::CloudSubscribed, _) if specific_kind.is_some() => {
+                self.cloud_subscription_label().to_owned()
+            }
             _ => koru_i18n::t(lang, key).to_owned(),
         }
     }

@@ -929,7 +929,8 @@ fn it_waits_for_koru_cloud_without_asking_on_every_pass() {
         outcome.result,
         AccountOperationResult::CloudSubscription {
             request_id: 21,
-            current: Some(true)
+            current: Some(true),
+            subscription_kind: Some(koru_agent_wire::CloudSubscriptionKind::Active),
         }
     );
     let rows = fixture.inspect().unwrap();

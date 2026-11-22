@@ -295,12 +295,27 @@ fn the_cloud_row_is_the_shared_switch_or_the_way_to_koru_cloud() {
 
     view.show(Page::Profile(synced.id));
     view.c.set_cloud_status(profiles::CloudStatus::Manage);
+    view.c
+        .set_cloud_subscription_kind(Some(koru_agent_wire::CloudSubscriptionKind::Trialing));
     view.delegate(|_| ());
     let switch = view.laid().placed(Control::CloudSync).unwrap().clone();
     let Look::Toggle(toggle) = switch.look else {
         panic!("the shared switch")
     };
     assert_eq!(toggle, Toggle::new(false));
+    // Subscription type ("Trial") and Manage subscription button -> /dashboard.
+    let section = view.laid().sign_in.clone().unwrap();
+    assert!(
+        section
+            .rows
+            .iter()
+            .any(|row| row.label.as_deref() == Some("Subscription")
+                && row.hint.as_deref() == Some("Trial"))
+    );
+    assert!(press(&mut view, Control::CloudPrimary));
+    assert!(
+        matches!(view.take_effect(), Some(Effect::OpenWebsite(url)) if url.ends_with("/dashboard"))
+    );
     // Turning it on is the whole act: nothing is asked (2026-11-11).
     assert!(press(&mut view, Control::CloudSync));
     assert!(view.c.prompts().next().is_none());

@@ -18,6 +18,46 @@ use crate::onboarding::Action as FormAction;
 use vello::{Scene, kurbo::Affine};
 use winit::keyboard::{Key as WKey, ModifiersState, NamedKey};
 
+#[test]
+fn workspace_setup_exposes_only_the_modal_and_its_controls() {
+    let mut view = form();
+    view.show_workspace_setup();
+    let (window, slot) = slots();
+    let nodes = view.accessibility_semantics(window, slot);
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].role, Role::Dialog);
+    assert!(nodes[0].modal);
+    let flat = flatten(&nodes);
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::COMPARE_PLANS));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_OFFLINE));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_ACCOUNT));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::BILLING_MONTHLY));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::BILLING_YEARLY));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_EXISTING));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::GOOGLE));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::APPLE));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::CONTINUE_WITH_EMAIL));
+    assert!(view.pending.is_none());
+
+    // Picking Offline -> Continue moves into Screen 2 (modal setup card).
+    view.activate(Hit::WelcomeOffline);
+    view.activate(Hit::Primary);
+    let nodes = view.accessibility_semantics(window, slot);
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].role, Role::Dialog);
+    assert!(nodes[0].modal);
+    let flat = flatten(&nodes);
+    assert!(flat.iter().any(|node| node.role == Role::TextInput));
+    assert!(flat.iter().any(|node| node.occurrence.part == parts::BACK));
+    assert!(view.pending.is_none());
+
+    view.screen = Screen::Recovery;
+    let nodes = view.accessibility_semantics(window, slot);
+    assert_eq!(nodes.len(), 1);
+    assert_eq!(nodes[0].role, Role::Dialog);
+    assert!(nodes[0].modal);
+}
+
 // ------------------------------------------------------------------ helpers
 
 fn slots() -> (WindowSlot, ViewSlot) {
@@ -314,6 +354,13 @@ fn the_setup_card_publishes_its_fields_rows_and_actions() {
     let you = find(&nodes, parts::YOU).expect("the You group");
     assert_eq!(you.role, Role::Group);
     assert_eq!(you.label.as_deref(), Some(t(lang, Key::SetupYouLabel)));
+    let profile_icon = find(&nodes, parts::PROFILE_ICON).expect("the profile tile");
+    assert_eq!(profile_icon.role, Role::Button);
+    assert_eq!(
+        profile_icon.label.as_deref(),
+        Some(t(lang, Key::A11yFirstRunProfileIcon))
+    );
+    assert_eq!(profile_icon.bounds, Some(frame_rect(&mut view, KEY_AVATAR)));
     let owner = find(&nodes, parts::OWNER_NAME).expect("the owner field");
     assert_eq!(owner.role, Role::TextInput);
     assert_eq!(
@@ -345,28 +392,6 @@ fn the_setup_card_publishes_its_fields_rows_and_actions() {
         name.value.as_deref(),
         Some(t(lang, Key::SetupWorkspaceDefaultName))
     );
-
-    let colors = find(&nodes, parts::COLORS).expect("the swatch row");
-    assert_eq!(colors.role, Role::ListBox);
-    assert_eq!(colors.label.as_deref(), Some(t(lang, Key::SetupColorRow)));
-    // The total lives on the container, never on the item.
-    assert_eq!(colors.size_of_set, Some(10));
-    assert_eq!(colors.children.len(), 10);
-    assert_eq!(
-        labels(&colors.children),
-        COLOR_NAMES
-            .iter()
-            .map(|key| t(lang, *key).to_owned())
-            .collect::<Vec<_>>()
-    );
-    for (index, cell) in colors.children.iter().enumerate() {
-        assert_eq!(cell.role, Role::ListBoxOption);
-        assert_eq!(cell.occurrence.part, parts::COLOR[index]);
-        // Zero-based: the adapter adds the one a person hears.
-        assert_eq!(cell.position, Some(index));
-        // Choosing *is* the action, so every cell says whether it is chosen.
-        assert_eq!(cell.selected, Some(index == 3), "green is chosen");
-    }
 
     let primary = find(&nodes, parts::PRIMARY).expect("the primary");
     assert_eq!(primary.label.as_deref(), Some(t(lang, Key::SetupStart)));
@@ -651,114 +676,10 @@ fn a_stale_primary_is_refused_rather_than_routed_to_its_replacement() {
     assert!(view.take_action().is_none());
 }
 
-// ------------------------------------------------------------- the rows
-
-/// **One node per swatch, at the swatch's rectangle**, on every line, at the
-/// minimum window and at the narrowest card beside the sidebar.
-#[test]
-fn the_rows_publish_one_node_per_cell_at_the_cell_rects() {
-    for (width, height) in [(452.0, 640.0), (760.0, 640.0)] {
-        let mut view = at_setup();
-        view.set_viewport(width, height);
-        let nodes = tree(&mut view);
-        let colors = find(&nodes, parts::COLORS).expect("the swatch row");
-        let row = frame_rect(&mut view, KEY_COLORS);
-        assert_eq!(colors.bounds, Some(row));
-        let cells = swatch_geometry().wrapped_swatches(row);
-        assert_eq!(colors.children.len(), cells.len());
-        for (node, cell) in colors.children.iter().zip(&cells) {
-            assert_eq!(node.bounds, Some(*cell), "{width}×{height}");
-        }
-    }
-}
-
-/// **The emoji row publishes ten cells at their rectangles** (PLAN §9): a
-/// list named *Workspace emoji* of ten options, each named by its emoji and
-/// keyed by a fixed word, in the card's order, 🌱 chosen, every cell where
-/// `EmojiRow::cells` puts it inside the row's leaf — at the minimum window,
-/// at the narrowest card beside the sidebar, and wrapped in a narrow column.
-/// A client's click on a cell chooses it, as a press does.
-#[test]
-fn the_emoji_row_publishes_ten_cells_at_their_rects() {
-    let mut narrow = OnboardingView::default();
-    narrow.set_embedded(true);
-    narrow.show_setup();
-    narrow.set_viewport(150.0, 900.0);
-    let mut views = vec![narrow];
-    for (width, height) in [(452.0, 640.0), (760.0, 640.0)] {
-        let mut view = at_setup();
-        view.set_viewport(width, height);
-        views.push(view);
-    }
-    for mut view in views {
-        let lang = view.language;
-        let nodes = tree(&mut view);
-        let emoji = find(&nodes, parts::EMOJI).expect("the emoji row");
-        assert_eq!(emoji.role, Role::ListBox);
-        assert_eq!(emoji.label.as_deref(), Some(t(lang, Key::SetupEmojiRow)));
-        assert_eq!(emoji.size_of_set, Some(10));
-        let row = frame_rect(&mut view, KEY_EMOJI);
-        assert_eq!(emoji.bounds, Some(row));
-        let cells = emoji_geometry().cells(row);
-        assert_eq!(emoji.children.len(), 10);
-        for (index, (node, cell)) in emoji.children.iter().zip(&cells).enumerate() {
-            assert_eq!(node.role, Role::ListBoxOption);
-            assert_eq!(node.occurrence.part, parts::EMOJI_PARTS[index]);
-            assert_eq!(node.label.as_deref(), Some(SETUP_EMOJI[index]));
-            assert_eq!(node.position, Some(index));
-            assert_eq!(node.selected, Some(index == 0), "🌱 is chosen");
-            assert_eq!(node.bounds, Some(*cell));
-            assert!(node.actions.contains(&Action::Click));
-        }
-    }
-
-    let (window, slot) = slots();
-    let mut view = at_setup();
-    let nodes = flatten(&view.accessibility_semantics(window, slot));
-    let rocket = at(&nodes, parts::EMOJI_PARTS[5]);
-    assert!(view.accessibility_action(rocket, Action::Click, None));
-    assert_eq!(view.workspace_icon.as_deref(), Some("🚀"));
-    assert_eq!(view.accessibility_focus(window, slot), Some(rocket));
-    // Out of the row's ten, no part.
-    assert!(part_of(Screen::Setup, Hit::Emoji(10)).is_none());
-}
-
-/// A client's focus on a cell puts the keyboard on the row with its cursor
-/// there, choosing nothing; a click chooses, as Enter does.
-#[test]
-fn a_cell_click_chooses_and_a_cell_focus_moves_the_cursor() {
-    let (window, slot) = slots();
-    let mut view = at_setup();
-    let nodes = flatten(&view.accessibility_semantics(window, slot));
-    let blue = at(&nodes, parts::COLOR[0]);
-    assert!(view.accessibility_action(blue, Action::Focus, None));
-    assert_eq!(view.swatch_cursor, 0);
-    assert_eq!(
-        view.workspace_color.as_deref(),
-        Some("green"),
-        "focus chooses nothing"
-    );
-    assert_eq!(view.accessibility_focus(window, slot), Some(blue));
-
-    let orange = at(&nodes, parts::COLOR[5]);
-    assert!(view.accessibility_action(orange, Action::Click, None));
-    assert_eq!(view.workspace_color.as_deref(), Some("orange"));
-    assert_eq!(view.swatch_cursor, 5);
-    let nodes = flatten(&view.accessibility_semantics(window, slot));
-    assert_eq!(
-        find(&nodes, parts::COLOR[5]).and_then(|cell| cell.selected),
-        Some(true)
-    );
-    assert_eq!(
-        find(&nodes, parts::COLOR[3]).and_then(|cell| cell.selected),
-        Some(false)
-    );
-}
-
-/// While the card is finishing every field and row is published disabled,
+/// While the card is finishing every field and tile is published disabled,
 /// and a field refuses a value.
 #[test]
-fn finishing_disables_fields_and_rows() {
+fn finishing_disables_fields_and_tiles() {
     let (window, slot) = slots();
     let mut view = at_setup_named();
     let nodes = flatten(&view.accessibility_semantics(window, slot));
@@ -766,6 +687,7 @@ fn finishing_disables_fields_and_rows() {
     assert!(view.accessibility_action(primary, Action::Click, None));
     let finishing = flatten(&view.accessibility_semantics(window, slot));
     for part in [
+        parts::PROFILE_ICON,
         parts::OWNER_NAME,
         parts::WORKSPACE_NAME,
         parts::WORKSPACE_ICON,
@@ -776,8 +698,6 @@ fn finishing_disables_fields_and_rows() {
             "{part}"
         );
     }
-    let colors = find(&finishing, parts::COLORS).expect("still drawn");
-    assert!(colors.children.iter().all(|cell| cell.disabled));
     let owner = at(&finishing, parts::OWNER_NAME);
     assert!(!view.accessibility_action(owner, Action::SetValue, Some(&value("Eve"))));
     assert_eq!(view.owner_name.borrow().raw_text(), "Ada");
@@ -974,11 +894,11 @@ fn set_value_is_declined_where_there_is_nothing_to_set() {
     let mut view = at_setup();
     let nodes = flatten(&view.accessibility_semantics(window, slot));
     let owner = at(&nodes, parts::OWNER_NAME);
+    let profile_icon = at(&nodes, parts::PROFILE_ICON);
     let icon = at(&nodes, parts::WORKSPACE_ICON);
-    let cell = at(&nodes, parts::COLOR[2]);
     assert!(!view.accessibility_action(owner, Action::SetValue, None));
+    assert!(!view.accessibility_action(profile_icon, Action::SetValue, Some(&value("nope"))));
     assert!(!view.accessibility_action(icon, Action::SetValue, Some(&value("nope"))));
-    assert!(!view.accessibility_action(cell, Action::SetValue, Some(&value("teal"))));
     assert_eq!(view.workspace_color.as_deref(), Some("green"));
 
     let mut view = at_setup_named();
@@ -1014,7 +934,7 @@ fn an_action_naming_something_this_form_never_published_is_refused() {
 fn the_google_route_publishes_one_named_boundary_and_nothing_else() {
     let (window, slot) = slots();
     let mut view = form();
-    view.begin_browser_signin(false);
+    view.begin_browser_signin(super::super::BrowserProvider::Google);
     let nodes = flatten(&view.accessibility_semantics(window, slot));
     assert_eq!(nodes.len(), 1);
     assert_eq!(nodes[0].role, Role::Group);
@@ -1051,20 +971,15 @@ fn identity_is_the_same_in_every_language() {
 #[test]
 fn every_authored_name_on_the_route_is_translated() {
     let (window, slot) = slots();
-    // The emoji cells are named by their content, the emoji itself, which is
-    // the same in every language; they are left out of the comparison.
     let authored = |view: &mut OnboardingView| {
         labels(&flatten(&view.accessibility_semantics(window, slot)))
-            .into_iter()
-            .filter(|name| !SETUP_EMOJI.contains(&name.as_str()))
-            .collect::<Vec<_>>()
     };
     let english: Vec<String> = {
         let mut view = at_setup();
         view.language = Lang::En;
         authored(&mut view)
     };
-    assert!(english.len() > 15);
+    assert!(english.len() >= 10);
     for lang in Lang::ALL {
         if lang == Lang::En {
             continue;
@@ -1074,12 +989,8 @@ fn every_authored_name_on_the_route_is_translated() {
         let names = authored(&mut view);
         assert_eq!(names.len(), english.len(), "{} lost a name", lang.tag());
         let shared = names.iter().zip(&english).filter(|(a, b)| a == b).count();
-        // A few short words coincide between languages — a color called
-        // *Magenta* or *Orange* in several of them. Everything else must be
-        // the translated row. (The workspace's own name is content, a value,
-        // not a name.)
         assert!(
-            shared <= 4,
+            shared <= 2,
             "{} left {shared} accessible names in English: {names:?}",
             lang.tag()
         );
@@ -1169,12 +1080,12 @@ fn the_revision_follows_what_is_published_and_nothing_that_moves_per_frame() {
     let named = view.semantics_revision();
     assert_ne!(named, focused, "a typed value did not rebuild the tree");
 
-    // Choosing a swatch changes what the row publishes.
-    view.activate(Hit::Swatch(0));
+    // Opening the profile appearance modal changes what is published.
+    view.activate(Hit::ProfileAppearance);
     assert_ne!(
         view.semantics_revision(),
         named,
-        "a chosen swatch did not rebuild the tree"
+        "opening the appearance modal did not rebuild the tree"
     );
 }
 
@@ -1192,13 +1103,10 @@ fn every_control_of_every_screen_round_trips_through_its_part() {
         Hit::Terms,
         Hit::Privacy,
         Hit::ResumeAccount,
+        Hit::ProfileAppearance,
         Hit::Name,
         Hit::WorkspaceName,
         Hit::WorkspaceAppearance,
-        Hit::Swatch(0),
-        Hit::Swatch(9),
-        Hit::Emoji(0),
-        Hit::Emoji(9),
         Hit::Back,
         Hit::Recovery,
     ];
@@ -1222,10 +1130,7 @@ fn every_control_of_every_screen_round_trips_through_its_part() {
             mapped += 1;
         }
     }
-    assert!(mapped > 12, "the table went quiet: only {mapped} controls");
-    // A swatch that does not exist is not a control.
-    assert!(part_of(Screen::Setup, Hit::Swatch(10)).is_none());
-    assert!(part_of(Screen::Setup, Hit::Emoji(10)).is_none());
+    assert!(mapped >= 12, "the table went quiet: only {mapped} controls");
     // And the Google route routes nothing at all.
     assert!(hit_of(Screen::Browser, parts::PRIMARY).is_none());
     assert!(hit_of(Screen::ExistingProfiles, parts::PRIMARY).is_none());
@@ -1289,11 +1194,11 @@ fn a_control_sits_where_it_is_drawn_whatever_language_it_is_named_in() {
             (parts::FORM, KEY_CARD),
             (parts::BLURB, KEY_LEAD),
             (parts::YOU, KEY_YOU_ROW),
+            (parts::PROFILE_ICON, KEY_AVATAR),
             (parts::OWNER_NAME, KEY_NAME),
             (parts::FIRST_WORKSPACE, KEY_WORKSPACE_ROW),
             (parts::WORKSPACE_ICON, KEY_TILE),
             (parts::WORKSPACE_NAME, KEY_WORKSPACE_NAME),
-            (parts::COLORS, KEY_COLORS),
             (parts::PRIMARY, KEY_PRIMARY),
             (parts::BACK, KEY_BACK),
         ] {

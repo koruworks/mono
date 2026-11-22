@@ -1818,6 +1818,27 @@ impl MainView {
         search_enabled: bool,
         workspace_links: koru_workspaces_ui::WorkspaceLinks,
     ) -> Self {
+        Self::new_with_services(updates, agent, search_enabled, workspace_links, true)
+    }
+
+    /// The same chrome before a Profile exists, with content readers disabled.
+    pub(crate) fn new_for_setup() -> Self {
+        Self::new_with_services(
+            crate::agent::UpdateFeed::absent(),
+            crate::agent::AgentLink::absent(),
+            false,
+            koru_workspaces_ui::WorkspaceLinks::inert(),
+            false,
+        )
+    }
+
+    fn new_with_services(
+        updates: crate::agent::UpdateFeed,
+        agent: crate::agent::AgentLink,
+        search_enabled: bool,
+        workspace_links: koru_workspaces_ui::WorkspaceLinks,
+        content_services: bool,
+    ) -> Self {
         Self {
             panes: panes::PaneTree::new(Tab::welcome()),
             viewport: (900.0, 560.0),
@@ -1999,7 +2020,7 @@ impl MainView {
             #[cfg(test)]
             relayouts: 0,
             help_headlines: None,
-            help_headlines_rx: Some(crate::whatsnew::read_headlines_async()),
+            help_headlines_rx: content_services.then(crate::whatsnew::read_headlines_async),
             help_releases: None,
             help_releases_rx: None,
             help_releases_asked: false,
@@ -2031,7 +2052,11 @@ impl MainView {
             // The window's own store, like the global-search overlay — never
             // the channel default, or a rooted window's mention picker would
             // offer another profile's workspaces and documents.
-            entity_search: koru_search_ui::EntitySearch::new_at(crate::search::gateway_root()),
+            entity_search: if content_services {
+                koru_search_ui::EntitySearch::new_at(crate::search::gateway_root())
+            } else {
+                koru_search_ui::EntitySearch::without_reader()
+            },
             entity_workspaces: Vec::new(),
             entity_titles: std::collections::HashMap::new(),
             entity_file_kinds: std::collections::HashMap::new(),
@@ -2056,14 +2081,14 @@ impl MainView {
             // compiled with `cfg(test)`, so an inert index here is what
             // keeps this binary's suite from listing runs off whatever
             // gateway the machine has running.
-            run_index: match cfg!(test) {
+            run_index: match cfg!(test) || !content_services {
                 true => koru_runs_ui::RunIndex::inert(),
                 false => koru_runs_ui::RunIndex::open(
                     koru_channel::segment(),
                     koru_workspace_host::cli::root_from_args(),
                 ),
             },
-            schedule_index: match cfg!(test) {
+            schedule_index: match cfg!(test) || !content_services {
                 true => crate::schedule_index::ScheduleIndex::inert(),
                 false => crate::schedule_index::ScheduleIndex::open(),
             },
@@ -2071,7 +2096,7 @@ impl MainView {
             // a suite must not read or write the settings of whatever stack
             // the machine happens to be running. A disabled link answers the
             // registry's defaults forever, which is what a first run reads.
-            delegate_folder: match cfg!(test) {
+            delegate_folder: match cfg!(test) || !content_services {
                 true => koru_api_client::GlobalLink::disabled(),
                 false => koru_api_client::GlobalLink::global(
                     koru_channel::segment().to_owned(),

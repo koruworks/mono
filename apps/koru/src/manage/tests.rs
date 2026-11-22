@@ -492,11 +492,10 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
 }
 
 /// **In a narrow pane the card's rows wrap to the column** (F6): both the
-/// swatch row and the emoji row lie inside the page's column, each on more
-/// than one line, with every cell inside the column — none clipped, nothing
-/// scrolled sideways.
+/// In a narrow Manage pane the embedded setup card's rows and primary button
+/// fit inside the page's column with no inline swatch or emoji rows.
 #[test]
-fn embedded_rows_wrap_to_a_narrow_column() {
+fn embedded_rows_fit_a_narrow_column() {
     use koru_workspace_host::accessibility::{ControlPart, SemanticNode};
     fn find(node: &SemanticNode, part: &'static str) -> Option<SemanticNode> {
         if node.occurrence.part == ControlPart::new(part) {
@@ -510,39 +509,28 @@ fn embedded_rows_wrap_to_a_narrow_column() {
     view.c.with_creation_form(|form| form.show_setup());
     view.size_creation_form();
     let form = view.form_rect();
-    assert!(
-        form.w < 310.0,
-        "the pane must be narrower than ten swatches for this to test anything: {form:?}"
-    );
+    assert!(form.w < 310.0, "narrow column: {form:?}");
     let mut cx = context();
     cx.area.w = 330.0;
     cx.area.h = 700.0;
     let tree = view.semantics(&cx);
     let (left, right) = (cx.area.x + form.x, cx.area.x + form.x + form.w);
-    for part in ["colors", "emoji"] {
-        let row = find(&tree, part).unwrap_or_else(|| panic!("the {part} row"));
-        let bounds = row.bounds.expect("a row has a rectangle");
+    for removed in ["colors", "emoji"] {
+        assert!(find(&tree, removed).is_none(), "{removed} row is removed");
+    }
+    for part in [
+        "profile-icon",
+        "owner-name",
+        "workspace-icon",
+        "workspace-name",
+        "primary",
+    ] {
+        let node = find(&tree, part).unwrap_or_else(|| panic!("{part} is present"));
+        let bounds = node.bounds.expect("a control has a rectangle");
         assert!(
             bounds.x >= left - 0.01 && bounds.x + bounds.w <= right + 0.01,
-            "the {part} row leaves the column: {bounds:?} in {left}..{right}"
+            "{part} leaves the column: {bounds:?} in {left}..{right}"
         );
-        assert_eq!(row.children.len(), 10, "{part}");
-        let mut lines: Vec<f32> = Vec::new();
-        for cell in &row.children {
-            let cell = cell.bounds.expect("a cell has a rectangle");
-            assert!(
-                cell.x >= left - 0.01 && cell.x + cell.w <= right + 0.01,
-                "a {part} cell leaves the column: {cell:?} in {left}..{right}"
-            );
-            assert!(
-                cell.y >= bounds.y - 0.01 && cell.y + cell.h <= bounds.y + bounds.h + 0.01,
-                "a {part} cell leaves its row: {cell:?} in {bounds:?}"
-            );
-            if !lines.iter().any(|y| (y - cell.y).abs() < 0.5) {
-                lines.push(cell.y);
-            }
-        }
-        assert!(lines.len() > 1, "the {part} row did not wrap: {lines:?}");
     }
 }
 
@@ -554,8 +542,10 @@ fn a_conflicting_profile_create_opens_manage_without_another_creation_request() 
         assert!(c.connected_profile_creation_conflict());
         c.with_creation_form(|form| {
             // The conflict offers Open Manage even with the name field empty.
-            form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT);
-            form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT);
+            // From Name: WorkspaceAppearance -> WorkspaceName -> Primary.
+            for _ in 0..3 {
+                form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
+            }
             form.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty());
         });
         assert!(c.take_profile_creation_request().is_none());

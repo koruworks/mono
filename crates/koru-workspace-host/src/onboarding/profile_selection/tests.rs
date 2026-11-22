@@ -770,3 +770,32 @@ fn named_space_activates_the_focused_checkbox_without_losing_keyboard_focus() {
     assert_eq!(view.selection.checked, set(&[&id(12)]));
     assert_eq!(view.controls().get(view.focus), Some(&Hit::Existing(1)));
 }
+
+#[test]
+fn workspace_modal_chooser_preselects_syncable_profiles_and_supports_not_you_without_resume_on_setup()
+{
+    let mut view = OnboardingView::default();
+    view.language = koru_i18n::Lang::En;
+    view.show_workspace_setup();
+    view.select_account_context(&state(1));
+    view.show_account_profile_choices("Steven Liechti", choices(1));
+    assert_eq!(view.screen, Screen::ExistingProfiles);
+    // Two remote profiles (ids 12 & 13) pre-selected; local profile (id 11) is not ticked.
+    assert_eq!(view.selection.checked, set(&[&id(12), &id(13)]));
+    let layout = view.profiles_modal_layout();
+    assert_eq!(layout.primary_label, "Sync 2 profiles");
+    assert!(layout.primary_enabled);
+
+    // Moving to "Create a new profile" does NOT show "Return to account choice" on Screen 2.
+    let create = layout.create_new.centre();
+    assert!(view.mouse_down(create.0, create.1));
+    assert_eq!(view.screen, Screen::Setup);
+    assert!(!view.controls().contains(&Hit::ResumeAccount));
+
+    // Going back to ExistingProfiles and clicking "Not you?" logs out and returns to Screen 1.
+    view.screen = Screen::ExistingProfiles;
+    let not_you = view.profiles_modal_layout().not_you.centre();
+    assert!(view.mouse_down(not_you.0, not_you.1));
+    assert_eq!(view.screen, Screen::Entry);
+    assert_eq!(view.take_action(), Some(Action::SwitchAccount));
+}

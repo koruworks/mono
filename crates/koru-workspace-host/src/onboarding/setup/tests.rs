@@ -2,10 +2,219 @@
 
 //! **The setup card's frame**, laid out in memory: its width beside the
 //! welcome sidebar, its fit at the smallest windows in every language, its
-//! targets, its wrapping swatch row and its place in the inspector. Nothing
-//! here opens a window, touches a disk or reaches a Store.
+//! targets, its square profile and workspace tiles with hover pencil
+//! affordances, and its place in the inspector. Nothing here opens a window,
+//! touches a disk or reaches a Store.
 
 use super::*;
+
+#[test]
+fn workspace_setup_is_centered_and_switches_between_welcome_and_setup() {
+    for (width, height) in [(720.0, 640.0), (1000.0, 680.0), (1440.0, 900.0)] {
+        let mut view = view(width, height);
+        view.set_custom_caption(true);
+        view.show_workspace_setup();
+        assert_eq!(view.screen, Screen::Entry);
+        assert_eq!(view.welcome_path, WelcomePath::CreateAccount);
+        let (_, welcome_frame) = view.welcome_modal_frame();
+        let welcome_card = rect(&welcome_frame, super::super::welcome_modal::KEY_CARD);
+        let area = view.setup_area();
+        assert!((welcome_card.x + welcome_card.w * 0.5 - width * 0.5).abs() < 0.01);
+        assert!(
+            (welcome_card.y + welcome_card.h * 0.5 - (area.y + area.h * 0.5)).abs() < 0.01
+        );
+        let records = capture(&mut view);
+        assert!(!records.iter().any(|r| r.name == "WelcomeSidebar"));
+
+        // Choose Offline -> Continue to enter Screen 2.
+        view.activate(Hit::WelcomeOffline);
+        view.activate(Hit::Primary);
+        assert_eq!(view.screen, Screen::Setup);
+        let layout = frame(&mut view);
+        let card = rect(&layout, KEY_CARD);
+        assert!((card.x + card.w * 0.5 - width * 0.5).abs() < 0.01);
+        assert!((card.y + card.h * 0.5 - (area.y + area.h * 0.5)).abs() < 0.01);
+        assert!(layout.node(KEY_BACK).is_some());
+        assert!(view.controls().contains(&Hit::Back));
+        assert!(view.pending.is_none());
+        let records = capture(&mut view);
+        assert!(!records.iter().any(|r| r.name == "WelcomeSidebar"));
+
+        // Change returns cleanly to Screen 1.
+        view.activate(Hit::Back);
+        assert_eq!(view.screen, Screen::Entry);
+    }
+}
+
+#[test]
+fn workspace_setup_keeps_input_in_the_card_and_submits_local_creation() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let mut view = view(1000.0, 680.0);
+    view.show_workspace_setup();
+    view.activate(Hit::WelcomeOffline);
+    view.activate(Hit::Primary);
+    view.owner_name
+        .borrow_mut()
+        .set_text(&mut view.engine, "Mara");
+    let start = view.focus;
+    assert_eq!(view.controls().get(start), Some(&Hit::Name));
+    let controls = view.controls();
+    for _ in 0..controls.len() {
+        view.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
+    }
+    assert_eq!(view.focus, start);
+    view.key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty());
+    assert_eq!(view.screen, Screen::Setup);
+    assert!(view.pending.is_none());
+    view.activate(Hit::Primary);
+    assert!(matches!(
+        view.pending,
+        Some(super::super::Action::CreateLocalProfile {
+            connect_account: false,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn welcome_modal_dispatches_pricing_browser_oauth_and_plus_checkout() {
+    let mut view = view(1000.0, 680.0);
+    view.show_workspace_setup();
+    assert_eq!(view.welcome_path, WelcomePath::CreateAccount);
+
+    view.activate(Hit::ComparePlans);
+    assert_eq!(view.take_action(), Some(Action::OpenPricing));
+
+    view.activate(Hit::Secondary);
+    assert_eq!(view.take_action(), Some(Action::StartGoogle));
+    assert!(view.modal_account_active());
+    view.account_cancelled();
+    assert!(!view.modal_account_active());
+
+    view.activate(Hit::Apple);
+    assert_eq!(view.take_action(), Some(Action::StartApple));
+    view.account_cancelled();
+
+    view.activate(Hit::ContinueWithEmail);
+    assert_eq!(view.take_action(), Some(Action::StartEmailBrowser));
+    assert_eq!(view.browser_provider, BrowserProvider::Email);
+    view.account_cancelled();
+
+    // Default billing interval is Yearly ("y1") and toggles cleanly to Monthly ("s1").
+    assert_eq!(view.welcome_billing, WelcomeBillingInterval::Yearly);
+    assert_eq!(view.checkout_plan(), "y1");
+    view.activate(Hit::BillingMonthly);
+    assert_eq!(view.welcome_billing, WelcomeBillingInterval::Monthly);
+    assert_eq!(view.checkout_plan(), "s1");
+    view.activate(Hit::BillingYearly);
+    assert_eq!(view.welcome_billing, WelcomeBillingInterval::Yearly);
+    assert_eq!(view.checkout_plan(), "y1");
+
+    // Checkout pending & incomplete modals fit cleanly and dispatch retry/cancel/offline.
+    view.set_account_email("steven@example.com".into());
+    view.show_checkout_pending();
+    assert!(view.is_checkout_pending());
+    let (_, pending_frame) = view.checkout_modal_frame();
+    assert!(pending_frame.node(super::super::checkout_modal::KEY_REOPEN).is_some());
+    assert!(pending_frame.node(super::super::checkout_modal::KEY_CANCEL).is_some());
+
+    view.activate(Hit::ReopenCheckout);
+    assert_eq!(view.take_action(), Some(Action::StartCheckout { plan: "y1" }));
+
+    view.activate(Hit::CancelCheckout);
+    assert_eq!(view.screen, Screen::CheckoutIncomplete);
+    assert_eq!(view.take_action(), Some(Action::CancelCheckout));
+    let (_, incomplete_frame) = view.checkout_modal_frame();
+    assert!(incomplete_frame.node(super::super::checkout_modal::KEY_RETRY).is_some());
+    assert!(incomplete_frame.node(super::super::checkout_modal::KEY_OFFLINE).is_some());
+
+    view.activate(Hit::BillingMonthly);
+    view.activate(Hit::RetryCheckout);
+    assert_eq!(view.screen, Screen::CheckoutPending);
+    assert_eq!(view.take_action(), Some(Action::StartCheckout { plan: "s1" }));
+
+    view.show_checkout_incomplete();
+    assert!(view.controls().contains(&Hit::Back));
+    view.activate(Hit::Back);
+    assert_eq!(view.screen, Screen::Entry);
+    assert!(!view.modal_account_active());
+
+    view.show_checkout_incomplete();
+    view.activate(Hit::ContinueOffline);
+    assert_eq!(view.screen, Screen::Setup);
+    assert!(!view.connect_account);
+
+    // Modal cards share a steady minimum height across Screen 1 options,
+    // checkout states, and Screen 2 so switching never jumps vertically.
+    let mut steady = self::view(1000.0, 680.0);
+    steady.language = koru_i18n::Lang::En;
+    steady.set_custom_caption(true);
+    steady.show_workspace_setup();
+    let h_create = rect(&steady.welcome_modal_frame().1, super::super::welcome_modal::KEY_CARD).h;
+    steady.welcome_path = WelcomePath::Offline;
+    let h_offline = rect(&steady.welcome_modal_frame().1, super::super::welcome_modal::KEY_CARD).h;
+    steady.welcome_path = WelcomePath::ExistingAccount;
+    let h_existing = rect(&steady.welcome_modal_frame().1, super::super::welcome_modal::KEY_CARD).h;
+    steady.show_checkout_pending();
+    let h_pending = rect(&steady.checkout_modal_frame().1, super::super::checkout_modal::KEY_CARD).h;
+    steady.show_checkout_incomplete();
+    let h_incomplete = rect(&steady.checkout_modal_frame().1, super::super::checkout_modal::KEY_CARD).h;
+    steady.show_setup();
+    let h_setup = rect(&steady.setup_frame().1, KEY_CARD).h;
+    for (name, h) in [
+        ("offline", h_offline),
+        ("existing", h_existing),
+        ("pending", h_pending),
+        ("incomplete", h_incomplete),
+        ("setup", h_setup),
+    ] {
+        assert!(
+            (h - h_create).abs() < 0.5,
+            "modal height jumped for {name}: {h} vs create {h_create}"
+        );
+    }
+
+    // Pricing URL obeys origin normalization and locale segments.
+    assert_eq!(
+        super::super::pricing_url_for(None, koru_i18n::Lang::En),
+        "https://www.koru.do/en/pricing"
+    );
+    assert_eq!(
+        super::super::pricing_url_for(
+            Some("https://staging.koru.do/support"),
+            koru_i18n::Lang::PtBr
+        ),
+        "https://staging.koru.do/pt/pricing"
+    );
+}
+
+#[test]
+fn welcome_modal_fits_minimum_window_in_every_language() {
+    for lang in koru_i18n::Lang::ALL {
+        for path in [
+            WelcomePath::Offline,
+            WelcomePath::CreateAccount,
+            WelcomePath::ExistingAccount,
+        ] {
+            let mut view = view(720.0, 640.0);
+            view.language = lang;
+            view.set_custom_caption(true);
+            view.show_workspace_setup();
+            view.welcome_path = path;
+            let area = view.setup_area();
+            let (_, frame) = view.welcome_modal_frame();
+            let card = rect(&frame, super::super::welcome_modal::KEY_CARD);
+            assert!(
+                card.x >= area.x - 0.5 && card.x + card.w <= area.x + area.w + 0.5,
+                "{lang:?} {path:?} horizontal overflow: card={card:?} area={area:?}"
+            );
+            assert!(
+                card.y >= area.y - 0.5 && card.y + card.h <= area.y + area.h + 0.5,
+                "{lang:?} {path:?} vertical overflow: card={card:?} area={area:?}"
+            );
+        }
+    }
+}
 
 fn view(width: f32, height: f32) -> OnboardingView {
     let mut view = OnboardingView::default();
@@ -130,29 +339,6 @@ fn the_card_fits_the_minimum_window_in_every_language() {
                         && primary.y + primary.h <= card.y + card.h + 0.01,
                     "{case}: the primary is cut off: {primary:?} in {card:?}"
                 );
-                // Both rows lie inside the card with every cell inside its
-                // row (the emoji row since I3).
-                let colors = rect(&frame, KEY_COLORS);
-                let emoji = rect(&frame, KEY_EMOJI);
-                for (name, row) in [("swatch row", colors), ("emoji row", emoji)] {
-                    assert!(
-                        row.x >= card.x
-                            && row.x + row.w <= card.x + card.w + 0.01
-                            && row.y + row.h <= card.y + card.h + 0.01,
-                        "{case}: the {name} leaves the card: {row:?} in {card:?}"
-                    );
-                }
-                assert!(
-                    emoji.y >= colors.y + colors.h,
-                    "{case}: emoji under swatches"
-                );
-                for cell in emoji_geometry().cells(emoji) {
-                    assert!(
-                        cell.x + cell.w <= emoji.x + emoji.w + 0.01
-                            && cell.y + cell.h <= emoji.y + emoji.h + 0.01,
-                        "{case}: an emoji cell is clipped: {cell:?} in {emoji:?}"
-                    );
-                }
                 assert!(
                     frame.diagnostics.is_empty(),
                     "{case}: {:?}",
@@ -165,8 +351,8 @@ fn the_card_fits_the_minimum_window_in_every_language() {
 }
 
 /// **Every target comes from the frame**: a press at the middle of each
-/// keyed node answers the control the table maps it to, and a press on each
-/// swatch's cell answers that cell.
+/// keyed node answers the control the table maps it to, including both the
+/// profile and workspace appearance tiles.
 #[test]
 fn every_target_comes_from_the_frame() {
     let mut view = OnboardingView::default();
@@ -192,6 +378,7 @@ fn every_target_comes_from_the_frame() {
         .set_text(&mut view.engine, "Ana");
     let frame = frame(&mut view);
     for (key, hit) in [
+        (KEY_AVATAR, Hit::ProfileAppearance),
         (KEY_NAME, Hit::Name),
         (KEY_TILE, Hit::WorkspaceAppearance),
         (KEY_WORKSPACE_NAME, Hit::WorkspaceName),
@@ -205,57 +392,67 @@ fn every_target_comes_from_the_frame() {
         assert_eq!(hit_for_key(key), Some(hit));
         assert_eq!(key_for_hit(hit), Some(key));
     }
-    let cells = swatch_geometry().wrapped_swatches(rect(&frame, KEY_COLORS));
-    assert_eq!(cells.len(), SWATCH_COUNT);
-    for (index, cell) in cells.iter().enumerate() {
-        let (x, y) = cell.centre();
-        assert_eq!(view.hit(x, y), Some(Hit::Swatch(index)));
-    }
-    let emoji = emoji_geometry().cells(rect(&frame, KEY_EMOJI));
-    assert_eq!(emoji.len(), SETUP_EMOJI.len());
-    for (index, cell) in emoji.iter().enumerate() {
-        let (x, y) = cell.centre();
-        assert_eq!(view.hit(x, y), Some(Hit::Emoji(index)));
-    }
-    assert_eq!(key_for_hit(Hit::Emoji(3)), Some(KEY_EMOJI));
-    // The chip is decorative: no target.
-    let (x, y) = rect(&frame, KEY_AVATAR).centre();
-    assert_eq!(view.hit(x, y), None);
 }
 
-/// **The swatch row wraps instead of clipping**: narrower than the ten
-/// swatches' 310, the leaf is as tall as the component says it needs, on two
-/// lines, and every cell is inside it.
+/// Hovering either the profile or workspace square tile marks it hovered for
+/// the pencil overlay, and clicking it opens the icon-and-color modal for
+/// that target.
 #[test]
-fn the_swatch_row_wraps_instead_of_clipping() {
-    let mut view = OnboardingView::default();
-    view.set_embedded(true);
-    view.show_setup();
-    view.set_viewport(300.0, 900.0);
-    let frame = frame(&mut view);
-    let row = rect(&frame, KEY_COLORS);
-    assert!(row.w < 310.0, "{row:?}");
-    let geometry = swatch_geometry();
-    assert!((row.h - geometry.wrapped_height(row.w)).abs() < 0.01);
-    assert_eq!(geometry.lines(row).len(), 2);
-    for cell in geometry.wrapped_swatches(row) {
+fn hovering_and_clicking_profile_or_workspace_tile_opens_its_appearance_modal() {
+    let mut view = view(1000.0, 680.0);
+    let layout = frame(&mut view);
+
+    for (key, expected_hit, expected_component, expected_target) in [
+        (
+            KEY_AVATAR,
+            Hit::ProfileAppearance,
+            "ProfileIcon",
+            koru_appearance_ui::Target::DraftProfile,
+        ),
+        (
+            KEY_TILE,
+            Hit::WorkspaceAppearance,
+            "WorkspaceIcon",
+            koru_appearance_ui::Target::Draft,
+        ),
+    ] {
+        let tile = rect(&layout, key);
+        assert_eq!(tile.w, tile.h, "{expected_component} is square");
+        let (x, y) = tile.centre();
+        assert!(view.mouse_move(x, y));
+        assert_eq!(view.hover, Some(expected_hit));
+        let records = capture(&mut view);
+        let icon_record = records
+            .iter()
+            .find(|r| r.name == expected_component)
+            .unwrap_or_else(|| panic!("{expected_component} is captured"));
         assert!(
-            cell.x >= row.x
-                && cell.x + cell.w <= row.x + row.w
-                && cell.y >= row.y
-                && cell.y + cell.h <= row.y + row.h + 0.01,
-            "{cell:?} outside {row:?}"
+            icon_record
+                .properties
+                .iter()
+                .any(|p| p.name == "hovered" && p.value == "true"),
+            "{expected_component} shows hover pencil state"
         );
+        assert!(view.mouse_down(x, y));
+        let panel = view
+            .workspace_appearance
+            .as_ref()
+            .expect("clicking tile opens modal");
+        assert_eq!(panel.target, expected_target);
+        view.workspace_appearance = None;
     }
 }
 
 /// **One floating panel, and the card inside it** (D7): the inspector shows
 /// the card's element tree under the panel, with the shared components —
-/// the name fields, `KoruAvatar`, `ColorPickerRow` and the tile — inside the
-/// card.
+/// the name fields, the square profile and workspace tiles, and the monochrome
+/// primary button — and no inline color or emoji rows.
 #[test]
 fn the_card_tree_nests_under_one_floating_panel_in_the_inspector() {
     let mut view = view(1000.0, 680.0);
+    view.owner_name
+        .borrow_mut()
+        .set_text(&mut view.engine, "Ana");
     let records = capture(&mut view);
     let panels: Vec<usize> = records
         .iter()
@@ -270,11 +467,11 @@ fn the_card_tree_nests_under_one_floating_panel_in_the_inspector() {
     assert!(within(&records, card, panels[0]));
     for component in [
         "NameField",
-        "KoruAvatar",
-        "ColorPickerRow",
+        "Profile tile",
+        "ProfileIcon",
         "Workspace tile",
         "WorkspaceIcon",
-        "KoruSwatch",
+        "KoruButton",
     ] {
         let found: Vec<usize> = records
             .iter()
@@ -286,17 +483,25 @@ fn the_card_tree_nests_under_one_floating_panel_in_the_inspector() {
             assert!(within(&records, index, card), "{component} is in the card");
         }
     }
-    let swatches = records.iter().filter(|r| r.name == "KoruSwatch").count();
-    assert_eq!(swatches, SWATCH_COUNT);
-}
-
-/// The ten swatches are the palette's ten named colors, in its order, and
-/// the accessibility parts are keyed by those names in the same order.
-#[test]
-fn the_swatches_are_the_ten_named_colors_in_palette_order() {
-    let names = theme::workspace_color_names();
-    assert_eq!(names.len(), SWATCH_COUNT);
-    for (name, part) in names.iter().zip(super::super::accessibility::parts::COLOR) {
-        assert_eq!(part.to_string(), format!("color-{name}"));
+    for removed in ["KoruAvatar", "ColorPickerRow", "KoruSwatch", "KoruEmojiRow"] {
+        assert!(
+            !records.iter().any(|r| r.name == removed),
+            "{removed} is no longer on the setup card"
+        );
     }
+    let primary = records
+        .iter()
+        .find(|r| {
+            r.name == "KoruButton"
+                && r.properties
+                    .iter()
+                    .any(|p| p.name == "variant" && p.value == "Inverted")
+        })
+        .expect("Start using Koru wears the monochrome Inverted button role");
+    assert!(
+        primary
+            .properties
+            .iter()
+            .any(|p| p.name == "background token" && p.value == "theme::p().text")
+    );
 }

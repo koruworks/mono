@@ -2876,6 +2876,20 @@ struct OnboardingApp<H: Host> {
     /// `ListProfiles` immediately requested another list and its response reset
     /// an in-progress Profile form back to step one.
     signed_in_profiles_requested: bool,
+    /// True while a new user-initiated sign-in from the workspace modal is in
+    /// flight; ignores any pre-existing `AccountStage::SignedIn` broadcast from
+    /// an earlier session until the new sign-in command itself settles.
+    awaiting_modal_signin: bool,
+    /// When the user starts a fresh sign-in from Screen 1 while an earlier
+    /// account is still bound to the active scope, sign out of that scope
+    /// first so any Koru account can sign in without an identity-mismatch
+    /// refusal.
+    pending_modal_signin: Option<koru_agent_wire::AccountCommand>,
+    cloud_access_request_seq: u64,
+    pending_cloud_access_request: Option<u64>,
+    checkout_poll_at: Option<Instant>,
+    checkout_submission: Option<crate::account_ui::CommandSubmissionId>,
+    checkout_generation: Option<u64>,
     /// The installation must remain protected while onboarding is open too.
     #[allow(dead_code)]
     update_lease: Option<koru_update::InstanceLease>,
@@ -3664,8 +3678,82 @@ impl<H: Host> OnboardingApp<H> {
         ) {
             self.host.account_command_owned(
                 self.view.account_scope(),
-                koru_agent_wire::AccountCommand::ListProfileChoices,
+                koru_agent_wire::AccountCommand::InspectAccountSession,
             );
+            if self.view.workspace_modal {
+                self.request_cloud_access_check();
+            } else {
+                self.host.account_command_owned(
+                    self.view.account_scope(),
+                    koru_agent_wire::AccountCommand::ListProfileChoices,
+                );
+            }
+        }
+    }
+
+    fn request_cloud_access_check(&mut self) {
+        self.cloud_access_request_seq = self.cloud_access_request_seq.wrapping_add(1).max(1);
+        let request_id = self.cloud_access_request_seq;
+        self.pending_cloud_access_request = Some(request_id);
+        self.host.account_command_owned(
+            self.view.account_scope(),
+            koru_agent_wire::AccountCommand::InspectCloudAccess { request_id },
+        );
+    }
+
+    fn begin_onboarding_checkout(&mut self, plan: &'static str) {
+        if let Some(generation) = self.checkout_generation.take() {
+            self.host.account_command_owned(
+                self.view.account_scope(),
+                koru_agent_wire::AccountCommand::Cancel { generation },
+            );
+        }
+        self.pending_cloud_access_request = None;
+        self.checkout_poll_at = None;
+        self.view.show_checkout_pending();
+        let submission = crate::account_ui::CommandSubmissionId::next();
+        self.checkout_submission = Some(submission);
+        let locale = self.view.language().tag().to_owned();
+        self.host.account_command_tracked_owned(
+            submission,
+            self.view.account_scope(),
+            koru_agent_wire::AccountCommand::StartCheckout {
+                plan: plan.to_owned(),
+                locale,
+            },
+        );
+    }
+
+    fn cancel_onboarding_checkout(&mut self) {
+        self.checkout_poll_at = None;
+        self.checkout_submission = None;
+        if let Some(generation) = self.checkout_generation.take() {
+            self.host.account_command_owned(
+                self.view.account_scope(),
+                koru_agent_wire::AccountCommand::Cancel { generation },
+            );
+        }
+    }
+
+    fn start_modal_signin(&mut self, command: koru_agent_wire::AccountCommand) {
+        self.signed_in_profiles_requested = false;
+        self.awaiting_modal_signin = self.view.workspace_modal;
+        self.pending_cloud_access_request = None;
+        self.cancel_onboarding_checkout();
+        self.view.clear_account_email();
+        let state = self.host.account_state();
+        let bound_to_prior_account = self.view.workspace_modal
+            && (state.stage == koru_agent_wire::AccountStage::SignedIn
+                || state.active_account_id.is_some());
+        if bound_to_prior_account {
+            self.pending_modal_signin = Some(command);
+            self.host.account_command_owned(
+                self.view.account_scope(),
+                koru_agent_wire::AccountCommand::Logout,
+            );
+        } else {
+            self.pending_modal_signin = None;
+            self.submit_account_command(command);
         }
     }
 
@@ -3681,18 +3769,17 @@ impl<H: Host> OnboardingApp<H> {
         self.context = Some(warmed.context);
         self.renderers = warmed.renderer.into_iter().collect();
 
+        let size = crate::cli::window_size_from_args().unwrap_or((1000.0, 680.0));
         let mut attributes = Window::default_attributes()
             .with_title(self.name.clone())
             .with_visible(false)
-            // The welcome split has to continue through the title area. On
-            // macOS the native traffic-light titlebar remains platform-owned;
-            // elsewhere onboarding draws the same compact direct controls as
-            // the rest of Koru's custom-caption windows.
+            // The host paints the workspace; setup owns input until creation.
+            // On macOS the native traffic lights remain platform-owned.
             .with_decorations(cfg!(target_os = "macos"))
-            .with_inner_size(winit::dpi::LogicalSize::new(1000.0, 680.0))
+            .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1))
             // The shared emoji picker is 420 px wide and about 590 px tall;
             // keep its 16 px modal gutter reachable without clipping.
-            .with_min_inner_size(winit::dpi::LogicalSize::new(452.0, 640.0))
+            .with_min_inner_size(winit::dpi::LogicalSize::new(720.0, 640.0))
             .with_theme(window_theme_for_pref());
         if let Some(icon) = self.host.window_icon().or_else(app_icon) {
             attributes = attributes.with_window_icon(Some(icon));
@@ -3777,6 +3864,25 @@ impl<H: Host> OnboardingApp<H> {
         if let Some(live) = &self.live {
             live.window.request_redraw();
         }
+    }
+
+    /// Bring the onboarding window back to the foreground after an external
+    /// browser flow returns so the person lands straight on profile selection
+    /// or setup. Never steals focus while the person is completing checkout in
+    /// the browser.
+    fn bring_to_front(&self) {
+        if self.view.is_checkout_pending() {
+            return;
+        }
+        if let Some(live) = &self.live {
+            live.window.set_minimized(false);
+            live.window.focus_window();
+            if !self.focused {
+                live.window
+                    .request_user_attention(Some(winit::window::UserAttentionType::Informational));
+            }
+        }
+        activate_app();
     }
 
     /// The first-run window's half of the F12 inspector: the toggle itself,
@@ -3907,21 +4013,61 @@ impl<H: Host> OnboardingApp<H> {
                     },
                 ),
                 crate::onboarding::Action::StartGoogle => {
-                    self.submit_account_command(koru_agent_wire::AccountCommand::StartGoogle {
+                    self.start_modal_signin(koru_agent_wire::AccountCommand::StartGoogle {
                         locale: "en".into(),
                     })
                 }
                 crate::onboarding::Action::StartApple => {
-                    self.submit_account_command(koru_agent_wire::AccountCommand::StartApple {
+                    self.start_modal_signin(koru_agent_wire::AccountCommand::StartApple {
                         locale: "en".into(),
                     })
                 }
-                crate::onboarding::Action::ContinueWithEmail { address, password } => self
-                    .submit_account_command(koru_agent_wire::AccountCommand::ContinueWithEmail {
+                crate::onboarding::Action::StartEmailBrowser => {
+                    self.start_modal_signin(koru_agent_wire::AccountCommand::StartEmailBrowser {
                         locale: "en".into(),
-                        address,
-                        password,
-                    }),
+                    })
+                }
+                crate::onboarding::Action::ReopenBrowserSignin => {
+                    if let Some(url) = self.host.account_browser_url(self.view.account_scope()) {
+                        self.host.open_uri(&url);
+                    }
+                }
+                crate::onboarding::Action::CopyBrowserSigninLink => {
+                    if let Some(url) = self.host.account_browser_url(self.view.account_scope())
+                        && koru_clipboard::system().set_text(&url).is_ok()
+                    {
+                        self.view.mark_browser_link_copied();
+                    }
+                }
+                crate::onboarding::Action::SwitchAccount => {
+                    self.awaiting_modal_signin = false;
+                    self.pending_modal_signin = None;
+                    self.signed_in_profiles_requested = false;
+                    self.host.account_command_owned(
+                        self.view.account_scope(),
+                        koru_agent_wire::AccountCommand::Logout,
+                    );
+                }
+                crate::onboarding::Action::OpenPricing => {
+                    let url = self.view.pricing_url();
+                    self.host.open_uri(&url);
+                }
+                crate::onboarding::Action::StartCheckout { plan } => {
+                    self.begin_onboarding_checkout(plan);
+                }
+                crate::onboarding::Action::CancelCheckout => {
+                    self.cancel_onboarding_checkout();
+                }
+                crate::onboarding::Action::ContinueWithEmail { address, password } => {
+                    self.signed_in_profiles_requested = false;
+                    self.submit_account_command(
+                        koru_agent_wire::AccountCommand::ContinueWithEmail {
+                            locale: "en".into(),
+                            address,
+                            password,
+                        },
+                    )
+                }
                 crate::onboarding::Action::SubmitEmailCode { code } => {
                     self.submit_account_command(koru_agent_wire::AccountCommand::SubmitEmailCode {
                         code,
@@ -3968,6 +4114,8 @@ impl<H: Host> OnboardingApp<H> {
                         });
                 }
                 crate::onboarding::Action::CancelGoogle => {
+                    self.pending_modal_signin = None;
+                    self.awaiting_modal_signin = false;
                     self.submit_account_command(koru_agent_wire::AccountCommand::Cancel {
                         generation: self.view.account_generation(),
                     })
@@ -4154,6 +4302,14 @@ impl<H: Host> OnboardingApp<H> {
     }
 
     fn poll_account(&mut self) {
+        // Required local setup stays independent of background broadcasts until
+        // the person explicitly starts an account flow from the welcome modal.
+        if self.view.workspace_modal && !self.view.modal_account_active() {
+            self.host.take_account_dirty();
+            self.view
+                .observe_account_projection(&self.host.account_state());
+            return;
+        }
         self.poll_local_profile_binding();
         if (self.awaiting_hosted_profile || self.awaiting_local_binding)
             && !self.host.agent_available()
@@ -4173,9 +4329,19 @@ impl<H: Host> OnboardingApp<H> {
             if self.view.select_account_context(&state) {
                 self.signed_in_profiles_requested = false;
             }
+            if state.stage == koru_agent_wire::AccountStage::SignedOut
+                && state.active_account_id.is_none()
+                && let Some(command) = self.pending_modal_signin.take()
+            {
+                self.view.arm_browser_signin(&command);
+                self.submit_account_command(command);
+                return;
+            }
             if state.stage == koru_agent_wire::AccountStage::SignedIn {
-                self.view.account_creation_finished();
-                self.request_signed_in_profiles_once();
+                if !self.awaiting_modal_signin && !self.view.is_checkout_pending() {
+                    self.view.account_creation_finished();
+                    self.request_signed_in_profiles_once();
+                }
             } else if matches!(
                 state.stage,
                 koru_agent_wire::AccountStage::Restoring
@@ -4211,6 +4377,11 @@ impl<H: Host> OnboardingApp<H> {
                 && self.connected_owner_scope == admission.owner_scope
             {
                 self.connected_generation = Some(admission.generation);
+            }
+            if self.checkout_submission == Some(admission.submission)
+                && self.view.account_scope() == admission.owner_scope
+            {
+                self.checkout_generation = Some(admission.generation);
             }
         }
         if self.pending_connected_open.is_some()
@@ -4249,20 +4420,29 @@ impl<H: Host> OnboardingApp<H> {
             }
             match result {
                 koru_agent_wire::AccountOperationResult::AccountCreationRequired => {
+                    self.bring_to_front();
                     self.view
                         .account_creation_required(&self.host.account_state());
                 }
                 koru_agent_wire::AccountOperationResult::SignedIn => {
-                    self.view.account_creation_finished();
-                    self.request_signed_in_profiles_once();
+                    self.awaiting_modal_signin = false;
+                    if !self.view.workspace_modal {
+                        self.bring_to_front();
+                    }
+                    if !self.view.is_checkout_pending() {
+                        self.view.account_creation_finished();
+                        self.request_signed_in_profiles_once();
+                    }
                 }
                 koru_agent_wire::AccountOperationResult::Profiles { profiles } => {
+                    self.bring_to_front();
                     self.view.show_account_profiles(profiles);
                 }
                 koru_agent_wire::AccountOperationResult::ProfileChoices {
                     display_name,
                     choices,
                 } => {
+                    self.bring_to_front();
                     self.view
                         .show_account_profile_choices(&display_name, choices);
                 }
@@ -4300,15 +4480,90 @@ impl<H: Host> OnboardingApp<H> {
                     );
                     self.view.profiles_selected(profiles);
                 }
-                koru_agent_wire::AccountOperationResult::Cancelled => self.view.account_cancelled(),
-                koru_agent_wire::AccountOperationResult::Failed { code } => {
-                    let mut state = self.host.account_state().clone();
-                    state.stage = koru_agent_wire::AccountStage::Failed;
-                    state.failure_code = Some(code);
-                    self.view.show_account_state(&state);
+                koru_agent_wire::AccountOperationResult::Cancelled => {
+                    self.awaiting_modal_signin = false;
+                    self.bring_to_front();
+                    self.view.account_cancelled();
                 }
-                koru_agent_wire::AccountOperationResult::SignedInIdentity { .. }
-                | koru_agent_wire::AccountOperationResult::ProfileAuthorizationRemoved { .. }
+                koru_agent_wire::AccountOperationResult::Failed { code } => {
+                    self.awaiting_modal_signin = false;
+                    if self.checkout_generation == Some(generation)
+                        || self.view.is_checkout_pending()
+                    {
+                        self.checkout_submission = None;
+                        self.checkout_generation = None;
+                        self.checkout_poll_at = None;
+                        self.view.show_checkout_incomplete();
+                        self.bring_to_front();
+                    } else {
+                        self.bring_to_front();
+                        let mut state = self.host.account_state().clone();
+                        state.stage = koru_agent_wire::AccountStage::Failed;
+                        state.failure_code = Some(code);
+                        self.view.show_account_state(&state);
+                    }
+                }
+                koru_agent_wire::AccountOperationResult::SignedInIdentity {
+                    verified_email, ..
+                } => {
+                    self.view.set_account_email(verified_email);
+                }
+                koru_agent_wire::AccountOperationResult::CloudAccess { request_id, active } => {
+                    if self.pending_cloud_access_request == Some(request_id) {
+                        self.pending_cloud_access_request = None;
+                        match active {
+                            Some(true) => {
+                                self.cancel_onboarding_checkout();
+                                self.bring_to_front();
+                                self.host.account_command_owned(
+                                    self.view.account_scope(),
+                                    koru_agent_wire::AccountCommand::ListProfileChoices,
+                                );
+                            }
+                            Some(false) => {
+                                if self.view.is_checkout_pending() {
+                                    self.checkout_poll_at =
+                                        Some(Instant::now() + Duration::from_secs(4));
+                                } else {
+                                    let plan = self.view.checkout_plan();
+                                    self.begin_onboarding_checkout(plan);
+                                }
+                            }
+                            None => {
+                                if self.view.is_checkout_pending() {
+                                    self.checkout_poll_at =
+                                        Some(Instant::now() + Duration::from_secs(4));
+                                } else {
+                                    self.bring_to_front();
+                                    self.view.show_checkout_incomplete();
+                                }
+                            }
+                        }
+                    }
+                }
+                koru_agent_wire::AccountOperationResult::CheckoutFinished { active, .. } => {
+                    self.checkout_submission = None;
+                    self.checkout_generation = None;
+                    self.checkout_poll_at = None;
+                    if active {
+                        self.host.account_command_owned(
+                            self.view.account_scope(),
+                            koru_agent_wire::AccountCommand::ListProfileChoices,
+                        );
+                    } else if self.view.is_checkout_pending() {
+                        self.view.show_checkout_incomplete();
+                    }
+                    self.bring_to_front();
+                }
+                koru_agent_wire::AccountOperationResult::SignedOut => {
+                    if let Some(command) = self.pending_modal_signin.take() {
+                        let state = self.host.account_state().clone();
+                        self.view.select_account_context(&state);
+                        self.view.arm_browser_signin(&command);
+                        self.submit_account_command(command);
+                    }
+                }
+                koru_agent_wire::AccountOperationResult::ProfileAuthorizationRemoved { .. }
                 | koru_agent_wire::AccountOperationResult::ProfileDeleted { .. }
                 | koru_agent_wire::AccountOperationResult::ProfileRestored { .. }
                 | koru_agent_wire::AccountOperationResult::ProfileLifecycle { .. }
@@ -4318,7 +4573,6 @@ impl<H: Host> OnboardingApp<H> {
                 | koru_agent_wire::AccountOperationResult::AddGoogleCandidate { .. }
                 | koru_agent_wire::AccountOperationResult::GoogleAuthorizationAdded { .. }
                 | koru_agent_wire::AccountOperationResult::AddGoogleCancelled { .. }
-                | koru_agent_wire::AccountOperationResult::SignedOut
                 | koru_agent_wire::AccountOperationResult::AccountSelected { .. }
                 | koru_agent_wire::AccountOperationResult::CloudSubscription { .. }
                 | koru_agent_wire::AccountOperationResult::CloudSync { .. } => {}
@@ -4330,7 +4584,17 @@ impl<H: Host> OnboardingApp<H> {
             {
                 self.pause_created_profile_connection(retry);
             }
-            self.view.account_command_failed(failure);
+            if self.checkout_submission == Some(failure.submission) {
+                self.checkout_submission = None;
+                self.checkout_generation = None;
+                self.checkout_poll_at = None;
+                if self.view.is_checkout_pending() {
+                    self.view.show_checkout_incomplete();
+                }
+            }
+            if self.view.account_command_failed(failure) {
+                self.awaiting_modal_signin = false;
+            }
         }
     }
 
@@ -4366,7 +4630,7 @@ impl<H: Host> OnboardingApp<H> {
                 let frame =
                     koru_draw::inspect::Frame::begin(inspector.frame, inspection_root, viewport);
                 let owner = koru_draw::inspect::scope(
-                    "First-run window",
+                    "Workspace setup",
                     "container",
                     inspection_root,
                     viewport,
@@ -4380,6 +4644,15 @@ impl<H: Host> OnboardingApp<H> {
                 );
                 (started, frame, owner)
             });
+        self.host.draw_profile_setup_background(
+            &mut self.scene,
+            Affine::scale(scale),
+            (
+                live.surface.config.width as f32 / scale as f32,
+                live.surface.config.height as f32 / scale as f32,
+            ),
+            live.window.is_maximized(),
+        );
         self.view.draw(&mut self.scene, Affine::scale(scale));
         if let Some((started, frame, owner)) = inspection_frame {
             drop(owner);
@@ -4715,11 +4988,12 @@ impl<H: Host> OnboardingApp<H> {
 
 impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self
-            .host
-            .account_command_deadline()
-            .is_some_and(|due| due <= Instant::now())
-        {
+        let account_deadline = if self.view.workspace_modal && !self.view.modal_account_active() {
+            None
+        } else {
+            self.host.account_command_deadline()
+        };
+        if account_deadline.is_some_and(|due| due <= Instant::now()) {
             self.poll_account();
             self.request_redraw();
         }
@@ -4733,11 +5007,30 @@ impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
         if self.view.caret_needs_frame() {
             self.request_redraw();
         }
+        let mut checkout_deadline = None;
+        if self.view.is_browser_waiting() {
+            self.request_redraw();
+            checkout_deadline = Some(Instant::now() + Duration::from_millis(50));
+        }
+        if self.view.is_checkout_pending() {
+            self.request_redraw();
+            checkout_deadline = Some(Instant::now() + Duration::from_millis(50));
+            if self.checkout_submission.is_none()
+                && self.checkout_generation.is_none()
+                && self
+                    .checkout_poll_at
+                    .is_some_and(|due| due <= Instant::now())
+                && self.pending_cloud_access_request.is_none()
+            {
+                self.checkout_poll_at = Some(Instant::now() + Duration::from_secs(4));
+                self.request_cloud_access_check();
+            }
+        }
         let blink = self.view.caret_blink_deadline(Instant::now());
-        let deadline = match (self.host.account_command_deadline(), blink) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        let deadline = [account_deadline, blink, checkout_deadline]
+            .into_iter()
+            .flatten()
+            .min();
         event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -5394,6 +5687,7 @@ impl<H: Host> App<H> {
                     // the start, rather than for one frame with them.
                     let mut view = crate::onboarding::OnboardingView::default();
                     view.observe_account_projection(&host.account_state());
+                    view.show_workspace_setup();
                     return Some(ContentState::Onboarding(Box::new(OnboardingApp {
                         host,
                         name: name.to_owned(),
@@ -5436,6 +5730,13 @@ impl<H: Host> App<H> {
                             },
                         ),
                         signed_in_profiles_requested: false,
+                        awaiting_modal_signin: false,
+                        pending_modal_signin: None,
+                        cloud_access_request_seq: 0,
+                        pending_cloud_access_request: None,
+                        checkout_poll_at: None,
+                        checkout_submission: None,
+                        checkout_generation: None,
                         profile_dir,
                         proxy,
                     })));

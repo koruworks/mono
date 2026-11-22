@@ -48,6 +48,7 @@ const CONNECTED_LABEL: &str = "Connected to a Koru account";
 const CONNECTED_HINT: &str = "Sign-in details will appear when this account is available.";
 const CLOUD_LABEL: &str = "Cloud sync";
 const CLOUD_HINT: &str = "Sync this profile's workspaces through Koru Cloud.";
+const SUBSCRIPTION_LABEL: &str = "Subscription";
 const RESUME_TITLE: &str = "Finish setting up your account";
 const RESUME_BODY: &str = "Koru is waiting for your answer about creating an account.";
 
@@ -290,6 +291,25 @@ impl ManageView {
             Some(hint),
             Some(switch),
         );
+        if self.c.cloud_status() == profiles::CloudStatus::Manage {
+            let label = koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::CloudManageSubscription,
+            );
+            let w = button::button_width(&mut self.engine, label);
+            let look = Look::Button(ButtonRole::Secondary);
+            let manage = (Control::CloudPrimary, label.to_owned(), look, w, button::H);
+            let kind = self.c.cloud_subscription_label().to_owned();
+            self.lay_row(
+                column,
+                cy,
+                rows,
+                controls,
+                SUBSCRIPTION_LABEL,
+                Some(kind),
+                Some(manage),
+            );
+        }
     }
 
     /// One row with its control against the right edge.

@@ -16,6 +16,7 @@ koru-account-core = { path = "../koru-account-core" }
 koru-account-wire = { path = "../koru-account-wire" }
 koru-account-session = { path = "../koru-account-session" }
 koru-agent-wire = { path = "../koru-agent-wire" }
+koru-env = { path = "../koru-env" }
 koru-oauth-credentials = { path = "../koru-oauth-credentials" }
 koru-device = { path = "../koru-device" }
 koru-network-iroh = { path = "../koru-network-iroh" }

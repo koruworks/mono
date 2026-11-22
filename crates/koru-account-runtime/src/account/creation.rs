@@ -45,9 +45,9 @@ impl PendingCreation {
         listener: Box<dyn SignInSession>,
     ) -> Self {
         let locale = match &start {
-            AccountCommand::StartGoogle { locale } | AccountCommand::StartApple { locale } => {
-                locale.clone()
-            }
+            AccountCommand::StartGoogle { locale }
+            | AccountCommand::StartApple { locale }
+            | AccountCommand::StartEmailBrowser { locale } => locale.clone(),
             _ => String::new(),
         };
         Self {

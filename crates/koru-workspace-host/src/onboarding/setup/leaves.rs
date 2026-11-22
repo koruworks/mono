@@ -2,58 +2,31 @@
 
 //! **The setup card's leaves**: the existing drawables the card is made of,
 //! each a named `impl Leaf` that takes what it draws as a value built per
-//! frame — the shared `TextInput`, `KoruAvatar`, the workspace `Tile`,
-//! `ColorPickerRow` in its wrapped form, `KoruEmojiRow`, and the shared
-//! buttons. Colors come from the frame's palette.
+//! frame — the shared `TextInput`, the square profile and workspace `Tile`s
+//! with hover pencil affordances, and the shared buttons. Colors come from
+//! the frame's palette.
 //!
-//! **No geometry lives here.** The two row leaves forward to their
-//! components' own wrapped geometry, so paint, the view's pointer and the
-//! screen reader all read one arithmetic, owned by the component. This file
-//! is on the source scan's migrated list (`koru_draw::theme::ui_scan`).
+//! This file is on the source scan's migrated list
+//! (`koru_draw::theme::ui_scan`).
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use koru_draw::el::{ElState, FrameCx, Leaf};
 use koru_draw::geometry::Rect;
+use koru_draw::icons;
 use koru_draw::text::TextEngine;
 use koru_draw::tile::Tile;
 use koru_draw::{inspect, scene};
 use koru_ui::button::{ActionButton, ActionStyle, ButtonRole, button_width, draw_button_enabled};
 use koru_ui::text_input::{InputStyle, TextInput};
-use koru_ui::{ColorPickerRow, EmojiRow, KoruAvatar};
 use vello::Scene;
 use vello::kurbo::Affine;
-use vello::peniko::Color;
 
 use super::tokens::{
-    SETUP_ACTION_H, SETUP_CHIP, SETUP_DISABLED_ALPHA, SETUP_EMOJI_CELL, SETUP_EMOJI_GAP,
-    SETUP_FIELD_H, SETUP_PRIMARY_H, SETUP_RING_GAP, SETUP_RING_RADIUS, SETUP_RING_W,
+    SETUP_ACTION_H, SETUP_CHIP, SETUP_FIELD_H, SETUP_PRIMARY_H, SETUP_RING_GAP, SETUP_RING_RADIUS,
+    SETUP_RING_W, SETUP_TILE_HOVER_ICON, SETUP_TILE_HOVER_SCRIM, SETUP_TILE_RADIUS_RATIO,
 };
-
-/// The emoji row's ten (D6), in the mock-up's order: 🌱 is the first
-/// workspace's default.
-pub(crate) const SETUP_EMOJI: [&str; 10] =
-    ["🌱", "📓", "💼", "🎓", "🏠", "🚀", "🧠", "🎨", "📚", "🎯"];
-
-/// The emoji row's geometry, at the card's cell size: what paint, the
-/// view's pointer and the screen reader all read.
-pub(crate) fn emoji_geometry() -> EmojiRow<'static> {
-    EmojiRow::new(&SETUP_EMOJI).cell(SETUP_EMOJI_CELL.value, SETUP_EMOJI_GAP.value)
-}
-
-/// The ten named workspace colors the swatch row offers (D6), in the
-/// palette's order (`theme::workspace_color_names`).
-pub(crate) const SWATCH_COUNT: usize = 10;
-
-/// The swatch row's geometry: ten swatches, no label. Paint fills in the
-/// palette's colors; everything that only measures, places or hits reads
-/// this, and both give one geometry because the colors do not move it.
-const GEOMETRY: [Option<Color>; SWATCH_COUNT] = [None; SWATCH_COUNT];
-
-pub(crate) fn swatch_geometry() -> ColorPickerRow<'static> {
-    ColorPickerRow::new(&GEOMETRY)
-}
 
 /// **A name field**: the shared `TextInput`, drawn as a form's field in the
 /// allocation the frame gives it. Held through `Rc<RefCell<…>>` because
@@ -94,38 +67,21 @@ impl Leaf for NameField {
     }
 }
 
-/// **The person's chip**: `KoruAvatar`, the initial of what is typed in the
-/// name field beside it, live. Decorative: the field is what is named.
-pub(crate) struct AvatarLeaf {
-    pub(crate) name: String,
-}
-
-impl Leaf for AvatarLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (SETUP_CHIP.value, SETUP_CHIP.value)
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        cx: &FrameCx,
-        _state: ElState,
-    ) {
-        KoruAvatar::initial(&self.name).draw_in(scene, root, engine, at, cx.palette());
-    }
-}
-
-/// **The workspace tile**: its emoji and color as the workspace will wear
-/// them, ringed while the keyboard is on it. Pressing it opens the full
-/// picker (D5); that is the view's, not the leaf's.
+/// **A square appearance tile** for either the profile or the workspace: its
+/// emoji (or initial) and color, wearing a dark scrim with a centered pencil
+/// on hover and a focus ring while the keyboard is on it. Clicking it opens
+/// the full icon-and-color modal; that is the view's, not the leaf's.
 pub(crate) struct TileLeaf {
+    pub(crate) component: &'static str,
     pub(crate) icon: Option<String>,
     pub(crate) color: Option<String>,
     pub(crate) name: String,
+    /// When `false`, an unset icon with a blank name draws an empty rounded
+    /// square rather than `Tile`'s `'W'` workspace fallback.
+    pub(crate) fallback_initial: bool,
+    pub(crate) hovered: bool,
     pub(crate) focused: bool,
+    pub(crate) disabled: bool,
 }
 
 impl Leaf for TileLeaf {
@@ -142,28 +98,56 @@ impl Leaf for TileLeaf {
         cx: &FrameCx,
         _state: ElState,
     ) {
+        let hovered = self.hovered && !self.disabled;
+        let focused = self.focused && !self.disabled;
         let _icon = inspect::scope(
-            "WorkspaceIcon",
+            self.component,
             "component",
             root,
             scene::rect(at.x, at.y, at.w, at.h),
             |record| {
                 record.property("control", "Tile", "koru_draw::tile");
-                record.property("focused", self.focused, "view state");
+                record.property("hovered", hovered, "view state");
+                record.property("focused", focused, "view state");
             },
         );
+        let trimmed = self.name.trim();
+        let icon = match self.icon.as_deref() {
+            Some(icon) => Some(icon),
+            None if !self.fallback_initial && trimmed.is_empty() => Some(""),
+            None => None,
+        };
+        let palette = cx.palette();
         Tile {
-            icon: self.icon.as_deref(),
+            icon,
             color: self.color.as_deref(),
-            name: &self.name,
+            name: trimmed,
         }
-        .draw_in(scene, root, engine, at, cx.palette());
-        if self.focused {
+        .draw_in(scene, root, engine, at, palette);
+        if hovered {
+            let radius = at.w.min(at.h) * SETUP_TILE_RADIUS_RATIO;
+            scene::fill(
+                scene,
+                root,
+                palette.bubble_bg.multiply_alpha(SETUP_TILE_HOVER_SCRIM),
+                &scene::rrect(at.x, at.y, at.w, at.h, radius),
+            );
+            let pencil = engine.icon_layout(icons::PENCIL, SETUP_TILE_HOVER_ICON.value);
+            scene::draw_layout(
+                scene,
+                root,
+                &pencil,
+                at.x + (at.w - pencil.width()) * 0.5,
+                at.y + (at.h - pencil.height()) * 0.5,
+                Some(palette.bubble_fg),
+            );
+        }
+        if focused {
             let out = SETUP_RING_GAP.value;
             scene::stroke(
                 scene,
                 root,
-                cx.palette().focus_ring,
+                palette.focus_ring,
                 f64::from(SETUP_RING_W.value),
                 &scene::rrect(
                     at.x - out,
@@ -177,92 +161,10 @@ impl Leaf for TileLeaf {
     }
 }
 
-/// **The swatch row**: `ColorPickerRow` in its wrapped form, so a narrow
-/// card puts the swatches on as many lines as it needs and never clips one.
-/// `measure(Some(width))` is the component's `wrapped_height(width)`.
-pub(crate) struct SwatchRowLeaf {
-    pub(crate) selected: Option<usize>,
-    pub(crate) hovered: Option<usize>,
-    pub(crate) focused: Option<usize>,
-    pub(crate) disabled: bool,
-}
-
-impl Leaf for SwatchRowLeaf {
-    fn measure(&self, width: Option<f32>) -> (f32, f32) {
-        let row = swatch_geometry();
-        match width {
-            Some(width) => (width, row.wrapped_height(width)),
-            None => (row.width(), row.height()),
-        }
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        cx: &FrameCx,
-        _state: ElState,
-    ) {
-        let colors = cx.palette().workspace_colors.map(|(_, color)| Some(color));
-        ColorPickerRow::new(&colors)
-            .selected(self.selected)
-            .hovered(self.hovered.filter(|_| !self.disabled))
-            .focused(self.focused.filter(|_| !self.disabled))
-            .alpha(if self.disabled {
-                SETUP_DISABLED_ALPHA
-            } else {
-                1.0
-            })
-            .draw_wrapped(scene, root, engine, at);
-    }
-}
-
-/// **The emoji row**: `KoruEmojiRow`, wrapping as the swatch row does.
-/// `measure(Some(width))` is the component's `height(width)`.
-pub(crate) struct EmojiRowLeaf {
-    pub(crate) selected: Option<usize>,
-    pub(crate) hovered: Option<usize>,
-    pub(crate) focused: Option<usize>,
-    pub(crate) disabled: bool,
-}
-
-impl Leaf for EmojiRowLeaf {
-    fn measure(&self, width: Option<f32>) -> (f32, f32) {
-        let row = emoji_geometry();
-        match width {
-            Some(width) => (width, row.height(width)),
-            None => (row.width(), row.height(row.width())),
-        }
-    }
-
-    fn paint(
-        &self,
-        scene: &mut Scene,
-        root: Affine,
-        engine: &mut TextEngine,
-        at: Rect,
-        _cx: &FrameCx,
-        _state: ElState,
-    ) {
-        emoji_geometry()
-            .selected(self.selected)
-            .hovered(self.hovered.filter(|_| !self.disabled))
-            .focused(self.focused.filter(|_| !self.disabled))
-            .alpha(if self.disabled {
-                SETUP_DISABLED_ALPHA
-            } else {
-                1.0
-            })
-            .draw(scene, root, engine, at);
-    }
-}
-
 /// What a card button is for, which decides how it is drawn.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ButtonStyle {
-    /// The card's one primary: filled, the column's full width.
+    /// The card's one primary: monochrome ink-filled, the column's full width.
     Primary,
     /// *Resume account creation*: the outlined dialog button.
     Secondary,
@@ -325,7 +227,7 @@ impl Leaf for ButtonLeaf {
                 at,
                 &self.label,
                 if self.style == ButtonStyle::Primary {
-                    ButtonRole::Primary
+                    ButtonRole::Inverted
                 } else {
                     ButtonRole::Secondary
                 },

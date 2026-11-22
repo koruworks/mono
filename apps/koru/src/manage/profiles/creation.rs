@@ -93,6 +93,14 @@ impl ProfilesController {
                     locale: "en".into(),
                 });
             }
+            Some(Action::StartEmailBrowser) => {
+                self.pending = Some(AccountCommand::StartEmailBrowser {
+                    locale: "en".into(),
+                });
+            }
+            Some(Action::OpenPricing)
+            | Some(Action::StartCheckout { .. })
+            | Some(Action::CancelCheckout) => {}
             // The same four steps the first-run window raises, from the same
             // screens: this surface embeds the identical form.
             Some(Action::ContinueWithEmail { address, password }) => {
@@ -193,7 +201,10 @@ impl ProfilesController {
                     connect_account,
                 });
             }
-            None => {}
+            Some(Action::SwitchAccount) => {
+                self.pending = Some(AccountCommand::Logout);
+            }
+            Some(Action::ReopenBrowserSignin | Action::CopyBrowserSigninLink) | None => {}
         }
     }
 

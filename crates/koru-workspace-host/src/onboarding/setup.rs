@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! **The first-run setup card** (welcome step 1, TECHNICAL.final §5): one
-//! card in place of the Profile and Workspace steps — a name, a first
-//! workspace with its tile, swatches and emoji, one primary.
+//! card in place of the Profile and Workspace steps — a profile tile and
+//! name, a first workspace tile and name, and one primary button. Both tiles
+//! open the full icon-and-color modal when clicked and reveal a pencil
+//! affordance on hover.
 //!
 //! ```text
 //! col  Setup window          the area beside the welcome sidebar, below the caption
@@ -10,35 +12,33 @@
 //!   col  Setup card          at most 540, never wider than the area less 32
 //!     text  title, lead      not when embedded setup/title, setup/lead
 //!     text  "You" / "Profile"                  setup/you
-//!     row   You              chip, name field  setup/avatar, setup/name
+//!     row   You              tile, name field  setup/avatar, setup/name
 //!     text  "First workspace"
 //!     row   First workspace  tile, name field  setup/workspace-tile, setup/workspace-name
-//!     leaf  swatch row       wraps to the width setup/colors
-//!     leaf  emoji row        wraps to the width setup/emoji
-//!     text  note, status    when there is one setup/note, setup/status
+//!     text  note, status     when there is one setup/note, setup/status
 //!     leaf  primary                            setup/primary
 //!     col   Other actions    Back, Resume, Recovery when offered
 //!   spacer
 //! ```
 //!
 //! **The frame is the one source of geometry** (D7): drawing, the pointer and
-//! the accessibility projection all read `frame.node(key).rect`, and a
-//! swatch's or an emoji's rectangle is its component's (`ColorPickerRow`'s
-//! wrapped form, `KoruEmojiRow`) inside its leaf's. Focus, typed actions and semantics stay in [`OnboardingView`] and
+//! the accessibility projection all read `frame.node(key).rect`. Focus, typed
+//! actions and semantics stay in [`OnboardingView`] and
 //! [`super::accessibility`]; `el::Frame::semantics()` and `focus_order()` are
 //! not used for this screen.
 //!
 //! **Finishing is a state of the card**, not a screen: while the primary's
 //! creation is in flight the card offers no control, answers no press, draws
-//! its fields and rows inert and its primary reads *Finishing…*.
+//! its fields and tiles inert and its primary reads *Finishing…*.
 //!
 //! Every size is a token from [`tokens`] or measured geometry; this file and
 //! [`leaves`] are on the source scan's migrated list
 //! (`koru_draw::theme::ui_scan`).
 
+use super::welcome_modal::leaves::LinkLeaf;
 use super::*;
 
-mod leaves;
+pub(super) mod leaves;
 mod tokens;
 
 use koru_draw::el::{
@@ -47,13 +47,9 @@ use koru_draw::el::{
 };
 use koru_draw::theme::{Ink, Line, Radius, Space, Surface, roles};
 use koru_i18n::{Key as T, t};
-use koru_ui::ColorPickerRow;
 use std::rc::Rc;
 
-use leaves::{
-    AvatarLeaf, ButtonLeaf, ButtonStyle, EmojiRowLeaf, NameField, SwatchRowLeaf, TileLeaf,
-};
-pub(super) use leaves::{SETUP_EMOJI, SWATCH_COUNT, emoji_geometry, swatch_geometry};
+use leaves::{ButtonLeaf, ButtonStyle, NameField, TileLeaf};
 use tokens::*;
 
 /// Which label the card's first field wears: on first run it names the
@@ -83,8 +79,6 @@ pub(super) const KEY_NAME: ElKey = ElKey::surface(SURFACE, "name");
 pub(super) const KEY_WORKSPACE_ROW: ElKey = ElKey::surface(SURFACE, "workspace-row");
 pub(super) const KEY_TILE: ElKey = ElKey::surface(SURFACE, "workspace-tile");
 pub(super) const KEY_WORKSPACE_NAME: ElKey = ElKey::surface(SURFACE, "workspace-name");
-pub(super) const KEY_COLORS: ElKey = ElKey::surface(SURFACE, "colors");
-pub(super) const KEY_EMOJI: ElKey = ElKey::surface(SURFACE, "emoji");
 pub(super) const KEY_NOTE: ElKey = ElKey::surface(SURFACE, "note");
 pub(super) const KEY_STATUS: ElKey = ElKey::surface(SURFACE, "status");
 pub(super) const KEY_PRIMARY: ElKey = ElKey::surface(SURFACE, "primary");
@@ -96,10 +90,10 @@ pub(super) const KEY_RECOVERY: ElKey = ElKey::surface(SURFACE, "recovery");
 pub(super) const WINDOW: &str = "Setup window";
 pub(super) const CARD: &str = "Setup card";
 
-/// **The key-to-control table**, both ways. Each row is one key; the cell
-/// under a point is the component's to say ([`OnboardingView::setup_hit`]).
+/// **The key-to-control table**, both ways.
 fn hit_for_key(key: ElKey) -> Option<Hit> {
     Some(match key {
+        k if k == KEY_AVATAR => Hit::ProfileAppearance,
         k if k == KEY_NAME => Hit::Name,
         k if k == KEY_TILE => Hit::WorkspaceAppearance,
         k if k == KEY_WORKSPACE_NAME => Hit::WorkspaceName,
@@ -113,11 +107,10 @@ fn hit_for_key(key: ElKey) -> Option<Hit> {
 
 pub(super) fn key_for_hit(hit: Hit) -> Option<ElKey> {
     Some(match hit {
+        Hit::ProfileAppearance => KEY_AVATAR,
         Hit::Name => KEY_NAME,
         Hit::WorkspaceAppearance => KEY_TILE,
         Hit::WorkspaceName => KEY_WORKSPACE_NAME,
-        Hit::Swatch(_) => KEY_COLORS,
-        Hit::Emoji(_) => KEY_EMOJI,
         Hit::Primary => KEY_PRIMARY,
         Hit::Back => KEY_BACK,
         Hit::ResumeAccount => KEY_RESUME,
@@ -145,9 +138,10 @@ impl OnboardingView {
     /// route, the keyboard on the name field.
     pub fn show_setup(&mut self) {
         self.connect_account = false;
+        self.modal_account_flow = false;
         self.setup_finishing = false;
         self.screen = Screen::Setup;
-        self.focus = 0;
+        self.focus = self.setup_initial_focus();
         self.error = None;
     }
 
@@ -159,10 +153,49 @@ impl OnboardingView {
         self.owner_label = label;
     }
 
-    /// Whether the card has a *Back*: only when there is an entry choice to
-    /// go back to ([`Screen::first`]).
-    pub(super) fn setup_has_back() -> bool {
-        Screen::first() != Screen::Setup
+    /// Whether the workspace-modal setup card shows *Change* in its eyebrow
+    /// to return to Screen 1.
+    pub(super) fn setup_has_change(&self) -> bool {
+        self.workspace_modal
+            && !self.embedded
+            && koru_features::cloud_sync()
+            && self.accounts_offered()
+    }
+
+    /// Whether the card has a *Back* / *Change*: only when there is an entry
+    /// choice to go back to.
+    pub(super) fn setup_has_back(&self) -> bool {
+        self.setup_has_change() || (!self.workspace_modal && Screen::first() != Screen::Setup)
+    }
+
+    /// Which subtitle the setup card displays for the active onboarding mode.
+    pub(super) fn setup_lead_key(&self) -> T {
+        if self.workspace_modal && self.connect_account {
+            T::SetupLeadPlus
+        } else {
+            T::SetupLead
+        }
+    }
+
+    /// The eyebrow shown above the title in workspace-modal onboarding.
+    pub(super) fn setup_eyebrow_text(&self) -> String {
+        let lang = self.language;
+        if !self.connect_account {
+            return t(lang, T::SetupEyebrowOffline).to_owned();
+        }
+        let plan = match self.welcome_path {
+            WelcomePath::CreateAccount => t(lang, T::SetupEyebrowPlus),
+            WelcomePath::ExistingAccount | WelcomePath::Offline => t(lang, T::SetupEyebrowAccount),
+        };
+        match self
+            .account_email
+            .as_deref()
+            .map(str::trim)
+            .filter(|email| !email.is_empty())
+        {
+            Some(email) => format!("{plan} · {email}"),
+            None => plan.to_owned(),
+        }
     }
 
     /// Both names hold a non-space character. `TextInput::value` trims and
@@ -208,43 +241,36 @@ impl OnboardingView {
         }
     }
 
-    /// The swatch the workspace's color is, when it is one of the ten.
-    pub(super) fn selected_swatch(&self) -> Option<usize> {
-        let color = self.workspace_color.as_deref()?;
-        theme::workspace_color_names()
+    /// Entering the card lands the caret directly in the name field so typing
+    /// begins immediately, while Shift+Tab reaches the profile tile before it.
+    pub(super) fn setup_initial_focus(&self) -> usize {
+        self.setup_controls()
             .iter()
-            .position(|name| *name == color)
+            .position(|control| *control == Hit::Name)
+            .unwrap_or(0)
     }
 
-    /// The cell the workspace's emoji is, when it is one of the row's ten;
-    /// `None` for one chosen from the full picker, which rings no cell.
-    pub(super) fn selected_emoji(&self) -> Option<usize> {
-        let icon = self.workspace_icon.as_deref()?;
-        SETUP_EMOJI.iter().position(|emoji| *emoji == icon)
-    }
-
-    /// The card's stops, in reading order (TECHNICAL.final §12 item 3): the
-    /// name, the tile, the workspace name, the swatch row and the emoji row
-    /// as one stop each, the primary when it can be pressed, then *Back*,
-    /// *Resume* and recovery when offered. Nothing while finishing.
+    /// The card's stops, in reading order: the profile tile, the name field,
+    /// the workspace tile, the workspace name, the primary when it can be
+    /// pressed, then *Back*, *Resume* and recovery when offered. Nothing while
+    /// finishing.
     pub(super) fn setup_controls(&self) -> Vec<Hit> {
         if self.setup_finishing {
             return Vec::new();
         }
         let mut controls = vec![
+            Hit::ProfileAppearance,
             Hit::Name,
             Hit::WorkspaceAppearance,
             Hit::WorkspaceName,
-            Hit::Swatch(self.swatch_cursor),
-            Hit::Emoji(self.emoji_cursor),
         ];
         if self.setup_primary_enabled() {
             controls.push(Hit::Primary);
         }
-        if Self::setup_has_back() {
+        if self.setup_has_back() {
             controls.push(Hit::Back);
         }
-        if self.can_reopen_account_creation() {
+        if !self.workspace_modal && self.can_reopen_account_creation() {
             controls.push(Hit::ResumeAccount);
         }
         if self.recovery_offered() {
@@ -262,8 +288,8 @@ impl OnboardingView {
         self.setup_focus_entered(before);
     }
 
-    /// **What entering a stop does.** Entering a row puts its cursor on the
-    /// chosen cell, or the first; entering the workspace name while it is
+    /// **What entering a stop does.** Leaving a name field blurs it so its
+    /// selection does not linger; entering the workspace name while it is
     /// still the default selects all of it, so typing replaces it.
     pub(super) fn setup_focus_entered(&mut self, before: Option<Hit>) {
         if self.screen != Screen::Setup {
@@ -273,58 +299,11 @@ impl OnboardingView {
         if now == before {
             return;
         }
-        match now {
-            Some(Hit::Swatch(_)) if !matches!(before, Some(Hit::Swatch(_))) => {
-                self.swatch_cursor = self.selected_swatch().unwrap_or(0);
-            }
-            Some(Hit::Emoji(_)) if !matches!(before, Some(Hit::Emoji(_))) => {
-                self.emoji_cursor = self.selected_emoji().unwrap_or(0);
-            }
-            Some(Hit::WorkspaceName) if !self.workspace_name_edited => {
-                self.workspace_name
-                    .borrow_mut()
-                    .select_all(&mut self.engine);
-            }
-            _ => {}
-        }
-    }
-
-    /// **An arrow inside a row** — the swatches or the emoji — moves that
-    /// row's cursor and is consumed: Left and Right a cell, across lines; Up
-    /// and Down a line in the same column, to the line's last cell when it is
-    /// shorter. At the row's ends it does nothing, and it never leaves the
-    /// row — Tab does. Each row's columns are its own component's answer.
-    pub(super) fn setup_arrow(&mut self, key: NamedKey, row: Hit) {
-        let (rect_key, count) = match row {
-            Hit::Swatch(_) => (KEY_COLORS, SWATCH_COUNT),
-            Hit::Emoji(_) => (KEY_EMOJI, SETUP_EMOJI.len()),
-            _ => return,
-        };
-        let width = self
-            .setup_node_rect(rect_key)
-            .map_or(f32::MAX, |rect| rect.w);
-        let columns = match row {
-            Hit::Swatch(_) => ColorPickerRow::columns(width),
-            _ => emoji_geometry().columns(width),
-        };
-        let last = count - 1;
-        let current = match row {
-            Hit::Swatch(_) => self.swatch_cursor,
-            _ => self.emoji_cursor,
-        };
-        let cursor = current.min(last);
-        let next = match key {
-            NamedKey::ArrowLeft => cursor.saturating_sub(1),
-            NamedKey::ArrowRight => (cursor + 1).min(last),
-            NamedKey::ArrowUp if cursor >= columns => cursor - columns,
-            NamedKey::ArrowDown if cursor / columns < last / columns => {
-                (cursor + columns).min(last)
-            }
-            _ => cursor,
-        };
-        match row {
-            Hit::Swatch(_) => self.swatch_cursor = next,
-            _ => self.emoji_cursor = next,
+        self.blur_text_field(before);
+        if now == Some(Hit::WorkspaceName) && !self.workspace_name_edited {
+            self.workspace_name
+                .borrow_mut()
+                .select_all(&mut self.engine);
         }
     }
 
@@ -335,24 +314,35 @@ impl OnboardingView {
         }
         match hit {
             Hit::Name | Hit::WorkspaceName => self.focus_setup_control(hit),
+            Hit::ProfileAppearance => {
+                self.focus_setup_control(hit);
+                let name = self.owner_name.borrow().value();
+                let title = if name.is_empty() {
+                    t(self.language, self.setup_owner_keys().0)
+                } else {
+                    &name
+                };
+                self.workspace_appearance = Some(EmojiColorPanel::for_profile_draft(
+                    &mut self.engine,
+                    title,
+                    self.profile_icon.clone(),
+                    self.profile_color.clone(),
+                ));
+            }
             Hit::WorkspaceAppearance => {
                 self.focus_setup_control(hit);
+                let name = self.workspace_name.borrow().value();
+                let title = if name.is_empty() {
+                    t(self.language, T::SetupWorkspaceLabel)
+                } else {
+                    &name
+                };
                 self.workspace_appearance = Some(EmojiColorPanel::for_draft(
                     &mut self.engine,
-                    &self.workspace_name.borrow().value(),
+                    title,
                     self.workspace_icon.clone(),
                     self.workspace_color.clone(),
                 ));
-            }
-            Hit::Swatch(index) if index < SWATCH_COUNT => {
-                self.swatch_cursor = index;
-                self.workspace_color = Some(theme::workspace_color_names()[index].to_owned());
-                self.focus_setup_control(Hit::Swatch(index));
-            }
-            Hit::Emoji(index) if index < SETUP_EMOJI.len() => {
-                self.emoji_cursor = index;
-                self.workspace_icon = Some(SETUP_EMOJI[index].to_owned());
-                self.focus_setup_control(Hit::Emoji(index));
             }
             Hit::Primary if self.creation_conflict => {
                 self.setup_finishing = true;
@@ -367,12 +357,15 @@ impl OnboardingView {
                     workspace_name: self.workspace_name.borrow().value(),
                     workspace_icon: self.workspace_icon.clone(),
                     workspace_color: self.workspace_color.clone(),
-                    profile_icon: None,
-                    profile_color: None,
+                    profile_icon: self.profile_icon.clone(),
+                    profile_color: self.profile_color.clone(),
                     connect_account: self.connect_account,
                 });
             }
-            Hit::Back if Self::setup_has_back() => self.show_entry(),
+            Hit::Back if self.setup_has_back() => {
+                self.modal_account_flow = false;
+                self.show_entry();
+            }
             Hit::Recovery if self.recovery_offered() => self.open_recovery(),
             _ => {}
         }
@@ -384,7 +377,11 @@ impl OnboardingView {
         if self.embedded {
             return Rect::new(0.0, 0.0, self.viewport.0, self.viewport.1);
         }
-        let (_, right) = welcome::split(self.viewport.0, self.viewport.1);
+        let right = if self.workspace_modal {
+            Rect::new(0.0, 0.0, self.viewport.0, self.viewport.1)
+        } else {
+            welcome::split(self.viewport.0, self.viewport.1).1
+        };
         let top = if self.custom_caption {
             theme::CAPTION_H
         } else {
@@ -410,7 +407,7 @@ impl OnboardingView {
             let margin = Spacing::from(SETUP_CARD_MARGIN).px(koru_draw::theme::Profile::Desktop);
             Length::Runtime(
                 SETUP_CARD_MAX_W.value.min(area.w - margin * 2.0),
-                "area beside the welcome sidebar",
+                "setup host width",
             )
         };
         // Embedded, the page frames the card: no panel, so no inset, and the
@@ -448,10 +445,37 @@ impl OnboardingView {
             .max_w(SETUP_CARD_MAX_W)
             .pad(pad)
             .gap(SETUP_ROW_GAP);
+        if self.workspace_modal && !self.embedded {
+            card = card.min_h(super::welcome_modal::tokens::WELCOME_MODAL_MIN_H);
+        }
         // Embedded, the host page's head already says *New profile* with its
         // own lead, so the card has neither (Q-C): its first line is the
         // *Profile* label, directly under the page head.
         if !self.embedded {
+            if self.workspace_modal {
+                let mut eyebrow = row("Setup eyebrow")
+                    .items_center()
+                    .gap(SETUP_FIELD_GAP)
+                    .child(
+                        text(self.setup_eyebrow_text())
+                            .named("Setup eyebrow text")
+                            .role(roles::META)
+                            .ink(Ink::Secondary)
+                            .fill(),
+                    );
+                if !finishing && self.setup_has_change() {
+                    let change = LinkLeaf::new(
+                        &mut self.engine,
+                        t(lang, T::SetupChange),
+                        false,
+                        false,
+                        hover == Some(Hit::Back),
+                        focused == Some(Hit::Back),
+                    );
+                    eyebrow = eyebrow.child(leaf("Change", change).semantic().id(KEY_BACK).hit());
+                }
+                card = card.child(eyebrow);
+            }
             card = card
                 .child(
                     text(t(lang, T::SetupTitle))
@@ -461,7 +485,7 @@ impl OnboardingView {
                         .id(KEY_TITLE),
                 )
                 .child(
-                    text(t(lang, T::SetupLead))
+                    text(t(lang, self.setup_lead_key()))
                         .named("Setup lead")
                         .role(roles::UI)
                         .ink(Ink::Secondary)
@@ -477,13 +501,21 @@ impl OnboardingView {
                     .gap(SETUP_FIELD_GAP)
                     .child(
                         leaf(
-                            "Avatar",
-                            AvatarLeaf {
-                                name: self.owner_name.borrow().raw_text().to_owned(),
+                            "Profile tile",
+                            TileLeaf {
+                                component: "ProfileIcon",
+                                icon: self.profile_icon.clone(),
+                                color: self.profile_color.clone(),
+                                name: self.owner_name.borrow().value(),
+                                fallback_initial: false,
+                                hovered: hover == Some(Hit::ProfileAppearance),
+                                focused: focused == Some(Hit::ProfileAppearance),
+                                disabled: finishing,
                             },
                         )
-                        .decorative()
-                        .id(KEY_AVATAR),
+                        .semantic()
+                        .id(KEY_AVATAR)
+                        .hit(),
                     )
                     .child(
                         leaf("NameField", owner)
@@ -502,10 +534,14 @@ impl OnboardingView {
                         leaf(
                             "Workspace tile",
                             TileLeaf {
+                                component: "WorkspaceIcon",
                                 icon: self.workspace_icon.clone(),
                                 color: self.workspace_color.clone(),
                                 name: self.workspace_name.borrow().value(),
+                                fallback_initial: true,
+                                hovered: hover == Some(Hit::WorkspaceAppearance),
                                 focused: focused == Some(Hit::WorkspaceAppearance),
+                                disabled: finishing,
                             },
                         )
                         .semantic()
@@ -519,50 +555,10 @@ impl OnboardingView {
                             .id(KEY_WORKSPACE_NAME)
                             .hit(),
                     ),
-            )
-            .child(
-                leaf(
-                    "Swatch row",
-                    SwatchRowLeaf {
-                        selected: self.selected_swatch(),
-                        hovered: match hover {
-                            Some(Hit::Swatch(index)) => Some(index),
-                            _ => None,
-                        },
-                        focused: match focused {
-                            Some(Hit::Swatch(index)) => Some(index),
-                            _ => None,
-                        },
-                        disabled: finishing,
-                    },
-                )
-                .semantic()
-                .id(KEY_COLORS)
-                .hit(),
-            )
-            .child(
-                leaf(
-                    "Emoji row",
-                    EmojiRowLeaf {
-                        selected: self.selected_emoji(),
-                        hovered: match hover {
-                            Some(Hit::Emoji(index)) => Some(index),
-                            _ => None,
-                        },
-                        focused: match focused {
-                            Some(Hit::Emoji(index)) => Some(index),
-                            _ => None,
-                        },
-                        disabled: finishing,
-                    },
-                )
-                .semantic()
-                .id(KEY_EMOJI)
-                .hit(),
             );
-        // Only the connected first run says where things live: it is the one
-        // that has an account to explain.
-        if self.connect_account && !self.embedded {
+        // Only the legacy connected first run says where things live: the
+        // two-screen modal explains the selected plan in its eyebrow and footer.
+        if self.connect_account && !self.embedded && !self.workspace_modal {
             card = card.child(
                 text(t(lang, T::SetupConnectedNote))
                     .named("Setup note")
@@ -581,6 +577,9 @@ impl OnboardingView {
                     .wrap()
                     .id(KEY_STATUS),
             );
+        }
+        if self.workspace_modal && !self.embedded {
+            card = card.child(spacer());
         }
         let primary_label = self.setup_primary_label().to_owned();
         card = card.child(
@@ -603,7 +602,7 @@ impl OnboardingView {
         // The quieter ways on, under the primary — none while finishing, as
         // *Back* was not drawn on the finishing screen this replaces.
         let mut others = Vec::new();
-        if !finishing && Self::setup_has_back() {
+        if !finishing && !self.workspace_modal && self.setup_has_back() {
             let back = t(lang, T::Back);
             others.push(self.setup_button(
                 "Back",
@@ -614,7 +613,7 @@ impl OnboardingView {
                 focused,
             ));
         }
-        if !finishing && self.can_reopen_account_creation() {
+        if !finishing && !self.workspace_modal && self.can_reopen_account_creation() {
             let resume = t(lang, T::AccountCreationResume);
             others.push(self.setup_button(
                 "Resume account creation",
@@ -719,23 +718,14 @@ impl OnboardingView {
         frame.node(key).map(|node| node.rect)
     }
 
-    /// The control under a point: the frame names the key, and for the swatch
-    /// row the component names the cell. `None` while finishing, and for the
-    /// primary while it cannot be pressed.
+    /// The control under a point: the frame names the key. `None` while
+    /// finishing, and for the primary while it cannot be pressed.
     pub(super) fn setup_hit(&mut self, x: f32, y: f32) -> Option<Hit> {
         if self.setup_finishing {
             return None;
         }
         let (_, frame) = self.setup_frame();
         let key = frame.hit_at(x, y)?;
-        if key == KEY_COLORS {
-            let rect = frame.node(KEY_COLORS)?.rect;
-            return swatch_geometry().wrapped_hit(rect, x, y).map(Hit::Swatch);
-        }
-        if key == KEY_EMOJI {
-            let rect = frame.node(KEY_EMOJI)?.rect;
-            return emoji_geometry().hit(rect, x, y).map(Hit::Emoji);
-        }
         let hit = hit_for_key(key)?;
         if hit == Hit::Primary && !self.setup_primary_enabled() {
             return None;
@@ -765,7 +755,7 @@ impl OnboardingView {
                 .borrow_mut()
                 .click(&mut self.engine, rect, x, y)
         }) {
-            if !self.workspace_name_edited {
+            if !self.workspace_name_edited && before != Some(Hit::WorkspaceName) {
                 let mut input = self.workspace_name.borrow_mut();
                 input.select_all(&mut self.engine);
                 // A press that selected everything is not the start of a
@@ -780,6 +770,8 @@ impl OnboardingView {
         self.focus = index;
         if hit != Hit::WorkspaceName {
             self.setup_focus_entered(before);
+        } else if before != Some(Hit::WorkspaceName) {
+            self.blur_text_field(before);
         }
         Some(index)
     }

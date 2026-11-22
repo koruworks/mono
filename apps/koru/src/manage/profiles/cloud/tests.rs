@@ -57,7 +57,8 @@ fn subscribed() -> ProfilesController {
         0,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: Some(true)
+            current: Some(true),
+            subscription_kind: None,
         }
     ));
     c
@@ -163,7 +164,8 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         7,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: None
+            current: None,
+            subscription_kind: None,
         }
     ));
     assert_eq!(c.notice.as_deref(), Some("unrelated profile work"));
@@ -187,7 +189,8 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         7,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: Some(false)
+            current: Some(false),
+            subscription_kind: None,
         }
     ));
     assert!(c.complete_scoped(
@@ -195,10 +198,12 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         8,
         AccountOperationResult::CloudSubscription {
             request_id: new_id,
-            current: Some(true)
+            current: Some(true),
+            subscription_kind: Some(koru_agent_wire::CloudSubscriptionKind::Trialing),
         }
     ));
     assert!(c.cloud.status == Status::Manage);
+    assert_eq!(c.cloud_subscription_label(), "Trial");
     c.cloud_activate();
     assert!(c.take_cloud_uri().unwrap().ends_with("/dashboard"));
     c.refresh_cloud();
@@ -213,7 +218,8 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
         9,
         AccountOperationResult::CloudSubscription {
             request_id: late,
-            current: Some(true)
+            current: Some(true),
+            subscription_kind: None,
         }
     ));
     assert!(c.cloud.status == Status::Unknown);
@@ -233,7 +239,8 @@ fn switching_accounts_keeps_targeted_status_off_the_selected_profile_and_new_acc
         3,
         AccountOperationResult::CloudSubscription {
             request_id: id,
-            current: Some(true)
+            current: Some(true),
+            subscription_kind: None,
         }
     ));
     assert_eq!(c.account.active_scope, 2);

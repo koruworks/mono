@@ -17,13 +17,17 @@
 //! is the one source of its geometry.
 
 pub mod accessibility;
+mod browser_modal;
 mod browser_signin;
+mod checkout_modal;
 #[cfg(test)]
 mod creation_tests;
 mod email;
 mod profile_selection;
+mod profiles_modal;
 mod recovery;
 mod setup;
+mod welcome_modal;
 use profile_selection::SelectionDraft;
 pub use recovery::{RecoverableProfile, UnassignedWorkspaceRow};
 pub use setup::SetupOwnerLabel;
@@ -74,6 +78,17 @@ pub enum Action {
     CancelAccountCreation,
     StartGoogle,
     StartApple,
+    /// Open `koru.do/login` in the system browser with PKCE + loopback return.
+    StartEmailBrowser,
+    /// Open the localized Koru pricing page in the system browser.
+    OpenPricing,
+    /// Open Koru's Stripe Embedded Checkout page in the system browser for the
+    /// chosen billing plan (`"s1"` monthly or `"y1"` yearly).
+    StartCheckout {
+        plan: &'static str,
+    },
+    /// Cancel an in-flight browser checkout wait.
+    CancelCheckout,
     /// The welcome screen's one submit. Which journey it turns out to be is
     /// the worker's to answer, and the stage that comes back says which
     /// screen follows.
@@ -99,6 +114,12 @@ pub enum Action {
     RestoreLocalProfile {
         profile_id: String,
     },
+    /// Reopen the active browser sign-in URL in the system browser.
+    ReopenBrowserSignin,
+    /// Copy the active browser sign-in URL to the system clipboard.
+    CopyBrowserSigninLink,
+    /// Sign out of the current account and return to Screen 1 (*Not you?*).
+    SwitchAccount,
     /// `NeedsProfile` recovery (root-catalog §6.3): restore a shared Profile
     /// deletion by its batch. The host performs it off this thread and opens
     /// the Profile that comes back.
@@ -133,6 +154,10 @@ enum Screen {
     EmailCode,
     EmailPassword,
     AccountStatus,
+    /// Waiting for Stripe Embedded Checkout to complete in the browser.
+    CheckoutPending,
+    /// Checkout was cancelled or could not be verified; retry or continue offline.
+    CheckoutIncomplete,
     ExistingProfiles,
     RestoringProfile,
     /// The restorable Trash and the unassigned workspaces, from the setup
@@ -167,6 +192,8 @@ impl Screen {
             Screen::EmailCode => "Email code",
             Screen::EmailPassword => "Email password",
             Screen::AccountStatus => "Account status",
+            Screen::CheckoutPending => "Checkout pending",
+            Screen::CheckoutIncomplete => "Checkout incomplete",
             Screen::ExistingProfiles => "Profile chooser",
             Screen::RestoringProfile => "Restoring Profile",
             Screen::Recovery => "Recovery",
@@ -211,20 +238,58 @@ enum Hit {
     CreateNew,
     ContinueOffline,
     ResumeAccount,
+    /// The profile tile, which opens the full emoji and color picker.
+    ProfileAppearance,
     /// The setup card's first field: the owner's name (the Profile's name
     /// under the *Profile* label).
     Name,
+    /// The welcome modal's Screen 1 choice controls.
+    ComparePlans,
+    WelcomeOffline,
+    WelcomeAccount,
+    WelcomeExisting,
+    BillingMonthly,
+    BillingYearly,
+    ReopenCheckout,
+    CancelCheckout,
+    RetryCheckout,
+    ReopenBrowser,
+    CopyBrowserLink,
+    SwitchAccount,
     /// The setup card's workspace name.
     WorkspaceName,
     /// The workspace tile, which opens the full emoji and color picker.
     WorkspaceAppearance,
-    /// A cell of the swatch row, by its place in the palette's order. As a
-    /// keyboard stop the row is one control, at its cursor.
-    Swatch(usize),
-    /// A cell of the emoji row, by its place among the card's ten. One stop,
-    /// at its cursor, like the swatch row.
-    Emoji(usize),
     Back,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WelcomePath {
+    Offline,
+    CreateAccount,
+    ExistingAccount,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WelcomeBillingInterval {
+    Monthly,
+    Yearly,
+}
+
+impl WelcomeBillingInterval {
+    pub(super) fn plan_code(self) -> &'static str {
+        match self {
+            Self::Monthly => "s1",
+            Self::Yearly => "y1",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BrowserProvider {
+    Google,
+    Apple,
+    Email,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,7 +336,19 @@ pub struct OnboardingView {
     account_state: AccountState,
     browser_signin: Option<browser_signin::Submission>,
     /// Which provider the browser wait is for, so its copy names the right one.
-    browser_apple: bool,
+    browser_provider: BrowserProvider,
+    /// The welcome modal's Screen 1 selection (default: Create a Koru account).
+    welcome_path: WelcomePath,
+    /// Billing interval selected on Screen 1 or CheckoutIncomplete (default: Yearly).
+    welcome_billing: WelcomeBillingInterval,
+    /// Signed-in account email for Screen 2 / checkout cards, once resolved.
+    account_email: Option<String>,
+    /// Signed-in account owner display name for *Welcome back, Name*.
+    account_owner_name: Option<String>,
+    /// True once the person initiates an account sign-in from the workspace
+    /// modal; keeps unrelated background account broadcasts from hijacking
+    /// Screen 1 or Offline setup.
+    modal_account_flow: bool,
     account_forms: std::collections::BTreeMap<u64, Box<OnboardingView>>,
     language: koru_i18n::Lang,
     viewport: (f32, f32),
@@ -301,6 +378,8 @@ pub struct OnboardingView {
     /// which draw them from `Leaf::paint(&self)`; the view is their only
     /// writer.
     owner_name: Rc<RefCell<TextInput>>,
+    profile_icon: Option<String>,
+    profile_color: Option<String>,
     connect_account: bool,
     workspace_name: Rc<RefCell<TextInput>>,
     /// The person has typed in the workspace name: until then every focus
@@ -312,10 +391,6 @@ pub struct OnboardingView {
     /// The card's primary raised a creation (or Manage) that has not come
     /// back: everything on it is inert and the primary reads *Finishing…*.
     setup_finishing: bool,
-    /// The swatch row's cursor: which cell the arrows are on.
-    swatch_cursor: usize,
-    /// The emoji row's cursor.
-    emoji_cursor: usize,
     /// The card's shaped text, kept across frames.
     setup_cache: koru_draw::el::TextCache,
     /// The card's bottom and the room under it, from the last frame laid out
@@ -328,6 +403,8 @@ pub struct OnboardingView {
     /// manager's *New profile*): no presentation pane, and the column starts
     /// at the left edge and the top, under the page's own head.
     embedded: bool,
+    /// The required setup modal over the host's identity-free workspace shell.
+    pub(crate) workspace_modal: bool,
     /// Visible host area in form coordinates; overlays must not use the
     /// scrollable form's virtual height as their window.
     embedded_visible_area: Option<Rect>,
@@ -365,6 +442,12 @@ pub struct OnboardingView {
     caret_drawn: Option<bool>,
     /// A caret blinks only in the window that has the keyboard.
     window_focused: bool,
+    /// True once the person navigates controls with Tab or arrow keys; reset on
+    /// screen transitions and pointer presses so modal links/segments do not
+    /// show an unasked-for focus outline on open.
+    keyboard_focus: bool,
+    /// When *Copy the sign-in link* was last pressed, to flash *Sign-in link copied*.
+    browser_link_copied_at: Option<std::time::Instant>,
 }
 
 impl Default for OnboardingView {
@@ -388,16 +471,23 @@ impl Default for OnboardingView {
         let email_code = TextInput::new(&mut engine, theme::role::row());
         let new_password = TextInput::new(&mut engine, theme::role::row());
         let confirm_password = TextInput::new(&mut engine, theme::role::row());
+        let screen = Screen::first();
+        let initial_focus = usize::from(screen == Screen::Setup);
         Self {
             created_profile_retry: None,
             account_state: AccountState::default(),
             browser_signin: None,
-            browser_apple: false,
+            browser_provider: BrowserProvider::Google,
+            welcome_path: WelcomePath::CreateAccount,
+            welcome_billing: WelcomeBillingInterval::Yearly,
+            account_email: None,
+            account_owner_name: None,
+            modal_account_flow: false,
             account_forms: Default::default(),
             language,
             viewport: (1000.0, 680.0),
             engine,
-            screen: Screen::first(),
+            screen,
             account_profiles: Vec::new(),
             account_profile_sources: Vec::new(),
             account_surface: None,
@@ -415,6 +505,8 @@ impl Default for OnboardingView {
             new_password,
             confirm_password,
             owner_name: Rc::new(RefCell::new(name)),
+            profile_icon: None,
+            profile_color: None,
             connect_account: false,
             workspace_name: Rc::new(RefCell::new(workspace_name)),
             workspace_name_edited: false,
@@ -422,19 +514,18 @@ impl Default for OnboardingView {
             workspace_color: Some(setup::SETUP_DEFAULT_COLOR.to_owned()),
             workspace_appearance: None,
             setup_finishing: false,
-            swatch_cursor: 0,
-            emoji_cursor: 0,
             setup_cache: Default::default(),
             setup_height: Cell::new(None),
             owner_label: SetupOwnerLabel::You,
             custom_caption: false,
             embedded: false,
+            workspace_modal: false,
             embedded_visible_area: None,
             caption_hover: None,
             maximized: false,
             screen_shown: None,
             screen_instance: 0,
-            focus: 0,
+            focus: initial_focus,
             hover: None,
             pending: None,
             local_creation_id: koru_core::ProfileId::new(),
@@ -448,6 +539,8 @@ impl Default for OnboardingView {
             blink_origin: std::time::Instant::now(),
             caret_drawn: None,
             window_focused: true,
+            keyboard_focus: false,
+            browser_link_copied_at: None,
         }
     }
 }
@@ -528,6 +621,10 @@ impl OnboardingView {
         next.viewport = self.viewport;
         next.custom_caption = self.custom_caption;
         next.embedded = self.embedded;
+        next.workspace_modal = self.workspace_modal;
+        next.welcome_path = self.welcome_path;
+        next.welcome_billing = self.welcome_billing;
+        next.modal_account_flow = self.modal_account_flow;
         next.owner_label = self.owner_label;
         next.embedded_visible_area = self.embedded_visible_area;
         next.language = self.language;
@@ -552,6 +649,48 @@ impl OnboardingView {
     /// and the column lines up with the page's head instead of centring.
     pub fn set_embedded(&mut self, embedded: bool) {
         self.embedded = embedded;
+    }
+
+    /// First launch and an emptied Profile catalog share this presentation:
+    /// Screen 1 offers the three starting paths when Koru Cloud is available,
+    /// then Screen 2 sets up the profile and first workspace.
+    pub fn show_workspace_setup(&mut self) {
+        self.workspace_modal = true;
+        self.modal_account_flow = false;
+        if koru_features::cloud_sync() && self.accounts_offered() {
+            self.welcome_path = WelcomePath::CreateAccount;
+            self.welcome_billing = WelcomeBillingInterval::Yearly;
+            self.show_entry();
+        } else {
+            self.welcome_path = WelcomePath::Offline;
+            self.show_setup();
+        }
+    }
+
+    /// Whether the workspace modal has an active user-initiated account flow
+    /// that should receive account state updates and results.
+    pub(crate) fn modal_account_active(&self) -> bool {
+        self.modal_account_flow
+    }
+
+    /// Record the signed-in account's verified email for Screen 2's eyebrow
+    /// and checkout cards.
+    pub(crate) fn set_account_email(&mut self, email: String) {
+        let trimmed = email.trim();
+        self.account_email = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+    }
+
+    pub(crate) fn clear_account_email(&mut self) {
+        self.account_email = None;
+    }
+
+    /// Localized pricing destination (`{origin}/{lang}/pricing`), sharing the
+    /// `KORU_SUPPORT_URL` origin convention used across desktop chrome.
+    pub(crate) fn pricing_url(&self) -> String {
+        pricing_url_for(
+            koru_env::value(koru_env::name::KORU_SUPPORT_URL).as_deref(),
+            self.language,
+        )
     }
 
     pub fn set_embedded_visible_area(&mut self, area: Rect) {
@@ -691,8 +830,13 @@ impl OnboardingView {
         self.creation_submission = None;
         self.creation_waiting = false;
         self.enrollment_cancelling = false;
+        self.modal_account_flow = false;
         self.screen = Screen::first();
-        self.focus = 0;
+        self.focus = if self.screen == Screen::Setup {
+            self.setup_initial_focus()
+        } else {
+            0
+        };
         self.error = None;
     }
 
@@ -717,7 +861,11 @@ impl OnboardingView {
         self.creation_submission = None;
         self.creation_waiting = false;
         self.screen = Screen::first();
-        self.focus = 0;
+        self.focus = if self.screen == Screen::Setup {
+            self.setup_initial_focus()
+        } else {
+            0
+        };
         self.error = None;
         true
     }
@@ -740,7 +888,11 @@ impl OnboardingView {
         choices: Vec<AccountProfileChoice>,
     ) {
         let keep_local_form = !self.account_profiles.is_empty() && self.screen == Screen::Setup;
+        let had_profiles = !self.account_profiles.is_empty();
         self.account_creation_finished();
+        if !owner_display_name.trim().is_empty() {
+            self.account_owner_name = Some(owner_display_name.trim().to_owned());
+        }
         // First run fills the owner field from the account (D6). Under the
         // *Profile* label the field names a new Profile, not the person, so
         // it is left as it is (Q-A).
@@ -807,8 +959,16 @@ impl OnboardingView {
                 .position(|row| row.profile_id == id)
         });
         self.prune_choice_grants();
+        if self.workspace_modal
+            && !had_profiles
+            && self.selection.checked.is_empty()
+            && !self.selection.locked()
+        {
+            self.selection.checked = self.authorized_selection_ids();
+        }
         if !keep_local_form {
             self.screen = Screen::ExistingProfiles;
+            self.keyboard_focus = false;
             self.focus = 0;
         }
         if !self.selection.locked() {
@@ -911,6 +1071,12 @@ impl OnboardingView {
             return;
         }
         match state.stage {
+            koru_agent_wire::AccountStage::WaitingForBrowser
+                if self.screen == Screen::Browser || self.browser_signin.is_some() =>
+            {
+                self.screen = Screen::Browser;
+                return;
+            }
             koru_agent_wire::AccountStage::AwaitingEmailCode => {
                 if self.screen != Screen::EmailCode {
                     self.show_email_code();
@@ -997,7 +1163,12 @@ impl OnboardingView {
     }
     fn show_entry(&mut self) {
         self.screen = Screen::first();
-        self.focus = 0;
+        self.keyboard_focus = false;
+        self.focus = if self.screen == Screen::Setup {
+            self.setup_initial_focus()
+        } else {
+            0
+        };
         self.error = None;
     }
 
@@ -1007,7 +1178,7 @@ impl OnboardingView {
         self.connect_account = true;
         self.setup_finishing = false;
         self.screen = Screen::Setup;
-        self.focus = 0;
+        self.focus = self.setup_initial_focus();
         self.error = None;
     }
 
@@ -1021,7 +1192,7 @@ impl OnboardingView {
     pub fn creation_failed(&mut self, message: impl Into<String>) {
         self.screen = Screen::Setup;
         self.setup_finishing = false;
-        self.focus = 0;
+        self.focus = self.setup_initial_focus();
         self.error = Some(message.into());
     }
 
@@ -1036,8 +1207,13 @@ impl OnboardingView {
     /// Account errors return to the entry choice; they are unrelated to local
     /// Profile creation and must not skip the offline path.
     pub fn account_failed(&mut self, message: impl Into<String>) {
+        self.modal_account_flow = false;
         self.screen = Screen::first();
-        self.focus = 0;
+        self.focus = if self.screen == Screen::Setup {
+            self.setup_initial_focus()
+        } else {
+            0
+        };
         self.error = Some(message.into());
         self.error_field = None;
     }
@@ -1124,6 +1300,7 @@ impl OnboardingView {
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> bool {
         self.restart_caret_blink();
+        self.keyboard_focus = false;
         self.pointer = (x, y);
         let area = self.appearance_area();
         if self.workspace_appearance.is_some() {
@@ -1144,7 +1321,9 @@ impl OnboardingView {
             self.existing_profile_scroll_drag = Some(grab);
             return true;
         }
+        let before = self.controls().get(self.focus).copied();
         let field_clicked = match self.screen {
+            Screen::Entry if self.workspace_modal => None,
             Screen::Entry if !self.accounts_offered() => None,
             Screen::Entry => {
                 let layout = self.welcome_layout();
@@ -1198,13 +1377,66 @@ impl OnboardingView {
         };
         if let Some(focus) = field_clicked {
             self.focus = focus;
+            let now = self.controls().get(self.focus).copied();
+            if before != now {
+                self.blur_text_field(before);
+            }
             return true;
         }
         let Some(hit) = self.hit(x, y) else {
-            return false;
+            return self.blur_focused_text_field();
         };
+        if before != Some(hit) {
+            self.blur_text_field(before);
+        }
         self.activate(hit);
         true
+    }
+
+    /// Collapse any text selection and drag on `hit` when focus leaves it.
+    fn blur_text_field(&mut self, hit: Option<Hit>) -> bool {
+        match (self.screen, hit) {
+            (Screen::Setup, Some(Hit::Name)) => {
+                self.owner_name.borrow_mut().blur(&mut self.engine);
+                true
+            }
+            (Screen::Setup, Some(Hit::WorkspaceName)) => {
+                self.workspace_name.borrow_mut().blur(&mut self.engine);
+                true
+            }
+            (Screen::Entry, Some(Hit::EmailAddress)) => {
+                self.email_address.blur(&mut self.engine);
+                true
+            }
+            (Screen::Entry, Some(Hit::EmailPassword)) => {
+                self.email_password.blur(&mut self.engine);
+                true
+            }
+            (Screen::EmailCode, Some(Hit::EmailCode)) => {
+                self.email_code.blur(&mut self.engine);
+                true
+            }
+            (Screen::EmailPassword, Some(Hit::NewPassword)) => {
+                self.new_password.blur(&mut self.engine);
+                true
+            }
+            (Screen::EmailPassword, Some(Hit::ConfirmPassword)) => {
+                self.confirm_password.blur(&mut self.engine);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// A press outside every control blurs any focused text field and removes
+    /// focus so neither the selection nor the focus ring stays lit.
+    fn blur_focused_text_field(&mut self) -> bool {
+        let focused = self.controls().get(self.focus).copied();
+        if self.blur_text_field(focused) {
+            self.focus = usize::MAX;
+            return true;
+        }
+        false
     }
 
     pub fn mouse_up(&mut self) {
@@ -1263,8 +1495,41 @@ impl OnboardingView {
             CursorIcon::Text
         } else if matches!(
             self.hover,
-            Some(Hit::WorkspaceAppearance | Hit::Swatch(_) | Hit::Emoji(_))
-        ) {
+            Some(
+                Hit::ProfileAppearance
+                    | Hit::WorkspaceAppearance
+                    | Hit::ComparePlans
+                    | Hit::WelcomeOffline
+                    | Hit::WelcomeAccount
+                    | Hit::WelcomeExisting
+                    | Hit::BillingMonthly
+                    | Hit::BillingYearly
+                    | Hit::ReopenCheckout
+                    | Hit::CancelCheckout
+                    | Hit::RetryCheckout
+                    | Hit::ReopenBrowser
+                    | Hit::CopyBrowserLink
+                    | Hit::SwitchAccount
+            )
+        ) || (self.screen == Screen::Browser && self.hover == Some(Hit::Secondary))
+            || (self.workspace_modal
+                && self.screen == Screen::ExistingProfiles
+                && matches!(
+                    self.hover,
+                    Some(
+                        Hit::Existing(_)
+                            | Hit::OpenExisting(_)
+                            | Hit::RetryExisting(_)
+                            | Hit::Primary
+                            | Hit::RefreshProfiles
+                            | Hit::CreateNew
+                            | Hit::ContinueOffline
+                            | Hit::CancelSelection
+                    )
+                ))
+            || (self.workspace_modal
+                && matches!(self.hover, Some(Hit::ContinueWithEmail | Hit::Back)))
+        {
             koru_ui::cursor::PRESS
         } else {
             CursorIcon::Default
@@ -1320,49 +1585,54 @@ impl OnboardingView {
         let controls = self.controls();
         match key {
             Key::Named(NamedKey::Tab) if mods.is_empty() => {
-                self.focus = (self.focus + 1) % controls.len().max(1);
+                self.keyboard_focus = true;
+                self.focus = if self.focus >= controls.len() {
+                    0
+                } else {
+                    (self.focus + 1) % controls.len().max(1)
+                };
                 self.keep_focused_existing_profile_visible(&controls);
+                self.blur_text_field(focused);
                 self.setup_focus_entered(focused);
                 true
             }
             Key::Named(NamedKey::Tab) if mods == ModifiersState::SHIFT => {
-                self.focus = self
-                    .focus
-                    .checked_sub(1)
-                    .unwrap_or(controls.len().saturating_sub(1));
+                self.keyboard_focus = true;
+                self.focus = if self.focus >= controls.len() {
+                    controls.len().saturating_sub(1)
+                } else {
+                    self.focus
+                        .checked_sub(1)
+                        .unwrap_or(controls.len().saturating_sub(1))
+                };
                 self.keep_focused_existing_profile_visible(&controls);
+                self.blur_text_field(focused);
                 self.setup_focus_entered(focused);
                 true
             }
-            // **Inside a row — the swatches or the emoji — the arrows move its
-            // cursor** and are consumed, ends included: a `ListBox` does not
-            // hand focus on. Everywhere else they keep moving the focus, below.
-            Key::Named(
-                named @ (NamedKey::ArrowLeft
-                | NamedKey::ArrowRight
-                | NamedKey::ArrowUp
-                | NamedKey::ArrowDown),
-            ) if mods.is_empty()
-                && self.screen == Screen::Setup
-                && matches!(focused, Some(Hit::Swatch(_) | Hit::Emoji(_))) =>
-            {
-                if let Some(row) = focused {
-                    self.setup_arrow(*named, row);
-                }
-                true
-            }
             Key::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) if mods.is_empty() => {
-                self.focus = (self.focus + 1) % controls.len().max(1);
+                self.keyboard_focus = true;
+                self.focus = if self.focus >= controls.len() {
+                    0
+                } else {
+                    (self.focus + 1) % controls.len().max(1)
+                };
                 self.keep_focused_existing_profile_visible(&controls);
+                self.blur_text_field(focused);
                 self.setup_focus_entered(focused);
                 true
             }
             Key::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) if mods.is_empty() => {
-                self.focus = self
-                    .focus
-                    .checked_sub(1)
-                    .unwrap_or(controls.len().saturating_sub(1));
+                self.keyboard_focus = true;
+                self.focus = if self.focus >= controls.len() {
+                    controls.len().saturating_sub(1)
+                } else {
+                    self.focus
+                        .checked_sub(1)
+                        .unwrap_or(controls.len().saturating_sub(1))
+                };
                 self.keep_focused_existing_profile_visible(&controls);
+                self.blur_text_field(focused);
                 self.setup_focus_entered(focused);
                 true
             }
@@ -1415,12 +1685,18 @@ impl OnboardingView {
             // button here.
             key if (matches!(key, Key::Named(NamedKey::Space))
                 || matches!(key, Key::Character(value) if value.as_str() == " "))
-                && matches!(self.screen, Screen::ExistingProfiles | Screen::Setup)
+                && (matches!(self.screen, Screen::ExistingProfiles | Screen::Setup)
+                    || (self.workspace_modal && self.screen == Screen::Entry))
                 && mods.is_empty() =>
             {
                 if let Some(hit) = controls.get(self.focus).copied() {
                     self.activate(hit);
                 }
+                true
+            }
+            Key::Named(NamedKey::Escape) if self.screen == Screen::CheckoutIncomplete => {
+                self.modal_account_flow = false;
+                self.show_entry();
                 true
             }
             Key::Named(NamedKey::Escape) if self.screen == Screen::Recovery => {
@@ -1458,7 +1734,15 @@ impl OnboardingView {
         // Entry's `welcome::draw` paints the backdrop itself; painting it here
         // as well drew the welcome split twice — the inspector showed two
         // WelcomeSidebar containers, and the sidebar paid double overdraw.
-        if self.screen != Screen::Entry {
+        if self.workspace_modal {
+            let area = self.setup_area();
+            scene::fill(
+                canvas,
+                root,
+                theme::p().scrim,
+                &scene::rect(area.x, area.y, area.w, area.h),
+            );
+        } else if self.screen != Screen::Entry {
             welcome::draw_backdrop(
                 canvas,
                 root,
@@ -1496,23 +1780,18 @@ impl OnboardingView {
                 |_| {},
             );
             match self.screen {
+                Screen::Entry if self.workspace_modal => self.draw_welcome_modal(canvas, root),
                 Screen::Entry => self.draw_entry(canvas, root),
-                Screen::Browser => self.draw_waiting(
-                    canvas,
-                    root,
-                    "Finish signing in in your browser",
-                    if self.browser_apple {
-                        "Waiting for Apple..."
-                    } else {
-                        "Waiting for Google..."
-                    },
-                ),
+                Screen::Browser => self.draw_browser_modal(canvas, root),
                 Screen::EmailWorking => {
                     self.draw_waiting(canvas, root, "One moment", "Checking that address...")
                 }
                 Screen::EmailCode => self.draw_email_code(canvas, root),
                 Screen::EmailPassword => self.draw_email_password(canvas, root),
                 Screen::AccountStatus => self.draw_account_status(canvas, root),
+                Screen::CheckoutPending | Screen::CheckoutIncomplete => {
+                    self.draw_checkout_modal(canvas, root)
+                }
                 Screen::ExistingProfiles => self.draw_existing_profiles(canvas, root),
                 Screen::RestoringProfile => self.draw_restoring_profile(canvas, root),
                 Screen::Recovery => self.draw_recovery(canvas, root),
@@ -1652,8 +1931,21 @@ impl OnboardingView {
             let width = self.viewport.0.min(MAX_W).max(240.0);
             return Rect::new(0.0, 0.0, width, self.viewport.1 - PAD);
         }
-        let (_, right) = welcome::split(self.viewport.0, self.viewport.1);
+        let right = if self.workspace_modal {
+            self.setup_area()
+        } else {
+            welcome::split(self.viewport.0, self.viewport.1).1
+        };
         let width = (right.w - PAD * 2.0).min(MAX_W).max(240.0);
+        if self.workspace_modal {
+            let outer_y = PAD + 16.0;
+            return Rect::new(
+                right.x + (right.w - width) * 0.5,
+                right.y + outer_y,
+                width,
+                (right.h - outer_y * 2.0).max(240.0),
+            );
+        }
         Rect::new(
             right.x + (right.w - width) * 0.5,
             44.0,
@@ -1683,23 +1975,33 @@ impl OnboardingView {
     }
 
     fn existing_profiles_viewport(&mut self) -> Rect {
-        self.selection_layout().viewport
+        if self.workspace_modal {
+            self.profiles_modal_layout().list_box
+        } else {
+            self.selection_layout().viewport
+        }
     }
 
     fn existing_profiles_content_height(&mut self) -> f32 {
-        self.selection_layout().content_height
+        if self.workspace_modal {
+            self.profiles_modal_layout().content_height
+        } else {
+            self.selection_layout().content_height
+        }
     }
 
     fn existing_profile_scrollbar(&mut self) -> Option<ScrollbarGeom> {
         if self.screen != Screen::ExistingProfiles {
             return None;
         }
-        let layout = self.selection_layout();
-        ScrollbarGeom::for_content(
-            layout.viewport,
-            layout.content_height,
-            self.existing_profile_scroll,
-        )
+        let (viewport, content_height) = if self.workspace_modal {
+            let layout = self.profiles_modal_layout();
+            (layout.list_box, layout.content_height)
+        } else {
+            let layout = self.selection_layout();
+            (layout.viewport, layout.content_height)
+        };
+        ScrollbarGeom::for_content(viewport, content_height, self.existing_profile_scroll)
     }
 
     fn clamp_existing_profile_scroll(&mut self) {
@@ -1717,12 +2019,17 @@ impl OnboardingView {
         else {
             return;
         };
-        let layout = self.selection_layout();
-        let row = layout.rows[index].rect;
-        if row.y < layout.viewport.y {
-            self.existing_profile_scroll -= layout.viewport.y - row.y;
-        } else if row.y + row.h > layout.viewport.y + layout.viewport.h {
-            self.existing_profile_scroll += row.y + row.h - layout.viewport.y - layout.viewport.h;
+        let (viewport, row) = if self.workspace_modal {
+            let layout = self.profiles_modal_layout();
+            (layout.list_box, layout.rows[index].rect)
+        } else {
+            let layout = self.selection_layout();
+            (layout.viewport, layout.rows[index].rect)
+        };
+        if row.y < viewport.y {
+            self.existing_profile_scroll -= viewport.y - row.y;
+        } else if row.y + row.h > viewport.y + viewport.h {
+            self.existing_profile_scroll += row.y + row.h - viewport.y - viewport.h;
         }
         self.clamp_existing_profile_scroll();
     }
@@ -1732,6 +2039,7 @@ impl OnboardingView {
     }
     fn form_controls(&self) -> Vec<Hit> {
         match self.screen {
+            Screen::Entry if self.workspace_modal => self.welcome_modal_controls(),
             // No Koru Cloud: nothing to sign in to, so the one way in and the
             // furniture.
             Screen::Entry if !self.accounts_offered() => {
@@ -1756,7 +2064,8 @@ impl OnboardingView {
                 controls.extend([Hit::Primary, Hit::Terms, Hit::Privacy]);
                 controls
             }
-            Screen::Browser | Screen::EmailWorking => vec![Hit::Secondary],
+            Screen::Browser => self.browser_modal_controls(),
+            Screen::EmailWorking => vec![Hit::Secondary],
             Screen::EmailCode => {
                 let mut controls = vec![Hit::EmailCode];
                 if self.email_code_complete() {
@@ -1777,6 +2086,7 @@ impl OnboardingView {
                 .as_ref()
                 .map(|surface| (0..surface.actions.len()).map(Hit::AccountAction).collect())
                 .unwrap_or_default(),
+            Screen::CheckoutPending | Screen::CheckoutIncomplete => self.checkout_modal_controls(),
             Screen::ExistingProfiles => self.selection_controls(),
             Screen::RestoringProfile => Vec::new(),
             Screen::Recovery => self.recovery_controls(),
@@ -1785,6 +2095,21 @@ impl OnboardingView {
     }
 
     fn activate(&mut self, hit: Hit) {
+        if self.screen == Screen::Entry && self.workspace_modal {
+            self.activate_welcome_modal(hit);
+            return;
+        }
+        if matches!(
+            self.screen,
+            Screen::CheckoutPending | Screen::CheckoutIncomplete
+        ) {
+            self.activate_checkout_modal(hit);
+            return;
+        }
+        if self.screen == Screen::Browser {
+            self.activate_browser_modal(hit);
+            return;
+        }
         // A build with no Koru Cloud never offers these, and nothing reaches
         // them by another route either: no sign-in starts, so nothing is sent.
         if self.screen == Screen::Entry
@@ -1807,14 +2132,14 @@ impl OnboardingView {
                     return;
                 }
                 self.telemetry.push(Telemetry::EntryGoogle);
-                self.begin_browser_signin(false);
+                self.begin_browser_signin(BrowserProvider::Google);
             }
             (Screen::Entry, Hit::Apple) => {
                 if self.reopen_account_creation() {
                     return;
                 }
                 self.telemetry.push(Telemetry::EntryApple);
-                self.begin_browser_signin(true);
+                self.begin_browser_signin(BrowserProvider::Apple);
             }
             (Screen::Entry, Hit::RevealPassword) => {
                 self.email_password.press_end_icon();
@@ -1845,6 +2170,17 @@ impl OnboardingView {
             ) => self.activate_selection(hit),
             (Screen::ExistingProfiles, Hit::CreateNew) => self.show_connected_profile(),
             (Screen::ExistingProfiles, Hit::ContinueOffline) => self.show_setup(),
+            (Screen::ExistingProfiles, Hit::SwitchAccount) => {
+                self.account_profiles.clear();
+                self.account_profile_sources.clear();
+                self.account_email = None;
+                self.account_owner_name = None;
+                self.selection.checked.clear();
+                self.selection.settled();
+                self.modal_account_flow = false;
+                self.show_entry();
+                self.pending = Some(Action::SwitchAccount);
+            }
             (Screen::Recovery, hit @ (Hit::Back | Hit::RestoreDeleted(_))) => {
                 self.activate_recovery(hit)
             }
@@ -1877,6 +2213,8 @@ impl OnboardingView {
 
     fn hit(&mut self, x: f32, y: f32) -> Option<Hit> {
         match self.screen {
+            Screen::Entry if self.workspace_modal => self.welcome_modal_hit(x, y),
+            Screen::CheckoutPending | Screen::CheckoutIncomplete => self.checkout_modal_hit(x, y),
             Screen::Entry => {
                 let layout = self.welcome_layout();
                 match layout.hit(x, y) {
@@ -1900,7 +2238,8 @@ impl OnboardingView {
                     None => None,
                 }
             }
-            Screen::Browser | Screen::EmailWorking => self
+            Screen::Browser => self.browser_modal_hit(x, y),
+            Screen::EmailWorking => self
                 .button("Cancel", 64.0)
                 .contains(x, y)
                 .then_some(Hit::Secondary),
@@ -1943,8 +2282,8 @@ impl OnboardingView {
         self.selection_hit(x, y)
     }
 
-    /// The tile's full picker answered: a saved choice is what the tile, the
-    /// swatch row and the action all read — "no color" included (D5).
+    /// The tile's full picker answered: a saved choice updates whichever
+    /// appearance (profile or workspace) opened the modal — "no color" included.
     fn settle_workspace_appearance(&mut self, outcome: AppearanceOutcome) -> bool {
         match outcome {
             AppearanceOutcome::Keep => true,
@@ -1953,8 +2292,20 @@ impl OnboardingView {
                 true
             }
             AppearanceOutcome::Save { icon, color } => {
-                self.workspace_icon = icon;
-                self.workspace_color = color;
+                let target = self
+                    .workspace_appearance
+                    .as_ref()
+                    .map(|panel| panel.target);
+                match target {
+                    Some(koru_appearance_ui::Target::DraftProfile) => {
+                        self.profile_icon = icon;
+                        self.profile_color = color;
+                    }
+                    _ => {
+                        self.workspace_icon = icon;
+                        self.workspace_color = color;
+                    }
+                }
                 self.workspace_appearance = None;
                 true
             }
@@ -2077,6 +2428,7 @@ impl OnboardingView {
     /// The shape both waits share: what is happening, what is being waited
     /// on, and the one way out.
     fn draw_waiting(&mut self, canvas: &mut Scene, root: Affine, title: &str, detail: &str) {
+        let _panel = self.workspace_modal_panel(canvas, root);
         let p = theme::p();
         let c = self.content();
         draw_text(
@@ -2203,7 +2555,7 @@ impl OnboardingView {
                 self.pending = Some(Action::RetryAccount);
             }
             AccountAction::SignInGoogle | AccountAction::SignInAnotherGoogle => {
-                self.begin_browser_signin(false);
+                self.begin_browser_signin(BrowserProvider::Google);
             }
             AccountAction::ChooseProfile if !self.account_profiles.is_empty() => {
                 self.screen = Screen::ExistingProfiles;
@@ -2264,10 +2616,26 @@ impl OnboardingView {
         })
     }
 
+    fn workspace_modal_panel(&self, canvas: &mut Scene, root: Affine) -> Option<inspect::Scope> {
+        self.workspace_modal.then(|| {
+            let area = self.content();
+            scene::floating_panel_scope(
+                canvas,
+                root,
+                area.x - PAD,
+                area.y - PAD,
+                area.w + PAD * 2.0,
+                area.h + PAD * 2.0,
+                &scene::Panel::popover(theme::overlay::popover().radius),
+            )
+        })
+    }
+
     fn draw_account_status(&mut self, canvas: &mut Scene, root: Affine) {
         let Some(surface) = self.account_surface.clone() else {
             return;
         };
+        let _panel = self.workspace_modal_panel(canvas, root);
         let p = theme::p();
         let c = self.content();
         let (title_y, body_y, bottom) = self.account_copy_geometry();
@@ -2330,10 +2698,16 @@ impl OnboardingView {
         }
     }
     fn draw_existing_profiles(&mut self, canvas: &mut Scene, root: Affine) {
+        if self.workspace_modal {
+            self.draw_profiles_modal(canvas, root);
+            return;
+        }
+        let _panel = self.workspace_modal_panel(canvas, root);
         self.draw_selection(canvas, root);
     }
 
     fn draw_restoring_profile(&mut self, canvas: &mut Scene, root: Affine) {
+        let _panel = self.workspace_modal_panel(canvas, root);
         let p = theme::p();
         let c = self.content();
         draw_text(
@@ -2367,6 +2741,32 @@ impl OnboardingView {
             .and_then(|profile| profile.name.as_deref())
             .unwrap_or("this Profile")
     }
+}
+
+fn pricing_url_for(configured_support_url: Option<&str>, lang: koru_i18n::Lang) -> String {
+    const DEFAULT_ORIGIN: &str = "https://www.koru.do";
+    let origin = configured_support_url
+        .and_then(|raw| {
+            let raw = raw.trim();
+            let (scheme, rest) = raw.split_once("://")?;
+            if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")) {
+                return None;
+            }
+            let host = rest.split(['/', '?', '#']).next()?;
+            (!host.is_empty()).then(|| format!("{}://{host}", scheme.to_ascii_lowercase()))
+        })
+        .unwrap_or_else(|| DEFAULT_ORIGIN.to_owned());
+    let segment = match lang {
+        koru_i18n::Lang::En => "en",
+        koru_i18n::Lang::Es => "es",
+        koru_i18n::Lang::PtBr => "pt",
+        koru_i18n::Lang::De => "de",
+        koru_i18n::Lang::Fr => "fr",
+        koru_i18n::Lang::Ar => "ar",
+        koru_i18n::Lang::ZhHans => "zh",
+        koru_i18n::Lang::Ja => "ja",
+    };
+    format!("{origin}/{segment}/pricing")
 }
 
 fn draw_text(
@@ -2796,8 +3196,7 @@ mod tests {
         );
         for component in [
             "NameField",
-            "ColorPickerRow",
-            "KoruAvatar",
+            "Profile tile",
             "Workspace tile",
         ] {
             let hits: Vec<usize> = records
@@ -3017,10 +3416,9 @@ mod tests {
     // ------------------------------------------------- the setup card
 
     use super::setup::{
-        KEY_BACK, KEY_CARD, KEY_COLORS, KEY_EMOJI, KEY_NAME, KEY_PRIMARY, KEY_RECOVERY,
-        KEY_WORKSPACE_NAME, SETUP_EMOJI, emoji_geometry, swatch_geometry,
+        KEY_AVATAR, KEY_BACK, KEY_CARD, KEY_NAME, KEY_PRIMARY, KEY_RECOVERY, KEY_TILE,
+        KEY_WORKSPACE_NAME,
     };
-    use koru_ui::ColorPickerRow;
 
     /// The card, account-free, in a window sized like the real one.
     fn card() -> OnboardingView {
@@ -3084,8 +3482,7 @@ mod tests {
     }
 
     /// **The defaults a first workspace starts with** (D6): *Personal* in the
-    /// view's language, 🌱 on green — the fourth swatch — and the keyboard in
-    /// the empty name field.
+    /// view's language, 🌱 on green, and the keyboard in the empty name field.
     #[test]
     fn the_card_opens_with_personal_seedling_and_green() {
         let view = card();
@@ -3095,7 +3492,8 @@ mod tests {
         );
         assert_eq!(view.workspace_icon.as_deref(), Some("🌱"));
         assert_eq!(view.workspace_color.as_deref(), Some("green"));
-        assert_eq!(view.selected_swatch(), Some(3));
+        assert_eq!(view.profile_icon, None);
+        assert_eq!(view.profile_color, None);
         assert_eq!(field(&view, Hit::Name), "");
         assert_eq!(view.controls().get(view.focus), Some(&Hit::Name));
         assert!(!view.workspace_name_edited);
@@ -3153,7 +3551,13 @@ mod tests {
         let primary = rect_of(&mut view, KEY_PRIMARY);
         let absent = |view: &mut OnboardingView| {
             assert!(!view.controls().contains(&Hit::Primary));
-            assert!(!press(view, primary), "a press on the inert primary");
+            assert_eq!(
+                view.hit(primary.centre().0, primary.centre().1),
+                None,
+                "the inert primary is not a hit target"
+            );
+            press(view, primary);
+            assert_eq!(view.take_action(), None, "a press on the inert primary");
             view.activate(Hit::Primary);
             assert_eq!(view.take_action(), None);
         };
@@ -3179,7 +3583,11 @@ mod tests {
         let mut view = card();
         set_field(&mut view, Hit::Name, "Ana");
         set_field(&mut view, Hit::WorkspaceName, "Notes");
-        view.activate(Hit::Swatch(0));
+        view.activate(Hit::WorkspaceAppearance);
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🌱".into()),
+            color: Some("blue".into()),
+        });
         let primary = rect_of(&mut view, KEY_PRIMARY);
         let back = rect_of(&mut view, KEY_BACK);
         assert!(back.y >= primary.y + primary.h, "Back is under the primary");
@@ -3217,8 +3625,8 @@ mod tests {
         assert_eq!(field(&view, Hit::Name), "Steven ");
     }
 
-    /// The pointer path end to end: the name field at its frame rectangle, a
-    /// swatch at the component's cell rectangle, the primary.
+    /// The pointer path end to end: the name field, both appearance tiles,
+    /// and the primary at their frame rectangles.
     #[test]
     fn the_card_creates_through_the_real_pointer_path() {
         let mut view = card();
@@ -3226,40 +3634,68 @@ mod tests {
         assert!(press(&mut view, name));
         assert_eq!(view.controls().get(view.focus), Some(&Hit::Name));
         typed(&mut view, "Steven");
-        let cells = swatch_geometry().wrapped_swatches(rect_of(&mut view, KEY_COLORS));
-        assert!(press(&mut view, cells[1]));
-        assert_eq!(view.workspace_color.as_deref(), Some("purple"));
+
+        let avatar = rect_of(&mut view, KEY_AVATAR);
+        assert!(press(&mut view, avatar));
+        assert_eq!(
+            view.workspace_appearance.as_ref().map(|p| p.target),
+            Some(koru_appearance_ui::Target::DraftProfile)
+        );
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🦊".into()),
+            color: Some("teal".into()),
+        });
+
+        let tile = rect_of(&mut view, KEY_TILE);
+        assert!(press(&mut view, tile));
+        assert_eq!(
+            view.workspace_appearance.as_ref().map(|p| p.target),
+            Some(koru_appearance_ui::Target::Draft)
+        );
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🚀".into()),
+            color: Some("purple".into()),
+        });
+
         let primary = rect_of(&mut view, KEY_PRIMARY);
         assert!(press(&mut view, primary));
         assert!(matches!(
             view.take_action(),
-            Some(Action::CreateLocalProfile { name, workspace_color: Some(color), .. })
-                if name == "Steven" && color == "purple"
+            Some(Action::CreateLocalProfile {
+                name,
+                workspace_icon: Some(w_icon),
+                workspace_color: Some(w_color),
+                profile_icon: Some(p_icon),
+                profile_color: Some(p_color),
+                ..
+            }) if name == "Steven"
+                && w_icon == "🚀"
+                && w_color == "purple"
+                && p_icon == "🦊"
+                && p_color == "teal"
         ));
     }
 
-    /// With the tile's picker open, a press inside the picker over a swatch
-    /// of the card belongs to the picker.
+    /// With the tile's picker open, a press inside the picker over a card
+    /// control belongs to the picker rather than activating the card beneath.
     #[test]
     fn the_appearance_panel_owns_pointer_hits_over_the_card() {
         let mut view = card();
         view.set_viewport(452.0, 640.0);
-        let cells = swatch_geometry().wrapped_swatches(rect_of(&mut view, KEY_COLORS));
+        set_field(&mut view, Hit::Name, "Ana");
+        let primary = rect_of(&mut view, KEY_PRIMARY);
         view.activate(Hit::WorkspaceAppearance);
         let panel = view
             .workspace_appearance
             .as_ref()
             .expect("the tile opens the picker")
             .panel(view.viewport);
-        let under = cells
-            .iter()
-            .find(|cell| panel.contains(cell.centre().0, cell.centre().1))
-            .copied()
-            .expect("a swatch under the picker");
-        let (x, y) = under.centre();
+        assert!(panel.contains(primary.centre().0, primary.centre().1));
+        let (x, y) = primary.centre();
         view.mouse_down(x, y);
         view.mouse_up();
-        assert_eq!(view.workspace_color.as_deref(), Some("green"));
+        assert_eq!(view.take_action(), None);
+        assert!(!view.setup_finishing);
     }
 
     /// Enter in either name field is the primary; with a name missing it
@@ -3296,12 +3732,18 @@ mod tests {
         assert_eq!(view.take_action(), None, "no workspace name");
     }
 
-    /// A choice saved in the full picker leaves with the action, and "no
-    /// color" rings no swatch.
+    /// A choice saved in the full picker leaves with the action for both
+    /// workspace and profile appearance, including "no color".
     #[test]
     fn appearance_choice_leaves_with_the_workspace_creation_action() {
         let mut view = card();
         set_field(&mut view, Hit::Name, "Ana");
+        view.activate(Hit::ProfileAppearance);
+        view.settle_workspace_appearance(AppearanceOutcome::Save {
+            icon: Some("🦊".into()),
+            color: Some("red".into()),
+        });
+        view.activate(Hit::WorkspaceAppearance);
         view.settle_workspace_appearance(AppearanceOutcome::Save {
             icon: Some("🌊".into()),
             color: Some("blue".into()),
@@ -3312,17 +3754,19 @@ mod tests {
             Some(Action::CreateLocalProfile {
                 workspace_icon: Some(icon),
                 workspace_color: Some(color),
+                profile_icon: Some(p_icon),
+                profile_color: Some(p_color),
                 ..
-            }) if icon == "🌊" && color == "blue"
+            }) if icon == "🌊" && color == "blue" && p_icon == "🦊" && p_color == "red"
         ));
 
         let mut view = card();
         set_field(&mut view, Hit::Name, "Ana");
+        view.activate(Hit::WorkspaceAppearance);
         view.settle_workspace_appearance(AppearanceOutcome::Save {
             icon: Some("🌱".into()),
             color: None,
         });
-        assert_eq!(view.selected_swatch(), None, "no color rings no swatch");
         view.activate(Hit::Primary);
         assert!(matches!(
             view.take_action(),
@@ -3333,48 +3777,27 @@ mod tests {
         ));
     }
 
-    /// A swatch chooses with one press; the tile's picker reaches what the
-    /// row does not — "no color" — and the row follows it (D5).
+    /// **The card's order**: profile tile, owner name (initial focus),
+    /// workspace tile, workspace name, primary, and Back.
     #[test]
-    fn a_swatch_chooses_the_color_and_the_full_picker_can_choose_none() {
+    fn tab_visits_the_card_in_its_order() {
         let mut view = card();
-        view.activate(Hit::Swatch(0));
-        assert_eq!(view.workspace_color.as_deref(), Some("blue"));
-        assert_eq!(view.selected_swatch(), Some(0));
-        assert_eq!(view.controls().get(view.focus), Some(&Hit::Swatch(0)));
-        view.activate(Hit::WorkspaceAppearance);
-        assert!(view.workspace_appearance.is_some());
-        view.settle_workspace_appearance(AppearanceOutcome::Save {
-            icon: Some("🌱".into()),
-            color: None,
-        });
-        assert!(view.workspace_appearance.is_none());
-        assert_eq!(view.workspace_color, None);
-        assert_eq!(view.selected_swatch(), None);
-        view.activate(Hit::Swatch(9));
-        assert_eq!(view.workspace_color.as_deref(), Some("stone"));
-    }
-
-    /// **The card's order, one stop a row** (TECHNICAL.final §12 item 3);
-    /// inside the swatch row the arrows move its cursor across lines and stop
-    /// at its ends; on the tile and the buttons they move the focus as on
-    /// every other screen.
-    #[test]
-    fn tab_visits_the_card_in_its_order_and_arrows_move_inside_the_swatch_row() {
-        let mut view = card();
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Name));
         set_field(&mut view, Hit::Name, "Ana");
         let controls = view.controls();
-        assert_eq!(controls.len(), 7);
         assert_eq!(
-            controls[..3],
-            [Hit::Name, Hit::WorkspaceAppearance, Hit::WorkspaceName]
+            controls,
+            vec![
+                Hit::ProfileAppearance,
+                Hit::Name,
+                Hit::WorkspaceAppearance,
+                Hit::WorkspaceName,
+                Hit::Primary,
+                Hit::Back,
+            ]
         );
-        assert!(matches!(controls[3], Hit::Swatch(_)));
-        // The emoji row is the next stop after the swatches (I3).
-        assert!(matches!(controls[4], Hit::Emoji(_)));
-        assert_eq!(controls[5..], [Hit::Primary, Hit::Back]);
 
-        // On the tile and on the primary, the arrows move the focus.
+        // On the tiles and on the primary, the arrows move the focus.
         focus_on(&mut view, Hit::WorkspaceAppearance);
         named(&mut view, NamedKey::ArrowRight);
         assert_eq!(view.controls().get(view.focus), Some(&Hit::WorkspaceName));
@@ -3386,144 +3809,6 @@ mod tests {
         assert_eq!(view.controls().get(view.focus), Some(&Hit::Back));
         named(&mut view, NamedKey::ArrowLeft);
         assert_eq!(view.controls().get(view.focus), Some(&Hit::Primary));
-
-        // A narrow card: four swatches a line, ten on three lines.
-        let mut view = OnboardingView::default();
-        view.set_embedded(true);
-        view.show_setup();
-        view.set_viewport(140.0, 900.0);
-        let row = rect_of(&mut view, KEY_COLORS);
-        assert_eq!(ColorPickerRow::columns(row.w), 4);
-        focus_on(&mut view, Hit::Name);
-        for _ in 0..3 {
-            named(&mut view, NamedKey::Tab);
-        }
-        let stop = view.focus;
-        // Entering the row puts the cursor on the chosen cell, green.
-        assert_eq!(view.controls().get(stop), Some(&Hit::Swatch(3)));
-        let mut step = |key: NamedKey, cursor: usize| {
-            assert!(named(&mut view, key), "{key:?} is consumed");
-            assert_eq!(view.focus, stop, "{key:?} left the row");
-            assert_eq!(view.swatch_cursor, cursor, "after {key:?}");
-            assert_eq!(
-                view.workspace_color.as_deref(),
-                Some("green"),
-                "{key:?} chose"
-            );
-        };
-        step(NamedKey::ArrowRight, 4); // across lines
-        step(NamedKey::ArrowLeft, 3);
-        step(NamedKey::ArrowDown, 7);
-        step(NamedKey::ArrowDown, 9); // to the shorter line's last cell
-        step(NamedKey::ArrowDown, 9); // the last line: nothing
-        step(NamedKey::ArrowRight, 9); // the last cell: nothing
-        step(NamedKey::ArrowUp, 5);
-        step(NamedKey::ArrowUp, 1);
-        step(NamedKey::ArrowUp, 1); // the first line: nothing
-        step(NamedKey::ArrowLeft, 0);
-        step(NamedKey::ArrowLeft, 0); // the first cell: nothing
-        // Enter chooses the cursor's cell, and so does Space.
-        assert!(named(&mut view, NamedKey::Enter));
-        assert_eq!(view.workspace_color.as_deref(), Some("blue"));
-        named(&mut view, NamedKey::ArrowRight);
-        assert!(named(&mut view, NamedKey::Space));
-        assert_eq!(view.workspace_color.as_deref(), Some("purple"));
-        // Tab leaves the row.
-        named(&mut view, NamedKey::Tab);
-        assert_ne!(view.focus, stop);
-    }
-
-    /// **The emoji row and the full picker write the same emoji** (D5): a
-    /// press on a cell sets the tile's emoji and rings that cell; an emoji
-    /// from the tile's picker that is one of the ten rings its cell, and one
-    /// that is not rings none while the tile shows it; the action leaves with
-    /// whatever the tile shows.
-    #[test]
-    fn an_emoji_from_the_row_and_one_from_the_full_picker_agree_with_the_tile() {
-        let mut view = card();
-        assert_eq!(view.selected_emoji(), Some(0), "🌱 is the default");
-        let cells = emoji_geometry().cells(rect_of(&mut view, KEY_EMOJI));
-        assert!(press(&mut view, cells[5]));
-        assert_eq!(view.workspace_icon.as_deref(), Some("🚀"));
-        assert_eq!(view.selected_emoji(), Some(5));
-        assert_eq!(view.controls().get(view.focus), Some(&Hit::Emoji(5)));
-
-        // One of the ten, from the full picker: its cell is ringed.
-        view.activate(Hit::WorkspaceAppearance);
-        view.settle_workspace_appearance(AppearanceOutcome::Save {
-            icon: Some("🎨".into()),
-            color: Some("green".into()),
-        });
-        assert_eq!(view.selected_emoji(), Some(7));
-
-        // One outside the ten: no cell is ringed, and the tile shows it.
-        view.activate(Hit::WorkspaceAppearance);
-        view.settle_workspace_appearance(AppearanceOutcome::Save {
-            icon: Some("🌊".into()),
-            color: Some("blue".into()),
-        });
-        assert_eq!(view.selected_emoji(), None);
-        assert_eq!(view.workspace_icon.as_deref(), Some("🌊"));
-        set_field(&mut view, Hit::Name, "Ana");
-        view.activate(Hit::Primary);
-        assert!(matches!(
-            view.take_action(),
-            Some(Action::CreateLocalProfile { workspace_icon: Some(icon), .. }) if icon == "🌊"
-        ));
-        assert!(!SETUP_EMOJI.contains(&"🌊"));
-    }
-
-    /// **Arrows inside the emoji row** move its cursor across lines and stop
-    /// at its ends, choosing nothing until Enter or Space — the swatch row's
-    /// rule, on the emoji row's own columns.
-    #[test]
-    fn arrows_move_across_emoji_lines_and_stop_at_the_ends() {
-        // A narrow card: four cells a line, ten on three lines.
-        let mut view = OnboardingView::default();
-        view.set_embedded(true);
-        view.show_setup();
-        view.set_viewport(150.0, 900.0);
-        let row = rect_of(&mut view, KEY_EMOJI);
-        assert_eq!(emoji_geometry().columns(row.w), 4);
-        focus_on(&mut view, Hit::Name);
-        for _ in 0..4 {
-            named(&mut view, NamedKey::Tab);
-        }
-        let stop = view.focus;
-        // Entering the row puts the cursor on the chosen cell, 🌱.
-        assert_eq!(view.controls().get(stop), Some(&Hit::Emoji(0)));
-        let mut step = |key: NamedKey, cursor: usize| {
-            assert!(named(&mut view, key), "{key:?} is consumed");
-            assert_eq!(view.focus, stop, "{key:?} left the row");
-            assert_eq!(view.emoji_cursor, cursor, "after {key:?}");
-            assert_eq!(view.workspace_icon.as_deref(), Some("🌱"), "{key:?} chose");
-        };
-        step(NamedKey::ArrowLeft, 0); // the first cell: nothing
-        step(NamedKey::ArrowUp, 0); // the first line: nothing
-        step(NamedKey::ArrowRight, 1);
-        step(NamedKey::ArrowRight, 2);
-        step(NamedKey::ArrowRight, 3);
-        step(NamedKey::ArrowRight, 4); // across lines
-        step(NamedKey::ArrowDown, 8);
-        step(NamedKey::ArrowDown, 8); // the last line: nothing
-        step(NamedKey::ArrowRight, 9);
-        step(NamedKey::ArrowRight, 9); // the last cell: nothing
-        step(NamedKey::ArrowUp, 5);
-        step(NamedKey::ArrowLeft, 4);
-        step(NamedKey::ArrowLeft, 3); // back across lines
-        step(NamedKey::ArrowDown, 7);
-        step(NamedKey::ArrowDown, 9); // to the shorter line's last cell
-        // Enter chooses the cursor's cell, and so does Space.
-        assert!(named(&mut view, NamedKey::Enter));
-        assert_eq!(view.workspace_icon.as_deref(), Some("🎯"));
-        named(&mut view, NamedKey::ArrowLeft);
-        assert!(named(&mut view, NamedKey::Space));
-        assert_eq!(view.workspace_icon.as_deref(), Some("📚"));
-        // The swatch row's cursor never moved.
-        assert_eq!(view.workspace_color.as_deref(), Some("green"));
-        // Tab leaves the row.
-        named(&mut view, NamedKey::Tab);
-        assert_ne!(view.focus, stop);
     }
 
     /// **Replacing the default**: while the workspace name is unedited, every
@@ -3555,6 +3840,38 @@ mod tests {
         let text = field(&view, Hit::WorkspaceName);
         assert_eq!(text.chars().count(), 5, "{text}");
         assert!(text.contains('x'));
+    }
+
+    /// Clicking outside the selected workspace name field blurs and deselects
+    /// it, and Tab resumes cleanly from the first control.
+    #[test]
+    fn clicking_outside_the_workspace_name_deselects_and_blurs_it() {
+        let mut view = card();
+        let workspace = rect_of(&mut view, KEY_WORKSPACE_NAME);
+        assert!(press(&mut view, workspace));
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::WorkspaceName));
+        assert!(view.workspace_name.borrow().has_selection());
+
+        // Clicking empty space outside all controls clears both focus and selection.
+        assert!(view.mouse_down(4.0, 4.0));
+        assert_eq!(view.controls().get(view.focus), None);
+        assert!(!view.workspace_name.borrow().has_selection());
+
+        // A second click outside does nothing.
+        assert!(!view.mouse_down(4.0, 4.0));
+
+        // Tab from unfocused enters the first control cleanly without overflow.
+        named(&mut view, NamedKey::Tab);
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::ProfileAppearance));
+
+        // Focusing the workspace name again re-selects it, and moving focus to
+        // the name field deselects it as well.
+        assert!(press(&mut view, workspace));
+        assert!(view.workspace_name.borrow().has_selection());
+        let name = rect_of(&mut view, KEY_NAME);
+        assert!(press(&mut view, name));
+        assert_eq!(view.controls().get(view.focus), Some(&Hit::Name));
+        assert!(!view.workspace_name.borrow().has_selection());
     }
 
     /// **Finishing is a state of the card**: nothing to press, nothing under
@@ -3619,7 +3936,7 @@ mod tests {
         let mut view = OnboardingView::default();
         view.set_viewport(452.0, 640.0);
         view.set_custom_caption(true);
-        view.begin_browser_signin(false);
+        view.begin_browser_signin(BrowserProvider::Google);
         let close = koru_ui::caption::direct_controls(view.caption_rect())[2]
             .rect
             .centre();
@@ -3630,7 +3947,10 @@ mod tests {
             Some(koru_ui::caption::Action::Close)
         );
         view.draw(&mut Scene::new(), Affine::IDENTITY);
-        assert_eq!(view.controls(), vec![Hit::Secondary]);
+        assert_eq!(
+            view.controls(),
+            vec![Hit::ReopenBrowser, Hit::Secondary, Hit::CopyBrowserLink]
+        );
         assert_eq!(view.hit(30.0, theme::CAPTION_H + 16.0), None);
     }
 
@@ -3683,7 +4003,7 @@ mod tests {
         ));
         assert_eq!(view.take_action(), Some(Action::StartApple));
         assert_eq!(view.screen, Screen::Browser);
-        assert!(view.browser_apple);
+        assert_eq!(view.browser_provider, BrowserProvider::Apple);
         assert_eq!(view.take_telemetry(), vec![Telemetry::EntryApple]);
         view.account_cancelled();
         assert_eq!(view.screen, Screen::Entry);
@@ -3691,7 +4011,7 @@ mod tests {
         // Google after Apple waits for Google again.
         view.activate(Hit::Secondary);
         assert_eq!(view.take_action(), Some(Action::StartGoogle));
-        assert!(!view.browser_apple);
+        assert_eq!(view.browser_provider, BrowserProvider::Google);
     }
 
     fn recoverable() -> (RecoverableProfile, UnassignedWorkspaceRow) {
@@ -4086,9 +4406,14 @@ mod tests {
                 .iter()
                 .find(|node| node.occurrence.part == accessibility::parts::YOU)
                 .expect("the first group");
+            let owner = you
+                .children
+                .iter()
+                .find(|child| child.occurrence.part == super::accessibility::parts::OWNER_NAME)
+                .expect("owner name field");
             (
                 you.label.clone().unwrap_or_default(),
-                you.children[0].label.clone().unwrap_or_default(),
+                owner.label.clone().unwrap_or_default(),
             )
         }
         let mut view = card();
@@ -4158,7 +4483,8 @@ mod tests {
         view.activate(Hit::Primary);
         assert_eq!(view.screen, Screen::Setup);
         typed(&mut view, "Ana");
-        view.activate(Hit::Swatch(1));
+        view.activate(Hit::ProfileAppearance);
+        view.settle_workspace_appearance(AppearanceOutcome::Cancel);
         view.activate(Hit::WorkspaceAppearance);
         view.settle_workspace_appearance(AppearanceOutcome::Cancel);
 

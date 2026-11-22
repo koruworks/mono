@@ -4915,6 +4915,7 @@ dependencies = [
  "koru-account-wire",
  "koru-agent-wire",
  "koru-device",
+ "koru-env",
  "koru-network-iroh",
  "koru-oauth-credentials",
  "koru-oauth-loopback",

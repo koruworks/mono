@@ -181,8 +181,8 @@ subscription for your signed-in Koru account, from top to bottom:
   and Cloud sync are off.* instead. The account row reads *Not set up in this
   build*, each Profile's row *Koru Cloud isn't set up in this build*, the nav
   says *Off*, and there is no **Try again**, no **Accounts…** and no sign-in:
-  this is not an outage, and nothing is retried. The first-run welcome offers
-  only **Continue without an account**, and a Profile's *Sign-in and sync*
+  this is not an outage, and nothing is retried. First run opens the local
+  setup modal directly, and a Profile's *Sign-in and sync*
   says the same. [CONTRIBUTING.md](../../CONTRIBUTING.md) explains how to give a
   build a Koru Cloud.
 
@@ -591,7 +591,7 @@ available. Retry cannot shorten that server wait; there is no need to sign out
 or restart. Android's empty Workspaces screen shows the same explanation while
 that Profile is waiting for the limit to clear.
 
-On desktop, the existing-Profile page in first-run onboarding and **Manage
+On desktop, the existing-Profile chooser in **Manage
 Profiles → Create Profile** offers **One**, **Selected**, and **All current**.
 Choose One and a row for a single Profile, or Selected and check the rows you
 want. Choosing All current captures the Profiles currently authorized for this
@@ -1061,7 +1061,7 @@ Profile has not arrived yet* and moves into place by itself when it does.
 **A Profile deleted on another device.** When another of your devices deletes
 a Profile you have open here, this window settles the same way a deletion
 made here does: its workspaces are in the Trash, you are moved to another
-Profile — or, if it was your last one, to the first-run window — and a notice
+Profile — or, if it was your last one, to the workspace setup modal — and a notice
 says the Profile was deleted on another device. The deletion is listed under
 **Deleted profiles** here as well, so **Restore** works from whichever device
 you are at. Nothing is created in its place.
@@ -1854,35 +1854,16 @@ form in its own window.
 **Workspaces → Open Workspace opens one even when nothing is running.** It used
 to bring an existing window forward and do nothing at all when there was none —
 which was exactly when you needed it. It now starts Koru, on the profile and
-workspace you were last in. With no Profile yet it opens first-run
-onboarding and creates nothing until you submit a name and Workspace. **Continue
-offline** works without Agent or network access; **Sign in with Google** and
-**Sign in with Apple** use the browser, then ask before selecting an existing
-hosted Profile. Every local Profile remains visible offline. With Apple you may
-choose **Hide My Email**; Koru then only ever sees Apple's relay address, and
-Apple shares your name with Koru only the first time you sign in.
+workspace you were last in. With no Profile yet, it shows the full workspace
+interface behind a centered **Set up your profile and workspace** modal.
+The card is solid and the workspace behind it is dimmed and inactive. There
+is no separate welcome window, marketing sidebar, or initial sign-in screen.
+Nothing is created until you submit the names. Closing the window leaves
+setup unfinished and shows the same modal next time.
 
-The first page has a dark Koru introduction pane beside the sign-in choices —
-*Your private workspace for thinking, planning, and AI.*, the same promise as
-the website's — and on a window narrower than 760 px that decorative pane steps out so the actions remain usable.
-Under *Welcome to Koru* the page says an account is only needed for cloud sync
-between devices. The email form (address, password, **Continue**) comes first,
-then **Google** and **Apple** side by side, then — set apart below them —
-**Continue without an account**. The Google action carries
-Google's colored mark. A failure is said where it happened: under the email or
-password field, with the field outlined in red, or in a red banner under the
-button that was pressed — outlined too — with **Try again** when that attempt
-can be repeated. **Terms of Service** opens
-`https://www.koru.do/terms` and **Privacy Policy** opens
-`https://www.koru.do/privacy`. There is no Help button and no language control
-on this page.
-
-There is no Accounts button on first-run onboarding. Use **Accounts…** on
-Manage's **Koru Cloud** page after opening a Profile to switch held accounts. During Google sign-in,
-**Cancel** or `Esc` cancels that sign-in and returns to the entry choice once
-cancellation is confirmed. If the Agent refuses to start sign-in, the entry
-choice shows the failure under the button you pressed and still offers offline
-setup.
+Setup is local and needs no Cloud account. Sign in afterward through
+**Manage → Koru Cloud**; use **Accounts…** there to switch held accounts.
+Every local Profile remains available offline.
 
 If the verified Google identity has no Koru account, native sign-in creates it
 automatically. If the account has Profiles, select the checkboxes for those you
@@ -1895,16 +1876,11 @@ device without leaving for the onboarding chooser. Peer enrollment and content c
 Connected Profiles keep their account attribution even while
 identity details are unavailable.
 
-The first-run chooser also lets already-connected rows be
-checked: when all selected Profiles are connected, **Open local content** opens
-the first selected Profile. A mixed selection connects only the unfinished ones.
-
 Setting up takes **one card**: *Set up your profile and workspace*. Under
 **You**, type your name; the round chip beside it shows its first letter as you
 type. That one name is both yours and your first Profile's — your first Profile
-is simply called *Steven*, and you can rename it later in **Manage**. After
-Google sign-in the name is already filled from your Koru account when one is
-available. Under **First workspace**, the workspace is already called
+is simply called *Steven*, and you can rename it later in **Manage**.
+Under **First workspace**, the workspace is already called
 *Personal*, with 🌱 on green: click into the name (or Tab to it) and it is
 selected whole, so what you type replaces it. Click a swatch in the row of ten
 colors to change the workspace's color, and an emoji in the row of ten under
@@ -1927,8 +1903,8 @@ under the swatches and everything you typed, and trying again cannot make a
 second Profile. With the keyboard, Tab visits the name, the tile, the
 workspace name, the swatch row and the emoji row (one stop each — the arrow
 keys move between a row's swatches or emoji and Enter or Space chooses one),
-**Start using Koru**, then **Back**. **Back**
-under the button returns to Welcome, and the card comes back as you left it. A session saved by an older version with a
+then **Start using Koru**. Escape and clicking the backdrop do not dismiss
+required setup. A session saved by an older version with a
 separate profiles tab opens on Welcome instead; the Manage tab itself comes
 back after a restart.
 
@@ -1986,7 +1962,8 @@ brings the Profile back together with the workspaces that deletion moved to
 Trash — a workspace you had put in Trash earlier stays there, one you have
 since moved to another Profile stays where you put it, and one whose 30 days
 have passed is reported as no longer available rather than recreated. If you
-delete your last Profile, Koru reopens on the first-run window; **Restore a
+delete your last Profile, Koru returns to the workspace with the setup modal;
+the deleted content is no longer displayed. **Restore a
 deleted profile or find unassigned workspaces…** there offers the same
 restore, and lists any unassigned workspaces, which you can move once a
 Profile exists.

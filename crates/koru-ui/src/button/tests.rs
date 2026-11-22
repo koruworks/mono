@@ -83,3 +83,34 @@ fn primary_action_hover_is_a_real_darken() {
     assert!(hover.components[2] < colour.components[2]);
     assert_eq!(hover.components[3], colour.components[3]);
 }
+
+#[test]
+fn inverted_button_uses_foreground_ink_and_reports_its_token() {
+    let mut engine = TextEngine::new();
+    let mut canvas = Scene::new();
+    let root = Affine::IDENTITY;
+    let rect = Rect::new(0.0, 0.0, 200.0, 42.0);
+    let capture = koru_draw::inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 200.0, 42.0));
+    draw_button_enabled(
+        &mut canvas,
+        root,
+        &mut engine,
+        rect,
+        "Start using Koru",
+        ButtonRole::Inverted,
+        true,
+        false,
+        true,
+    );
+    let records = capture.finish().records;
+    let button = records
+        .iter()
+        .find(|r| r.name == "KoruButton")
+        .expect("KoruButton record");
+    assert!(
+        button
+            .properties
+            .iter()
+            .any(|p| p.name == "background token" && p.value == "theme::p().text")
+    );
+}

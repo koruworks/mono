@@ -1687,6 +1687,10 @@ pub enum EmailCompleteResponseV1 {
         version: Version1,
         grant: OneUseGrant,
         expires_at_millis: i64,
+        /// Where a native client's loopback or App Link listener is waiting,
+        /// when the flow was started via [`RouteId::EmailBrowserStart`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native_redirect: Option<String>,
     },
     PasswordRefused {
         version: Version1,
@@ -1724,6 +1728,10 @@ pub enum EmailSignInResponseV1 {
         version: Version1,
         grant: OneUseGrant,
         expires_at_millis: i64,
+        /// Where a native client's loopback or App Link listener is waiting,
+        /// when the flow was started via [`RouteId::EmailBrowserStart`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        native_redirect: Option<String>,
     },
     Rejected {
         version: Version1,
