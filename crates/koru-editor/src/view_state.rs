@@ -678,6 +678,16 @@ pub struct ViewState {
     pub search_flash: Option<SearchFlash>,
     /// Every live match for the active document-local search surface.
     pub search_highlights: Vec<SearchHighlight>,
+    /// **The words read out of each picture in this document** (OCR), by the
+    /// picture's blob address (`b3:<hex>`, the `ImageRef::hash`). The hosting
+    /// view fills it from the Store's reading, fetched off the event thread,
+    /// and nothing here ever writes it: in-page find matches it, a picture's
+    /// menu offers *Copy text* from it, and accessibility describes the
+    /// picture with it. Never part of the document, and never synced.
+    pub picture_texts: HashMap<String, std::sync::Arc<str>>,
+    /// Bumped whenever [`Self::picture_texts`] changes, so a consumer that
+    /// remembers what it last used can tell without comparing every text.
+    pub picture_texts_revision: u64,
     /// Every misspelled word the next frame should underline.
     pub spelling: Vec<SpellingUnderline>,
     /// A whitespace boundary just finished a word in this node. Set by
@@ -1331,6 +1341,8 @@ impl Default for ViewState {
             selected_pill: None,
             search_flash: None,
             search_highlights: Vec::new(),
+            picture_texts: HashMap::new(),
+            picture_texts_revision: 0,
             spelling: Vec::new(),
             word_completed: None,
             wants_workspace_word: None,

@@ -18,9 +18,7 @@ use super::panes;
 use super::tab::{Tab, TabView};
 use super::tab_rules::KoruTabs;
 
-/// The air between two things parked at the right-hand end of the tab strip —
-/// the branch pill and the offline chip — and between the leftmost of them and
-/// the tabs, so nothing ends up touching.
+/// The air between the offline chip and the title-bar tabs.
 const CHIP_GAP: f32 = 6.0;
 
 /// How wide the pane may be dragged.
@@ -98,18 +96,15 @@ impl MainView {
     /// is toggled — so the content reflows once per toggle rather than once per
     /// animation frame. The sliding is entirely in where a column is *drawn*.
     pub(super) fn resolve_regions(&mut self) {
-        let sidebar_w = self.sidebar.layout_width();
+        let sidebar_w = self.sidebar.layout_width().max(theme::RAIL_W);
+        self.explore.set_floating(!self.sidebar.is_open());
         let ai_w = self.ai_panel.layout_width();
         self.regions = regions::solve(
             self.viewport.0,
             self.viewport.1,
             sidebar_w,
             ai_w.max(self.context.layout_width()),
-        )
-        // The ground's lanes at the right edge and the foot, in the rail's
-        // colour (the review's artboard and note): the cards stop short of
-        // the window.
-        .with_ground(koru_draw::theme::EDGE_LANE_W);
+        );
     }
 
     pub(super) fn content(&self) -> Rect {
@@ -142,10 +137,7 @@ impl MainView {
             super::reminder_bell(),
             self.leading(),
         );
-        let taken = self
-            .branch_pill()
-            .map(|pill| pill.x)
-            .or_else(|| self.offline_chip().map(|chip| chip.x));
+        let taken = self.offline_chip().map(|chip| chip.x);
         match taken {
             Some(x) => Rect::new(full.x, full.y, (x - CHIP_GAP - full.x).max(0.0), full.h),
             None => full,
@@ -312,6 +304,9 @@ impl MainView {
     /// while it is arriving or leaving.
     pub(super) fn sidebar_rect(&self) -> Rect {
         let r = self.regions.sidebar;
+        if !self.sidebar.is_open() {
+            return Rect::new(0.0, r.y, theme::RAIL_W.min(self.viewport.0), r.h);
+        }
         // **At rest the column is drawn where it is hit-tested**: in the
         // settled region. The panel's own width is the one that was *asked
         // for*, and the two differ whenever the window is too narrow to give
@@ -324,9 +319,9 @@ impl MainView {
             return r;
         }
         Rect::new(
-            -self.sidebar.slide_offset(),
+            0.0,
             r.y,
-            self.sidebar.drawn_width(),
+            (self.sidebar.drawn_width() - self.sidebar.slide_offset()).max(theme::RAIL_W),
             r.h,
         )
     }
@@ -347,15 +342,14 @@ impl MainView {
 
     /// The area the Explore popover uses as its anchor.
     ///
-    /// With the pane open this is its ordinary settled region. With it shut,
-    /// the region is deliberately zero-width so the document reclaims all of
-    /// the room; the workspace shortcut must not change that layout merely to
-    /// give its floating panel an anchor. In that state, use the pane's
-    /// remembered width as virtual geometry. Nothing draws or hit-tests the
-    /// pane itself there — only the popover uses this rectangle.
+    /// Rail menus use the real rail, independently of the floating explorer.
+    /// A collapsed pane gets positive virtual width so Explore can recover
+    /// the rail to its left. Heading menus follow the visible pane instead.
     pub(super) fn explore_popover_area(&self) -> Rect {
-        if self.regions.sidebar.w > 0.0 {
+        if self.explore.popover_anchors_to_heading() {
             self.explore_area()
+        } else if self.regions.sidebar.w > theme::RAIL_W {
+            Self::pane_of(self.regions.sidebar)
         } else {
             Self::pane_of(Rect::new(0.0, 0.0, self.sidebar.full(), self.viewport.1))
         }
@@ -383,7 +377,131 @@ impl MainView {
 
     /// The settled pane — what the explore view is hit-tested against.
     pub(super) fn explore_area(&self) -> Rect {
+        if self.explore_preview && !self.sidebar.is_open() {
+            return self.explore_preview_rect();
+        }
         Self::pane_of(self.regions.sidebar)
+    }
+
+    pub(super) fn explore_preview_rect(&self) -> Rect {
+        let gap = theme::Space::S1.px(theme::Profile::Desktop);
+        let x = theme::RAIL_W + gap;
+        let y = theme::CAPTION_H + gap;
+        Rect::new(
+            x,
+            y,
+            (self.sidebar.full() - theme::RAIL_W).min((self.viewport.0 - x - gap).max(0.0)),
+            (self.viewport.1 - y - gap).max(0.0),
+        )
+    }
+
+    pub(super) fn preview_pointer(&mut self, x: f32, y: f32) -> bool {
+        if self.sidebar.is_open() || self.carrying() {
+            return false;
+        }
+        if let Some(crate::panes::sidebar::apps_rail::Hit::App(mode)) =
+            self.explore.rail_hit(self.rail_area(), x, y)
+        {
+            let changed = !self.explore_preview
+                || self.explore.navigator_mode() != mode
+                || self.explore_preview_fade.is_some();
+            if changed {
+                use crate::panes::explore::NavigatorMode as Mode;
+                match mode {
+                    Mode::Home => self.explore.show_home(),
+                    Mode::Documents => self.explore.show_documents(),
+                    Mode::Files => self.explore.show_files(),
+                    Mode::Tasks => self.explore.show_tasks(),
+                    Mode::Chats => self.explore.show_chats(),
+                    Mode::Agents => self.explore.show_agents(),
+                    Mode::Artifacts => self.explore.show_artifacts(),
+                    Mode::Canvases => self.explore.show_canvases(),
+                    Mode::Socials => self.explore.show_socials(),
+                    Mode::Bots => self.explore.show_bots(),
+                }
+                self.explore_stale = true;
+            }
+            self.explore_preview = true;
+            self.explore_preview_fade = None;
+            return changed;
+        }
+        // Include the narrow bridge so the pointer can enter the floating pane.
+        let panel = self.explore_preview_rect();
+        let bridge = Rect::new(
+            theme::RAIL_W,
+            panel.y,
+            panel.x + panel.w - theme::RAIL_W,
+            panel.h,
+        );
+        if self.explore_preview && (bridge.contains(x, y) || self.explore.popover_open()) {
+            let entered = panel.contains(x, y) || self.explore.popover_open();
+            let released = entered && self.explore_preview_deadline.take().is_some();
+            return self.explore_preview_fade.take().is_some() || released;
+        }
+        if self.explore_preview_deadline.is_some() {
+            return false;
+        }
+        if self.explore_preview && self.explore_preview_fade.is_none() {
+            if self.reduced_motion {
+                self.explore_preview = false;
+                self.explore.clear_focus();
+            } else {
+                self.explore_preview_fade = Some(Instant::now());
+            }
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn preview_alpha(&mut self) -> f32 {
+        let Some(started) = self.explore_preview_fade else {
+            return 1.0;
+        };
+        let alpha = (1.0 - started.elapsed().as_secs_f32() / 0.14).max(0.0);
+        if alpha == 0.0 {
+            self.explore_preview = false;
+            self.explore_preview_fade = None;
+            self.explore_preview_deadline = None;
+            self.explore.clear_focus();
+        }
+        alpha
+    }
+
+    /// Keyboard entry gets an idle deadline instead of following an unrelated
+    /// pointer outside the pane. Navigation refreshes it without reflowing.
+    pub(super) fn preview_keyboard_activity(&mut self, now: Instant) {
+        if !self.explore_preview || self.sidebar.is_open() {
+            return;
+        }
+        self.explore_preview_fade = None;
+        self.explore_preview_deadline = (!self
+            .explore_preview_rect()
+            .contains(self.pointer.0, self.pointer.1))
+        .then_some(now + std::time::Duration::from_secs(2));
+    }
+
+    pub(super) fn maintain_explore_preview(&mut self, now: Instant) -> bool {
+        if !self.explore_preview_deadline.is_some_and(|due| now >= due) {
+            return false;
+        }
+        self.explore_preview_deadline = None;
+        if !self.explore_preview || self.sidebar.is_open() {
+            return false;
+        }
+        if self.explore.popover_open()
+            || self
+                .explore_preview_rect()
+                .contains(self.pointer.0, self.pointer.1)
+        {
+            return false;
+        }
+        if self.reduced_motion {
+            self.explore_preview = false;
+            self.explore.clear_focus();
+        } else {
+            self.explore_preview_fade = Some(now);
+        }
+        true
     }
 
     /// The settled rail.
@@ -474,6 +592,7 @@ impl MainView {
         if !self.tab_widths().is_empty() {
             self.ensure_tab_visible(active);
         }
+        self.sync_mini_app_refinement_target();
     }
 
     /// `Ctrl+Shift+E`: **focus the tree, or toggle the pane.**
@@ -706,6 +825,9 @@ impl MainView {
 
     /// Open or shut the pane. What the logo and the toggle button do.
     pub(super) fn toggle_sidebar(&mut self) -> bool {
+        self.explore_preview = false;
+        self.explore_preview_fade = None;
+        self.explore_preview_deadline = None;
         let now = Instant::now();
         // **The fold** (`theme::motion::pane_fold`): the panel's own slide,
         // reversed from where it is on interrupt, with the contents' fade
@@ -780,7 +902,8 @@ impl MainView {
     /// pane is shut, and through the fold either way — it rides the drawn
     /// pane's edge out to the corner and back (frame 9's blue note).
     pub(super) fn chain_drawn(&self) -> bool {
-        !self.sidebar.is_open() || (self.fold.is_some() && self.sidebar.animating())
+        cfg!(target_os = "macos")
+            && (!self.sidebar.is_open() || (self.fold.is_some() && self.sidebar.animating()))
     }
 
     /// Show the workspaces switcher without changing the Explore pane.
@@ -855,6 +978,7 @@ impl MainView {
             self.ai_chat.clear_context_document_dismissal();
         }
         let open = self.ai_panel.toggle(now);
+        self.ai_chat.offer_mini_apps(open);
         self.ai_focused = open;
         if open {
             self.ai_chat.activate();
@@ -926,9 +1050,6 @@ impl MainView {
                 .map(|id| koru_store_core::WorkspaceId::from_uuid(id.as_uuid())),
         );
         self.explore.show_socials();
-        if !self.sidebar.is_open() {
-            self.toggle_sidebar();
-        }
         if self.sidebar.full() < 280. {
             self.set_sidebar_width(280.);
             self.commit_sidebar_width();
@@ -1127,57 +1248,11 @@ impl MainView {
             super::reminder_bell(),
             self.leading(),
         );
-        let taken = self
-            .branch_pill()
-            .map(|pill| pill.x)
-            .or_else(|| self.offline_chip().map(|chip| chip.x));
+        let taken = self.offline_chip().map(|chip| chip.x);
         match taken {
             Some(x) => Rect::new(full.x, full.y, (x - CHIP_GAP - full.x).max(0.0), full.h),
             None => full,
         }
-    }
-
-    /// Where the branch pill sits, when this build came off a branch worth
-    /// naming at all.
-    ///
-    /// **Left of the offline chip when both are up.** The chip is the one that
-    /// says something is wrong, so it keeps the end of the band; a pill that
-    /// jumped position depending on whether the store was reachable would be
-    /// worse than either order.
-    ///
-    /// `None` on `dev` and `main`, and in every released build — see
-    /// [`koru_shell_chrome::branch::worth_showing`].
-    pub(super) fn branch_pill(&self) -> Option<Rect> {
-        self.branch_pill_for(crate::build_stamp::caption_branch(), self.branch_pill_w)
-    }
-
-    /// Split from [`branch_pill`](Self::branch_pill) so both arms are reachable
-    /// in a test. This suite runs on whatever branch somebody is on — usually
-    /// `dev`, where there is no pill at all — and the arrangement worth pinning
-    /// is the one with a pill *and* an offline chip up, which no test could
-    /// otherwise reach without a rebuild on another branch.
-    pub(super) fn branch_pill_for(&self, name: Option<&str>, w: f32) -> Option<Rect> {
-        name?;
-        if w <= 0.0 {
-            return None;
-        }
-        let full = koru_shell_chrome::caption::tab_strip_with_leading(
-            self.regions.caption,
-            super::WINDOW_BUTTONS,
-            super::CONTEXT_TOGGLE,
-            super::reminder_bell(),
-            self.leading(),
-        );
-        let band = match self.offline_chip() {
-            Some(chip) => Rect::new(
-                full.x,
-                full.y,
-                (chip.x - CHIP_GAP - full.x).max(0.0),
-                full.h,
-            ),
-            None => full,
-        };
-        (band.w > 0.0).then(|| koru_shell_chrome::branch::pill(band, w))
     }
 
     /// Where the offline chip sits, if there is anything to say.
@@ -1273,10 +1348,6 @@ impl MainView {
             })
             .collect();
         *self.tab_widths_mut() = widths;
-        self.branch_pill_w = match crate::build_stamp::caption_branch() {
-            Some(name) => koru_shell_chrome::branch::width(&mut self.engine, name),
-            None => 0.0,
-        };
         self.set_tab_widths_stale(false);
         self.clamp_tab_scroll();
     }
@@ -1291,6 +1362,9 @@ impl MainView {
     /// furniture (it is called with empty tab widths) and the lanes answer for
     /// themselves below.
     pub(super) fn hit_at(&mut self, x: f32, y: f32) -> koru_shell_chrome::regions::Hit {
+        if self.explore_preview && self.explore_preview_rect().contains(x, y) {
+            return koru_shell_chrome::regions::Hit::Sidebar;
+        }
         // Ask the shared chrome resolver with empty tab widths so the old caption
         // strip never answers with tab hits. Any tab-like answer there is just the
         // drag window area.

@@ -1008,6 +1008,21 @@ fn a_create_tabs_news_reaches_the_unfinished_group_at_once() {
 /// height follows its lines — and the toggle starts below it.
 #[test]
 fn an_unfinished_rows_state_has_the_rows_width_and_overlaps_nothing() {
+    // Measured in bundled Inter, as the explorer's popover baseline is: the
+    // Windows default face (Segoe UI since main bfa6cf361) is narrower, and
+    // the sentence would not wrap at the narrow width this test needs.
+    let _theme = crate::tests::lock_theme();
+    let was = koru_draw::theme::font_setting(koru_draw::theme::FontSlot::Ui);
+    koru_draw::theme::set_ui_font(koru_draw::theme::FontChoice::Inter);
+    struct Restore(Option<koru_settings::FontSetting>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            if let Some(was) = self.0.take() {
+                koru_draw::theme::set_font_setting(koru_draw::theme::FontSlot::Ui, was);
+            }
+        }
+    }
+    let _restore = Restore(Some(was));
     let mut f = fixture();
     f.shown_with(Vec::new());
     let mut stuck = unfinished(f.home, "Dark Check", true);

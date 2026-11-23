@@ -766,6 +766,19 @@ impl TextEngine {
         self.simple_layout_wrapped_in(text, style, theme::ui_stack(), max_w)
     }
 
+    /// Like [`simple_layout_wrapped`](Self::simple_layout_wrapped), with each
+    /// wrapped line centered horizontally within `max_w`.
+    pub fn simple_layout_wrapped_centered(
+        &mut self,
+        text: &str,
+        style: theme::TextStyle,
+        max_w: f32,
+    ) -> Layout<Brush> {
+        let mut layout = self.simple_layout_wrapped(text, style, max_w);
+        layout.align(Alignment::Center, AlignmentOptions::default());
+        layout
+    }
+
     /// Wrapped chrome text using an explicit font stack, including diagnostic numbers.
     pub fn simple_layout_wrapped_in(
         &mut self,

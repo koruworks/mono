@@ -80,6 +80,15 @@ jobs = 8
 [env]
 RUST_TEST_THREADS = "8"
 
+# **The oldest macOS a Mac build runs on: 13.4.** The ONNX Runtime library in
+# the pinned sherpa-onnx archive, which the read worker and voice both link
+# statically, is built for macOS 13.4 (the archive's other libraries for 11.0),
+# so a binary claiming less could still fail on an older Mac. Every Mac cargo build (rustc's link, and cc and CMake in build scripts)
+# reads this; other targets ignore it. Not forced, so a shell that sets it
+# wins. `LSMinimumSystemVersion` in the package is the same claim
+# (`koru-release`'s `MACOS_MINIMUM`), and a test holds the two equal.
+MACOSX_DEPLOYMENT_TARGET = "13.4"
+
 # whisper-rs-sys builds vendored C and C++ with a Visual Studio multi-config
 # generator. That generator ignores the generic `/MT` flags inferred by the
 # `cmake` crate and restores `/MD` for its Release configuration. This hook is

@@ -554,6 +554,12 @@ impl Workspace {
         // found — which is also what lets the receipt path be pinned in
         // memory, where no store is dialled.
         let listed = pick_task_list(&self.task_list_documents());
+        if listed.is_some_and(|id| self.document_retiring(id)) {
+            return Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "the tasks document is still being saved; try again",
+            ));
+        }
         if let Some(id) = listed
             && (self.active == Some(id) || self.others.contains_key(&id))
         {

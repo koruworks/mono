@@ -382,7 +382,7 @@ impl MainView {
             }
             && !matches!(
                 self.tabs().active_tab().view,
-                TabView::Bot(_) | TabView::Manage(_) | TabView::Settings(_) | TabView::Feedback(_)
+                TabView::Bot(_) | TabView::Settings(_) | TabView::Feedback(_)
             )
     }
 

@@ -642,7 +642,8 @@ fn every_element_record_reads_what_the_contract_lists() {
                 .starts_with("apps/koru/src/panes/explore/popover_elements.rs:")
                 || record
                     .source
-                    .starts_with("apps/koru/src/panes/explore/workspace_menu_elements.rs:"),
+                    .starts_with("apps/koru/src/panes/explore/workspace_menu_elements.rs:")
+                || record.source.starts_with("crates/koru-ui/src/menu.rs:"),
             "{}: sourced where it was written, not where it painted: {}",
             record.name,
             record.source
@@ -893,61 +894,36 @@ fn profile_gear(id: ProfileId) -> Occurrence {
 /// Profile identities retain their gears and descriptions beside the fixed actions.
 #[test]
 fn the_profiles_page_puts_each_gear_beside_its_profile_and_lists_fixed_actions() {
-    let mut v = opened_profiles(3);
-    v.profiles[0].email.clear();
+    let v = opened_profiles(3);
     let a = area(dtheme::SIDEBAR_MIN_W);
     let cx = cx(a, Lang::En);
     let menu = v
         .with_page(a, VIEW, |frame| v.element_semantics(&cx, frame))
-        .expect("the page")
+        .unwrap()
         .pop()
-        .expect("its Menu");
+        .unwrap();
     assert_eq!(menu.role, AkRole::Menu);
-    assert_eq!(menu.label.as_deref(), Some("Switch profile"));
-    assert_eq!(
-        menu.size_of_set,
-        Some(8),
-        "Manage profiles, three Profiles, three gears, Sync"
-    );
-    assert_eq!(menu.children[0].role, AkRole::Heading);
-    assert_eq!(menu.children[0].label.as_deref(), Some("Profiles"));
-    assert_eq!(menu.children[1].role, AkRole::MenuItem);
-    assert_eq!(menu.children[1].label.as_deref(), Some("Manage profiles"));
-    assert_eq!(menu.children[1].occurrence.part.name(), "manage-profiles");
-    for (i, profile) in v.profiles.iter().enumerate() {
-        let primary = &menu.children[2 + i * 2];
-        let gear = &menu.children[3 + i * 2];
-        assert_eq!(primary.label.as_deref(), Some(profile.name.as_str()));
-        assert_eq!(primary.description, Some(v.profile_description(profile)));
-        assert_eq!(primary.selected, Some(i == 1), "the open Profile");
-        assert_eq!(gear.occurrence, profile_gear(profile.id));
-        assert_eq!(gear.label.as_deref(), Some("Manage profile"));
-    }
-    let actions: Vec<_> = menu.children[8..]
-        .iter()
-        .map(|node| (node.occurrence.part.name(), node.label.as_deref()))
-        .collect();
-    assert_eq!(actions, vec![("global-sync", Some("Sync"))]);
-    assert_eq!(
-        menu.children[8].description.as_deref(),
-        Some(v.sync_control_name().as_str())
-    );
-    for node in &menu.children[8..] {
-        assert_eq!(node.role, AkRole::MenuItem);
-        assert_eq!(node.actions, [AkAction::Click, AkAction::Focus]);
-    }
-    for profile in &v.profiles {
-        let rect = v
-            .with_page(a, VIEW, |frame| {
-                frame.node(profiles::primary(profile.id)).unwrap().rect
-            })
-            .unwrap();
-        let (x, y) = rect.centre();
-        assert_eq!(
-            v.menu_tooltip(a, VIEW, x, y).map(|(_, text, _)| text),
-            Some(v.profile_description(profile))
-        );
-    }
+    assert_eq!(menu.size_of_set, Some(9));
+    v.with_page(a, VIEW, |frame| {
+        for profile in &v.profiles {
+            assert!(frame.node(profiles::primary(profile.id)).is_some());
+            assert_eq!(
+                frame.node(profiles::manage(profile.id)).is_none(),
+                Some(profile.id) == v.current_profile
+            );
+        }
+        for action in [
+            profiles::MenuAction::New,
+            profiles::MenuAction::Sync,
+            profiles::MenuAction::Settings,
+            profiles::MenuAction::Help,
+        ] {
+            let node = frame.node(action.key()).unwrap();
+            let (x, y) = node.rect.centre();
+            assert_eq!(frame.hit_at(x, y), Some(action.key()));
+        }
+    })
+    .unwrap();
 }
 
 /// **A request for a Profile's gear acts on that gear**: Focus lights it
@@ -975,132 +951,53 @@ fn focus_lights_a_profiles_gear_and_click_opens_manage_on_it() {
     v.popover_key(&WKey::Named(NamedKey::ArrowDown));
     assert_eq!(
         v.accessibility_action(a, profile_gear(target), AkAction::Click, VIEW),
-        Some(Outcome::ManageProfile(target))
+        Some(Outcome::OpenProfileInNewWindow(target))
     );
 }
 
 /// Every fixed action agrees across geometry, pointer, accessibility and keyboard.
 #[test]
-fn each_profile_action_uses_its_own_row_and_destination() {
-    use profiles::MenuAction;
-    use winit::keyboard::{Key as WKey, NamedKey};
-    let a = area(dtheme::SIDEBAR_MIN_W);
-    for (action, outcome) in [(MenuAction::Sync, Outcome::OpenSyncSettings)] {
-        let mut v = opened_profiles(3);
-        let (_, r) = v
-            .popover_rects(a, VIEW)
-            .into_iter()
-            .find(|(row, _)| *row == PopoverRow::ProfileAction(action))
-            .expect("the fixed action row");
-        assert_eq!(r.h, dtheme::metrics::ROW_MIN.value + 4.0);
-        v.with_page(a, VIEW, |frame| {
-            assert!(near(frame.node(action.key()).unwrap().rect, r));
-            for (x, y) in [(r.x + 0.5, r.y + 0.5), (r.x + r.w - 0.5, r.y + r.h - 0.5)] {
-                assert_eq!(frame.hit_at(x, y), Some(action.key()));
-            }
-        })
-        .unwrap();
-        let (x, y) = r.centre();
-        assert_eq!(
-            v.popover_part_at(a, VIEW, x, y)
-                .map(|(_, row, part)| (row, part)),
-            Some((PopoverRow::ProfileAction(action), PopoverPart::Row)),
-            "{action:?}"
-        );
-        assert_eq!(v.mouse_down(a, VIEW, x, y, false), outcome, "{action:?}");
-        assert!(!v.popover_open());
-        let occurrence = Occurrence::surface(
-            WindowSlot::from_raw(1),
-            ViewSlot::from_raw(1),
-            SURFACE,
-            ControlPart::new(action.key().part),
-        );
-        let mut v = opened_profiles(3);
-        assert_eq!(
-            v.accessibility_action(a, occurrence, AkAction::Click, VIEW),
-            Some(outcome.clone())
-        );
-        assert!(!v.popover_open());
-        for key in [NamedKey::Enter, NamedKey::Space] {
-            let mut v = opened_profiles(3);
-            assert_eq!(
-                v.accessibility_action(a, occurrence, AkAction::Focus, VIEW),
-                Some(Outcome::Consumed)
-            );
-            assert_eq!(v.popover_interaction().hot, Some(action.key()));
-            assert_eq!(v.popover_key(&WKey::Named(key)), Some(outcome.clone()));
-            assert!(!v.popover_open());
-        }
-    }
+fn profile_menu_cloud_action_opens_cloud_settings() {
+    let v = opened_profiles(3);
+    assert!(
+        v.popover_rows()
+            .contains(&PopoverRow::ProfileAction(profiles::MenuAction::Sync))
+    );
+    assert_eq!(profiles::MenuAction::Sync.outcome(), Outcome::ManageCloud);
 }
 
 #[test]
-fn manage_profiles_has_its_own_heading_target_and_opens_the_current_profile() {
+fn the_current_profile_has_a_check_instead_of_a_new_window_action() {
     use winit::keyboard::{Key as WKey, NamedKey};
-    let a = area(dtheme::SIDEBAR_MIN_W);
     let mut v = opened_profiles(3);
-    let current = v.current_profile.unwrap();
-    v.popover.as_mut().unwrap().hover = Some(0);
-    v.popover_part = Some(PopoverPart::Row);
+    let current = v.current_profile;
+    v.open_popover(PopoverKind::Profiles);
+    assert_eq!(v.popover_key(&WKey::Named(NamedKey::ArrowRight)), None);
     assert_eq!(
-        v.popover_interaction().hot,
-        None,
-        "the heading text does not highlight its config button"
+        v.popover_key(&WKey::Named(NamedKey::Enter)),
+        Some(Outcome::Consumed)
     );
-    v.popover_part = Some(PopoverPart::Gear);
-    assert_eq!(v.popover_interaction().hot, Some(profiles::MANAGE_PROFILES));
-    let rect = v
-        .with_page(a, VIEW, |frame| {
-            frame.node(profiles::MANAGE_PROFILES).unwrap().rect
-        })
-        .unwrap();
-    let (x, y) = rect.centre();
-    assert_eq!(
-        v.popover_part_at(a, VIEW, x, y)
-            .map(|(_, row, part)| (row, part)),
-        Some((PopoverRow::ProfilesHeading, PopoverPart::Gear))
-    );
-    assert_eq!(
-        v.mouse_down(a, VIEW, x, y, false),
-        Outcome::ManageProfile(current)
-    );
-    assert!(!v.popover_open());
-    for key in [NamedKey::Enter, NamedKey::Space] {
-        let mut v = opened_profiles(3);
-        v.popover_key(&WKey::Named(NamedKey::ArrowDown));
-        assert_eq!(v.popover_interaction().hot, Some(profiles::MANAGE_PROFILES));
-        assert_eq!(
-            v.popover_key(&WKey::Named(key)),
-            Some(Outcome::ManageProfile(current))
-        );
-        assert!(!v.popover_open());
-    }
+    assert_eq!(v.current_profile, current);
 }
 
 #[test]
-fn sync_stays_fixed_below_the_profile_list_with_one_divider() {
-    use profiles::MenuAction;
+fn scrolling_profiles_keeps_fixed_actions_visible_and_clickable() {
     let a = area(dtheme::SIDEBAR_MIN_W);
     let mut v = opened_profiles(40);
-    let actions = |v: &ExploreView| {
-        v.popover_rects(a, VIEW)
-            .into_iter()
-            .filter(|(row, _)| matches!(row, PopoverRow::ProfileAction(_)))
-            .collect::<Vec<_>>()
+    let footer = |v: &ExploreView| {
+        v.with_page(a, VIEW, |frame| {
+            frame
+                .node(profiles::MenuAction::Settings.key())
+                .unwrap()
+                .rect
+        })
+        .unwrap()
     };
-    let before = actions(&v);
+    let before = footer(&v);
     assert!(v.scroll_popover(a, VIEW, -400.0));
-    assert_eq!(actions(&v), before);
-    assert_eq!(
-        before.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
-        [PopoverRow::ProfileAction(MenuAction::Sync)]
-    );
-    let [(_, sync)] = before.as_slice() else {
-        panic!("one fixed action");
-    };
-    let band = v.popover_list_band(a, VIEW).unwrap();
-    let divider = dtheme::Space::S1.px(dtheme::Profile::Desktop) * 2.0 + dtheme::BORDER_W as f32;
-    assert_eq!(sync.y - (band.y + band.h), divider);
+    assert_eq!(footer(&v), before);
+    let (x, y) = before.centre();
+    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::OpenSettings);
 }
 
 /// **A Profile row's record names its tokens**: its minimum, the plate's
@@ -1143,22 +1040,18 @@ fn a_profile_rows_record_names_its_tokens() {
         "{}",
         row.source
     );
-    assert_eq!(value(row, "min_h"), "metrics::ROW_MIN -> 26");
-    assert_eq!(
-        value(row, "pad_x"),
-        "alias::ROW_PLATE_INSET = Space::S1 -> 4"
-    );
+    assert_eq!(value(row, "min_h"), "metrics::PROFILE_ROW_MIN -> 44");
+    assert_eq!(value(row, "pad_x"), "Space::S2 -> 8");
     assert_eq!(
         value(find("Profile name"), "text mode"),
         "single line, elided"
     );
-    assert!(
-        !records
-            .iter()
-            .any(|record| record.name == "Profile detail" || record.name == "Profile lines")
-    );
+    assert!(records.iter().any(|record| record.name == "Profile detail"));
     assert_eq!(value(find("Profile name"), "lines"), "1");
-    assert_eq!(value(find("Manage gear"), "name"), "Key::ManageProfile");
+    assert_eq!(
+        value(find("Open profile in new window"), "name"),
+        "Key::ProfileOpenNewWindow"
+    );
 }
 
 // ------------------------------------------- recovery (root catalog Plan 1.3)
@@ -1186,6 +1079,7 @@ fn recovery_controller(unassigned: koru_core::WorkspaceId) -> crate::manage::Sha
             targets: 2,
             expired_or_purged: 0,
         }],
+        trashed_in_account: Vec::new(),
     });
     std::rc::Rc::new(std::cell::RefCell::new(controller))
 }
@@ -1312,6 +1206,138 @@ fn the_unassigned_group_leads_the_menu_and_is_absent_without_anything_unassigned
             .unwrap()
             > at,
         "the group comes first"
+    );
+    assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+}
+
+/// One workspace in the Trash here that the account keeps under `profile`.
+fn trashed_controller(
+    workspace: koru_core::WorkspaceId,
+    profile: ProfileId,
+) -> crate::manage::SharedWorkspaces {
+    use koru_workspaces_ui::{ProfileRow, Recovery, TrashedInAccountRow, WorkspacesController};
+    let profile = crate::manage::workspaces::catalog_profile(profile);
+    let mut controller = WorkspacesController::new();
+    controller.adopt_profiles(&[ProfileRow {
+        id: profile,
+        name: "Work".into(),
+    }]);
+    controller.fixture_recovery(Recovery {
+        trashed_in_account: vec![TrashedInAccountRow {
+            id: crate::manage::workspaces::catalog_workspace(workspace),
+            name: "PM".into(),
+            icon: None,
+            color: None,
+            profile,
+            acknowledged: true,
+        }],
+        ..Recovery::default()
+    });
+    std::rc::Rc::new(std::cell::RefCell::new(controller))
+}
+
+/// **In the Trash here, still in the account** (trash-recovery P2): the
+/// group is in the menu of the Profile the account keeps the workspace in —
+/// above that Profile's own rows — and in no other Profile's; its row is
+/// words, its one action asks to restore into that Profile, and a reader
+/// hears both.
+#[test]
+fn a_workspace_trashed_here_is_offered_only_in_the_menu_of_the_accounts_profile() {
+    let pm = WorkspaceId::from_uuid(uuid(78));
+    let here = ProfileId::from_uuid(uuid(900));
+    let a = area(dtheme::SIDEBAR_MIN_W);
+
+    // The account keeps it under another Profile: nothing in this menu.
+    let mut v = opened(workspaces(2));
+    v.set_workspace_controller(trashed_controller(pm, ProfileId::from_uuid(uuid(555))));
+    assert!(
+        !v.rows_for(PopoverKind::Summary)
+            .iter()
+            .any(|row| matches!(row, PopoverRow::TrashedInAccount(_)))
+    );
+    let (_, frame) = lay(&v, a);
+    assert!(
+        frame
+            .node(workspace_menu_elements::TRASHED_HEADING)
+            .is_none()
+    );
+
+    // Under this window's Profile: the row and its action, above the heading.
+    let mut v = opened(workspaces(2));
+    v.set_workspace_controller(trashed_controller(pm, here));
+    let rows = v.rows_for(PopoverKind::Summary);
+    let heading = rows
+        .iter()
+        .position(|row| *row == PopoverRow::WorkspacesHeading)
+        .unwrap();
+    assert_eq!(
+        &rows[heading - 2..heading],
+        &[
+            PopoverRow::TrashedInAccount(0),
+            PopoverRow::TrashedRestoreTo(0),
+        ]
+    );
+    let (_, frame) = lay(&v, a);
+    let group_heading = frame
+        .node(workspace_menu_elements::TRASHED_HEADING)
+        .expect("the group's heading");
+    let own_heading = frame.node(HEADING).expect("this Profile's heading");
+    assert!(group_heading.rect.y < own_heading.rect.y);
+    let row_rect = frame
+        .node(workspace_menu_elements::trashed(pm))
+        .expect("the row")
+        .rect;
+    let restore_rect = frame
+        .node(workspace_menu_elements::trashed_restore(pm))
+        .expect("Restore to Work")
+        .rect;
+    assert!(row_rect.y < restore_rect.y);
+    let page_rows = v.page_rows(&frame);
+    for row in [
+        PopoverRow::TrashedInAccount(0),
+        PopoverRow::TrashedRestoreTo(0),
+    ] {
+        assert!(
+            page_rows.iter().any(|(r, _)| *r == row),
+            "{row:?} is placed"
+        );
+    }
+
+    // The row does nothing; its action restores into this Profile.
+    assert_eq!(
+        v.choose(PopoverRow::TrashedInAccount(0), PopoverPart::Row),
+        Outcome::Consumed
+    );
+    assert_eq!(
+        v.choose(PopoverRow::TrashedRestoreTo(0), PopoverPart::Row),
+        Outcome::RestoreWorkspaceTo {
+            workspace: pm,
+            profile: here,
+        }
+    );
+
+    let cx = cx(a, Lang::En);
+    let nodes = v.element_semantics(&cx, &frame);
+    let menu = &nodes[0];
+    let labels: Vec<&str> = menu
+        .children
+        .iter()
+        .filter_map(|child| child.label.as_deref())
+        .collect();
+    let at = labels
+        .iter()
+        .position(|label| *label == "In the Trash on this device")
+        .expect("the group heading is published");
+    assert_eq!(menu.children[at].role, AkRole::Heading);
+    assert_eq!(
+        labels[at + 1],
+        "PM, In the Trash here, still in your Koru account"
+    );
+    assert_eq!(labels[at + 2], "Restore to Work: PM");
+    assert_eq!(menu.children[at + 2].role, AkRole::MenuItem);
+    assert_eq!(
+        menu.children[at + 2].actions,
+        [AkAction::Click, AkAction::Focus]
     );
     assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
 }

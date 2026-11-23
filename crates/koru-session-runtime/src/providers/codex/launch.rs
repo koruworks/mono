@@ -59,24 +59,42 @@ pub(super) fn render_argv(
 /// app-server launch appends these after its own; a raw `codex` tab takes
 /// them bare, after the profile's program (`tab_bridge` in
 /// `koru-session-host`).
+///
+/// Codex deep-merges even a whole-table override with the person's config.
+/// A pre-existing HTTP `koru.url` therefore conflicts with stdio `command`.
+/// For the supplied desktop bridge only, disable that inherited entry and
+/// use the reserved `koru_desktop` alias, explicitly enabled for this launch.
+/// No configuration file or unrelated server entry is changed.
 pub fn mcp_server_overrides(mcp_servers: &[crate::providers::McpServerLaunch]) -> Vec<OsString> {
     let mut argv = Vec::new();
     for server in mcp_servers {
+        let name = if server.name == koru_session_profiles::MCP_SERVER_NAME {
+            argv.extend([
+                OsString::from("-c"),
+                format!(
+                    "mcp_servers.{}.enabled=false",
+                    koru_session_profiles::MCP_SERVER_NAME
+                )
+                .into(),
+                OsString::from("-c"),
+                format!(
+                    "mcp_servers.{}.enabled=true",
+                    koru_session_profiles::CODEX_DESKTOP_MCP_SERVER_NAME
+                )
+                .into(),
+            ]);
+            koru_session_profiles::CODEX_DESKTOP_MCP_SERVER_NAME
+        } else {
+            server.name.as_str()
+        };
         let literal = |value: &OsString| format!("'{}'", value.to_string_lossy().replace('\'', ""));
         argv.push("-c".into());
-        argv.push(
-            format!(
-                "mcp_servers.{}.command={}",
-                server.name,
-                literal(&server.command)
-            )
-            .into(),
-        );
+        argv.push(format!("mcp_servers.{}.command={}", name, literal(&server.command)).into());
         argv.push("-c".into());
         argv.push(
             format!(
                 "mcp_servers.{}.args=[{}]",
-                server.name,
+                name,
                 server
                     .args
                     .iter()

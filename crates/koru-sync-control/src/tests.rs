@@ -498,7 +498,7 @@ fn host_on(session_id: ControlSessionId) -> ControlHost {
 
 #[test]
 fn the_control_protocol_is_nine_and_the_greeting_refuses_every_other_number() {
-    assert_eq!(CONTROL_PROTOCOL_VERSION, 9);
+    assert_eq!(CONTROL_PROTOCOL_VERSION, 10);
     assert_eq!(CONTROL_FRAME_VERSION, 1);
     // A different number, and its own: the peer protocol went 5 -> 6 for the
     // root-catalog exchange while the control protocol stayed 7.
@@ -1418,7 +1418,10 @@ fn m8_own_device_bit_a_change_of_it_is_a_change_of_the_grant() {
 
 #[test]
 fn m8_own_device_bit_travels_on_control_protocol_9_with_no_bump() {
-    assert_eq!(CONTROL_PROTOCOL_VERSION, 9);
+    // The bit itself cost no version at 9. Main's live account request
+    // (trash recovery P2) has since taken the protocol to 10, for its own
+    // reasons; the bit still travels with no bump of its own.
+    assert_eq!(CONTROL_PROTOCOL_VERSION, 10);
     let hello = hello();
     let mut sent = snapshot(
         &hello,
@@ -1465,4 +1468,80 @@ fn m8_own_device_bit_travels_on_control_protocol_9_with_no_bump() {
         panic!("a replace_authorization");
     };
     assert_eq!(read, sent);
+}
+
+/// `ReconcileCloudAccountLive` (trash-recovery PLAN.final P2): ids only,
+/// bounded, bound to the live session — and a host with no Store behind it
+/// answers that nothing is trashed, never an invented id.
+#[test]
+fn the_account_live_request_is_bounded_session_bound_and_round_trips() {
+    use cloud::{CloudAccountLiveWorkspace, MAX_CLOUD_ROOT_INVENTORY};
+
+    let session = ControlSessionId::new();
+    let mut host = host_on(session);
+    let listed = |count: usize| -> Vec<CloudAccountLiveWorkspace> {
+        (0..count)
+            .map(|_| CloudAccountLiveWorkspace {
+                workspace_id: cloud_id(0x31),
+                profile_id: cloud_id(0x32),
+            })
+            .collect()
+    };
+    let request = |control_session_id, workspaces| ControlRequest::ReconcileCloudAccountLive {
+        control_session_id,
+        account_id: cloud_id(0x22),
+        workspaces,
+    };
+
+    let asked = request(session, listed(2));
+    let rendered = serde_json::to_string(&asked).unwrap();
+    assert!(
+        rendered.contains(r#""kind":"reconcile_cloud_account_live""#),
+        "{rendered}"
+    );
+    match serde_json::from_str::<ControlRequest>(&rendered).unwrap() {
+        ControlRequest::ReconcileCloudAccountLive { workspaces, .. } => {
+            assert_eq!(workspaces, listed(2))
+        }
+        other => panic!("{other:?}"),
+    }
+    // Not one of the 64 KiB Cloud frames: a full list is several times
+    // that, and capped there it would be refused whole on a large account.
+    assert!(!is_cloud_request(&asked));
+    let full = serde_json::to_vec(&request(session, listed(MAX_CLOUD_ROOT_INVENTORY))).unwrap();
+    assert!(full.len() > cloud::MAX_CLOUD_CONTROL_FRAME_BYTES);
+    assert!(full.len() < 1024 * 1024, "{} bytes", full.len());
+    assert_eq!(
+        host.handle(session, asked),
+        ControlResponse::CloudAccountLiveTrashed {
+            control_session_id: session,
+            trashed: Vec::new(),
+        }
+    );
+    // An empty list is a real answer — "the account lists nothing live
+    // here" — and is how the Store's set is cleared.
+    assert!(matches!(
+        host.handle(session, request(session, Vec::new())),
+        ControlResponse::CloudAccountLiveTrashed { .. }
+    ));
+
+    for refused in [
+        request(ControlSessionId::new(), listed(1)),
+        request(session, listed(MAX_CLOUD_ROOT_INVENTORY + 1)),
+        request(
+            session,
+            vec![CloudAccountLiveWorkspace {
+                workspace_id: CloudId::from_bytes([0; 16]),
+                profile_id: cloud_id(0x32),
+            }],
+        ),
+    ] {
+        assert!(
+            matches!(
+                host.handle(session, refused),
+                ControlResponse::Rejected { .. }
+            ),
+            "a stale session, an over-cap list and a non-v4 id are refused whole"
+        );
+    }
 }

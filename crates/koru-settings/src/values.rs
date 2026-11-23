@@ -231,27 +231,33 @@ token_enum! {
         X2 => "2x";
         X3 => "3x";
         X4 => "4x";
+        X8 => "8x";
+        X16 => "16x";
     }
 }
 
 impl ScrollSpeedChoice {
-    /// The multiplier, 1 to 4.
+    /// The multiplier: 1, 2, 3, 4, 8 or 16.
     pub fn factor(self) -> u8 {
         match self {
             Self::X1 => 1,
             Self::X2 => 2,
             Self::X3 => 3,
             Self::X4 => 4,
+            Self::X8 => 8,
+            Self::X16 => 16,
         }
     }
 
-    /// The choice for a multiplier; anything outside 1..=4 is held to it.
+    /// Clamp to the supported range, rounding down between offered steps.
     pub fn from_factor(factor: u8) -> Self {
         match factor {
             0 | 1 => Self::X1,
             2 => Self::X2,
             3 => Self::X3,
-            _ => Self::X4,
+            4..=7 => Self::X4,
+            8..=15 => Self::X8,
+            _ => Self::X16,
         }
     }
 }
@@ -600,9 +606,8 @@ pub struct DocTextSize(u8);
 impl DocTextSize {
     /// Every size offered, smallest first. Above 22 is what zoom is for.
     pub const ALL: [u8; 7] = [14, 15, 16, 17, 18, 20, 22];
-    /// The size the type ramp is drawn at, and what follows-the-default means
-    /// in this build.
-    pub const DEFAULT: Self = Self(16);
+    /// The default document body size, matching the app's 14 px text.
+    pub const DEFAULT: Self = Self(14);
 
     pub fn new(px: u8) -> Option<Self> {
         Self::ALL.contains(&px).then_some(Self(px))

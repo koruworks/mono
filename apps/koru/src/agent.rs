@@ -548,6 +548,9 @@ pub struct AgentLink {
     /// terminal sides until both arrive; capacity refusals are also bounded.
     /// Ordinary account results never consume either bound.
     browser_completions: Arc<Mutex<BrowserCompletions>>,
+    /// Most recent verified browser sign-in URL pushed by Agent for an active
+    /// `owner_scope`, so the waiting modal can reopen or copy the exact link.
+    browser_url: Arc<Mutex<Option<(u64, String)>>>,
     /// Whole pairing UI state, updated by either the correlated response or an
     /// unsolicited Agent push. The QR secret never enters application logs.
     pairing: Arc<Mutex<koru_agent_wire::PairingView>>,
@@ -645,6 +648,7 @@ impl AgentLink {
             pending_cleanup_acknowledgements: Arc::new(Mutex::new(HashMap::new())),
             cleanup_acknowledgements: Arc::new(Mutex::new(VecDeque::new())),
             browser_completions: Arc::new(Mutex::new(BrowserCompletions::default())),
+            browser_url: Arc::new(Mutex::new(None)),
             pairing: Arc::new(Mutex::new(koru_agent_wire::PairingView {
                 state: koru_agent_wire::PairingState::Idle,
                 qr_payload: None,
@@ -732,6 +736,14 @@ impl AgentLink {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
+    }
+
+    pub fn account_browser_url(&self, owner_scope: u64) -> Option<String> {
+        let guard = self.browser_url.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .as_ref()
+            .filter(|(scope, _)| *scope == owner_scope || owner_scope == 0)
+            .map(|(_, url)| url.clone())
     }
 
     #[allow(dead_code)] // consumed by the supplied Account surface in Plan 3.6
@@ -1539,10 +1551,21 @@ impl AgentLink {
             pinned: pinned.to_vec(),
             reopen_claim: self.reopen_claim.clone(),
         };
-        *self
-            .presence
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Some(hello.clone());
+        {
+            let mut presence = self
+                .presence
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            // **The same presence is not news.** The window calls this when
+            // anything in its context may have moved — the account state
+            // included — and the Agent answers every hello with five pushes,
+            // so an unchanged one sent every few seconds was a loop of its
+            // own (2026-11-17). A reconnect still replays the stored one.
+            if presence.as_ref() == Some(&hello) {
+                return;
+            }
+            *presence = Some(hello.clone());
+        }
         self.request(hello);
     }
 
@@ -1770,6 +1793,7 @@ impl AgentLink {
         let pending_cleanup_acknowledgements = Arc::clone(&self.pending_cleanup_acknowledgements);
         let cleanup_acknowledgements = Arc::clone(&self.cleanup_acknowledgements);
         let browser_completions = Arc::clone(&self.browser_completions);
+        let browser_url = Arc::clone(&self.browser_url);
         let pairing = Arc::clone(&self.pairing);
         let pairing_dirty = Arc::clone(&self.pairing_dirty);
         let root_sync = Arc::clone(&self.root_sync);
@@ -1945,6 +1969,8 @@ impl AgentLink {
                             attempt,
                         ) {
                             BeginBrowser::Accepted => {
+                                *browser_url.lock().unwrap_or_else(|e| e.into_inner()) =
+                                    Some((owner_scope, url.0.clone()));
                                 if browser_tx.try_send((generation, attempt, url.0)).is_err() {
                                     browser_completion(generation, attempt, false);
                                 }
@@ -1966,6 +1992,12 @@ impl AgentLink {
                                     result,
                                 },
                         } => {
+                            {
+                                let mut url = browser_url.lock().unwrap_or_else(|e| e.into_inner());
+                                if url.as_ref().is_some_and(|(scope, _)| *scope == owner_scope) {
+                                    *url = None;
+                                }
+                            }
                             if !accept_owned_agent_account_result(
                                 &browser_completions,
                                 &account_results,
@@ -2438,6 +2470,7 @@ impl AgentLink {
                 .extend(unanswered);
             let _ = wake_the_loop(&self.wake);
         }
+        *self.browser_url.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let browser_failures =
             finish_browser_disconnect(&self.browser_completions, &self.account_results);
         if browser_failures > 0 {

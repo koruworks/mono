@@ -40,6 +40,7 @@ koru-i18n = { path = "../koru-i18n" }
 koru-env = { path = "../koru-env" }
 koru-draw = { path = "../koru-draw" }
 koru-markdown = { path = "../koru-markdown" }
+koru-import-markdown = { path = "../koru-import-markdown" }
 koru-keys = { path = "../koru-keys" }
 # What this build hides for now: the composer's private-chat button.
 koru-features = { path = "../koru-features" }
@@ -65,6 +66,7 @@ winit.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+koru-diagram = { path = "../koru-diagram" }
 # `cfg(test)` here cannot reach these crates' own guards — a dependency is
 # never compiled with it — so the suite turns them on by feature.
 koru-search-ui = { path = "../koru-search-ui", features = ["no-reader"] }

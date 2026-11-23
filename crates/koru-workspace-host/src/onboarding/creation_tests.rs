@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// The conflict lands on the card, whose primary offers Manage in every
+/// language; pressing it finishes the card and raises `ManageProfiles` once,
+/// keeping the creation id.
 #[test]
 fn conflicting_identity_offers_manage_without_republishing_or_replacing_the_id() {
     for language in koru_i18n::Lang::ALL {
@@ -9,16 +12,16 @@ fn conflicting_identity_offers_manage_without_republishing_or_replacing_the_id()
         view.language = language;
         let id = view.local_creation_id;
         view.creation_conflict();
-        assert_eq!(view.screen, Screen::Workspace);
+        assert_eq!(view.screen, Screen::Setup);
         assert!(view.controls().contains(&Hit::Primary));
         assert_eq!(
-            view.workspace_action_label(),
+            view.setup_primary_label(),
             koru_i18n::t(language, koru_i18n::Key::ProfileCreationManage)
         );
         view.activate(Hit::Primary);
         assert_eq!(view.take_action(), Some(Action::ManageProfiles));
         assert_eq!(view.local_creation_id, id);
-        assert_eq!(view.screen, Screen::Finishing);
+        assert!(view.setup_finishing);
         view.activate(Hit::Primary);
         assert!(
             view.take_action().is_none(),

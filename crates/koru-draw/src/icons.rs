@@ -457,6 +457,8 @@ pub const FADERS: char = '\u{E228}';
 /// An accent color — `ph-palette`. The `/color` command row and the Color…
 /// menu rows.
 pub const PALETTE: char = '\u{E6C8}';
+/// `ph-circle-half`, verified against phosphor-icons/web's regular stylesheet.
+pub const CIRCLE_HALF: char = '\u{E18C}';
 /// Priority — `ph-flag`. The `/priority` command row and the Priority… menu
 /// rows: how important this is, relative to other work (never its order —
 /// that is Rank, a different concept).
@@ -573,7 +575,7 @@ pub fn for_scheme(url: Option<&str>) -> char {
 pub const MEGAPHONE: char = '\u{e324}';
 
 /// Every icon, for tests and for a future picker.
-pub const ALL: [(&str, char); 153] = [
+pub const ALL: [(&str, char); 154] = [
     ("GRAPH", GRAPH),
     ("TERMINAL", TERMINAL),
     ("TABLE_COMPACT", TABLE_COMPACT),
@@ -709,6 +711,7 @@ pub const ALL: [(&str, char); 153] = [
     ("WRENCH", WRENCH),
     ("TAG", TAG),
     ("PALETTE", PALETTE),
+    ("CIRCLE_HALF", CIRCLE_HALF),
     ("FADERS", FADERS),
     ("FLAG", FLAG),
     ("WARNING", WARNING),

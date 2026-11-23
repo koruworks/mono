@@ -153,6 +153,7 @@ fn control_part(control: Control) -> ControlPart {
         Control::Name => "rename",
         Control::Switch => "switch-profile",
         Control::CloudPointer => "cloud-pointer",
+        Control::CloudSettings => "cloud-settings",
         Control::Attention(answer) => match answer {
             Attention::RetryDelete => "retry-delete",
             Attention::RemoveAfterFailure => "remove-after-failure",
@@ -194,6 +195,8 @@ fn control_part(control: Control) -> ControlPart {
         Control::UnassignedMore(_) => "unassigned-more",
         Control::RestoreUnassignedProfile(_) => "unassigned-restore",
         Control::RestoreDeletedProfile(_) => "restore-deleted",
+        Control::TrashedInAccountRow(_) => "trashed-in-account-row",
+        Control::RestoreTrashedTo(_) => "trashed-in-account-restore",
         Control::LinkDevice => "link-device",
         Control::CloseCreation => "close-creation",
         Control::ThisDevice => "this-computer",
@@ -245,6 +248,8 @@ impl Context {
 
     fn occurrence(&self, entry: Entry) -> Occurrence {
         match entry {
+            Entry::Profiles => self.surface(ControlPart::new("profiles")),
+            Entry::Workspaces => self.surface(ControlPart::new("workspaces-page")),
             Entry::Profile(id) => self.profile(id, parts::PROFILE),
             Entry::Hidden => self.surface(parts::HIDDEN),
             Entry::NewProfile => self.surface(parts::NEW_PROFILE),
@@ -313,7 +318,9 @@ impl Context {
             | Control::RestoreWorkspace(id)
             | Control::UnassignedRow(id)
             | Control::UnassignedMore(id)
-            | Control::RestoreUnassignedProfile(id) => {
+            | Control::RestoreUnassignedProfile(id)
+            | Control::TrashedInAccountRow(id)
+            | Control::RestoreTrashedTo(id) => {
                 Occurrence::model(self.window, self.view, id.as_uuid(), part)
             }
             // A deleted Profile's *Restore* is about that Profile.
@@ -339,9 +346,19 @@ impl ManageView {
                     .with_actions([Action::Click, Action::Focus])
             })
             .collect();
+        let nav_bounds = laid.rows.iter().fold(self.sidebar(), |bounds, (_, rect)| {
+            let x = bounds.x.min(rect.x);
+            let y = bounds.y.min(rect.y);
+            Rect::new(
+                x,
+                y,
+                (bounds.x + bounds.w).max(rect.x + rect.w) - x,
+                (bounds.y + bounds.h).max(rect.y + rect.h) - y,
+            )
+        });
         let nav = SemanticNode::new(cx.surface(parts::NAV), Role::ListBox)
             .with_label("Manage")
-            .with_bounds(cx.place(self.sidebar()))
+            .with_bounds(cx.place(nav_bounds))
             .with_size_of_set(options.len())
             .with_children(options);
         let heading = SemanticNode::new(cx.surface(parts::HEADING), Role::Heading)
@@ -684,6 +701,8 @@ impl ManageView {
                 .map(|row| row.name.clone())
         };
         match entry {
+            Entry::Profiles => "Profiles".to_owned(),
+            Entry::Workspaces => "Workspaces".to_owned(),
             Entry::Profile(id) => {
                 let name = profile_name(id).unwrap_or_else(|| "Profile".into());
                 let mut said = name;
@@ -710,6 +729,9 @@ impl ManageView {
             rev.u64(form.semantics_revision());
         }
         match self.page {
+            Some(Page::Workspaces(id)) => {
+                rev.byte(5).uuid(id.as_uuid());
+            }
             Some(Page::Profile(id)) => {
                 rev.byte(1).uuid(id.as_uuid());
             }

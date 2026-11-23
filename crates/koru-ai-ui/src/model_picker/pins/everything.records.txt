@@ -10,7 +10,6 @@ records 110 truncated false
     fill = "#FFFFFF / alpha 1.000" (scene::Panel::fill)
     elevation = "Raised" (scene::Panel::elevation)
     radius = "10" (scene::Panel::radius)
-    shadow opacity = "1" (scene::Panel::shadow_alpha)
 2 ^1 part "Shadow" b[424.00 29.00 824.00 384.00] c[0.00 0.00 900.00 700.00] z2
     rings = "16" (one soft shadow drawn as expanding fills; vello has no blur)
     spread / dy = "20 / 3" (SHADOW_SPREAD / SHADOW_DY)
@@ -315,19 +314,19 @@ records 110 truncated false
     docs = "docs/features/koruui/COMPONENTS.md" (catalog)
 34 ^33 primitive "fill" b[496.00 54.00 770.00 86.00] c[0.00 0.00 900.00 700.00] z34
     color = "#EAEAEA / alpha 1.000" (resolved paint; token origin not exposed)
-35 ^33 part "text line" b[503.00 62.14 506.47 77.86] c[0.00 0.00 900.00 700.00] z35
-    line height = "15.729492" (actual Parley line box)
+35 ^33 part "text line" b[508.00 61.00 511.47 79.00] c[0.00 0.00 900.00 700.00] z35
+    line height = "18" (actual Parley line box)
     baseline = "74.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-36 ^33 part "text line" b[503.00 63.00 607.29 81.00] c[0.00 0.00 900.00 700.00] z36
+36 ^33 part "text line" b[508.00 61.00 612.29 79.00] c[0.00 0.00 900.00 700.00] z36
     line height = "18" (actual Parley line box)
-    baseline = "76.729004" (local layout coordinates)
+    baseline = "74.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-37 ^36 primitive "text run" b[503.00 64.14 607.29 79.86] c[0.00 0.00 900.00 700.00] z37
+37 ^36 primitive "text run" b[508.00 62.14 612.29 77.86] c[0.00 0.00 900.00 700.00] z37
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "76.729004" (local layout coordinates)
+    baseline = "74.729004" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#ABABAB / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -336,8 +335,8 @@ records 110 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-38 ^33 primitive "fill" b[503.00 63.00 503.80 77.00] c[0.00 0.00 900.00 700.00] z38
-    color = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
+38 ^33 part "Cursor" b[508.00 63.00 508.80 77.00] c[0.00 0.00 900.00 700.00] z38
+    color = "#191919 / alpha 1.000" (resolved caret paint)
 39 ^31 element "Refresh models" b[772.00 56.00 798.00 84.00] c[0.00 0.00 900.00 700.00] z39
     element = "leaf" (El constructor)
     key = "surface model-picker/refresh" (El::id)
@@ -352,7 +351,7 @@ records 110 truncated false
 40 ^39 component "KoruIconButton" b[772.00 56.00 798.00 84.00] c[0.00 0.00 900.00 700.00] z40
     implementation = "koru_ui::icon_button" (shared implementation)
     state = "State { hovered: false, active: false, disabled: false }" (instance state; focus not exposed by this API)
-    metrics = "Metrics { icon_size: 15.0, padding_x: 0.0, padding_y: 0.0, inset_top: 4.0, inset_bottom: 5.0, radius: 6.0 }" (Metrics::STANDARD)
+    metrics = "Metrics { icon_size: 18.0, padding_x: 0.0, padding_y: 0.0, inset_top: 4.0, inset_bottom: 5.0, radius: 6.0 }" (Metrics::STANDARD)
     hit slot = "Rect { x: 772.0, y: 56.0, w: 26.0, h: 28.0 }" (caller rectangle; host semantics not implied)
     paint chip = "Rect { x: 775.5, y: 60.0, w: 19.0, h: 19.0 }" (derived by hover_chip_with)
     icon name = "ARROWS_CLOCKWISE" (icons::ALL; aliases may share a glyph)
@@ -361,17 +360,17 @@ records 110 truncated false
     icon source = "Tabler" (artwork provenance)
     layout = "centered glyph or label" (shared implementation)
     docs = "docs/features/koruui/COMPONENTS.md" (catalog)
-41 ^40 part "text line" b[777.50 62.50 792.50 77.50] c[0.00 0.00 900.00 700.00] z41
-    line height = "15" (actual Parley line box)
-    baseline = "77.5" (local layout coordinates)
+41 ^40 part "text line" b[776.00 61.00 794.00 79.00] c[0.00 0.00 900.00 700.00] z41
+    line height = "18" (actual Parley line box)
+    baseline = "79" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-42 ^41 primitive "icon" b[777.50 62.50 792.50 77.50] c[0.00 0.00 900.00 700.00] z42
+42 ^41 primitive "icon" b[776.00 61.00 794.00 79.00] c[0.00 0.00 900.00 700.00] z42
     icon pack = "Tabler" (selected icon pack)
     icon source = "Tabler" (upstream or original Koru artwork)
     icon name = "ARROWS_CLOCKWISE" (icons::ALL canonical name)
     icon codepoint = "U+E094" (stable icon identity)
     icon variant = "regular" (requested state)
-    icon size = "15" (layout slot)
+    icon size = "18" (layout slot)
     foreground = "#6B6B6B / alpha 1.000" (resolved paint)
 43 ^29 element "Model list" b[496.00 90.00 800.00 270.00] c[0.00 0.00 900.00 700.00] z43
     element = "scroll viewport" (El constructor)

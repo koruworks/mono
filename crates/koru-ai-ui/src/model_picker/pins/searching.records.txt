@@ -10,7 +10,6 @@ records 111 truncated false
     fill = "#FFFFFF / alpha 1.000" (scene::Panel::fill)
     elevation = "Raised" (scene::Panel::elevation)
     radius = "10" (scene::Panel::radius)
-    shadow opacity = "1" (scene::Panel::shadow_alpha)
 2 ^1 part "Shadow" b[424.00 29.00 824.00 384.00] c[0.00 0.00 900.00 700.00] z2
     rings = "16" (one soft shadow drawn as expanding fills; vello has no blur)
     spread / dy = "20 / 3" (SHADOW_SPREAD / SHADOW_DY)
@@ -312,11 +311,11 @@ records 111 truncated false
     docs = "docs/features/koruui/COMPONENTS.md" (catalog)
 33 ^32 primitive "fill" b[496.00 54.00 770.00 86.00] c[0.00 0.00 900.00 700.00] z33
     color = "#EAEAEA / alpha 1.000" (resolved paint; token origin not exposed)
-34 ^32 part "text line" b[503.00 62.14 510.85 77.86] c[0.00 0.00 900.00 700.00] z34
-    line height = "15.729492" (actual Parley line box)
+34 ^32 part "text line" b[508.00 61.00 515.85 79.00] c[0.00 0.00 900.00 700.00] z34
+    line height = "18" (actual Parley line box)
     baseline = "74.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-35 ^34 primitive "text run" b[503.00 62.14 510.85 77.86] c[0.00 0.00 900.00 700.00] z35
+35 ^34 primitive "text run" b[508.00 62.14 515.85 77.86] c[0.00 0.00 900.00 700.00] z35
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
@@ -329,8 +328,8 @@ records 111 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-36 ^32 primitive "fill" b[510.85 63.00 511.65 77.00] c[0.00 0.00 900.00 700.00] z36
-    color = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
+36 ^32 part "Cursor" b[515.85 63.00 516.65 77.00] c[0.00 0.00 900.00 700.00] z36
+    color = "#191919 / alpha 1.000" (resolved caret paint)
 37 ^30 element "Refresh models" b[772.00 56.00 798.00 84.00] c[0.00 0.00 900.00 700.00] z37
     element = "leaf" (El constructor)
     profile = "desktop" (FrameCx::profile)

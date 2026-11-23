@@ -32,7 +32,7 @@ use crate::links::WorkspaceLinks;
 use crate::pending::{CommandId, Pending};
 use crate::state::{
     Answer, Authorization, Availability, Consequence, DeletedProfileRow, Group, MoveConsequence,
-    Notice, ProfileRow, Recovery, Retry, Row, UnassignedRow,
+    Notice, ProfileRow, Recovery, Retry, Row, TrashedInAccountRow, UnassignedRow,
 };
 use crate::{
     NOTICE_MOVE_PROJECTS_PENDING, REFUSAL_DOCUMENTS_OPEN, REFUSAL_MOVE_NO_SUCH_PROFILE,
@@ -72,6 +72,10 @@ pub(crate) enum Stage {
     AskingMove,
     /// The move's consequence, on screen with its token.
     ConfirmingMove(MoveConsequence, koru_ui::Confirm),
+    /// **Restore to a Profile, asked.** No token and no gateway: the
+    /// question is about a workspace in the Trash, in which nothing is open,
+    /// so this surface knows everything the dialog says.
+    ConfirmingRestoreTo(TrashedInAccountRow, koru_ui::Confirm),
 }
 
 /// **The workspace-management state machine**, with no drawing in it.
@@ -111,6 +115,10 @@ pub struct WorkspacesController {
     pending_host_action: Option<Action>,
     requests: Vec<Request>,
     next_command: u64,
+    /// The trashed-in-account rows this window has already handed to its
+    /// host as a notice, so one is offered once however often the catalog
+    /// is read before the Store's acknowledgement comes back.
+    announced: std::collections::BTreeSet<WorkspaceId>,
     pending: std::collections::BTreeMap<CommandId, Pending>,
     pin_repairs: std::collections::BTreeMap<WorkspaceId, pins::PinRepair>,
 }
@@ -132,6 +140,7 @@ impl WorkspacesController {
             removals_received: false,
             removals: std::collections::BTreeMap::new(),
             recovery: Recovery::default(),
+            announced: std::collections::BTreeSet::new(),
             profiles: Vec::new(),
             availability: Availability::default(),
             authorization: Authorization::default(),
@@ -446,9 +455,62 @@ impl WorkspacesController {
             .map(|row| row.deletion)
     }
 
-    /// Whether either recovery list has anything in it.
+    /// Whether any recovery list has anything in it.
     pub fn has_recovery(&self) -> bool {
         !self.recovery.is_empty()
+    }
+
+    /// **In the Trash here, still in the account** (trash-recovery): every
+    /// such workspace, in catalog order. A drawing wants
+    /// [`Self::trashed_in_account_of`], which is the per-Profile rule.
+    pub fn trashed_in_account(&self) -> &[TrashedInAccountRow] {
+        &self.recovery.trashed_in_account
+    }
+
+    /// The ones the account keeps under `profile` — the only Profile they
+    /// are shown under, because it is where *Restore* puts them.
+    pub fn trashed_in_account_of(&self, profile: ProfileId) -> Vec<&TrashedInAccountRow> {
+        self.recovery
+            .trashed_in_account
+            .iter()
+            .filter(|row| row.profile == profile)
+            .collect()
+    }
+
+    /// The row of one workspace, if it is one.
+    pub fn trashed_in_account_row(&self, workspace: WorkspaceId) -> Option<&TrashedInAccountRow> {
+        self.recovery
+            .trashed_in_account
+            .iter()
+            .find(|row| row.id == workspace)
+    }
+
+    /// The name a Profile is known by here, for a sentence that names it.
+    pub fn profile_name(&self, profile: ProfileId) -> String {
+        self.profiles
+            .iter()
+            .find(|row| row.id == profile)
+            .map(|row| row.name.clone())
+            .unwrap_or_default()
+    }
+
+    /// **A row the person has not been told about, handed over once** (P4).
+    ///
+    /// One at a time, because a host has one place to say it: it asks when
+    /// that place is free, and the next row waits for the next ask rather
+    /// than being marked told without having been shown. The Store is told
+    /// so the notice is not shown again on this device, and until its
+    /// answer is read back this window remembers what it handed over.
+    pub fn take_trash_notice(&mut self) -> Option<TrashedInAccountRow> {
+        let row = self
+            .recovery
+            .trashed_in_account
+            .iter()
+            .find(|row| !row.acknowledged && !self.announced.contains(&row.id))
+            .cloned()?;
+        self.announced.insert(row.id);
+        self.links.acknowledge_trashed(row.id);
+        Some(row)
     }
 
     /// The sentence a batch restore's outcome becomes: how many came back,
@@ -723,6 +785,23 @@ impl WorkspacesController {
                     self.links.fetch_profiles();
                     return true;
                 }
+                if let Pending::RestoreTo { to, name, .. } = pending {
+                    // Worded here for the same reason: the answer is the
+                    // workspace or a refusal, and the sentence names both
+                    // ends either way.
+                    let text = match *answer {
+                        Answer::RestoredTo(Ok(_)) => fill(
+                            t(self.lang, Key::WorkspacesRestoredTo),
+                            &[&name, &self.profile_name(to)],
+                        ),
+                        _ => fill(t(self.lang, Key::WorkspacesRestoreToFailed), &[&name]),
+                    };
+                    self.notice = Some(Notice { text, retry: None });
+                    self.notice_owner = Some(to);
+                    self.links.invalidate();
+                    self.links.fetch_catalog();
+                    return true;
+                }
                 if let Pending::CreateProfile(reply) = pending {
                     let result = match *answer {
                         Answer::ProfileCreated(result) => result,
@@ -775,6 +854,8 @@ impl WorkspacesController {
             | Answer::ListingReconciled(_)
             | Answer::ProfileKept(_)
             | Answer::ProfileRestored(_)
+            | Answer::RestoredTo(_)
+            | Answer::Acknowledged
             | Answer::WorkspaceEnsured { .. } => false,
             Answer::Profiles(profiles) => self.adopt_profiles(&profiles),
             Answer::Authorization(authorization) => {
@@ -991,6 +1072,32 @@ impl WorkspacesController {
         .defaulting_to_confirm()
     }
 
+    /// **The restore-to question, built here, and its ADR-265 declaration.**
+    ///
+    /// Row two, where the move sits: the person pressed *Restore to …* on a
+    /// row that says where the workspace is and where it would go, and the
+    /// answer is reversible — it can be trashed again. So it declares its
+    /// primary and Enter accepts.
+    ///
+    /// It asks at all because the press changes two things the row's label
+    /// only half says: the workspace leaves the Trash, and it starts syncing
+    /// with the account again. No terminals are named — none can be open in
+    /// a workspace that is in the Trash — which is also why this needs no
+    /// gateway answer and no token.
+    fn restore_to_dialog(&self, row: &TrashedInAccountRow) -> koru_ui::Confirm {
+        let profile = self.profile_name(row.profile);
+        koru_ui::Confirm::localized(
+            fill(
+                t(self.lang, Key::WorkspacesRestoreToTitle),
+                &[&row.name, &profile],
+            ),
+            fill(t(self.lang, Key::WorkspacesRestoreToBody), &[&profile]),
+            t(self.lang, Key::WorkspacesRestoreDeleted),
+            t(self.lang, Key::WorkspacesCancel),
+        )
+        .defaulting_to_confirm()
+    }
+
     fn terminals_sentence(&self, terminals: &[String]) -> String {
         match terminals.len() {
             0 => t(self.lang, Key::WorkspacesNoTerminals).to_owned(),
@@ -1004,13 +1111,18 @@ impl WorkspacesController {
         }
     }
 
-    /// **The confirmation waiting for an answer**, lifecycle or move.
+    /// **The confirmation waiting for an answer**: lifecycle, move, or
+    /// restore-to.
     ///
-    /// Built from the gateway's answer; `None` while nothing is being asked or
-    /// while the answer is still on its way.
+    /// Built from the gateway's answer for the first two; `None` while
+    /// nothing is being asked or while that answer is still on its way.
     pub fn dialog(&self) -> Option<&koru_ui::Confirm> {
         match &self.stage {
-            Some(Stage::Confirming(_, dialog) | Stage::ConfirmingMove(_, dialog)) => Some(dialog),
+            Some(
+                Stage::Confirming(_, dialog)
+                | Stage::ConfirmingMove(_, dialog)
+                | Stage::ConfirmingRestoreTo(_, dialog),
+            ) => Some(dialog),
             _ => None,
         }
     }
@@ -1018,7 +1130,11 @@ impl WorkspacesController {
     /// The same, for a drawing that forwards pointer and key input to it.
     pub fn dialog_mut(&mut self) -> Option<&mut koru_ui::Confirm> {
         match &mut self.stage {
-            Some(Stage::Confirming(_, dialog) | Stage::ConfirmingMove(_, dialog)) => Some(dialog),
+            Some(
+                Stage::Confirming(_, dialog)
+                | Stage::ConfirmingMove(_, dialog)
+                | Stage::ConfirmingRestoreTo(_, dialog),
+            ) => Some(dialog),
             _ => None,
         }
     }
@@ -1081,6 +1197,18 @@ impl WorkspacesController {
                         self.links
                             .perform_move(&consequence, t(self.lang, Key::DefaultWorkspaceName));
                         self.stage = Some(Stage::Working);
+                    }
+                    // A keyed command rather than `Working`: its answer is
+                    // settled against the workspace it was asked about, and
+                    // the notice is worded from that.
+                    Some(Stage::ConfirmingRestoreTo(row, _)) => {
+                        let command = self.start_command(Pending::RestoreTo {
+                            workspace: row.id,
+                            to: row.profile,
+                            name: row.name.clone(),
+                        });
+                        self.links
+                            .restore_workspace_to(command, row.id, row.profile);
                     }
                     other => self.stage = other,
                 }
@@ -1321,8 +1449,10 @@ impl WorkspacesController {
             Action::Archive(..) => destructive().or_else(trashed),
             Action::SoftDelete(_) | Action::Restore(_) => destructive(),
             // The batch restore decides what the Trash contains, like a
-            // workspace's restore: the same scope, the same sentence.
-            Action::RestoreProfile(..) => destructive(),
+            // workspace's restore: the same scope, the same sentence. So
+            // does restoring one workspace into a Profile; `row` is not
+            // consulted for either.
+            Action::RestoreProfile(..) | Action::RestoreTo(..) => destructive(),
             Action::Select(_)
             | Action::MigrateTo(..)
             | Action::CancelMigrate
@@ -1436,6 +1566,28 @@ impl WorkspacesController {
                 }
                 let command = self.start_command(Pending::RestoreProfile(profile));
                 self.links.restore_profile(command, profile, deletion);
+            }
+            // **Asked here, not of the gateway** (see `restore_to_dialog`).
+            // Only for a workspace the account still lists, and only into
+            // the Profile it lists it under: a row that has gone, or a
+            // destination the row does not name, opens nothing. One at a
+            // time per workspace.
+            Action::RestoreTo(workspace, to) => {
+                let Some(row) = self
+                    .trashed_in_account_row(workspace)
+                    .filter(|row| row.profile == to)
+                    .cloned()
+                else {
+                    return;
+                };
+                if self.pending.values().any(|pending| {
+                    matches!(pending, Pending::RestoreTo { workspace: id, .. } if *id == workspace)
+                }) {
+                    return;
+                }
+                self.notice = None;
+                let dialog = self.restore_to_dialog(&row);
+                self.stage = Some(Stage::ConfirmingRestoreTo(row, dialog));
             }
             Action::ShowArchived => self.show_archived = !self.show_archived,
             Action::ShowTrash => self.show_trash = !self.show_trash,

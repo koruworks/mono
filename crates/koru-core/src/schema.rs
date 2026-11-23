@@ -1101,13 +1101,7 @@ impl WorkspaceDoc {
     /// [ADR-91]: ../../../docs/decisions/ADR-076-100.md#adr-91-perdocument--a-document-keeps-a-root-node-for-its-title-and-the-manifest-mirrors-it
     /// [TECHDEBT 57]: ../../../docs/contributing/techdebt/README.md
     pub fn own_document_id(&self) -> Option<DocumentId> {
-        let stamped = self
-            .doc
-            .get_map(C_META)
-            .get(K_DOCUMENT)
-            .and_then(as_string)
-            .as_deref()
-            .and_then(DocumentId::parse);
+        let stamped = self.stamped_document_id();
         if stamped.is_some() {
             return stamped;
         }
@@ -1116,6 +1110,17 @@ impl WorkspaceDoc {
             .into_iter()
             .find(|&id| self.kind_of(id) == Some(Kind::Document))
             .map(|root| self.document_id(root))
+    }
+
+    /// The explicit Store identity, without the legacy root-node fallback.
+    /// Loading code uses this before stamping an unstamped legacy document.
+    pub fn stamped_document_id(&self) -> Option<DocumentId> {
+        self.doc
+            .get_map(C_META)
+            .get(K_DOCUMENT)
+            .and_then(as_string)
+            .as_deref()
+            .and_then(DocumentId::parse)
     }
 
     /// Record which document this is, on one that does not say.
@@ -4292,15 +4297,17 @@ impl WorkspaceDoc {
     ///
     /// The first root in document order wins, which is the root every reader
     /// was already showing; each duplicate's children move to the end of the
-    /// winner, in order, and the emptied duplicate is deleted. **Nothing is
-    /// dropped**: the fold is moves plus a delete of a root whose only
-    /// remaining content is a title the winner carries too, because both were
-    /// seeded from the same manifest entry.
+    /// winner, in order. Each duplicate root becomes a paragraph before its
+    /// children. Its title, marks, attributes and identity remain available to
+    /// edits that a peer made before receiving the repair. Even an empty or
+    /// identical title is retained: local equality cannot rule out a later
+    /// incoming edit to that root. Recovery can therefore add a repeated title
+    /// or empty paragraph, but never deletes the node a peer is still editing.
     ///
     /// Convergence is the trash union's argument exactly (`ensure_trash_root`):
     /// the rule is a deterministic function of the merged state, so two
     /// replicas repairing the same pair issue the same moves and the same
-    /// delete, and ordinary ops converge like anything else. Returns whether
+    /// relabel, and ordinary ops converge like anything else. Returns whether
     /// anything was folded, so the caller can publish.
     pub fn unify_document_roots(&mut self) -> Result<bool> {
         let roots: Vec<NodeId> = self
@@ -4316,11 +4323,13 @@ impl WorkspaceDoc {
         }
         // A union made of ordinary ops, so it converges like anything else.
         for &dup in duplicates {
+            let end = self.children(Parent::Node(canonical))?.len();
+            self.move_node(dup, Parent::Node(canonical), end)?;
+            self.set_kind(dup, Kind::Paragraph)?;
             for child in self.children(Parent::Node(dup))? {
                 let end = self.children(Parent::Node(canonical))?.len();
                 self.move_node(child, Parent::Node(canonical), end)?;
             }
-            self.delete(dup)?;
         }
         Ok(true)
     }
@@ -5316,6 +5325,9 @@ mod attr_storage_tests {
         assert_eq!(reopened.export_snapshot().unwrap(), before);
     }
 }
+
+#[cfg(test)]
+mod stamped_identity_tests;
 
 #[cfg(test)]
 mod schema_marker_tests {

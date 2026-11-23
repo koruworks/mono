@@ -74,6 +74,11 @@ pub struct UpdateState {
     /// otherwise, because a manual check sends the same ETag.
     #[serde(default)]
     pub last_manifest: Option<crate::UpdateManifest>,
+    /// The UTC day ([`crate::site::utc_day`]) of the last check `www.koru.do`
+    /// answered with `first_today=1`. Only a day number: nothing that names
+    /// the install, and no time of day.
+    #[serde(default)]
+    pub site_counted_day: Option<u64>,
 }
 
 impl Default for UpdateState {
@@ -88,6 +93,7 @@ impl Default for UpdateState {
             cached_verified_package: None,
             etags: Vec::new(),
             last_manifest: None,
+            site_counted_day: None,
         }
     }
 }

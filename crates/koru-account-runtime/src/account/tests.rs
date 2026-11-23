@@ -510,11 +510,11 @@ impl AccountService for CommittedBeforeReturn {
 fn cancel_after_remote_commit_preserves_each_mutation_completion() {
     let commands = [
         AccountCommand::StartGoogle {
-            locale: "en-US".into(),
+            locale: "en-US".into(), ab: None
         },
         AccountCommand::CreateProfile {
             profile_id: "10000000-0000-4000-8000-000000000001".into(),
-            owner_display_name: "Seeded owner".into(),
+            owner_display_name: Some("Seeded owner".into()),
             name: "seeded".into(),
             locale: Some("en-US".into()),
         },
@@ -1223,7 +1223,7 @@ fn swapped_device_challenge_is_refused_before_signing_or_exchange() {
     );
     service.pending_exchange = Some(Pending {
         command: AccountCommand::StartGoogle {
-            locale: "en".into(),
+            locale: "en".into(), ab: None
         },
         request: NativeExchangeRequestV1 {
             version: Version1,
@@ -2047,7 +2047,7 @@ fn sign_in_with_apple_opens_apple_and_finishes_through_the_same_loopback_and_vau
         .enqueue(
             74,
             AccountCommand::StartApple {
-                locale: "en-US".into(),
+                locale: "en-US".into(), ab: None
             },
         )
         .unwrap();
@@ -2099,7 +2099,7 @@ fn composed_native_flow_uses_real_client_loopback_worker_and_vault() {
         .enqueue(
             73,
             AccountCommand::StartGoogle {
-                locale: "en-US".into(),
+                locale: "en-US".into(), ab: None
             },
         )
         .unwrap();
@@ -2160,7 +2160,7 @@ fn composed_collision_reuses_one_port_and_original_exchange_binding() {
         .enqueue(
             81,
             AccountCommand::StartGoogle {
-                locale: "en-US".into(),
+                locale: "en-US".into(), ab: None
             },
         )
         .unwrap();
@@ -2212,7 +2212,7 @@ fn composed_collision_account_mismatch_stops_after_stage_two() {
         .enqueue(
             82,
             AccountCommand::StartGoogle {
-                locale: "en-US".into(),
+                locale: "en-US".into(), ab: None
             },
         )
         .unwrap();
@@ -2253,7 +2253,7 @@ fn composed_loopback_wait_is_cancelled_out_of_band() {
         .enqueue(
             83,
             AccountCommand::StartGoogle {
-                locale: "en-US".into(),
+                locale: "en-US".into(), ab: None
             },
         )
         .unwrap();
@@ -2299,7 +2299,7 @@ fn exchange_ack_loss_retries_exact_request_without_a_second_browser_start() {
     );
     let cancel = Cancel(Arc::new(AtomicBool::new(false)));
     let command = AccountCommand::StartGoogle {
-        locale: "en-US".into(),
+        locale: "en-US".into(), ab: None
     };
     let mut browsers = 0;
     let first = service.execute(91, command.clone(), None, &cancel, &mut |progress| {
@@ -2383,7 +2383,7 @@ fn vault_ack_loss_retry_reuses_exchange_without_a_second_browser() {
         .enqueue(
             92,
             AccountCommand::StartGoogle {
-                locale: "en-US".into(),
+                locale: "en-US".into(), ab: None
             },
         )
         .unwrap();
@@ -3061,6 +3061,135 @@ fn reconciliation_resolves_only_profiles_bound_to_the_signed_in_identity() {
     );
 }
 
+/// The hosted requests a `CreateProfile` makes, in the order it makes them:
+/// an update of the account's display name (with the name it sent), and the
+/// creation of the hosted Profile.
+#[derive(Debug, PartialEq, Eq)]
+enum CreateRequest {
+    UpdateAccount(String),
+    CreateProfile,
+}
+
+/// **A recording transport for `CreateProfile`**, in the pattern of
+/// `ReconcileTransport`: it answers the two routes the command uses and
+/// writes down every request, so a test reads what was asked of Koru Cloud.
+#[derive(Default)]
+struct CreateProfileTransport {
+    requests: Mutex<Vec<CreateRequest>>,
+}
+
+impl Transport for CreateProfileTransport {
+    fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
+        let body = match (request.method, request.path_and_query.as_str()) {
+            (HttpMethod::Put, "/v1/account") => {
+                let update: UpdateAccountRequestV1 = serde_json::from_slice(&request.body)
+                    .map_err(|_| TransportError::InvalidRequest)?;
+                self.requests
+                    .lock()
+                    .unwrap()
+                    .push(CreateRequest::UpdateAccount(update.display_name.clone()));
+                serde_json::to_vec(&AccountSummaryV1 {
+                    version: Version1,
+                    koru_identity_id: "10000000-0000-4000-8000-000000000001".parse().unwrap(),
+                    display_name: update.display_name,
+                    auth_identities: Vec::new(),
+                    terms_version_at_creation: "test".into(),
+                    created_at_millis: 1,
+                })
+                .unwrap()
+            }
+            (HttpMethod::Post, "/v1/account/profiles") => {
+                let create: CreateProfileRequestV1 = serde_json::from_slice(&request.body)
+                    .map_err(|_| TransportError::InvalidRequest)?;
+                self.requests
+                    .lock()
+                    .unwrap()
+                    .push(CreateRequest::CreateProfile);
+                serde_json::to_vec(&ProfileSummaryV1 {
+                    version: Version1,
+                    koru_identity_id: "10000000-0000-4000-8000-000000000001".parse().unwrap(),
+                    profile_id: create.profile_id,
+                    name_snapshot: Some(create.name_snapshot),
+                    locale_snapshot: create.locale_snapshot,
+                    auth_identities: Vec::new(),
+                    lifecycle_revision: koru_account_core::ProfileLifecycleRevision::INITIAL,
+                })
+                .unwrap()
+            }
+            _ => return Err(TransportError::InvalidRequest),
+        };
+        Ok(HttpResponse { status: 200, body })
+    }
+}
+
+fn create_profile(owner_display_name: Option<&str>) -> AccountCommand {
+    AccountCommand::CreateProfile {
+        profile_id: "40000000-0000-4000-8000-000000000041".into(),
+        owner_display_name: owner_display_name.map(str::to_owned),
+        name: "Work".into(),
+        locale: Some("en-US".into()),
+    }
+}
+
+/// **Manage → New profile never renames the account** (welcome Q-G): with no
+/// owner name, the Agent creates the hosted Profile and asks nothing else.
+#[test]
+fn create_profile_without_an_owner_name_does_not_update_the_account() {
+    let transport = Arc::new(CreateProfileTransport::default());
+    let mut service = deletion_service(transport.clone());
+    let outcome = service
+        .execute(
+            1,
+            create_profile(None),
+            None,
+            &Cancel(Arc::new(AtomicBool::new(false))),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert!(matches!(
+        outcome.result,
+        AccountOperationResult::Profile { .. }
+    ));
+    assert_eq!(
+        *transport.requests.lock().unwrap(),
+        vec![CreateRequest::CreateProfile]
+    );
+}
+
+/// First run's one name still names the account, and before the Profile is
+/// created — what the connected first run has always done (D3).
+#[test]
+fn create_profile_with_an_owner_name_updates_the_account_first() {
+    let transport = Arc::new(CreateProfileTransport::default());
+    let mut service = deletion_service(transport.clone());
+    service
+        .execute(
+            1,
+            create_profile(Some("Ada")),
+            None,
+            &Cancel(Arc::new(AtomicBool::new(false))),
+            &mut |_| {},
+        )
+        .unwrap();
+    assert_eq!(
+        *transport.requests.lock().unwrap(),
+        vec![
+            CreateRequest::UpdateAccount("Ada".into()),
+            CreateRequest::CreateProfile
+        ]
+    );
+}
+
+/// Absent is not blank: no owner name is a valid command, and a present one
+/// is still held to the name rules.
+#[test]
+fn an_absent_owner_name_is_valid_and_a_blank_one_is_not() {
+    assert!(validate_command(&create_profile(None)).is_ok());
+    assert!(validate_command(&create_profile(Some("Ada"))).is_ok());
+    let blank = validate_command(&create_profile(Some("  "))).unwrap_err();
+    assert_eq!(blank.code, "invalid_profile_name");
+}
+
 impl DeleteReplayTransport {
     fn new(fail_first: bool, cancel_after_commit: Option<Arc<AtomicBool>>) -> Self {
         Self {
@@ -3295,7 +3424,7 @@ fn fresh_google_sign_in_replaces_existing_session_before_removal_retry() {
         .execute(
             91,
             AccountCommand::StartGoogle {
-                locale: "en-US".into(),
+                locale: "en-US".into(), ab: None
             },
             Some(&restored),
             &Cancel(Arc::new(AtomicBool::new(false))),

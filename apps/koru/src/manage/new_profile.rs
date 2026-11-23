@@ -3,9 +3,10 @@
 //! The New profile page: a Settings page head, and the embedded create form
 //! under it.
 //!
-//! **Today's form, unchanged** (maintainers' decision 17). It is the onboarding form
-//! the first-run window shows; there it takes the whole window, here it
-//! takes the page area under the page's title and lead. The form lays out at
+//! **The first-run setup card** (maintainers' decision 17; welcome step 1).
+//! It is the card the first-run window shows; there it sits beside the
+//! welcome sidebar, here it takes the page area under the page's title and
+//! lead, with its first label reading *Profile*. The form lays out at
 //! its own origin, so the one thing this page adds is the offset: input is
 //! shifted into the form's space and drawing is translated out of it, each in
 //! exactly one place ([`ManageView::form_rect`]).
@@ -24,7 +25,7 @@ use koru_ui::button;
 pub(super) const TITLE: &str = "New profile";
 const LEAD: &str = "Start a profile on this computer, or bring one in from your Koru account.";
 /// The lead without the account half, in a build that hides Koru Cloud
-/// (koru-features): the embedded form then starts on the local Profile step.
+/// (koru-features): the embedded form then starts on the setup card.
 const LEAD_LOCAL: &str = "Start a profile on this computer.";
 /// Between the title and the X at its right end.
 const CLOSE_GAP: f32 = 12.0;
@@ -153,7 +154,7 @@ impl ManageView {
                 r.property(
                     "form",
                     "koru_workspace_host::onboarding::OnboardingView",
-                    "embedded, unchanged",
+                    "embedded setup card",
                 );
             },
         );

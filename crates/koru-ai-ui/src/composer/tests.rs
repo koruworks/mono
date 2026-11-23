@@ -6,6 +6,163 @@ use super::*;
 use koru_ai_core::DocumentId;
 use winit::keyboard::NamedKey;
 
+static CARET_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn the_empty_composer_placeholder_cannot_paint_over_the_document_caret() {
+    use koru_draw::inspect;
+    let _lock = CARET_TEST_LOCK.lock().unwrap();
+
+    let mut composer = ChatComposer::new(None);
+    let text = Rect::new(20.0, 80.0, 400.0, 60.0);
+    composer.text_height(text.w - 2.0 * PAD_X, 1, 8);
+    composer.place(text, Rect::new(0.0, 0.0, 500.0, 500.0));
+    composer.set_focused(true);
+    let capture = inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        koru_draw::scene::rect(0.0, 0.0, 500.0, 500.0),
+    );
+    composer.draw(
+        &mut Scene::new(),
+        Affine::IDENTITY,
+        true,
+        (-1.0, -1.0),
+        "Continue the conversation...",
+    );
+    let records = capture.finish().records;
+    let color = inspect::color(theme::caret_color().color());
+    let caret = records
+        .iter()
+        .find(|record| {
+            record.name == "fill"
+                && (record.rect().width() - f64::from(theme::caret_w())).abs() < 0.01
+                && record
+                    .properties
+                    .iter()
+                    .any(|p| p.name == "color" && p.value == color)
+        })
+        .expect("the composer draws the shared document caret");
+    let placeholder = records
+        .iter()
+        .find(|record| record.name == "text line" && record.rect().width() > 20.0)
+        .expect("the empty composer draws its placeholder");
+    assert!(
+        caret.visible().area() > 0.0,
+        "the caret is not clipped away"
+    );
+    assert!(
+        caret.z > placeholder.z,
+        "the placeholder must sit behind the caret, not recolor or cover it"
+    );
+}
+
+#[test]
+fn typed_chat_surface_uses_live_document_caret_preferences() {
+    use koru_draw::inspect;
+    let _lock = CARET_TEST_LOCK.lock().unwrap();
+    struct Restore(theme::CaretColor, theme::CaretWidth, theme::CaretHeight);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            theme::set_caret_color(self.0);
+            theme::set_caret_width(self.1);
+            theme::set_caret_height(self.2);
+        }
+    }
+    let _restore = Restore(
+        theme::caret_color(),
+        theme::caret_width(),
+        theme::caret_height(),
+    );
+    let mut surface = crate::ChatSurface::new();
+    let (reader, _commands, _updates) = crate::reader::Reader::test_pair();
+    surface.reader = Some(reader);
+    surface.setup_open = false;
+    surface.validated_ready = true;
+    surface.focus = crate::Focus::Composer;
+    typed(&mut surface.composer, "asdfasdasdf asdfs");
+    surface.set_viewport(Rect::new(0.0, 0.0, 900.0, 600.0));
+    let mut heights = Vec::new();
+    for (color, width, height) in [
+        (
+            theme::CaretColor::Blue,
+            theme::CaretWidth::Thin,
+            theme::CaretHeight::Short,
+        ),
+        (
+            theme::CaretColor::Violet,
+            theme::CaretWidth::Thick,
+            theme::CaretHeight::Tall,
+        ),
+    ] {
+        theme::set_caret_color(color);
+        theme::set_caret_width(width);
+        theme::set_caret_height(height);
+        let capture = inspect::Frame::begin(
+            1,
+            Affine::IDENTITY,
+            koru_draw::scene::rect(0.0, 0.0, 900.0, 600.0),
+        );
+        surface.draw_with_caret_phase(&mut Scene::new(), Affine::IDENTITY, true);
+        let records = capture.finish().records;
+        let composer_text = records
+            .iter()
+            .position(|r| r.name == "ComposerText")
+            .expect("the real chat composer shell is painted");
+        let inside_composer = |record: &inspect::Record| {
+            let mut parent = record.parent;
+            while let Some(index) = parent {
+                if index == composer_text {
+                    return true;
+                }
+                parent = records[index].parent;
+            }
+            false
+        };
+        let expected_color = inspect::color(color.color());
+        let caret = records
+            .iter()
+            .find(|record| {
+                record.name == "fill"
+                    && inside_composer(record)
+                    && (record.rect().width() - f64::from(width.px())).abs() < 0.01
+                    && record
+                        .properties
+                        .iter()
+                        .any(|p| p.name == "color" && p.value == expected_color)
+            })
+            .expect("typed composer paints the current document caret color and width");
+        assert_eq!(caret.visible(), caret.rect(), "the full caret is visible");
+        heights.push(caret.rect().height());
+        let capture = inspect::Frame::begin(
+            2,
+            Affine::IDENTITY,
+            koru_draw::scene::rect(0.0, 0.0, 900.0, 600.0),
+        );
+        surface.draw_with_caret_phase(&mut Scene::new(), Affine::IDENTITY, false);
+        assert!(
+            !capture.finish().records.iter().any(|record| {
+                record.name == "fill"
+                    && record.bounds == caret.bounds
+                    && record
+                        .properties
+                        .iter()
+                        .any(|p| p.name == "color" && p.value == expected_color)
+            }),
+            "the host clock's off phase hides the caret"
+        );
+        assert!(
+            surface.composer.editor.view.active,
+            "blink does not remove input focus"
+        );
+        assert_eq!(surface.composer.message().markdown, "asdfasdasdf asdfs");
+    }
+    assert!(
+        heights[1] > heights[0],
+        "the existing composer follows live caret height changes"
+    );
+}
+
 fn typed(composer: &mut ChatComposer, text: &str) {
     for ch in text.chars() {
         let s = ch.to_string();

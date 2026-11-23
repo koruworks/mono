@@ -644,6 +644,7 @@ pub(super) fn start(
                             envelope.command,
                             AccountCommand::StartGoogle { .. }
                                 | AccountCommand::StartApple { .. }
+                                | AccountCommand::StartEmailBrowser { .. }
                                 | AccountCommand::ContinueWithEmail { .. }
                         ) {
                             if let Some(h) = held.get(&scope).filter(|h| h.record.is_none()) {
@@ -726,6 +727,7 @@ pub(super) fn start(
                                     if !resume {
                                         envelope.command = AccountCommand::StartGoogle {
                                             locale: locale.clone(),
+                                            ab: None,
                                         };
                                         h.queue.push_back(envelope);
                                     } else {

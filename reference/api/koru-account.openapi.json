@@ -1085,11 +1085,6 @@
                           ]
                         }
                       }
-                    },
-                    "mcp_allowed": {
-                      "enum": [
-                        false
-                      ]
                     }
                   }
                 }
@@ -3987,6 +3982,11 @@
               "grant": {
                 "$ref": "#/components/schemas/OneUseGrant"
               },
+              "native_redirect": {
+                "description": "Where a native client's loopback or App Link listener is waiting,\nwhen the flow was started via [`RouteId::EmailBrowserStart`].",
+                "nullable": true,
+                "type": "string"
+              },
               "outcome": {
                 "enum": [
                   "completed"
@@ -4233,6 +4233,11 @@
               },
               "grant": {
                 "$ref": "#/components/schemas/OneUseGrant"
+              },
+              "native_redirect": {
+                "description": "Where a native client's loopback or App Link listener is waiting,\nwhen the flow was started via [`RouteId::EmailBrowserStart`].",
+                "nullable": true,
+                "type": "string"
               },
               "outcome": {
                 "enum": [
@@ -4969,6 +4974,11 @@
           "app_version": {
             "type": "string"
           },
+          "billing": {
+            "description": "Optional onboarding A/B preselected billing code (`\"monthly\"` | `\"yearly\"`).",
+            "nullable": true,
+            "type": "string"
+          },
           "callback_port": {
             "description": "Zero exactly when `app_link_return` is set.",
             "format": "uint16",
@@ -4979,6 +4989,11 @@
           "client_state": {
             "$ref": "#/components/schemas/OAuthState"
           },
+          "code": {
+            "description": "Optional onboarding A/B copy code (`\"sync\"` | `\"backup\"` | `\"founding\"`).",
+            "nullable": true,
+            "type": "string"
+          },
           "descriptor": {
             "$ref": "#/components/schemas/SignedDeviceDescriptorV1"
           },
@@ -4988,6 +5003,11 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
+          },
+          "header": {
+            "description": "Optional onboarding A/B header code (`\"speed\"` | `\"ownership\"` | `\"purpose\"`).",
+            "nullable": true,
+            "type": "string"
           },
           "locale": {
             "type": "string"
@@ -5154,8 +5174,16 @@
           "app_version": {
             "type": "string"
           },
+          "billing": {
+            "nullable": true,
+            "type": "string"
+          },
           "client_state": {
             "$ref": "#/components/schemas/OAuthState"
+          },
+          "code": {
+            "nullable": true,
+            "type": "string"
           },
           "descriptor": {
             "$ref": "#/components/schemas/SignedDeviceDescriptorV1"
@@ -5165,6 +5193,10 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
+          },
+          "header": {
+            "nullable": true,
+            "type": "string"
           },
           "locale": {
             "type": "string"
@@ -9998,6 +10030,55 @@
           }
         ],
         "summary": "Approve or deny a pending authorization request"
+      }
+    },
+    "/v1/oauth/email/browser/start": {
+      "post": {
+        "operationId": "account.email_browser_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoogleNativeStartRequestV1"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStartResponseV1"
+                }
+              }
+            },
+            "description": "Start email sign-in in the system browser for a native client"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeveloperErrorV1"
+                }
+              }
+            },
+            "description": "Account capability unavailable"
+          }
+        },
+        "security": [],
+        "summary": "Start email sign-in in the system browser for a native client"
       }
     },
     "/v1/oauth/email/complete": {

@@ -827,6 +827,7 @@ fn repair_signin_as_another_account_is_cleaned_up_before_touching_either_slot() 
     h.probe.signin_account.store(2, Ordering::Release);
     let generation = h.command(AccountCommand::StartGoogle {
         locale: "en".into(),
+        ab: None,
     });
     let (scope, result) = h.result(generation);
     assert_eq!(scope, original_scope);
@@ -856,6 +857,7 @@ fn cancel_or_logout_during_repair_inspection_keeps_the_captured_cleanup_owner() 
         h.probe.gate.arm(Boundary::Inspect);
         let signin = h.command(AccountCommand::StartGoogle {
             locale: "en".into(),
+            ab: None,
         });
         h.probe.gate.entered();
         let cleanup = h.command(if explicit_logout {
@@ -1180,6 +1182,7 @@ fn signing_in_again_after_a_rejected_slot_clears_the_repair_code() {
     h.probe.signin_account.store(1, Ordering::Release);
     let generation = h.command(AccountCommand::StartGoogle {
         locale: "en".into(),
+        ab: None,
     });
     let (_, result) = h.result(generation);
     assert!(

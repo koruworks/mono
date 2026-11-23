@@ -506,7 +506,7 @@ fn measure_row(
         KoruTextParagraph::new(title, title_style(), "", theme::p().text).measure(engine, text_w);
     let title_rect = Rect::new(text_x, top, text_w, title_h);
     let mut bottom = top + title_h;
-    let (runs, sentence_h) = flow(engine, &sentence, text_x, bottom + SENTENCE_GAP, text_w);
+    let (mut runs, sentence_h) = flow(engine, &sentence, text_x, bottom + SENTENCE_GAP, text_w);
     if sentence_h > 0.0 {
         bottom += SENTENCE_GAP + sentence_h;
     }
@@ -581,6 +581,28 @@ fn measure_row(
         code = Some((shown, Rect::new(text_x, y, field_w, line_h)));
         copy_button = Some(Rect::new(text_x + field_w + CODE_GAP, y, copy_w, line_h));
         bottom = y + line_h;
+    }
+    let extra = match id {
+        RowId::TerminalAgent => vec![(
+            "Customize your terminal".to_owned(),
+            Some(Target::TerminalSettings),
+        )],
+        RowId::Mcp => vec![
+            (
+                format!(
+                    "Subscribe to Koru Cloud for Cloud MCP and 100 GB of cloud storage. Endpoint: {}. ",
+                    super::CLOUD_MCP_URL
+                ),
+                None,
+            ),
+            ("Subscribe".to_owned(), Some(Target::SubscribeCloud)),
+        ],
+        _ => Vec::new(),
+    };
+    if !extra.is_empty() {
+        let (extra_runs, height) = flow(engine, &extra, text_x, bottom + HINTS_GAP, text_w);
+        runs.extend(extra_runs);
+        bottom += HINTS_GAP + height;
     }
     let mut hints = Vec::new();
     if id == RowId::Learn && learn_open {

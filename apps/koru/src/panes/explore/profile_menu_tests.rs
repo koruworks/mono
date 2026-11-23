@@ -24,7 +24,7 @@ fn profile_focus_follows_identity_and_falls_to_the_neighbor_then_manage() {
     let mut view = ExploreView::new();
     view.set_context(vec![a.clone(), b.clone(), c.clone()], a.id, vec![], None);
     view.toggle_profile_popover();
-    view.popover.as_mut().unwrap().hover = Some(2);
+    view.popover.as_mut().unwrap().hover = Some(1);
     view.popover_part = Some(PopoverPart::Gear);
     for profiles in [
         vec![a.clone(), b.clone(), c.clone()],
@@ -41,8 +41,11 @@ fn profile_focus_follows_identity_and_falls_to_the_neighbor_then_manage() {
     assert_eq!(view.keyboard_part(row), PopoverPart::Gear);
     view.set_context(vec![], a.id, vec![], None);
     let row = view.popover_rows()[view.live().unwrap().hover.unwrap()];
-    assert_eq!(row, PopoverRow::ProfilesHeading);
-    assert_eq!(view.keyboard_part(row), PopoverPart::Gear);
+    assert_eq!(
+        row,
+        PopoverRow::ProfileAction(popover_elements::profiles::MenuAction::New)
+    );
+    assert_eq!(view.keyboard_part(row), PopoverPart::Row);
 }
 
 #[test]
@@ -56,5 +59,41 @@ fn profile_switch_closes_and_preserves_the_target_identity() {
         view.press(PopoverRow::Profile(1), PopoverPart::Row),
         Outcome::SwitchProfile(b.id)
     );
+    assert!(!view.popover_open());
+}
+
+#[test]
+fn help_submenu_keyboard_returns_to_its_parent_before_dismissing() {
+    use winit::keyboard::{Key, NamedKey};
+    let mut view = ExploreView::new();
+    view.open_popover(PopoverKind::Profiles);
+    for back in [NamedKey::Escape, NamedKey::ArrowLeft] {
+        assert!(view.open_help_flyout());
+        assert_eq!(view.popover_key(&Key::Named(back)), Some(Outcome::Consumed));
+        assert!(view.popover_is(PopoverKind::Profiles));
+        assert!(view.hovering_profile_help());
+        assert_eq!(
+            view.popover_key(&Key::Named(NamedKey::ArrowRight)),
+            Some(Outcome::OpenHelp)
+        );
+    }
+    assert_eq!(
+        view.popover_key(&Key::Named(NamedKey::Escape)),
+        Some(Outcome::Consumed)
+    );
+    assert!(!view.popover_open());
+    assert!(view.help_parent.is_none());
+}
+
+#[test]
+fn leaving_help_submenu_restores_profiles_and_an_action_closes_both() {
+    let mut view = ExploreView::new();
+    view.open_popover(PopoverKind::Profiles);
+    assert!(view.open_help_flyout());
+    assert!(view.clear_hover());
+    assert!(view.popover_is(PopoverKind::Profiles));
+    assert!(view.open_help_flyout());
+    view.close_popover();
+    assert!(view.help_parent.is_none());
     assert!(!view.popover_open());
 }

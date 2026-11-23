@@ -59,6 +59,7 @@ fn subscribed() -> ProfilesController {
             request_id: id,
             current: Some(true),
             access: Some(true),
+            subscription_kind: None,
         }
     ));
     c
@@ -140,6 +141,7 @@ fn email_session_updates_settle_before_cloud_subscription_and_sync_reads() {
             request_id,
             current: Some(true),
             access: Some(true),
+            subscription_kind: None,
         },
     );
     assert_eq!(c.cloud_status(), Status::Manage);
@@ -208,11 +210,12 @@ fn complimentary_access_enables_sync_without_purchase_actions() {
             request_id,
             current: Some(false),
             access: Some(true),
+            subscription_kind: Some(koru_agent_wire::CloudSubscriptionKind::Complimentary),
         },
     );
     assert_eq!(c.cloud_status(), Status::Active);
     assert_eq!(c.cloud_access(), Some(true));
-    assert_eq!(c.cloud_body_text(Lang::En), "Subscribed");
+    assert_eq!(c.cloud_body_text(Lang::En), "Complimentary");
     assert!(!c.cloud_actionable());
     assert!(!c.cloud_learn_more_visible());
     assert!(matches!(
@@ -224,7 +227,7 @@ fn complimentary_access_enables_sync_without_purchase_actions() {
     answer_sync(&mut c, vec![row(&work, true, 1, 1)]);
     assert_eq!(
         c.cloud_body_text(Lang::En),
-        "Subscribed · syncing 1 of 1 profiles"
+        "Complimentary · syncing 1 of 1 profiles"
     );
 }
 
@@ -240,6 +243,7 @@ fn an_inactive_purchase_keeps_billing_management_but_not_sync_access() {
             request_id,
             current: Some(true),
             access: Some(false),
+            subscription_kind: Some(koru_agent_wire::CloudSubscriptionKind::PastDue),
         },
     );
     assert_eq!(c.cloud_access(), Some(false));
@@ -283,6 +287,7 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
             request_id: id,
             current: None,
             access: None,
+            subscription_kind: None,
         }
     ));
     assert_eq!(c.notice.as_deref(), Some("unrelated profile work"));
@@ -308,6 +313,7 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
             request_id: id,
             current: Some(false),
             access: Some(false),
+            subscription_kind: None,
         }
     ));
     assert!(c.complete_scoped(
@@ -317,9 +323,11 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
             request_id: new_id,
             current: Some(true),
             access: Some(true),
+            subscription_kind: Some(koru_agent_wire::CloudSubscriptionKind::Trialing),
         }
     ));
     assert!(c.cloud.status == Status::Manage);
+    assert_eq!(c.cloud_subscription_label(), "Trial");
     c.cloud_activate();
     assert!(c.take_cloud_uri().unwrap().ends_with("/dashboard"));
     c.refresh_cloud();
@@ -336,6 +344,7 @@ fn targeted_results_before_admission_do_not_touch_profile_forms_and_late_replies
             request_id: late,
             current: Some(true),
             access: Some(true),
+            subscription_kind: None,
         }
     ));
     assert!(c.cloud.status == Status::Unknown);
@@ -357,6 +366,7 @@ fn switching_accounts_keeps_targeted_status_off_the_selected_profile_and_new_acc
             request_id: id,
             current: Some(true),
             access: Some(true),
+            subscription_kind: None,
         }
     ));
     assert_eq!(c.account.active_scope, 2);
@@ -478,4 +488,44 @@ fn turning_the_switch_on_or_off_asks_nothing() {
         c.take_cloud_request(),
         Some(AccountCommand::SetProfileCloudSync { enabled: true, .. })
     ));
+}
+
+/// M3: an account with no Koru Cloud yet can still turn the switch on, which
+/// is how it asks for its Koru Free place. A full Koru Free is said in words
+/// on the row, with the switch left as the person set it.
+#[test]
+fn an_account_without_koru_cloud_can_ask_for_free_and_reads_a_full_refusal() {
+    let mut c = signed_in();
+    let work = profile("Work", Some(ACCOUNT));
+    c.profiles = vec![work.clone()];
+    let (request_id, submission) = start(&mut c);
+    assert!(c.account_command_admitted(CommandAdmission {
+        submission,
+        owner_scope: 1,
+        generation: 0
+    }));
+    assert!(c.complete_scoped(
+        1,
+        0,
+        AccountOperationResult::CloudSubscription {
+            request_id,
+            current: Some(false),
+            access: Some(false),
+            subscription_kind: None,
+        }
+    ));
+    assert_eq!(c.cloud_access(), Some(false));
+    assert_eq!(c.cloud_sync_availability(&work), SyncAvailability::Enabled);
+
+    let mut refused = row(&work, true, 0, 1);
+    refused.error = Some("cloud_free_capacity_full".into());
+    answer_sync(&mut c, vec![refused]);
+    assert!(c.cloud_sync_on(work.id));
+    assert_eq!(
+        subtitle(&c, 0).as_deref(),
+        Some(koru_i18n::t(
+            crate::format::lang(),
+            TextKey::CloudSyncFreeFull
+        ))
+    );
 }

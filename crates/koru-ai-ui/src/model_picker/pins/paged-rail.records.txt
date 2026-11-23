@@ -10,7 +10,6 @@ records 93 truncated false
     fill = "#FFFFFF / alpha 1.000" (scene::Panel::fill)
     elevation = "Raised" (scene::Panel::elevation)
     radius = "10" (scene::Panel::radius)
-    shadow opacity = "1" (scene::Panel::shadow_alpha)
 2 ^1 part "Shadow" b[424.00 29.00 824.00 384.00] c[0.00 0.00 900.00 700.00] z2
     rings = "16" (one soft shadow drawn as expanding fills; vello has no blur)
     spread / dy = "20 / 3" (SHADOW_SPREAD / SHADOW_DY)
@@ -426,19 +425,19 @@ records 93 truncated false
     docs = "docs/features/koruui/COMPONENTS.md" (catalog)
 43 ^42 primitive "fill" b[496.00 54.00 770.00 86.00] c[0.00 0.00 900.00 700.00] z43
     color = "#EAEAEA / alpha 1.000" (resolved paint; token origin not exposed)
-44 ^42 part "text line" b[503.00 62.14 506.47 77.86] c[0.00 0.00 900.00 700.00] z44
-    line height = "15.729492" (actual Parley line box)
+44 ^42 part "text line" b[508.00 61.00 511.47 79.00] c[0.00 0.00 900.00 700.00] z44
+    line height = "18" (actual Parley line box)
     baseline = "74.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-45 ^42 part "text line" b[503.00 63.00 607.29 81.00] c[0.00 0.00 900.00 700.00] z45
+45 ^42 part "text line" b[508.00 61.00 612.29 79.00] c[0.00 0.00 900.00 700.00] z45
     line height = "18" (actual Parley line box)
-    baseline = "76.729004" (local layout coordinates)
+    baseline = "74.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-46 ^45 primitive "text run" b[503.00 64.14 607.29 79.86] c[0.00 0.00 900.00 700.00] z46
+46 ^45 primitive "text run" b[508.00 62.14 612.29 77.86] c[0.00 0.00 900.00 700.00] z46
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "76.729004" (local layout coordinates)
+    baseline = "74.729004" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#ABABAB / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)

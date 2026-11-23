@@ -216,6 +216,7 @@ fn pin_state(pins: &mut Pins, name: &str, mut surface: ChatSurface, golden: [&st
 /// list draws is built in `koru-agent-config-ui`.
 #[test]
 fn the_lists_elements_are_built_by_the_control() {
+    let _font = crate::pins::bundled_font();
     use koru_draw::inspect;
     let mut surface = open();
     let capture = inspect::Frame::begin(
@@ -255,6 +256,7 @@ macro_rules! golden {
 /// **What each state draws, declares and hits**, as it did before the move.
 #[test]
 fn every_state_draws_declares_and_hits_as_before() {
+    let _font = crate::pins::bundled_font();
     let mut pins = Pins::default();
     pin_state(&mut pins, "open", open(), golden!("open"));
     pin_state(
@@ -419,6 +421,7 @@ fn press_session(out: &mut String, mut surface: ChatSurface, commands: &Receiver
 /// one, and a made one with a reply running.
 #[test]
 fn every_key_and_press_does_what_it_did() {
+    let _font = crate::pins::bundled_font();
     let mut out = String::new();
     out.push_str("# keys, a chat not made yet\n");
     let (surface, commands) = base();

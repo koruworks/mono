@@ -55,6 +55,8 @@ fn billing_outage_is_targeted_and_preserves_account_and_credentials() {
                 request_id: 42,
                 current: available.then_some(true),
                 access: available.then_some(true),
+                subscription_kind: available
+                    .then_some(koru_agent_wire::CloudSubscriptionKind::PastDue),
             }
         );
         assert_eq!(service.access.as_ref().unwrap().0, "memory-only");
@@ -77,6 +79,7 @@ fn worker_failures_retain_cloud_request_identity_before_admission() {
                 request_id: 91,
                 current: None,
                 access: None,
+                subscription_kind: None,
             }
         );
         assert!(matches!(

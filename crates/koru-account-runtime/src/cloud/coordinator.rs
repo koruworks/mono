@@ -22,7 +22,31 @@
 //! type, not two paths side by side.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// **How old the last account check may be before a heartbeat makes another.**
+///
+/// A check reads the account's whole root catalog and its discovery listing
+/// from the service. It used to run on every 30-second heartbeat, which is
+/// two paged reads of the whole account per device, all day, for an answer
+/// that is almost always *nothing changed*. What changes the account from
+/// this device asks for a check at once ([`super::Control::wake`]); what
+/// changes it from another device is seen within this long. The heartbeat
+/// still renews credentials and keeps live sessions current in between —
+/// that needs no catalog read.
+pub(super) const ACCOUNT_CHECK_EVERY: Duration = Duration::from_secs(5 * 60);
+
+/// What the last account check came to, replayed by a heartbeat pass that
+/// does not check: the same candidates, the same counts and the same
+/// refused-unit rows, as if the service had answered exactly as it did.
+#[derive(Clone)]
+pub(super) struct LastCheck {
+    at: Instant,
+    candidates: VecDeque<Candidate>,
+    counts: BTreeMap<Option<ProfileId>, DiscoveryCounts>,
+    exhausted: bool,
+    deferred: Vec<Deferred>,
+}
 
 use koru_account_core::root_catalog::{
     ClientContentPolicy, HostedContentFacts, MembershipFact, SubjectLifecycle,
@@ -196,6 +220,9 @@ pub(super) struct Coordinator<A: Api, H: Host> {
     /// every other unit. A replaced generation clears it, because a new
     /// authorization is a new question; a newer build clears it by existing.
     pub(super) refused_units: BTreeMap<CloudUnitRefV2, &'static str>,
+    /// The placement refusals the host remembers across restarts, for the
+    /// account they were answered for; loaded on first use.
+    pub(super) remembered: Option<(KoruIdentityId, super::RememberedRefusals)>,
     /// Profiles this device has asked the service to select it for, under
     /// this authorization: once each, whatever the answer. See
     /// [`Self::select_held_profile`].
@@ -224,6 +251,10 @@ pub(super) struct Coordinator<A: Api, H: Host> {
     /// Counts by current placement; `None` is the unassigned group.
     discovery_counts: BTreeMap<Option<ProfileId>, DiscoveryCounts>,
     discovery_exhausted: bool,
+    /// Whether the next pass must check the account rather than replay the
+    /// last check: something asked, or the last one did not finish cleanly.
+    account_check_due: bool,
+    last_check: Option<LastCheck>,
     pub(super) receipt: ReceiptFacts,
     pub(super) carried: VecDeque<Candidate>,
     /// The verification material, bound to the generation it was read under.
@@ -261,6 +292,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             service_units: BTreeMap::new(),
             local_units: BTreeMap::new(),
             refused_units: BTreeMap::new(),
+            remembered: None,
             selected: BTreeSet::new(),
             refused_profiles: BTreeMap::new(),
             pass_at: None,
@@ -272,6 +304,8 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             discovery: None,
             discovery_counts: BTreeMap::new(),
             discovery_exhausted: false,
+            account_check_due: true,
+            last_check: None,
             receipt: ReceiptFacts::default(),
             carried: VecDeque::new(),
             jwks: None,
@@ -328,7 +362,11 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         match command {
             Command::Activate(authority, owner_scope) => self.activate(authority, owner_scope),
             Command::Refresh(previous, next) => self.refresh(previous, next),
-            Command::Wake => self.schedule_change(clock),
+            Command::Wake => {
+                self.account_check_due = true;
+                self.schedule_change(clock);
+            }
+            Command::Tick => self.schedule_change(clock),
             Command::Cancel => {
                 self.cancel.clear();
                 self.clear_authority();
@@ -395,6 +433,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
     /// being dropped here; the host's permits by the explicit fence.
     fn replace_generation(&mut self) {
         let stale: Vec<Uuid> = self.live.iter().map(|permit| permit.permit_id).collect();
+        // A new authorization is a new question: nothing of the last check
+        // is replayed under it.
+        self.account_check_due = true;
+        self.last_check = None;
         self.live.clear();
         self.admissions.clear();
         self.profile_units.clear();
@@ -583,7 +625,28 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         self.publish_progress();
         let mut failure: Option<Failure> = None;
 
-        if self.carried.is_empty() {
+        // **Replay the last check rather than repeat it**, when nothing asked
+        // for one and it is recent: the same candidates, counts and refused
+        // units, and the rest of the pass — admissions renewed as they near
+        // expiry, the context pushed — runs exactly as after a check.
+        let replay = self
+            .last_check
+            .as_ref()
+            .filter(|last| {
+                self.carried.is_empty()
+                    && !self.account_check_due
+                    && now.saturating_duration_since(last.at) < ACCOUNT_CHECK_EVERY
+            })
+            .cloned();
+        if let Some(last) = replay {
+            self.carried = last.candidates;
+            self.discovery_counts = last.counts;
+            self.discovery_exhausted = last.exhausted;
+            self.deferred = last.deferred;
+        } else if self.carried.is_empty() {
+            // Until this check finishes cleanly, the next pass checks too.
+            self.account_check_due = true;
+            let mut checked = true;
             // 1. The account's one catalog binding, once per generation; it
             //    also says which contract the service speaks. A refusal of
             //    the binding is terminal: nothing of this account is
@@ -606,6 +669,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                     self.settle(clock, Some(error));
                     return;
                 }
+                checked = false;
                 failure = Some(merge(failure, error));
             }
             // 3. Discovery, grouped by current placement.
@@ -617,6 +681,19 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 self.stage = stage_for(&error);
                 self.settle(clock, Some(merge(failure, error)));
                 return;
+            }
+            // Kept only when the whole account was read: a partial listing
+            // replayed for five minutes would be five minutes of missing
+            // Workspaces.
+            if checked && self.discovery_exhausted {
+                self.account_check_due = false;
+                self.last_check = Some(LastCheck {
+                    at: now,
+                    candidates: self.carried.clone(),
+                    counts: self.discovery_counts.clone(),
+                    exhausted: self.discovery_exhausted,
+                    deferred: self.deferred.clone(),
+                });
             }
         }
         if let Err(error) = self.refresh_verification() {
@@ -857,6 +934,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             Ok(()) => {
                 self.selected.insert(profile);
                 self.selected_this_pass = true;
+                // The service now issues for this Profile's Workspaces: what
+                // the account lists for this device has changed.
+                self.account_check_due = true;
             }
             // Refused outright: this sign-in may not reach the Profile, and
             // will not until the authorization changes. Anything else — the
@@ -895,6 +975,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 })
             });
         }
+        self.drop_trashed_here(&mut candidates);
         // Round robin by current placement before taking a bounded cohort:
         // a large Profile cannot occupy all sixteen slots ahead of every
         // other Profile, and the unassigned group is one group among them.
@@ -914,6 +995,56 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
         }
         Ok(())
+    }
+
+    /// **A Workspace in the Trash here is admitted for nothing.** The Store
+    /// is told every Workspace the account lists live under a Profile on
+    /// this device and answers the ones it has in its Trash; those leave the
+    /// pass before a token is asked for them. It is also how the Store
+    /// learns of a Workspace it holds trashed while the account holds it
+    /// live — the one fact the recovery surfaces show (trash-recovery
+    /// PLAN.final P2). Asked on every pass, an empty list included, because
+    /// the Store replaces what it knew from the answer. A Store that cannot
+    /// say drops nothing: the pass goes on as it always did.
+    ///
+    /// **Only against a v2 service.** The fact is about the account's
+    /// catalog, and the v1 window has none: its pair listing carries no
+    /// lifecycle to call live, and that path is kept exactly as it was.
+    fn drop_trashed_here(&self, candidates: &mut VecDeque<Candidate>) {
+        if self.contract != Some(CloudContract::V2) {
+            return;
+        }
+        let Ok(account) = self
+            .current_authority()
+            .map(|authority| authority.owner.account)
+        else {
+            return;
+        };
+        let listed: Vec<(WorkspaceId, ProfileId)> = candidates
+            .iter()
+            .filter(|candidate| candidate.lifecycle == SubjectLifecycle::Live)
+            .filter_map(|candidate| {
+                candidate
+                    .placement
+                    .map(|profile| (candidate.workspace_id, profile))
+            })
+            .collect();
+        match self.host.reconcile_account_live(account, &listed) {
+            Ok(trashed) if trashed.is_empty() => {}
+            Ok(trashed) => {
+                candidates.retain(|candidate| !trashed.contains(&candidate.workspace_id));
+                tracing::info!(
+                    target: "koru_cloud",
+                    trashed = trashed.len(),
+                    "cloud pass: workspaces in the Trash on this device are not admitted"
+                );
+            }
+            Err(error) => tracing::info!(
+                target: "koru_cloud",
+                code = error.code(),
+                "cloud pass: the Store did not say what is in its Trash; nothing dropped"
+            ),
+        }
     }
 
     /// `GET /v1/account/cloud/discovery?scope=workspaces`, paged: results
@@ -972,6 +1103,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
         }
         if self.discovery_exhausted {
+            self.note_account_profiles(account, &facts.lifecycles);
             self.receipt = facts;
         }
         Ok(candidates)
@@ -1063,6 +1195,19 @@ impl<A: Api, H: Host> Coordinator<A, H> {
     pub(super) fn defer_unit(&mut self, unit: CloudUnitRefV2, error: &Failure) {
         let code = error.code();
         self.refused_units.insert(unit, code);
+        tracing::info!(
+            target: "koru_cloud",
+            unit = ?unit,
+            code,
+            "cloud pass: the service refused this unit for good"
+        );
+        self.record_deferred(unit, error);
+    }
+
+    /// The diagnostics row of a unit refused for good, by id: what
+    /// [`Self::defer_unit`] records, without asserting it was heard now.
+    pub(super) fn record_deferred(&mut self, unit: CloudUnitRefV2, error: &Failure) {
+        let code = error.code();
         let placement = match (error, unit) {
             (Failure::UnitFormatTooNew, CloudUnitRefV2::ProfileCatalog { subject_id }) => {
                 Some(subject_id)
@@ -1084,12 +1229,6 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 .deferred_code
                 .get_or_insert(code);
         }
-        tracing::info!(
-            target: "koru_cloud",
-            unit = ?unit,
-            code,
-            "cloud pass: the service refused this unit for good"
-        );
         self.deferred.push(Deferred {
             profile_id: placement,
             workspace_id: match unit {
@@ -1100,6 +1239,68 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             code,
             unit: Some(unit),
         });
+    }
+
+    /// The remembered placement refusals for `account`, loaded once.
+    pub(super) fn remembered_for(
+        &mut self,
+        account: KoruIdentityId,
+    ) -> &mut super::RememberedRefusals {
+        if self
+            .remembered
+            .as_ref()
+            .is_none_or(|(held, _)| *held != account)
+        {
+            let loaded = self.host.remembered_refusals(account).unwrap_or_default();
+            self.remembered = Some((account, loaded));
+        }
+        &mut self.remembered.as_mut().expect("loaded above").1
+    }
+
+    /// A complete discovery's Profiles. The first list is kept with the
+    /// remembered refusals; a different one forgets them, because a refusal
+    /// for a Profile the account did not hold may not be one now — and the
+    /// next pass asks again.
+    fn note_account_profiles(
+        &mut self,
+        account: KoruIdentityId,
+        lifecycles: &BTreeMap<ProfileId, SubjectLifecycle>,
+    ) {
+        let now: Vec<_> = lifecycles.iter().map(|(id, life)| (*id, *life)).collect();
+        let remembered = self.remembered_for(account);
+        let changed = match &remembered.profiles {
+            Some(before) if *before == now => return,
+            Some(_) => !remembered.units.is_empty(),
+            None => false,
+        };
+        let forgotten: Vec<CloudUnitRefV2> = if changed {
+            remembered.units.drain(..).map(|(unit, _)| unit).collect()
+        } else {
+            Vec::new()
+        };
+        remembered.profiles = Some(now);
+        // Written only when there is a refusal to keep or one to forget: a
+        // device that has been refused nothing keeps nothing, and touches no
+        // file on any start.
+        if remembered.units.is_empty() && forgotten.is_empty() {
+            return;
+        }
+        let remembered = remembered.clone();
+        self.host.remember_refusals(account, &remembered);
+        if !forgotten.is_empty() {
+            tracing::info!(
+                target: "koru_cloud",
+                forgotten = forgotten.len(),
+                "cloud pass: the account's Profiles changed; refused units will be asked again"
+            );
+            // Skipped this pass on the strength of what was kept: they are a
+            // new question now, in this process too.
+            for unit in &forgotten {
+                self.refused_units.remove(unit);
+            }
+            self.deferred
+                .retain(|row| row.unit.is_none_or(|unit| !forgotten.contains(&unit)));
+        }
     }
 
     fn settle(&mut self, clock: &dyn Clock, failure: Option<Failure>) {
@@ -1126,6 +1327,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 self.retry_at = None;
             }
             Some(error) => {
+                self.account_check_due = true;
                 let delay = match &error {
                     Failure::RateLimited(after) => backoff(self.failures).max(*after),
                     _ => backoff(self.failures),

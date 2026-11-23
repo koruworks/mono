@@ -51,7 +51,10 @@ use koru_store_core::service::JoinUnit;
 /// where it says what it is.
 /// 9 adds bounded detached Cloud inspection Start/Poll/Cancel. It changes
 /// only this machine's control contract, never a Cloud or peer protocol.
-pub const CONTROL_PROTOCOL_VERSION: u32 = 9;
+/// 10 adds `ReconcileCloudAccountLive` (trash-recovery PLAN.final P2): a
+/// request of its own, because what it carries is new and a stale gateway
+/// should refuse the pair at the greeting rather than one request later.
+pub const CONTROL_PROTOCOL_VERSION: u32 = 10;
 pub const CONTROL_FRAME_VERSION: u8 = 1;
 pub mod cloud;
 pub mod inspection;
@@ -493,6 +496,20 @@ pub enum ControlRequest {
         account_id: CloudId,
         dataset: CloudReplicaPrincipalV1,
     },
+    /// `Store::reconcile_account_live`: every Workspace the account lists
+    /// **live** under a Profile on this device, sent once after a complete
+    /// discovery and before anything is admitted. The Store answers with
+    /// the ones that are in the Trash here, which the Agent then admits for
+    /// nothing, and records those whose deletion cannot leave this device
+    /// (trash-recovery PLAN.final P2). The whole list each time: the Store
+    /// replaces its set from it. At most
+    /// [`cloud::MAX_CLOUD_ROOT_INVENTORY`] entries, and for that reason not
+    /// one of the 64 KiB Cloud frames (see [`is_cloud_request`]).
+    ReconcileCloudAccountLive {
+        control_session_id: ControlSessionId,
+        account_id: CloudId,
+        workspaces: Vec<cloud::CloudAccountLiveWorkspace>,
+    },
     /// `Store::bind_account_scope` with the service's verified binding. A
     /// device bound to another account answers `catalog_binding_conflict`
     /// and nothing is written.
@@ -639,6 +656,11 @@ pub enum ControlResponse {
     CloudRootFrontier {
         control_session_id: ControlSessionId,
         frontier: Option<Vec<u8>>,
+    },
+    /// The listed Workspaces that are in the Trash on this device.
+    CloudAccountLiveTrashed {
+        control_session_id: ControlSessionId,
+        trashed: Vec<CloudId>,
     },
     CloudRootUnitExport {
         control_session_id: ControlSessionId,
@@ -1224,6 +1246,29 @@ impl ControlHost {
                     control_session_id: session_id,
                     manifest_document_id: None,
                     allows_cloud: None,
+                }
+            }
+            ControlRequest::ReconcileCloudAccountLive {
+                control_session_id,
+                account_id,
+                workspaces,
+            } => {
+                if control_session_id != session_id {
+                    return rejected(HostError::StaleSession);
+                }
+                if !account_id.is_v4()
+                    || workspaces.len() > cloud::MAX_CLOUD_ROOT_INVENTORY
+                    || workspaces
+                        .iter()
+                        .any(|listed| !listed.workspace_id.is_v4() || !listed.profile_id.is_v4())
+                {
+                    return rejected(HostError::InvalidCloudRequest);
+                }
+                // A placeholder, as the root requests below are: only the
+                // Store knows what is in its Trash.
+                ControlResponse::CloudAccountLiveTrashed {
+                    control_session_id: session_id,
+                    trashed: Vec::new(),
                 }
             }
             // The Store half of the account path (root-catalog Plan 3.2).
@@ -2071,7 +2116,11 @@ impl HostError {
 /// decoded request. The root-unit join (`JoinCloudRootUnit`) is deliberately
 /// not under it: its body is the frames the account API answered, bounded
 /// by that API's response cap and by the socket's own frame cap, and a
-/// personal unit's history is not a permit page.
+/// personal unit's history is not a permit page. `ReconcileCloudAccountLive`
+/// is not under it either, for the same kind of reason: it names every
+/// Workspace the account lists live under a Profile here, up to
+/// [`cloud::MAX_CLOUD_ROOT_INVENTORY`] of them, which is past 64 KiB at about
+/// six hundred. Its structural bound keeps it well inside the socket's cap.
 pub fn is_cloud_request(request: &ControlRequest) -> bool {
     matches!(
         request,

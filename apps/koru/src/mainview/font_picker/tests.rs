@@ -47,6 +47,39 @@ fn names(surface: &FontPickerSurface) -> Vec<Option<String>> {
 }
 
 #[test]
+fn the_font_list_scrolls_and_drags_without_selecting_or_overlapping_the_footer() {
+    let mut engine = TextEngine::new();
+    let mut surface = FontPickerSurface::for_role(&mut engine, Some(fonts()), None, false, "Inter");
+    surface.set_viewport(460.0, HEADER_H + FOOTER_H + 65.0);
+    surface.scroll_by(17.0);
+    assert_eq!(surface.list.scroll, 17.0);
+    let before = surface.lit();
+    let bar = surface.scrollbar().expect("long list shows a scrollbar");
+    assert!(matches!(
+        surface.mouse_down(&mut engine, 455.0, bar.thumb_top + 2.0),
+        Action::Keep
+    ));
+    surface.mouse_move(HEADER_H + 65.0);
+    assert_eq!(
+        surface.list.scroll,
+        surface.list.max_scroll(surface.rows().len(), 65.0)
+    );
+    assert_eq!(
+        surface.lit(),
+        before,
+        "dragging scrolls without choosing a font"
+    );
+    // The blank right half of the footer must never choose the last visible font.
+    assert!(matches!(
+        surface.mouse_down(&mut engine, 400.0, HEADER_H + 65.0 + 3.0),
+        Action::Keep
+    ));
+    assert_eq!(surface.lit(), before);
+    surface.scroll_by(-10000.0);
+    assert_eq!(surface.list.scroll, 0.0);
+}
+
+#[test]
 fn only_monospaced_families_are_listed_until_all_are_asked_for() {
     let mut engine = TextEngine::new();
     let mut surface = FontPickerSurface::new(&mut engine, fonts(), None);

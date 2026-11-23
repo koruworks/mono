@@ -97,6 +97,7 @@ enum Stop {
     /// hands the keyboard to it and takes it back.
     Tab,
     Library,
+    MiniApp,
 }
 
 impl MainView {
@@ -125,12 +126,20 @@ impl MainView {
         if self.bot_context_stands() {
             out.push(Stop::Library);
         }
+        if matches!(self.tabs().active_tab().view, super::TabView::MiniApp(_)) {
+            out.push(Stop::MiniApp);
+        }
         out
     }
 
     fn current_stop(&self) -> Option<Stop> {
         if self.bot_context_current() && self.bot_context.focus.is_some() {
             return Some(Stop::Library);
+        }
+        if let super::TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && app.header_focused()
+        {
+            return Some(Stop::MiniApp);
         }
         if self.reminder_creation.pill_focused() {
             return Some(Stop::Pill);
@@ -219,6 +228,9 @@ impl MainView {
         moved |= self.release_tab_keyboard();
         moved |= self.blur_bot_context();
         moved |= self.explore.clear_focus();
+        if let super::TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view {
+            app.blur_header();
+        }
         // **The navigator's list, when it has something to land on**: one
         // that has not is passed over, never a dead press.
         let mut next = stops[at(0)];
@@ -238,6 +250,12 @@ impl MainView {
             Stop::Library => moved |= self.focus_bot_context(),
             // Landed above, as the loop found it.
             Stop::Column => {}
+            Stop::MiniApp => {
+                if let super::TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view {
+                    app.focus_header();
+                    moved = true;
+                }
+            }
             Stop::Toast => {
                 self.chrome_focus = Some(ChromeStop::Toast(0));
                 moved = true;
@@ -299,6 +317,14 @@ impl MainView {
         if matches!(stop, ChromeStop::Toast(_)) && self.toast_line_count() == 0 {
             self.chrome_focus = None;
             return false;
+        }
+        if let ChromeStop::Apps(i) = stop
+            && let ExploreChromeFocus::Pin(id) = self.rail_focus(i)
+            && let Some(up) = move_chord(key, text, mods)
+        {
+            self.explore.nudge_pin(self.rail_area(), id, up);
+            self.retain_pin_focus(id);
+            return true;
         }
         // An open switcher owns the keyboard (its own Esc, arrows and Enter)
         // until it shuts; the stop takes over again after.
@@ -459,6 +485,12 @@ impl MainView {
                     self.open_rail_overflow();
                 }
                 ExploreChromeFocus::RailProfile => self.explore.toggle_profile_popover(),
+                ExploreChromeFocus::Pin(id) => {
+                    self.open_mini_app_pin(id);
+                }
+                ExploreChromeFocus::PinOverflow => {
+                    self.open_mini_app_pins(None);
+                }
             },
             // What a press on that answer does; the keyboard leaves with it,
             // since the line it was on is gone once answered.

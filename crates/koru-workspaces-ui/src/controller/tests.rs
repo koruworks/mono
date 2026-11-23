@@ -1231,7 +1231,210 @@ fn recovery() -> Recovery {
             targets: 3,
             expired_or_purged: 1,
         }],
+        trashed_in_account: Vec::new(),
     }
+}
+
+/// One workspace in the Trash here that the account keeps under `elsewhere`.
+fn trashed_in_account(acknowledged: bool) -> Recovery {
+    Recovery {
+        trashed_in_account: vec![TrashedInAccountRow {
+            id: id('d'),
+            name: "PM".into(),
+            icon: None,
+            color: None,
+            profile: elsewhere(),
+            acknowledged,
+        }],
+        ..Recovery::default()
+    }
+}
+
+/// The pending restore-to answers: `restored` is whether the Store brought
+/// the workspace back.
+fn settle_restore_to(c: &mut WorkspacesController, restored: bool) -> bool {
+    let command = c
+        .pending
+        .iter()
+        .find_map(|(id, pending)| matches!(pending, Pending::RestoreTo { .. }).then_some(*id))
+        .expect("a restore-to is pending");
+    let result = if restored {
+        Ok(())
+    } else {
+        Err(koru_store_core::Error::bare(
+            koru_store_core::Code::StorageFailed,
+        ))
+    };
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::RestoredTo(result)),
+    ))
+}
+
+fn with_profiles(c: &mut WorkspacesController) {
+    c.adopt_profiles(&[
+        ProfileRow {
+            id: owner(),
+            name: "Home".into(),
+        },
+        ProfileRow {
+            id: elsewhere(),
+            name: "Work".into(),
+        },
+    ]);
+}
+
+/// The third recovery list (trash-recovery P2): shown only under the Profile
+/// the account keeps the workspace in, gated like restore, asked about with
+/// a dialog this surface words itself, and then one keyed Store call.
+#[test]
+fn a_workspace_trashed_here_is_listed_under_the_accounts_profile_only() {
+    let mut c = controller();
+    with_profiles(&mut c);
+    assert!(c.receive(Answer::Recovery(trashed_in_account(true))));
+    assert!(c.has_recovery());
+    assert_eq!(c.trashed_in_account().len(), 1);
+    assert_eq!(
+        c.trashed_in_account_of(elsewhere())
+            .iter()
+            .map(|row| row.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["PM"]
+    );
+    assert!(
+        c.trashed_in_account_of(owner()).is_empty(),
+        "not every Profile's, unlike an Unassigned row"
+    );
+    assert_eq!(
+        c.trashed_in_account_row(id('d')).map(|row| row.profile),
+        Some(elsewhere())
+    );
+}
+
+#[test]
+fn restore_to_takes_the_destructive_scope_and_asks_with_its_own_words() {
+    let mut c = controller();
+    with_profiles(&mut c);
+    c.receive(Answer::Recovery(trashed_in_account(true)));
+    let action = Action::RestoreTo(id('d'), elsewhere());
+
+    // Gated like restore: without `workspace.destroy` the control is dimmed.
+    c.set_authorization(Authorization::Refused);
+    assert_eq!(
+        c.reason_for(&action, &Row::default()),
+        Some(t(Lang::En, Key::WorkspacesNotPermitted).to_owned())
+    );
+    c.set_authorization(Authorization::Vouched);
+    assert_eq!(c.reason_for(&action, &Row::default()), None);
+
+    c.perform(action);
+    let dialog = c.dialog().expect("asked here, with no gateway round trip");
+    assert_eq!(dialog.title(), "Restore PM to Work?");
+    assert!(
+        dialog
+            .body()
+            .contains("your Koru account still has it under Work"),
+        "{}",
+        dialog.body()
+    );
+    assert_eq!(
+        c.confirmation_default(),
+        Some(Outcome::Confirm),
+        "ADR-265 row two: Enter accepts"
+    );
+    assert!(c.confirmation_terminals().is_empty());
+    assert!(!c.has_pending(), "nothing is sent until it is accepted");
+
+    // Cancel leaves it in the Trash and sends nothing.
+    assert!(c.answer(Outcome::Cancel));
+    assert!(c.dialog().is_none());
+    assert!(!c.has_pending());
+}
+
+#[test]
+fn accepting_restore_to_makes_one_call_and_words_what_it_came_to() {
+    let mut c = controller();
+    with_profiles(&mut c);
+    c.receive(Answer::Recovery(trashed_in_account(true)));
+    c.perform(Action::RestoreTo(id('d'), elsewhere()));
+    assert!(c.answer(Outcome::Confirm));
+    assert!(c.dialog().is_none());
+    assert!(c.has_pending(), "the one keyed call");
+
+    // Pressed again while it runs: no second question, no second call.
+    c.perform(Action::RestoreTo(id('d'), elsewhere()));
+    assert!(c.dialog().is_none());
+
+    assert!(settle_restore_to(&mut c, true));
+    assert!(!c.has_pending());
+    assert_eq!(
+        c.notice_for(elsewhere()).map(Notice::text),
+        Some("PM was restored to Work."),
+        "said under the Profile it came back into"
+    );
+    assert!(c.notice_for(owner()).is_none());
+
+    // A refusal says so and names the workspace; nothing moved.
+    c.perform(Action::RestoreTo(id('d'), elsewhere()));
+    c.answer(Outcome::Confirm);
+    assert!(settle_restore_to(&mut c, false));
+    assert_eq!(
+        c.notice_for(elsewhere()).map(Notice::text),
+        Some("Koru couldn't restore PM. It is still in the Trash.")
+    );
+}
+
+#[test]
+fn restore_to_opens_nothing_for_a_row_that_is_gone_or_another_profile() {
+    let mut c = controller();
+    with_profiles(&mut c);
+    c.receive(Answer::Recovery(trashed_in_account(true)));
+    c.perform(Action::RestoreTo(id('d'), owner()));
+    assert!(c.dialog().is_none(), "not the Profile the account names");
+    c.perform(Action::RestoreTo(id('e'), elsewhere()));
+    assert!(c.dialog().is_none(), "no such row");
+}
+
+/// The notice is handed over once per window (P4), and not at all for a row
+/// the Store says the person was already told about.
+#[test]
+fn a_trash_notice_is_handed_over_once_and_never_for_an_acknowledged_row() {
+    let mut c = controller();
+    c.receive(Answer::Recovery(trashed_in_account(false)));
+    let first = c
+        .take_trash_notice()
+        .expect("the one row nobody was told of");
+    assert_eq!(first.name, "PM");
+    assert!(
+        c.take_trash_notice().is_none(),
+        "the same catalog read again offers nothing"
+    );
+    // Read back before the Store's answer: still unacknowledged, still once.
+    c.receive(Answer::Recovery(Recovery::default()));
+    c.receive(Answer::Recovery(trashed_in_account(false)));
+    assert!(c.take_trash_notice().is_none());
+
+    let mut told = controller();
+    told.receive(Answer::Recovery(trashed_in_account(true)));
+    assert!(told.take_trash_notice().is_none());
+
+    // Two at once are handed over one ask at a time, in catalog order.
+    let mut two = controller();
+    let mut recovery = trashed_in_account(false);
+    let mut second = recovery.trashed_in_account[0].clone();
+    second.id = id('e');
+    second.name = "Plans".into();
+    recovery.trashed_in_account.push(second);
+    two.receive(Answer::Recovery(recovery));
+    assert_eq!(
+        two.take_trash_notice().map(|row| row.name),
+        Some("PM".into())
+    );
+    assert_eq!(
+        two.take_trash_notice().map(|row| row.name),
+        Some("Plans".into())
+    );
+    assert!(two.take_trash_notice().is_none());
 }
 
 #[test]

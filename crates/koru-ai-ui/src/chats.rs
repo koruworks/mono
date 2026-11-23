@@ -42,6 +42,7 @@ impl ChatSurface {
             return false;
         }
         self.profile = profile;
+        self.native_apps.clear();
         self.keep_profile_chats();
         if self
             .transcript

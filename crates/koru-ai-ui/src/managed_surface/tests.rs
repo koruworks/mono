@@ -112,6 +112,8 @@ fn attachment_send_keeps_ids_and_receipt_identity_on_the_engine_carrier() {
         attachment_ids: vec![attachment],
         answers: None,
         skills: vec!["review-doc".into()],
+        mini_app_host: None,
+        mini_app_refinement: None,
     };
     let Some(Command::Engine {
         command:

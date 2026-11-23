@@ -430,6 +430,7 @@ fn pin_state(pins: &mut Pins, name: &str, mut surface: ChatSurface, golden: [&st
 /// built in `koru-agent-config-ui`.
 #[test]
 fn the_pickers_elements_are_built_by_the_control() {
+    let _font = crate::pins::bundled_font();
     use koru_draw::inspect;
     let mut surface = everything();
     let capture = inspect::Frame::begin(
@@ -470,6 +471,7 @@ macro_rules! golden {
 /// `source`, its semantics and its grid — as it did before the move.
 #[test]
 fn every_state_draws_declares_and_hits_as_before() {
+    let _font = crate::pins::bundled_font();
     let mut pins = Pins::default();
     pin_state(&mut pins, "everything", everything(), golden!("everything"));
     pin_state(&mut pins, "begun", begun(), golden!("begun"));
@@ -532,6 +534,7 @@ fn requests(surface: &mut ChatSurface) -> String {
 /// after each key the picker's state, the chat's and what was sent.
 #[test]
 fn the_keyboard_walks_the_picker_as_before() {
+    let _font = crate::pins::bundled_font();
     let (mut surface, commands) = base();
     let mut out = String::new();
     surface.open_model_picker();
@@ -778,6 +781,7 @@ fn press_session(out: &mut String, mut surface: ChatSurface, commands: &Receiver
 /// next message's.
 #[test]
 fn every_choice_sends_what_it_sent_in_the_order_it_did() {
+    let _font = crate::pins::bundled_font();
     let mut out = String::new();
 
     out.push_str("# a chat not made yet\n");
@@ -818,6 +822,7 @@ fn every_choice_sends_what_it_sent_in_the_order_it_did() {
 /// the old model's offset, past the new foot.
 #[test]
 fn a_choice_settles_the_list_against_the_new_models_footer() {
+    let _font = crate::pins::bundled_font();
     let (mut surface, commands) = base();
     if let Some(AgentModels::Listed(models)) = surface.agent_models.get_mut(&agent("agent-claude"))
     {
@@ -858,5 +863,6 @@ fn a_choice_settles_the_list_against_the_new_models_footer() {
 /// the AI service's `AGENT_DEFAULT_MODEL`. They are one id.
 #[test]
 fn the_controls_default_model_is_the_agents() {
+    let _font = crate::pins::bundled_font();
     assert_eq!(cfg::DEFAULT_MODEL, AGENT_DEFAULT_MODEL);
 }

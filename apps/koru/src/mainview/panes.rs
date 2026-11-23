@@ -242,7 +242,7 @@ impl TabGroup {
         pin_count: usize,
         swatch: Option<&'a Option<String>>,
         notes: &'a std::collections::HashSet<koru_core::DocumentId>,
-        ws: &'a koru_core::schema::WorkspaceDoc,
+        ws: Option<&'a koru_core::schema::WorkspaceDoc>,
     ) -> tabs::Tab<'a> {
         let dragging = carried.is_some_and(|(j, _)| j == i);
         let slide = match carried {
@@ -268,7 +268,7 @@ impl TabGroup {
                     .or_else(|| {
                         t.view
                             .root()
-                            .filter(|r| ws.in_trash(*r))
+                            .filter(|r| ws.is_some_and(|ws| ws.in_trash(*r)))
                             .map(|_| koru_draw::icons::TRASH)
                     })
                     .map(tabs::TabIcon::Glyph)
@@ -322,7 +322,7 @@ impl TabGroup {
         show_scrollbar: bool,
         scrollbar_active: bool,
         notes: &std::collections::HashSet<koru_core::DocumentId>,
-        ws: &koru_core::schema::WorkspaceDoc,
+        ws: Option<&koru_core::schema::WorkspaceDoc>,
     ) {
         self.last_header = Some(header);
         self.ensure_widths(engine);
@@ -1312,7 +1312,7 @@ mod tests {
         notes: &'a std::collections::HashSet<koru_core::DocumentId>,
         ws: &'a koru_core::schema::WorkspaceDoc,
     ) -> Option<tabs::TabIcon<'a>> {
-        TabGroup::tab_item(t, None, 0, 0, None, notes, ws).icon
+        TabGroup::tab_item(t, None, 0, 0, None, notes, Some(ws)).icon
     }
 
     /// **A Bot's tab wears the Bot's face in the strip**, in place of the

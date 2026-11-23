@@ -93,6 +93,11 @@ impl MainView {
         {
             return node;
         }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::ContextMenu)
+            && let Some(menu) = self.pin_menu_semantics(cx)
+        {
+            return menu;
+        }
         if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
             && let Some(offer) = &self.file_paste
         {
@@ -211,6 +216,11 @@ impl MainView {
             && let Some(node) = self.routine_creation_focus(cx)
         {
             return node;
+        }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::ContextMenu)
+            && let Some(focus) = self.pin_menu_focus(cx)
+        {
+            return focus;
         }
         // Innermost first: the flyout has the keys while it is up.
         for (_, menu) in self.live_menus().into_iter().rev() {
@@ -370,8 +380,13 @@ impl MainView {
         // a control a client can act on, and is left out.
         for (i, action) in items.iter().enumerate() {
             for (c, control) in action.controls().iter().enumerate() {
-                let &koru_ui::Control::Button { enabled: live, .. } = control else {
-                    continue;
+                let live = match control {
+                    koru_ui::Control::Button { enabled, .. } => *enabled,
+                    koru_ui::Control::Segment { .. } => true,
+                    koru_ui::Control::Toggle { .. } => true,
+                    koru_ui::Control::Link { visible: true, .. } => true,
+                    koru_ui::Control::Link { visible: false, .. } => continue,
+                    koru_ui::Control::Readout(_) => continue,
                 };
                 let Some((label, _)) = context_menu::control_tooltip(*action, c) else {
                     continue;
@@ -379,16 +394,22 @@ impl MainView {
                 let Some(bounds) = menu.control_rect(cx.viewport, i, c) else {
                     continue;
                 };
-                children.push(
-                    SemanticNode::new(
-                        cx.instance(MENU, menu.control_instance(i, c), ITEM),
-                        Role::Button,
-                    )
-                    .with_label(label)
-                    .with_bounds(bounds)
-                    .with_actions([Action::Click])
-                    .disabled(!live),
-                );
+                let mut node = SemanticNode::new(
+                    cx.instance(MENU, menu.control_instance(i, c), ITEM),
+                    if matches!(control, koru_ui::Control::Toggle { .. }) {
+                        Role::CheckBox
+                    } else {
+                        Role::Button
+                    },
+                )
+                .with_label(label)
+                .with_bounds(bounds)
+                .with_actions([Action::Click])
+                .disabled(!live);
+                if let koru_ui::Control::Toggle { on } = control {
+                    node = node.with_toggled(*on);
+                }
+                children.push(node);
             }
         }
         SemanticNode::new(cx.instance(MENU, menu.instance, parts::ROOT), Role::Menu)
@@ -431,7 +452,13 @@ impl MainView {
             return false;
         };
         let live = action.controls().get(c).is_some_and(|control| {
-            matches!(control, koru_ui::Control::Button { enabled: true, .. })
+            matches!(
+                control,
+                koru_ui::Control::Button { enabled: true, .. }
+                    | koru_ui::Control::Segment { .. }
+                    | koru_ui::Control::Toggle { .. }
+                    | koru_ui::Control::Link { visible: true, .. }
+            )
         });
         if !live {
             return false;
@@ -528,6 +555,11 @@ pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
     if confirm_answer_of(view, target).is_some() {
         return true;
     }
+    if view.blockers() == Blockers::Modal(koru_workspace_host::routing::ModalKind::ContextMenu)
+        && view.pin_menu_is_target(target)
+    {
+        return true;
+    }
     if let Some(id) = instance_of(target, MENU) {
         return view.menu_row_at(id).is_some() || view.names_a_live_menu(id);
     }
@@ -590,6 +622,9 @@ fn is_reminder_popover(blockers: Blockers) -> bool {
 
 /// Route a request at an open menu, through the menu's own keys.
 pub(super) fn action(view: &mut MainView, target: Occurrence, action: Action) -> bool {
+    if view.pin_menu_action(target, action) {
+        return true;
+    }
     use winit::keyboard::{Key as WKey, NamedKey};
 
     let Some(id) = instance_of(target, MENU) else {

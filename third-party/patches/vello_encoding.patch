@@ -1,0 +1,63 @@
+diff --git a/src/draw.rs b/src/draw.rs
+index 024324f..86d56d6 100644
+--- a/src/draw.rs
++++ b/src/draw.rs
+@@ -21,6 +21,9 @@ impl DrawTag {
+     /// Color fill.
+     pub const COLOR: Self = Self(0x44);
+ 
++    /// Solid glyph color followed by coverage gamma and cutoff (three words).
++    pub const GLYPH_COLOR: Self = Self(0x4c);
++
+     /// Linear gradient fill.
+     pub const LINEAR_GRADIENT: Self = Self(0x114);
+ 
+diff --git a/src/encoding.rs b/src/encoding.rs
+index 76db001..ff25b04 100644
+--- a/src/encoding.rs
++++ b/src/encoding.rs
+@@ -271,10 +271,6 @@ impl Encoding {
+     }
+ 
+     /// Encodes a brush with an optional alpha modifier.
+-    #[expect(
+-        single_use_lifetimes,
+-        reason = "False positive: https://github.com/rust-lang/rust/issues/129255"
+-    )]
+     pub fn encode_brush<'b>(&mut self, brush: impl Into<BrushRef<'b>>, alpha: f32) {
+         use super::math::point_to_f32;
+         match brush.into() {
+@@ -351,6 +347,33 @@ impl Encoding {
+         self.draw_data.push(rgba);
+     }
+ 
++    /// Encode a glyph brush with neutral, independently adjustable coverage.
++    /// Non-solid brushes retain their original behavior.
++    pub fn encode_glyph_brush<'b>(&mut self, brush: impl Into<BrushRef<'b>>, alpha: f32) {
++        match brush.into() {
++            BrushRef::Solid(color) => {
++                let color: DrawColor = color.multiply_alpha(alpha).into();
++                self.draw_tags.push(DrawTag::GLYPH_COLOR);
++                self.draw_data.extend([color.rgba, 1.0_f32.to_bits(), 0.0_f32.to_bits()]);
++            }
++            other => self.encode_brush(other, alpha),
++        }
++    }
++
++    /// Set coverage on solid glyphs only, without altering brush opacity,
++    /// shapes, images, clip masks or scene ordering. Call on the final scene.
++    pub fn set_glyph_coverage(&mut self, gamma: f32, cutoff: f32) {
++        let gamma = if gamma.is_finite() { gamma.clamp(0.5, 3.0) } else { 1.0 };
++        let cutoff = if cutoff.is_finite() { cutoff.clamp(0.0, 0.5) } else { 0.0 };
++        for run in &self.resources.glyph_runs {
++            if self.draw_tags.get(run.stream_offsets.draw_tags) == Some(&DrawTag::GLYPH_COLOR) {
++                let offset = run.stream_offsets.draw_data;
++                self.draw_data[offset + 1] = gamma.to_bits();
++                self.draw_data[offset + 2] = cutoff.to_bits();
++            }
++        }
++    }
++
+     /// Encodes a linear gradient brush.
+     pub fn encode_linear_gradient(
+         &mut self,

@@ -213,6 +213,7 @@ pub enum OnboardingEntryChoice {
     Offline,
     Google,
     Apple,
+    Email,
 }
 
 impl OnboardingEntryChoice {
@@ -221,49 +222,59 @@ impl OnboardingEntryChoice {
             Self::Offline => "offline",
             Self::Google => "google",
             Self::Apple => "apple",
+            Self::Email => "email",
         }
     }
 }
 
+/// Closed A/B variant codes recorded with onboarding impression and entry events.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct OnboardingAbAttrs {
+    pub code: Option<&'static str>,
+    pub header: Option<&'static str>,
+    pub billing: Option<&'static str>,
+}
+
+pub struct OnboardingShown {
+    pub ab: OnboardingAbAttrs,
+}
+
+payload!(OnboardingShown, "app.onboarding.shown", |self| {
+    let mut draft = Draft::new(EventName::from_static(Self::NAME));
+    if let Some(code) = self.ab.code {
+        draft = draft.attr("code", AttrValue::Token(code.to_owned()));
+    }
+    if let Some(header) = self.ab.header {
+        draft = draft.attr("header", AttrValue::Token(header.to_owned()));
+    }
+    if let Some(billing) = self.ab.billing {
+        draft = draft.attr("billing", AttrValue::Token(billing.to_owned()));
+    }
+    draft
+});
+
 pub struct OnboardingEntrySelected {
     pub choice: OnboardingEntryChoice,
+    pub ab: OnboardingAbAttrs,
 }
 
 payload!(
     OnboardingEntrySelected,
     "app.onboarding.entry_selected",
     |self| {
-        Draft::new(EventName::from_static(Self::NAME))
-            .attr("choice", AttrValue::Token(self.choice.token().to_owned()))
-    }
-);
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ProfilePurpose {
-    Work,
-    School,
-    Personal,
-}
-
-impl ProfilePurpose {
-    pub fn token(self) -> &'static str {
-        match self {
-            Self::Work => "work",
-            Self::School => "school",
-            Self::Personal => "personal",
+        let mut draft = Draft::new(EventName::from_static(Self::NAME))
+            .attr("choice", AttrValue::Token(self.choice.token().to_owned()));
+        if let Some(code) = self.ab.code {
+            draft = draft.attr("code", AttrValue::Token(code.to_owned()));
         }
+        if let Some(header) = self.ab.header {
+            draft = draft.attr("header", AttrValue::Token(header.to_owned()));
+        }
+        if let Some(billing) = self.ab.billing {
+            draft = draft.attr("billing", AttrValue::Token(billing.to_owned()));
+        }
+        draft
     }
-}
-
-pub struct OnboardingProfilePurposeSelected {
-    pub purpose: ProfilePurpose,
-}
-
-payload!(
-    OnboardingProfilePurposeSelected,
-    "app.onboarding.profile_purpose_selected",
-    |self| Draft::new(EventName::from_static(Self::NAME))
-        .attr("purpose", AttrValue::Token(self.purpose.token().to_owned()),)
 );
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -683,6 +694,20 @@ payload!(DueChanged, "due.changed", |self| {
         .attr("entity_id", AttrValue::Id(self.entity_id))
 });
 
+/// A workspace's tasks changed, as the Store's read model now answers them:
+/// one appeared or went, was ticked, dated, renamed, moved in its list or
+/// filed under another — on this device or arriving from another. The
+/// Tasks surfaces' one outside trigger; they ask the read model again.
+pub struct TasksChanged {
+    pub workspace_id: Uuid,
+}
+
+payload!(TasksChanged, "projection.tasks.changed", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+        .workspace(WorkspaceId(self.workspace_id))
+        .subject(Subject::workspace(self.workspace_id.to_string()))
+});
+
 pub struct EntityRemoved {
     pub workspace_id: Uuid,
     pub document_id: Uuid,
@@ -915,6 +940,19 @@ payload!(
     }
 );
 
+/// The Store's list of Workspaces that are in this device's Trash while the
+/// account still holds them live changed (trash-recovery): one was first
+/// seen, stopped being listed, or was acknowledged. No subject on purpose:
+/// the list is replaced as a set, and a surface reads it back rather than
+/// following it off the bus.
+pub struct WorkspaceTrashedInAccountChanged;
+
+payload!(
+    WorkspaceTrashedInAccountChanged,
+    "workspace.catalog.trashed_in_account_changed",
+    |self| Draft::new(EventName::from_static(Self::NAME))
+);
+
 // ------------------------------------------ the settings authority's facts
 //
 // One producer: `koru-settings`, through the sink the Gateway hands it, after
@@ -956,6 +994,15 @@ fn settings_changed(name: &'static str, section: SettingsSection) -> Draft {
 }
 
 pub struct SettingsGlobalChanged;
+pub struct SettingsMiniAppPinsChanged;
+payload!(
+    SettingsMiniAppPinsChanged,
+    "settings.mini_app_pins_changed",
+    |self| {
+        let _ = self;
+        Draft::new(EventName::from_static(Self::NAME))
+    }
+);
 
 payload!(SettingsGlobalChanged, "settings.global_changed", |self| {
     let _ = self;

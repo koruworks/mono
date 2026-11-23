@@ -73,6 +73,7 @@ These public HTTP/client operations are catalogued but have no mobile FFI or Pro
 | `ai.update_chat_agent_settings` | `client.ai().update_chat_agent_settings` | PATCH /v1/ai/chats/{chat}/agent-settings | Local agents run on the desktop that installed them |
 | `ai.tool_list_chats` | `client.ai().tool_list_chats` | POST /v1/ai/tools/chats/list | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.tool_search_chats` | `client.ai().tool_search_chats` | POST /v1/ai/tools/chats/search | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
+| `ai.mini_app_tool` | `client.ai().mini_app_tool` | POST /v1/ai/tools/mini-app | Mini-app tools require an exact live desktop host capability |
 | `ai.tool_read_chat` | `client.ai().tool_read_chat` | POST /v1/ai/tools/chats/read | Chat tools are an MCP and provider-facing surface, not a mobile chat operation |
 | `ai.update_chat_tool_policy` | `client.ai().update_chat_tool_policy` | PUT /v1/ai/chats/{chat}/tool-policy | Workspace-tool chat policy is not yet exposed by a mobile chat host |
 | `ai.add_chat_workspace_grants` | `client.ai().add_chat_workspace_grants` | POST /v1/ai/chats/{chat}/tool-policy/grants | Workspace-tool chat policy is not yet exposed by a mobile chat host |

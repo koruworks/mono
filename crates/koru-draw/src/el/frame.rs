@@ -332,8 +332,22 @@ impl Frame {
 
     /// Paint `root`, the tree this frame was laid out from.
     pub fn paint(&self, root: &El, scene: &mut Scene, transform: Affine, engine: &mut TextEngine) {
+        self.paint_with_host(root, scene, transform, engine, |_, _, _, _| {});
+    }
+
+    /// Paint ordinary elements and retained host controls in one traversal.
+    /// The callback runs once per visible node, after its ordinary content and
+    /// before children, inside the node's inspector and scroll clip scopes.
+    pub fn paint_with_host(
+        &self,
+        root: &El,
+        scene: &mut Scene,
+        transform: Affine,
+        engine: &mut TextEngine,
+        mut paint: impl FnMut(&Node, &mut Scene, Affine, &mut TextEngine),
+    ) {
         let mut next = 0;
-        self.paint_el(root, &mut next, scene, transform, engine);
+        self.paint_el(root, &mut next, scene, transform, engine, &mut paint);
     }
 
     /// Paint a host-owned surface through this frame's element ancestry.
@@ -421,6 +435,7 @@ impl Frame {
         scene: &mut Scene,
         transform: Affine,
         engine: &mut TextEngine,
+        paint: &mut impl FnMut(&Node, &mut Scene, Affine, &mut TextEngine),
     ) {
         let index = *next;
         let Some(node) = self.nodes.get(index) else {
@@ -544,8 +559,9 @@ impl Frame {
                     &scene::rect(view.x, view.y, view.w, view.h),
                 );
                 let _clip = inspect::clip(transform, scene::rect(view.x, view.y, view.w, view.h));
+                paint(node, scene, transform, engine);
                 for child in &el.children {
-                    self.paint_el(child, next, scene, transform, engine);
+                    self.paint_el(child, next, scene, transform, engine, paint);
                 }
                 // The shared thumb over its rows, lit while the pointer is
                 // in its gutter or it is dragged.
@@ -565,8 +581,9 @@ impl Frame {
             }
             Kind::Stack(_) => {}
         }
+        paint(node, scene, transform, engine);
         for child in &el.children {
-            self.paint_el(child, next, scene, transform, engine);
+            self.paint_el(child, next, scene, transform, engine, paint);
         }
     }
 }

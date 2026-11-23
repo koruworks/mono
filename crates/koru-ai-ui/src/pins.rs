@@ -216,6 +216,41 @@ pub(crate) fn drain(commands: &std::sync::mpsc::Receiver<crate::reader::Command>
     format!("[{}]", all.join(", "))
 }
 
+/// **The pins measure in bundled Inter**, as they were recorded. Since main
+/// made installed Segoe UI the Windows default (bfa6cf361), a system face
+/// would move every width, and only on machines that have it. Held for a
+/// pinned test, as the explorer's popover baseline holds it; the person's
+/// setting comes back when the guard drops.
+/// The UI face is one process-wide setting: pinned tests take turns with
+/// it, or one test's restore lands in the middle of another's measuring.
+pub(crate) struct BundledFont(
+    Option<Box<dyn FnOnce()>>,
+    #[allow(dead_code)] std::sync::MutexGuard<'static, ()>,
+);
+
+static FONT_TURN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn bundled_font() -> BundledFont {
+    use koru_draw::theme::{self, FontChoice, FontSlot};
+    let turn = FONT_TURN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let was = theme::font_setting(FontSlot::Ui);
+    theme::set_ui_font(FontChoice::Inter);
+    BundledFont(
+        Some(Box::new(move || theme::set_font_setting(FontSlot::Ui, was))),
+        turn,
+    )
+}
+
+impl Drop for BundledFont {
+    fn drop(&mut self) {
+        if let Some(restore) = self.0.take() {
+            restore();
+        }
+    }
+}
+
 /// **Pins compared with their goldens**, every one of them before the test
 /// fails, so one run shows every difference.
 #[derive(Default)]

@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [features]
 fixtures = ["koru-ai-sqlite/fixtures"]
+test-support = ["koru-mcp-server/test-support"]
 
 [dependencies]
 base64.workspace = true
@@ -52,3 +53,4 @@ koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite", features = ["fixtures"]
 loro.workspace = true
 koru-log = { path = "../../crates/koru-log" }
 tempfile.workspace = true
+

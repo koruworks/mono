@@ -296,8 +296,9 @@ impl ChatSurface {
         canvas: &mut vello::Scene,
         root: vello::kurbo::Affine,
         paint: HostPaint<'_>,
+        caret_on: bool,
     ) {
-        self.draw_with(canvas, root, Some(paint));
+        self.draw_with(canvas, root, Some(paint), caret_on);
     }
 
     /// A press at `(x, y)` that is the host's: in its room, with the

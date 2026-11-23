@@ -75,10 +75,18 @@ fn alt_three_enters_queue_navigation_from_a_document_with_open_or_closed_sidebar
         }
         view.explore.clear_focus();
         chord(&mut view, &mut workspace, "3", koru_keys::VIEW);
-        assert!(view.sidebar.is_open() && view.explore.showing_tasks());
+        assert_eq!(view.sidebar.is_open(), initially_open);
+        assert_eq!(view.explore_preview, !initially_open);
+        assert!(view.explore.showing_tasks());
         assert!(view.explore.has_focus());
         assert!(matches!(view.tabs().active_tab().view, TabView::Leaf(_)));
         next_queue(&mut view, &mut workspace);
+        assert!(
+            !view.explore_preview,
+            "Enter dismisses the floating navigator"
+        );
+        assert!(view.explore_preview_deadline.is_none());
+        assert_eq!(view.sidebar.is_open(), initially_open);
     }
 }
 

@@ -241,18 +241,42 @@ pub struct DeletedProfileRow {
     pub expired_or_purged: usize,
 }
 
-/// What the catalog read says about recovery: the two lists above, read in
+/// **A workspace in this device's Trash that the account still holds live**
+/// (trash-recovery PLAN.final P2): trashed here, its deletion unable to
+/// reach the account, while the account lists it under one of its Profiles
+/// on this device. Nothing on the device said so before this row.
+///
+/// Shown **only under the Profile the account keeps it in** — unlike an
+/// [`UnassignedRow`], which is every Profile's — because that Profile is
+/// where its one action, [`crate::Action::RestoreTo`], puts it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrashedInAccountRow {
+    pub id: WorkspaceId,
+    pub name: String,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    /// The Profile the account keeps it under.
+    pub profile: ProfileId,
+    /// Whether the person has been told on this device (P4). The Store
+    /// remembers it on the fact, so it resets if the fact goes and returns.
+    pub acknowledged: bool,
+}
+
+/// What the catalog read says about recovery: the three lists above, read in
 /// the same pass as the rows so a surface never shows a group its catalog
 /// does not know about.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Recovery {
     pub unassigned: Vec<UnassignedRow>,
     pub deleted_profiles: Vec<DeletedProfileRow>,
+    pub trashed_in_account: Vec<TrashedInAccountRow>,
 }
 
 impl Recovery {
     pub fn is_empty(&self) -> bool {
-        self.unassigned.is_empty() && self.deleted_profiles.is_empty()
+        self.unassigned.is_empty()
+            && self.deleted_profiles.is_empty()
+            && self.trashed_in_account.is_empty()
     }
 }
 
@@ -360,6 +384,12 @@ pub(crate) enum Answer {
     Recovery(Recovery),
     /// The batch restore finished, or refused. Keyed to its command.
     ProfileRestored(koru_store_core::errors::Result<koru_api_client::ProfileRestoreOutcome>),
+    /// A workspace was restored into a Profile, or was not. Keyed to its
+    /// command.
+    RestoredTo(koru_store_core::errors::Result<()>),
+    /// The Store was told the person has seen a notice. Nothing to draw:
+    /// the listing carries it on the next read.
+    Acknowledged,
     /// The profiles a workspace could be moved to.
     Profiles(Vec<ProfileRow>),
     /// The authorization probe's answer, for `workspace.destroy`.

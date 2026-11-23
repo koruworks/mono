@@ -316,7 +316,8 @@ pub(crate) struct BotView {
     size: (f32, f32),
     lang: Lang,
     work: Cell<Work>,
-    cache: RefCell<TextCache>,
+    // Boxed: the tab moves by value on the window thread (`tab.rs`).
+    cache: Box<RefCell<TextCache>>,
     /// The tab was hidden after it had been shown: the next showing reads
     /// the Bot once.
     stale: bool,
@@ -509,7 +510,7 @@ impl BotView {
             size: (0.0, 0.0),
             lang: crate::format::lang(),
             work: Cell::new(Work::default()),
-            cache: RefCell::new(TextCache::default()),
+            cache: Box::new(RefCell::new(TextCache::default())),
             stale: false,
             header_bottom: Cell::new(f32::INFINITY),
             settings: Box::default(),
@@ -2421,6 +2422,7 @@ impl View for BotView {
                             frame.paint(tree, canvas, root, engine);
                         });
                     },
+                    caret_on,
                 ),
                 None => View::draw(
                     conversation,

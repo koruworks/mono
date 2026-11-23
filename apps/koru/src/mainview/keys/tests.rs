@@ -82,7 +82,7 @@ fn the_container_chords_resolve() {
     assert_eq!(resolve(&ch("n"), Some("n"), PRIMARY), Some(Chord::New));
     assert_eq!(resolve(&ch("a"), Some("a"), PRIMARY_SHIFT), None);
     assert_eq!(resolve(&ch("w"), Some("w"), PRIMARY), Some(Chord::CloseTab));
-    assert_eq!(resolve(&ch("p"), Some("p"), PRIMARY), Some(Chord::Search));
+    assert_eq!(resolve(&ch("k"), Some("k"), PRIMARY), Some(Chord::Search));
     assert_eq!(
         resolve(&ch("f"), Some("f"), PRIMARY_SHIFT),
         Some(Chord::Search)
@@ -155,7 +155,7 @@ fn a_control_code_resolves_the_same_as_the_letter() {
         Some(Chord::CloseTab)
     );
     assert_eq!(
-        resolve(&ch("\u{10}"), Some("\u{10}"), PRIMARY),
+        resolve(&ch("\u{0b}"), Some("\u{0b}"), PRIMARY),
         Some(Chord::Search)
     );
 }
@@ -418,8 +418,8 @@ fn the_container_binds_nothing_the_registry_has_not_recorded() {
     // the moment bindings are customisable — a decision, not a repair. Written
     // up in `docs/contributing/techdebt/README.md`; found by Plan 2.2 while adding `r`.
     let candidates = [
-        't', 'w', 'j', 'e', 'o', 'p', 's', 'a', 'r', ',', '1', '2', '3', '4', '5', '6', '7', '8',
-        '9',
+        't', 'w', 'j', 'e', 'o', 'p', 'k', 's', 'a', 'r', ',', '1', '2', '3', '4', '5', '6', '7',
+        '8', '9',
     ];
     for c in candidates {
         for mods in [

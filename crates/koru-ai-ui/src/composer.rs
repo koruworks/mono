@@ -1106,7 +1106,7 @@ impl ChatComposer {
         &mut self,
         canvas: &mut Scene,
         root: Affine,
-        focused: bool,
+        caret_on: bool,
         pointer: (f32, f32),
         placeholder: &str,
     ) {
@@ -1118,7 +1118,7 @@ impl ChatComposer {
             &mut self.editor,
             &self.images,
             Frame {
-                caret_on: focused,
+                caret_on,
                 pointer,
                 placeholder,
                 title_placeholder: "",

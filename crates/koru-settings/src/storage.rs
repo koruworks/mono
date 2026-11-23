@@ -79,6 +79,7 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "theme",
     "icon_pack",
     "caret_color",
+    "caret_color_dark",
     "caret_width",
     "caret_height",
     "font",
@@ -86,6 +87,17 @@ pub(crate) const OWNED_PREFERENCE_KEYS: &[&str] = &[
     "headings_font",
     "code_font",
     "chat_font",
+    "text_hinting",
+    "text_antialiasing",
+    "text_offset",
+    "text_gamma",
+    "text_cutoff",
+    "text_hinting_dark",
+    "text_antialiasing_dark",
+    "text_offset_dark",
+    "text_gamma_dark",
+    "text_cutoff_dark",
+    "heading_weight",
     "doc_text_size",
     "base_color_light",
     "base_color_dark",
@@ -172,14 +184,66 @@ pub fn apply_preferences(text: &str, into: &mut GlobalSettings) -> PreferencesFi
                     .find(|pack| pack.token().eq_ignore_ascii_case(value.trim()));
             }
             "caret_color" => into.caret_color = CaretColorChoice::parse(value),
+            "caret_color_dark" => into.caret_color_dark = CaretColorChoice::parse(value),
             "caret_width" => into.caret_width = CaretWidthChoice::parse(value),
             "caret_height" => into.caret_height = CaretHeightChoice::parse(value),
             "font" => into.ui_font = FontSetting::parse_file_value(value),
             "body_font" => into.body_font = FontSetting::parse_file_value(value),
             "headings_font" => into.headings_font = FontSetting::parse_file_value(value),
+            "heading_weight" => {
+                if let Ok(weight @ (500 | 600)) = value.parse::<u16>() {
+                    into.heading_weight = weight;
+                }
+            }
             "code_font" => into.code_font = FontSetting::parse_file_value(value),
             // No v1 build wrote it, so no auto-written value to discount.
             "chat_font" => into.chat_font = FontSetting::parse_file_value(value),
+            "text_hinting" => match value {
+                "true" | "1" => into.text_hinting = true,
+                "false" | "0" => into.text_hinting = false,
+                _ => {}
+            },
+            "text_antialiasing" => {
+                if let Some(choice) = crate::TextAntialiasing::parse(value) {
+                    into.text_antialiasing = choice;
+                }
+            }
+            "text_offset" | "text_gamma" | "text_cutoff" => {
+                if let Ok(number) = value.parse::<f32>() {
+                    let mut patch = crate::GlobalPatch::default();
+                    match key {
+                        "text_offset" => patch.text_offset = Some(number),
+                        "text_gamma" => patch.text_gamma = Some(number),
+                        _ => patch.text_cutoff = Some(number),
+                    }
+                    if patch.validate().is_ok() {
+                        patch.apply(into);
+                    }
+                }
+            }
+            "text_hinting_dark" => match value {
+                "true" | "1" => into.text_hinting_dark = true,
+                "false" | "0" => into.text_hinting_dark = false,
+                _ => {}
+            },
+            "text_antialiasing_dark" => {
+                if let Some(choice) = crate::TextAntialiasing::parse(value) {
+                    into.text_antialiasing_dark = choice;
+                }
+            }
+            "text_offset_dark" | "text_gamma_dark" | "text_cutoff_dark" => {
+                if let Ok(number) = value.parse::<f32>() {
+                    let mut patch = crate::GlobalPatch::default();
+                    match key {
+                        "text_offset_dark" => patch.text_offset_dark = Some(number),
+                        "text_gamma_dark" => patch.text_gamma_dark = Some(number),
+                        _ => patch.text_cutoff_dark = Some(number),
+                    }
+                    if patch.validate().is_ok() {
+                        patch.apply(into);
+                    }
+                }
+            }
             "density" => into.density = DensityChoice::parse(value),
             "scroll_speed" => into.scroll_speed = ScrollSpeedChoice::parse(value),
             "dictation_toggle" => into.dictation_gesture = DictationGesture::parse(value),
@@ -232,6 +296,7 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
         line("icon_pack", pack.token());
     }
     line("caret_color", settings.caret_color.token());
+    line("caret_color_dark", settings.caret_color_dark.token());
     line("caret_width", settings.caret_width.token());
     line("caret_height", settings.caret_height.token());
     for (key, setting) in [
@@ -261,6 +326,64 @@ pub fn render_preferences(settings: &GlobalSettings, file: &PreferencesFile) -> 
         }
     }
     line("density", settings.density.token());
+    // Absence follows this platform's defaults. Restoring them removes the
+    // overrides, rather than auto-writing Windows tuning onto every device.
+    let raster_defaults = crate::TextRendering::default();
+    if settings.heading_weight != crate::text_rendering::DEFAULT_HEADING_WEIGHT {
+        line("heading_weight", &settings.heading_weight.to_string());
+    }
+    if settings.text_hinting != raster_defaults.hinting {
+        line(
+            "text_hinting",
+            if settings.text_hinting { "1" } else { "0" },
+        );
+    }
+    if settings.text_antialiasing != raster_defaults.antialiasing {
+        line("text_antialiasing", settings.text_antialiasing.token());
+    }
+    for (key, value, default) in [
+        ("text_offset", settings.text_offset, raster_defaults.offset),
+        ("text_gamma", settings.text_gamma, raster_defaults.gamma),
+        ("text_cutoff", settings.text_cutoff, raster_defaults.cutoff),
+    ] {
+        if value != default {
+            line(key, &value.to_string());
+        }
+    }
+    let raster_defaults = crate::TextRendering::DARK_DEFAULT;
+    if settings.text_hinting_dark != raster_defaults.hinting {
+        line(
+            "text_hinting_dark",
+            if settings.text_hinting_dark { "1" } else { "0" },
+        );
+    }
+    if settings.text_antialiasing_dark != raster_defaults.antialiasing {
+        line(
+            "text_antialiasing_dark",
+            settings.text_antialiasing_dark.token(),
+        );
+    }
+    for (key, value, default) in [
+        (
+            "text_offset_dark",
+            settings.text_offset_dark,
+            raster_defaults.offset,
+        ),
+        (
+            "text_gamma_dark",
+            settings.text_gamma_dark,
+            raster_defaults.gamma,
+        ),
+        (
+            "text_cutoff_dark",
+            settings.text_cutoff_dark,
+            raster_defaults.cutoff,
+        ),
+    ] {
+        if value != default {
+            line(key, &value.to_string());
+        }
+    }
     line("scroll_speed", settings.scroll_speed.token());
     line("dictation_toggle", settings.dictation_gesture.token());
     line("dictation_language", settings.dictation_language.token());

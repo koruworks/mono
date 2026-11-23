@@ -122,6 +122,9 @@ pub enum RouteId {
     ReadCloudPlan,
     ReadCloudUsageWorkspaces,
     ReadCloudUsageDocuments,
+    // Browser-based email sign-in (`koru.do/login` + loopback OAuth exchange).
+    // Appended: the table is indexed by position.
+    EmailBrowserStart,
 }
 
 impl RouteId {
@@ -197,6 +200,7 @@ impl RouteId {
             Self::ReadCloudPlan => "account.cloud_plan_read",
             Self::ReadCloudUsageWorkspaces => "account.cloud_usage_workspaces_read",
             Self::ReadCloudUsageDocuments => "account.cloud_usage_documents_read",
+            Self::EmailBrowserStart => "account.email_browser_start",
         }
     }
 }
@@ -1066,6 +1070,16 @@ pub const ROUTES: &[Route] = &[
         cloud_usage_documents_page,
         Query,
         "Read a bounded authoritative durable-unit inventory; per-document file bytes overlap and do not grant editing authority"
+    ),
+    route!(
+        EmailBrowserStart,
+        Post,
+        "/v1/oauth/email/browser/start",
+        Public,
+        native_start_request,
+        auth_start_response,
+        Body,
+        "Start email sign-in in the system browser for a native client"
     ),
 ];
 

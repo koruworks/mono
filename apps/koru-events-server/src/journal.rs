@@ -111,6 +111,9 @@ pub enum FeedNote {
         document: String,
         entity: String,
     },
+    /// A workspace's task rows changed in the read model. Content-free, and
+    /// already coalesced by the feed to one per workspace per tick.
+    TasksChanged { workspace: String },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -604,6 +607,16 @@ impl Journal {
                             entity_id,
                         }
                         .into();
+                        derived.push(draft.build(ctx, koru_events::EventId::mint(), now_ms));
+                    }
+                }
+                FeedNote::TasksChanged { workspace } => {
+                    if !seeded {
+                        continue;
+                    }
+                    if let Ok(workspace_id) = workspace.parse() {
+                        let draft: koru_events::Draft =
+                            koru_events::catalog::TasksChanged { workspace_id }.into();
                         derived.push(draft.build(ctx, koru_events::EventId::mint(), now_ms));
                     }
                 }
@@ -1128,6 +1141,9 @@ fn note_workspace(note: &FeedNote) -> Option<&str> {
         FeedNote::Projected { workspace, .. }
         | FeedNote::Removed { workspace, .. }
         | FeedNote::Listing { workspace, .. } => Some(workspace),
+        FeedNote::TasksChanged { workspace } => {
+            workspace.parse::<uuid::Uuid>().is_ok().then_some(workspace)
+        }
         FeedNote::DueChanged {
             workspace,
             document,

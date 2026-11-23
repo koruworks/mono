@@ -13,7 +13,7 @@
 //! ## Pages
 //!
 //! The sidebar lists [`PageId`]s — Appearance, Editor, Reminders, Terminal,
-//! System, and under a **Coding** heading ([`PageGroup`]) Agent providers —
+//! System, and under a **Coding** heading ([`PageGroup`]) Agent runtimes —
 //! with a search box that narrows them by what they hold. One page is
 //! laid out at a time, so a page that is not showing has no rects and cannot be
 //! pressed. **Reminders is the host's page**: its rows belong to `apps/koru`
@@ -94,6 +94,9 @@ mod tests;
 pub use action::{FontRole, Request};
 pub use links::SettingsLinks;
 pub use page::{PageGroup, PageId};
+mod host_pages;
+mod shortcuts;
+pub use host_pages::HostPage;
 pub use reader::{
     READER_ITEMS_SHOWN, ReaderBlocked, ReaderDownloadEnd, ReaderDownloadStage, ReaderItemRow,
     ReaderPartlyRow, ReaderRow, ReaderStatus,
@@ -117,7 +120,10 @@ const DIMMED: f32 = 0.45;
 /// **Where the nav and the page go is the shared [`PageShell`]** — Manage
 /// lays itself out by the same geometry. Settings' nav column: its width, its
 /// left air, and where its search box starts — level with the page's title.
-const SHELL: PageShell = PageShell::SETTINGS;
+const SHELL: PageShell = PageShell {
+    nav_w: PageShell::SETTINGS.nav_w * 1.3,
+    ..PageShell::SETTINGS
+};
 /// Named for the suite, which places presses by them.
 #[cfg(test)]
 const NAV_W: f32 = SHELL.nav_w;
@@ -153,7 +159,7 @@ pub struct Sections {
     pub terminal: bool,
     /// The host fills a Reminders page.
     pub reminders: bool,
-    /// The host lists the coding agents, so *Coding → Agent providers* is a
+    /// The host lists the coding agents, so *Coding → Agent runtimes* is a
     /// page (Koru's window only: it is the one that hides them).
     pub agents: bool,
 }
@@ -186,10 +192,12 @@ impl Sections {
         PageId::ALL
             .into_iter()
             .filter(|page| match page {
+                PageId::Host(_) => false,
                 PageId::Appearance | PageId::Editor => self.global,
                 PageId::Reminders => self.reminders,
                 PageId::Terminal => self.terminal,
                 PageId::System => self.global || self.ai,
+                PageId::Shortcuts => true,
                 PageId::AgentProviders => self.agents,
                 PageId::Bots => self.agents && self.global,
             })
@@ -230,24 +238,43 @@ impl OpenDropdown {
 }
 
 /// The slot and value a list row previews, when it previews anything.
-fn previewed_by(action: &Action) -> Option<(PreviewSlot, u16)> {
+fn previewed_by(action: &Action) -> Option<(PreviewSlot, u32)> {
     match action {
         Action::Font(role, family) => Some((
             PreviewSlot::Font(role.slot()),
-            theme::font_preview_value(*family),
+            u32::from(theme::font_preview_value(*family)),
         )),
         // *Follow app* on the chat's list shows the face it would follow.
         Action::FontSetting(role, koru_settings::FontSetting::FollowDefault) => Some((
             PreviewSlot::Font(role.slot()),
-            theme::font_preview_value(theme::resolve_font(
+            u32::from(theme::font_preview_value(theme::resolve_font(
                 role.slot(),
                 &koru_settings::FontSetting::FollowDefault,
-            )),
+            ))),
         )),
-        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, u16::from(*px))),
+        Action::DocTextSize(px) => Some((PreviewSlot::DocTextSize, u32::from(*px))),
+        Action::HeadingWeight(weight) => Some((PreviewSlot::HeadingWeight, u32::from(*weight))),
+        Action::TextAntialiasing(aa) => Some((
+            PreviewSlot::TextAntialiasing(koru_draw::theme::is_dark()),
+            koru_settings::TextAntialiasing::ALL
+                .iter()
+                .position(|choice| choice == aa)? as u32,
+        )),
+        Action::TextOffset(value) => Some((
+            PreviewSlot::TextOffset(koru_draw::theme::is_dark()),
+            value.to_bits(),
+        )),
+        Action::TextGamma(value) => Some((
+            PreviewSlot::TextGamma(koru_draw::theme::is_dark()),
+            value.to_bits(),
+        )),
+        Action::TextCutoff(value) => Some((
+            PreviewSlot::TextCutoff(koru_draw::theme::is_dark()),
+            value.to_bits(),
+        )),
         Action::IconPack(choice) => Some((
             PreviewSlot::IconPack,
-            icons::IconPack::parse(choice.token()) as u16,
+            icons::IconPack::parse(choice.token()) as u32,
         )),
         _ => None,
     }
@@ -259,7 +286,7 @@ const NAV_GROUP_GAP: f32 = 14.0;
 /// One run of the sidebar: a group's heading (none for the ungrouped pages)
 /// and the list under it, by index into the listed pages.
 struct NavRun {
-    group: Option<page::PageGroup>,
+    group: Option<String>,
     heading: Option<Rect>,
     area: Rect,
     pages: Vec<usize>,
@@ -285,6 +312,8 @@ pub struct SettingsSurface {
     scroll: f32,
 
     page: PageId,
+    host_pages: Vec<HostPage>,
+    nav_scroll: f32,
     search: TextInput,
     search_focused: bool,
     open: Option<OpenDropdown>,
@@ -347,7 +376,7 @@ pub struct SettingsSurface {
 
     voice: VoiceFacts,
     renderer: RendererRow,
-    /// The coding agents on *Agent providers*, as the host last read them.
+    /// The coding agents on *Agent runtimes*, as the host last read them.
     agent_providers: Vec<AgentProviderRow>,
     /// Where a new chat starts, as the host last read it.
     agent_defaults: AgentDefaults,
@@ -360,7 +389,7 @@ pub struct SettingsSurface {
     notice: Option<Notice>,
 
     laid: Laid,
-    /// The agent row the keyboard is on (*Agent providers*), by key: a press
+    /// The agent row the keyboard is on (*Agent runtimes*), by key: a press
     /// on the row or its handle puts it there, and the move chords move it.
     agent_focus: Option<String>,
     /// An agent row being dragged by its handle: where it came from and
@@ -399,6 +428,8 @@ impl SettingsSurface {
             search_focused: false,
             open: None,
             host_section_height: 0.0,
+            host_pages: Vec::new(),
+            nav_scroll: 0.0,
             global: links.global_authoritative(),
             terminal: links.terminal_authoritative(),
             links,
@@ -565,7 +596,7 @@ impl SettingsSurface {
         moved
     }
 
-    /// The coding agents *Agent providers* lists, in the host's order, each
+    /// The coding agents *Agent runtimes* lists, in the host's order, each
     /// with its status and switch. Answers whether anything moved.
     pub fn set_agent_providers(&mut self, rows: Vec<AgentProviderRow>) -> bool {
         let moved = self.agent_providers != rows;
@@ -727,7 +758,7 @@ impl SettingsSurface {
     /// Show `page`, from its top. Answers whether anything changed; a page this
     /// host does not have is refused.
     pub fn show_page(&mut self, page: PageId) -> bool {
-        if !self.sections.pages().contains(&page) {
+        if !self.pages().contains(&page) {
             return false;
         }
         let moved = self.page != page || self.scroll != 0.0;
@@ -744,10 +775,20 @@ impl SettingsSurface {
     /// search box.
     fn listed(&self) -> Vec<PageId> {
         let query = self.search.value();
-        self.sections
-            .pages()
+        self.pages()
             .into_iter()
-            .filter(|page| page.matches(self.lang, &query))
+            .filter(|page| match page {
+                PageId::Host(id) => self
+                    .host_pages
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .is_some_and(|p| {
+                        format!("{} {}", p.group, p.label)
+                            .to_lowercase()
+                            .contains(&query.to_lowercase())
+                    }),
+                _ => page.matches(self.lang, &query),
+            })
             .collect()
     }
 
@@ -762,6 +803,19 @@ impl SettingsSurface {
     }
 
     pub fn scroll_by(&mut self, delta: MouseScrollDelta) {
+        if !self.compact() && self.sidebar_rect().contains(self.pointer.0, self.pointer.1) {
+            let amount = match delta {
+                MouseScrollDelta::LineDelta(_, y) => -y * 40.0,
+                MouseScrollDelta::PixelDelta(p) => -p.y as f32,
+            };
+            let bottom = self
+                .nav_runs(&self.listed())
+                .last()
+                .map_or(0.0, |r| r.area.y + r.area.h + self.nav_scroll);
+            self.nav_scroll =
+                (self.nav_scroll + amount).clamp(0.0, (bottom - self.viewport.1 + 16.0).max(0.0));
+            return;
+        }
         let lines = match delta {
             MouseScrollDelta::LineDelta(_, y) => {
                 y * theme::text_metrics::DOC_BODY.line_height * WHEEL_LINES
@@ -861,7 +915,7 @@ impl SettingsSurface {
 
     /// The nav's own region: a column at the centred group's left, or —
     /// compact — a band across the top holding the search box and the chips.
-    fn sidebar_rect(&self) -> Rect {
+    pub fn sidebar_rect(&self) -> Rect {
         SHELL.sidebar(self.viewport, self.nav_band_h)
     }
 
@@ -894,15 +948,25 @@ impl SettingsSurface {
     fn nav_runs(&self, listed: &[PageId]) -> Vec<NavRun> {
         let nav = self.nav_rect();
         let mut runs: Vec<NavRun> = Vec::new();
-        let mut y = nav.y;
+        let mut y = nav.y - self.nav_scroll;
         for (index, page) in listed.iter().enumerate() {
-            let group = page.group();
+            let group = match page {
+                PageId::Host(id) => self
+                    .host_pages
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .map(|p| p.group.clone()),
+                _ => page.group().map(|g| g.label(self.lang).to_owned()),
+            };
             let same = runs.last().is_some_and(|run| run.group == group);
             if !same {
                 if let Some(last) = runs.last() {
                     y = last.area.y + last.area.h;
                 }
-                let heading = group.map(|_| {
+                if group.is_none() && !runs.is_empty() {
+                    y += NAV_GROUP_GAP;
+                }
+                let heading = group.as_ref().map(|_| {
                     if !runs.is_empty() {
                         y += NAV_GROUP_GAP;
                     }
@@ -931,13 +995,13 @@ impl SettingsSurface {
     }
 
     /// The page area: right of the nav column, or under the compact band.
-    fn page_area(&self) -> Rect {
+    pub fn page_area(&self) -> Rect {
         SHELL.page_area(self.viewport, self.nav_band_h)
     }
 
     /// Where the page's column sits: right after the nav (wide) or centred
     /// under the chips (compact), and never wider than the column width.
-    fn column_rect(&self) -> Rect {
+    pub fn column_rect(&self) -> Rect {
         SHELL.column(self.viewport, self.nav_band_h)
     }
 
@@ -950,10 +1014,20 @@ impl SettingsSurface {
             return;
         }
         let listed = self.listed();
-        let lang = self.lang;
+        let host_pages = self.host_pages.clone();
+        let labels: Vec<_> = listed
+            .iter()
+            .map(|p| self.page_label(*p).to_owned())
+            .collect();
         let items: Vec<NavItem<'_>> = listed
             .iter()
-            .map(|page| NavItem::new(page.label(lang)))
+            .zip(&labels)
+            .map(|(page, label)| {
+                host_pages
+                    .iter()
+                    .find(|p| *page == PageId::Host(p.id))
+                    .map_or_else(|| NavItem::new(label), HostPage::item)
+            })
             .collect();
         let area = self.chips_area();
         self.nav_chips = koru_ui::ChipNav::layout(&mut self.engine, area, &items);
@@ -967,6 +1041,17 @@ impl SettingsSurface {
     pub fn relayout(&mut self) {
         self.relayout_nav();
         let rect = self.column_rect();
+        let query = self.search.value();
+        if self.visible_page().is_none() {
+            let mut b = Builder::new(&mut self.engine, rect.x, rect.w, rect.y);
+            b.note(koru_i18n::t(self.lang, Key::SettingsSearchEmpty));
+            self.laid = b.finish();
+            return;
+        }
+        if matches!(self.page, PageId::Host(_)) {
+            self.laid = Builder::new(&mut self.engine, rect.x, rect.w, rect.y).finish();
+            return;
+        }
         let Self {
             lang,
             engine,
@@ -1002,6 +1087,7 @@ impl SettingsSurface {
         } = self;
         let lang = *lang;
         let mut b = Builder::new(engine, rect.x, rect.w, rect.y);
+        b.search(&query);
         b.title_with_button(
             page.label(lang),
             page.description(lang),
@@ -1038,6 +1124,7 @@ impl SettingsSurface {
             sample_document: *sample_document,
         };
         match page {
+            PageId::Host(_) => {}
             PageId::Appearance => global::appearance(&mut b, &rows),
             PageId::Editor => global::editor(&mut b, &rows),
             PageId::Reminders => {
@@ -1046,6 +1133,7 @@ impl SettingsSurface {
             PageId::Terminal => terminal::lay_out(&mut b, lang, terminal),
             PageId::System => global::system(&mut b, &rows),
             PageId::Bots => global::bots(&mut b, &rows),
+            PageId::Shortcuts => shortcuts::lay_out(&mut b, lang, &query),
             PageId::AgentProviders => {
                 agents::lay_out(&mut b, lang, agent_providers, agent_defaults)
             }
@@ -1062,6 +1150,10 @@ impl SettingsSurface {
     }
 
     /// The bottom of the laid-out page, the scroll range's upper bound.
+    pub fn restore_scroll(&mut self, scroll: f32) {
+        self.scroll = scroll.max(0.0);
+    }
+
     pub fn content_bottom(&self) -> f32 {
         self.laid.bottom
     }
@@ -1078,6 +1170,9 @@ impl SettingsSurface {
             }
             if self.compact() {
                 return koru_ui::ChipNav::chip_at(&self.nav_chips, x, y).map(Pointed::Nav);
+            }
+            if y < self.nav_rect().y {
+                return None;
             }
             let listed = self.listed();
             return self.nav_runs(&listed).iter().find_map(|run| {
@@ -1108,16 +1203,9 @@ impl SettingsSurface {
         self.sync_preview() || moved
     }
 
-    /// **A font list previews the lit face on the whole app.** While a list
-    /// of fonts is open, the face its lit row names stands in for the
-    /// role's choice; when the list closes, by a choice or not, the
-    /// stand-in goes and the choice (old or new) shows. Answers whether the
-    /// app's faces changed, so the host can lay every window out again.
-    ///
-    /// The icon-style list previews here too, through the menu's own
-    /// [`IconPreview`](icons::IconPreview), which restores the saved style
-    /// when the menu goes. The host repaints for that one rather than laying
-    /// out, so it is not part of the answer.
+    /// Preview the highlighted choice until the owning menu closes. The host
+    /// compares effective appearance to distinguish typography (layout) from
+    /// icon and raster changes (paint); persistence reads committed values.
     fn sync_preview(&mut self) -> bool {
         let shown = Self::previews_shown();
         if let Some(open) = self.open.as_mut() {
@@ -1127,7 +1215,7 @@ impl SettingsSurface {
     }
 
     /// Every slot a list can preview, as it reads now.
-    fn previews_shown() -> [Option<u16>; 7] {
+    fn previews_shown() -> [Option<u32>; 12] {
         use theme::FontSlot;
         [
             PreviewSlot::Font(FontSlot::Ui),
@@ -1137,6 +1225,11 @@ impl SettingsSurface {
             PreviewSlot::Font(FontSlot::Chat),
             PreviewSlot::DocTextSize,
             PreviewSlot::IconPack,
+            PreviewSlot::HeadingWeight,
+            PreviewSlot::TextAntialiasing(koru_draw::theme::is_dark()),
+            PreviewSlot::TextOffset(koru_draw::theme::is_dark()),
+            PreviewSlot::TextGamma(koru_draw::theme::is_dark()),
+            PreviewSlot::TextCutoff(koru_draw::theme::is_dark()),
         ]
         .map(preview::previewed)
     }
@@ -1264,6 +1357,16 @@ impl SettingsSurface {
     }
 
     /// Whether the search box has the keyboard.
+    pub fn clear_search(&mut self) {
+        self.search.set_text(&mut self.engine, "");
+        self.search_focused = false;
+        self.nav_scroll = 0.0;
+    }
+
+    pub fn blur_search(&mut self) {
+        self.search_focused = false;
+    }
+
     pub fn search_focused(&self) -> bool {
         self.search_focused
     }
@@ -1403,6 +1506,13 @@ impl SettingsSurface {
             self.sync_preview();
             return true;
         }
+        if *key == WinitKey::Named(NamedKey::Escape) && !self.search.is_empty() {
+            self.search.set_text(&mut self.engine, "");
+            self.search_focused = false;
+            self.nav_scroll = 0.0;
+            self.relayout();
+            return true;
+        }
         if !self.search_focused
             && let Some(handled) = self.agent_row_key(key, text, mods)
         {
@@ -1428,6 +1538,17 @@ impl SettingsSurface {
                 }
                 _ => {
                     let typed = self.search.key(&mut self.engine, key, text, mods);
+                    if typed == koru_ui::text_field::Typed::Handled {
+                        let listed = self.listed();
+                        if !listed.contains(&self.page)
+                            && let Some(page) = listed.first()
+                        {
+                            self.show_page(*page);
+                        }
+                        self.scroll = 0.0;
+                        self.nav_scroll = 0.0;
+                        self.relayout();
+                    }
                     return typed == koru_ui::text_field::Typed::Handled;
                 }
             }
@@ -1476,7 +1597,7 @@ impl SettingsSurface {
                 "container",
                 root,
                 scene::rect(area.x, area.y, area.w, area.h),
-                |r| r.property("page", self.page.label(self.lang), "view state"),
+                |r| r.property("page", self.page_label(self.page), "view state"),
             );
             scene_out.push_clip_layer(
                 vello::peniko::Fill::NonZero,
@@ -1536,9 +1657,20 @@ impl SettingsSurface {
         self.draw_search(scene_out, root);
 
         let listed = self.listed();
+        let host_pages = self.host_pages.clone();
+        let labels: Vec<_> = listed
+            .iter()
+            .map(|p| self.page_label(*p).to_owned())
+            .collect();
         let items: Vec<NavItem<'_>> = listed
             .iter()
-            .map(|page| NavItem::new(page.label(self.lang)))
+            .zip(&labels)
+            .map(|(page, label)| {
+                host_pages
+                    .iter()
+                    .find(|p| *page == PageId::Host(p.id))
+                    .map_or_else(|| NavItem::new(label), HostPage::item)
+            })
             .collect();
         let current = listed.iter().position(|page| *page == self.page);
         let hovered = match self
@@ -1563,6 +1695,8 @@ impl SettingsSurface {
                 None,
             );
         } else {
+            let clip = scene::rect(s.x, nav.y, s.w, (s.h - nav.y).max(0.0));
+            scene_out.push_clip_layer(vello::peniko::Fill::NonZero, root, &clip);
             for run in self.nav_runs(&listed) {
                 if let (Some(group), Some(at)) = (run.group, run.heading) {
                     // A group's heading: a card caption's words, as Manage's
@@ -1571,7 +1705,7 @@ impl SettingsSurface {
                         scene_out,
                         root,
                         &mut self.engine,
-                        group.label(self.lang),
+                        &group,
                         at.x + 8.0,
                         at.y,
                         theme::role::meta(),
@@ -1579,11 +1713,8 @@ impl SettingsSurface {
                         p.text_dim,
                     );
                 }
-                let run_items: Vec<NavItem<'_>> = run
-                    .pages
-                    .iter()
-                    .map(|index| NavItem::new(listed[*index].label(self.lang)))
-                    .collect();
+                let run_items: Vec<NavItem<'_>> =
+                    run.pages.iter().map(|index| items[*index]).collect();
                 let local = |index: Option<usize>| {
                     index.and_then(|index| run.pages.iter().position(|page| *page == index))
                 };
@@ -1598,6 +1729,9 @@ impl SettingsSurface {
                     None,
                 );
             }
+        }
+        if !self.compact() {
+            scene_out.pop_layer();
         }
         if items.is_empty() {
             koru_ui::text_paragraph::draw_line(
@@ -1731,6 +1865,7 @@ impl SettingsSurface {
                     "theme::role::meta()",
                     p.text_dim,
                 )
+                .highlight(&self.search.value())
                 .draw(scene_out, root, &mut self.engine, *rect);
             }
             Block::Tiles { title, y, x, tiles } => {
@@ -1765,13 +1900,14 @@ impl SettingsSurface {
                     title: card.title.as_deref(),
                     aside: card.aside.as_deref(),
                 }
-                .draw(
+                .draw_highlighted(
                     scene_out,
                     root,
                     &mut self.engine,
                     card.rect,
                     &dividers,
                     alpha,
+                    &self.search.value(),
                 );
                 for row in &card.rows {
                     self.draw_row_drag(scene_out, root, row);
@@ -1796,13 +1932,14 @@ impl SettingsSurface {
                         link: row.link.as_ref().map(|(text, _)| text.as_str()),
                         chip: row.chip.as_deref(),
                     }
-                    .draw(
+                    .draw_highlighted(
                         scene_out,
                         root,
                         &mut self.engine,
                         row.text_rect(),
                         row.text_w,
                         alpha,
+                        &self.search.value(),
                     );
                     self.draw_widget(scene_out, root, &row.widget, hovered, alpha);
                 }
@@ -1821,16 +1958,18 @@ impl SettingsSurface {
                     ),
                     |r| r.property("title", title.as_str(), "page content"),
                 );
-                koru_ui::text_paragraph::draw_line(
-                    scene_out,
-                    root,
-                    &mut self.engine,
+                koru_ui::text_paragraph::KoruTextParagraph::new(
                     title,
-                    *x,
-                    *y,
                     theme::role::meta(),
                     "theme::role::meta()",
                     p.text_dim.multiply_alpha(alpha),
+                )
+                .highlight(&self.search.value())
+                .draw(
+                    scene_out,
+                    root,
+                    &mut self.engine,
+                    Rect::new(*x, *y, self.viewport.0 - *x, 0.0),
                 );
                 if let Some((label, rect, hit)) = link {
                     koru_ui::text_paragraph::draw_line(
@@ -1960,14 +2099,26 @@ impl SettingsSurface {
                 let hovered = hovered
                     .and_then(|h| h.checked_sub(*first))
                     .filter(|h| *h < labels.len());
-                control.draw(
+                let dangerous = (0..labels.len()).find(|i| {
+                    matches!(
+                        self.laid.hits.get(first + i).map(|h| &h.target),
+                        Some(Target::Action(Action::AgentPermission(
+                            _,
+                            koru_settings::AgentPermission::Yolo
+                        )))
+                    )
+                });
+                control.draw_highlighted(
                     scene_out,
                     root,
                     &mut self.engine,
                     &refs,
                     *selected,
                     hovered,
+                    false,
                     alpha,
+                    dangerous,
+                    &self.search.value(),
                 );
             }
             Widget::Dropdown {
@@ -1977,7 +2128,14 @@ impl SettingsSurface {
                 hit,
                 dropdown,
             } => {
+                let dangerous = self.laid.dropdowns[*dropdown]
+                    .options
+                    .iter()
+                    .any(|(_, option)| option.selected && option.dangerous);
+                let query = self.search.value();
                 let mut field = Dropdown::new(value)
+                    .highlight(&query)
+                    .dangerous(dangerous)
                     .open(self.open.as_ref().is_some_and(|o| o.index == *dropdown));
                 if let Some(stack) = face {
                     field = field.in_face(stack);
@@ -2020,6 +2178,21 @@ impl SettingsSurface {
                     let rect = Rect::new(at.x, at.y, row.width(), row.height());
                     row.draw(scene_out, root, &mut self.engine, rect);
                 }
+            }
+            Widget::Link { rect, label, hit } => {
+                koru_ui::text_paragraph::KoruTextParagraph::new(
+                    label,
+                    theme::role::meta(),
+                    "theme::role::meta() — a link",
+                    if hovered == Some(*hit) {
+                        theme::p().text
+                    } else {
+                        theme::p().accent
+                    }
+                    .multiply_alpha(alpha),
+                )
+                .highlight(&self.search.value())
+                .draw(scene_out, root, &mut self.engine, *rect);
             }
             Widget::Button {
                 rect,
@@ -2258,6 +2431,12 @@ impl SettingsSurface {
                     self.requests.push(Request::SetBotsCapacity(value));
                 }
             }
+            Action::ShowPage(page) => {
+                self.clear_search();
+                self.show_page(page);
+                self.relayout();
+            }
+
             Action::Theme(choice) => theme::set_theme_preference(theme_preference(choice)),
             Action::CaretColor(choice) => theme::set_caret_color(caret_color(choice)),
             Action::CaretWidth(choice) => theme::set_caret_width(caret_width(choice)),
@@ -2268,7 +2447,9 @@ impl SettingsSurface {
                 // Live: a document opened now picks this up, before the next save.
                 theme::set_default_view_mode(mode);
             }
-            Action::CanvasBackground => self.requests.push(Request::CycleCanvasBackground),
+            Action::CanvasBackground(color) => {
+                self.requests.push(Request::SetCanvasBackground(color))
+            }
             Action::ApplyLayoutToAll => {
                 self.layout_applied = true;
                 self.requests.push(Request::ApplyLayoutToAllDocuments);
@@ -2290,6 +2471,34 @@ impl SettingsSurface {
             Action::AccentColor(dark, rgb) => theme::set_accent_color(dark, rgb),
             Action::FontSetting(role, setting) => theme::set_font_setting(role.slot(), setting),
             Action::MoreFonts(role) => self.requests.push(Request::MoreFonts(role)),
+            Action::TextRendering(settings) => koru_draw::text_rendering::set(settings),
+            Action::TextAntialiasing(aa) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    antialiasing: aa,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::TextOffset(value) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    offset: value,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::TextGamma(value) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    gamma: value,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::TextCutoff(value) => {
+                koru_draw::text_rendering::set(koru_settings::TextRendering {
+                    cutoff: value,
+                    ..koru_draw::text_rendering::saved()
+                })
+            }
+            Action::HeadingWeight(weight) => theme::set_heading_weight(weight),
+            Action::ZoomIn => self.requests.push(Request::ZoomIn),
+            Action::ZoomOut => self.requests.push(Request::ZoomOut),
             Action::VoiceLanguage(language) => {
                 self.voice_language = language.clone();
                 self.requests.push(Request::SetVoiceLanguage(language));
@@ -2378,10 +2587,6 @@ impl SettingsSurface {
             }),
             Action::TerminalCursorBlink(choice) => self.patch_terminal(TerminalPatch {
                 cursor_blink: Some(choice),
-                ..TerminalPatch::default()
-            }),
-            Action::TerminalComposerDefault(value) => self.patch_terminal(TerminalPatch {
-                composer_default: Some(value),
                 ..TerminalPatch::default()
             }),
             // One patch, two fields: the switch is the two of them.
@@ -2553,12 +2758,13 @@ fn view_mode_choice(mode: theme::ViewMode) -> ViewModeChoice {
 fn clone_action(action: &Action) -> Action {
     match action {
         Action::BotsCapacity(value) => Action::BotsCapacity(*value),
+        Action::ShowPage(page) => Action::ShowPage(*page),
         Action::Theme(v) => Action::Theme(*v),
         Action::CaretColor(v) => Action::CaretColor(*v),
         Action::CaretWidth(v) => Action::CaretWidth(*v),
         Action::CaretHeight(v) => Action::CaretHeight(*v),
         Action::ViewMode(v) => Action::ViewMode(*v),
-        Action::CanvasBackground => Action::CanvasBackground,
+        Action::CanvasBackground(color) => Action::CanvasBackground(*color),
         Action::ApplyLayoutToAll => Action::ApplyLayoutToAll,
         Action::Density(v) => Action::Density(*v),
         Action::ScrollSpeed(v) => Action::ScrollSpeed(*v),
@@ -2571,6 +2777,14 @@ fn clone_action(action: &Action) -> Action {
         Action::AccentColor(dark, rgb) => Action::AccentColor(*dark, *rgb),
         Action::FontSetting(role, setting) => Action::FontSetting(*role, setting.clone()),
         Action::MoreFonts(role) => Action::MoreFonts(*role),
+        Action::TextRendering(settings) => Action::TextRendering(*settings),
+        Action::TextAntialiasing(value) => Action::TextAntialiasing(*value),
+        Action::TextOffset(value) => Action::TextOffset(*value),
+        Action::TextGamma(value) => Action::TextGamma(*value),
+        Action::TextCutoff(value) => Action::TextCutoff(*value),
+        Action::HeadingWeight(weight) => Action::HeadingWeight(*weight),
+        Action::ZoomIn => Action::ZoomIn,
+        Action::ZoomOut => Action::ZoomOut,
         Action::VoiceLanguage(v) => Action::VoiceLanguage(v.clone()),
         Action::VoiceInput(v) => Action::VoiceInput(v.clone()),
         Action::VoiceTier(v) => Action::VoiceTier(*v),
@@ -2601,7 +2815,6 @@ fn clone_action(action: &Action) -> Action {
         Action::TerminalCursorWidth(v) => Action::TerminalCursorWidth(*v),
         Action::TerminalCursorHeight(v) => Action::TerminalCursorHeight(*v),
         Action::TerminalCursorBlink(v) => Action::TerminalCursorBlink(*v),
-        Action::TerminalComposerDefault(v) => Action::TerminalComposerDefault(*v),
         Action::TerminalMatchCaret(v) => Action::TerminalMatchCaret(*v),
         Action::AgentEnabled(key, on) => Action::AgentEnabled(key.clone(), *on),
         Action::RestoreAgentDefaults => Action::RestoreAgentDefaults,

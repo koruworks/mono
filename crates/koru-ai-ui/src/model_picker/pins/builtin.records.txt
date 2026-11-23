@@ -10,7 +10,6 @@ records 52 truncated false
     fill = "#FFFFFF / alpha 1.000" (scene::Panel::fill)
     elevation = "Raised" (scene::Panel::elevation)
     radius = "10" (scene::Panel::radius)
-    shadow opacity = "1" (scene::Panel::shadow_alpha)
 2 ^1 part "Shadow" b[424.00 -9.00 824.00 451.00] c[0.00 0.00 900.00 700.00] z2
     rings = "16" (one soft shadow drawn as expanding fills; vello has no blur)
     spread / dy = "20 / 3" (SHADOW_SPREAD / SHADOW_DY)
@@ -87,19 +86,19 @@ records 52 truncated false
     docs = "docs/features/koruui/COMPONENTS.md" (catalog)
 12 ^11 primitive "fill" b[448.00 16.00 770.00 48.00] c[0.00 0.00 900.00 700.00] z12
     color = "#EAEAEA / alpha 1.000" (resolved paint; token origin not exposed)
-13 ^11 part "text line" b[455.00 24.14 458.47 39.86] c[0.00 0.00 900.00 700.00] z13
-    line height = "15.729492" (actual Parley line box)
+13 ^11 part "text line" b[460.00 23.00 463.47 41.00] c[0.00 0.00 900.00 700.00] z13
+    line height = "18" (actual Parley line box)
     baseline = "36.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-14 ^11 part "text line" b[455.00 25.00 559.29 43.00] c[0.00 0.00 900.00 700.00] z14
+14 ^11 part "text line" b[460.00 23.00 564.29 41.00] c[0.00 0.00 900.00 700.00] z14
     line height = "18" (actual Parley line box)
-    baseline = "38.729004" (local layout coordinates)
+    baseline = "36.729004" (local layout coordinates)
     ink bounds = "Not exposed" (line box is not glyph ink)
-15 ^14 primitive "text run" b[455.00 26.14 559.29 41.86] c[0.00 0.00 900.00 700.00] z15
+15 ^14 primitive "text run" b[460.00 24.14 564.29 39.86] c[0.00 0.00 900.00 700.00] z15
     font size = "13" (rendered run)
     font weight = "500" (Parley run font attributes)
     font style = "Normal" (Parley run font attributes; synthetic italic reported separately)
-    baseline = "38.729004" (local layout coordinates)
+    baseline = "36.729004" (local layout coordinates)
     ascent / descent = "12.59375 / 3.1357422" (rendered font metrics; not padding)
     foreground = "#ABABAB / alpha 1.000" (resolved paint; token origin not exposed)
     rendered family = "Inter" (actual font face; fallback included)
@@ -108,8 +107,8 @@ records 52 truncated false
     variation coordinates = "[0, 2949]" (rendered run, normalized font axes)
     synthetic italic = "None" (rendered run)
     tracking = "Not exposed" (unknown; do not infer from advances)
-16 ^11 primitive "fill" b[455.00 25.00 455.80 39.00] c[0.00 0.00 900.00 700.00] z16
-    color = "#191919 / alpha 1.000" (resolved paint; token origin not exposed)
+16 ^11 part "Cursor" b[460.00 25.00 460.80 39.00] c[0.00 0.00 900.00 700.00] z16
+    color = "#191919 / alpha 1.000" (resolved caret paint)
 17 ^9 element "Refresh models" b[772.00 18.00 798.00 46.00] c[0.00 0.00 900.00 700.00] z17
     element = "leaf" (El constructor)
     profile = "desktop" (FrameCx::profile)

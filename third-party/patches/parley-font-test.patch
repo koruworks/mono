@@ -1,0 +1,794 @@
+--- a/main.rs
++++ b/main.rs
+@@ -1,14 +1,5 @@
+ // Copyright 2024 the Parley Authors
+ // SPDX-License-Identifier: Apache-2.0 OR MIT
+-
+-#![allow(missing_docs, reason = "We have many as-yet undocumented items.")]
+-#![expect(
+-    missing_debug_implementations,
+-    unreachable_pub,
+-    clippy::allow_attributes_without_reason,
+-    clippy::cast_possible_truncation,
+-    reason = "Deferred"
+-)]
+ 
+ use accesskit::{Node, Role, Tree, TreeId, TreeUpdate};
+ use anyhow::Result;
+@@ -18,7 +9,7 @@
+ use vello::peniko::Color;
+ use vello::util::{RenderContext, RenderSurface};
+ use vello::wgpu;
+-use vello::{AaConfig, Renderer, RendererOptions, Scene};
++use vello::{Renderer, RendererOptions, Scene};
+ use winit::application::ApplicationHandler;
+ use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+ use winit::event::{StartCause, WindowEvent};
+@@ -28,9 +19,13 @@
+ mod access_ids;
+ use access_ids::{TEXT_INPUT_ID, WINDOW_ID};
+ 
++mod coverage;
++mod fonts;
++mod quiet;
+ mod text;
+-
+-const WINDOW_TITLE: &str = "Vello Text Editor";
++mod zoom;
++
++const WINDOW_TITLE: &str = "Koru font test — Parley / Vello reference";
+ 
+ // Simple struct to hold the state of the renderer
+ pub struct ActiveRenderState<'s> {
+@@ -39,10 +34,11 @@
+     access_adapter: accesskit_winit::Adapter,
+     window: Arc<Window>,
+     sent_initial_access_update: bool,
++    pixel_blitter: zoom::PixelBlitter,
+ }
+ 
+ impl ActiveRenderState<'_> {
+-    fn access_update(&mut self, editor: &mut text::Editor) {
++    fn access_update(&mut self, editor: &mut quiet::Page) {
+         self.access_adapter.update_if_active(|| {
+             let mut update = TreeUpdate {
+                 tree_id: TreeId::ROOT,
+@@ -100,10 +96,10 @@
+     scene: Scene,
+ 
+     /// Our `Editor`, which owns a `parley::PlainEditor`.
+-    editor: text::Editor,
++    editor: quiet::Page,
+ 
+     /// The last generation of the editor layout that we drew.
+-    last_drawn_generation: text::Generation,
++    last_drawn_generation: u64,
+ 
+     /// The IME cursor area we last sent to the platform.
+     last_sent_ime_cursor_area: parley::BoundingBox,
+@@ -113,6 +109,7 @@
+ 
+     /// Translate winit events into ui-events events.
+     event_reducer: WindowEventReducer,
++    zoom: zoom::Zoom,
+ }
+ 
+ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
+@@ -134,6 +131,9 @@
+         window.set_ime_allowed(true);
+ 
+         let size = window.inner_size();
++        window.set_title(&self.editor.window_title());
++        self.editor
++            .resize(size.width, size.height, window.scale_factor());
+ 
+         // Create a vello Surface
+         let surface_future = {
+@@ -159,6 +159,8 @@
+                 .create_render_surface(surface, size.width, size.height, present_mode)
+         };
+         let surface = pollster::block_on(surface_future).expect("Error creating surface");
++        let pixel_blitter =
++            zoom::PixelBlitter::new(&self.context.devices[surface.dev_id].device, surface.format);
+ 
+         // Create a vello Renderer for the surface (using its device id)
+         self.renderers
+@@ -173,6 +175,7 @@
+             access_adapter,
+             window,
+             sent_initial_access_update: false,
++            pixel_blitter,
+         });
+ 
+         event_loop.set_control_flow(ControlFlow::Wait);
+@@ -197,7 +200,7 @@
+                 self.editor.cursor_blink();
+ 
+                 if let Some(next_time) = self.editor.next_blink_time() {
+-                    self.last_drawn_generation = text::Generation::default();
++                    self.last_drawn_generation = 0;
+                     if let RenderState::Active(state) = &self.state {
+                         state.window.request_redraw();
+                     }
+@@ -233,7 +236,20 @@
+             .access_adapter
+             .process_event(&render_state.window, &event);
+ 
+-        if !matches!(
++        let size = render_state.window.inner_size();
++        if self.zoom.event(&event, [size.width, size.height]) {
++            render_state.window.set_title(&format!(
++                "Pixels {}x | {}",
++                self.zoom.factor,
++                self.editor.window_title()
++            ));
++            render_state.window.request_redraw();
++            return;
++        }
++
++        if matches!(event, WindowEvent::MouseWheel { .. }) {
++            self.editor.handle_event(event.clone());
++        } else if !matches!(
+             event,
+             WindowEvent::KeyboardInput {
+                 is_synthetic: true,
+@@ -247,6 +263,11 @@
+                 match wet {
+                     WindowEventTranslation::Keyboard(k) => {
+                         self.editor.handle_keyboard_event(&k);
++                        render_state.window.set_title(&format!(
++                            "Pixels {}x | {}",
++                            self.zoom.factor,
++                            self.editor.window_title()
++                        ));
+                     }
+                     WindowEventTranslation::Pointer(p) => {
+                         self.editor.handle_pointer_event(&p);
+@@ -259,17 +280,14 @@
+ 
+         if self.last_drawn_generation != self.editor.generation() {
+             render_state.window.request_redraw();
+-            let area = self.editor.editor().ime_cursor_area();
++            let area = self.editor.ime_cursor_area();
+             if self.last_sent_ime_cursor_area != area {
+                 self.last_sent_ime_cursor_area = area;
+                 // Note: on X11 `set_ime_cursor_area` may cause the exclusion area to be obscured
+                 // until https://github.com/rust-windowing/winit/pull/3966 is in the Winit release
+                 // used by this example.
+                 render_state.window.set_ime_cursor_area(
+-                    PhysicalPosition::new(
+-                        area.x0 + text::INSET as f64,
+-                        area.y0 + text::INSET as f64,
+-                    ),
++                    PhysicalPosition::new(area.x0, area.y0),
+                     PhysicalSize::new(area.width(), area.height()),
+                 );
+             }
+@@ -286,9 +304,14 @@
+             WindowEvent::Resized(size) => {
+                 self.context
+                     .resize_surface(&mut render_state.surface, size.width, size.height);
+-                let editor = self.editor.editor();
+-                editor.set_scale(1.0);
+-                editor.set_width(Some(size.width as f32 - 2_f32 * text::INSET));
++                self.editor
++                    .resize(size.width, size.height, render_state.window.scale_factor());
++                render_state.window.request_redraw();
++            }
++
++            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
++                let size = render_state.window.inner_size();
++                self.editor.resize(size.width, size.height, scale_factor);
+                 render_state.window.request_redraw();
+             }
+ 
+@@ -296,7 +319,7 @@
+             WindowEvent::Focused(false) => {
+                 self.editor.disable_blink();
+                 self.editor.cursor_blink();
+-                self.last_drawn_generation = text::Generation::default();
++                self.last_drawn_generation = 0;
+                 if let RenderState::Active(state) = &self.state {
+                     state.window.request_redraw();
+                 }
+@@ -338,10 +361,14 @@
+                         &self.scene,
+                         &surface.target_view,
+                         &vello::RenderParams {
+-                            base_color: Color::from_rgb8(30, 30, 30), // Background color
++                            base_color: if self.editor.coverage.active() {
++                                Color::from_rgba8(0, 0, 0, 0)
++                            } else {
++                                Color::from_rgb8(255, 255, 255)
++                            },
+                             width,
+                             height,
+-                            antialiasing_method: AaConfig::Area,
++                            antialiasing_method: self.editor.antialiasing(),
+                         },
+                     )
+                     .expect("failed to render to surface");
+@@ -359,14 +386,27 @@
+                         .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                             label: Some("Surface Blit"),
+                         });
+-                surface.blitter.copy(
+-                    &device_handle.device,
+-                    &mut encoder,
+-                    &surface.target_view,
+-                    &surface_texture
+-                        .texture
+-                        .create_view(&wgpu::TextureViewDescriptor::default()),
+-                );
++                let frame_view = surface_texture
++                    .texture
++                    .create_view(&wgpu::TextureViewDescriptor::default());
++                if self.zoom.factor > 1 || self.editor.coverage.active() {
++                    render_state.pixel_blitter.copy(
++                        &device_handle.device,
++                        &device_handle.queue,
++                        &mut encoder,
++                        &surface.target_view,
++                        &frame_view,
++                        &self.zoom,
++                        self.editor.coverage,
++                    );
++                } else {
++                    surface.blitter.copy(
++                        &device_handle.device,
++                        &mut encoder,
++                        &surface.target_view,
++                        &frame_view,
++                    );
++                }
+                 device_handle.queue.submit([encoder.finish()]);
+                 // Queue the texture to be presented on the surface.
+                 surface_texture.present();
+@@ -388,11 +428,9 @@
+                 render_state.access_update(&mut self.editor);
+             }
+             accesskit_winit::WindowEvent::ActionRequested(req) => {
+-                if req.target_node == TEXT_INPUT_ID {
+-                    self.editor.handle_accesskit_action_request(&req);
+-                    if self.last_drawn_generation != self.editor.generation() {
+-                        render_state.window.request_redraw();
+-                    }
++                self.editor.handle_accesskit_action_request(&req);
++                if self.last_drawn_generation != self.editor.generation() {
++                    render_state.window.request_redraw();
+                 }
+             }
+             accesskit_winit::WindowEvent::AccessibilityDeactivated => {
+@@ -403,6 +441,52 @@
+ }
+ 
+ fn main() -> Result<()> {
++    let args: Vec<_> = std::env::args().skip(1).collect();
++    let mut font_index = 0;
++    let mut directory =
++        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts");
++    let mut font_report = false;
++    let mut list_fonts = false;
++    let mut coverage_args = Vec::new();
++    for arg in args {
++        if let Some(name) = arg.strip_prefix("--font=") {
++            font_index = fonts::find(name)?;
++        } else if let Some(path) = arg.strip_prefix("--fonts-dir=") {
++            directory = path.into();
++        } else if arg == "--font-report" {
++            font_report = true;
++        } else if arg == "--list-fonts" {
++            list_fonts = true;
++        } else {
++            coverage_args.push(arg);
++        }
++    }
++    let coverage = coverage::Coverage::from_args(&coverage_args)?;
++    if list_fonts {
++        for font in fonts::CHOICES {
++            println!("{}: {}", font.label, font.stack);
++        }
++        return Ok(());
++    }
++    let font_context = fonts::load(&directory)?;
++    if font_report {
++        for font in fonts::CHOICES {
++            for weight in [400.0, 500.0, 600.0, 700.0] {
++                let mut editor = text::Editor::new("Add an image", &font_context);
++                editor.set_font(font.stack);
++                editor.configure(22.0, 30.8, weight);
++                println!(
++                    "{} requested {weight}: {}",
++                    font.label,
++                    editor.font_report()
++                );
++            }
++        }
++        return Ok(());
++    }
++    let mut editor = quiet::Page::new(&font_context);
++    editor.set_font(font_index);
++    editor.coverage = coverage;
+     // Create a winit event loop:
+     let event_loop = EventLoop::with_user_event().build()?;
+ 
+@@ -412,26 +496,25 @@
+         renderers: vec![],
+         state: RenderState::Suspended(None),
+         scene: Scene::new(),
+-        editor: text::Editor::new(text::LOREM),
+-        last_drawn_generation: text::Generation::default(),
++        editor,
++        last_drawn_generation: 0,
+         last_sent_ime_cursor_area: parley::BoundingBox::new(f64::NAN, f64::NAN, f64::NAN, f64::NAN),
+         event_loop_proxy: event_loop.create_proxy(),
+         event_reducer: WindowEventReducer::default(),
++        zoom: zoom::Zoom::default(),
+     };
+ 
+     // Run the winit event loop
+     event_loop
+         .run_app(&mut app)
+         .expect("Couldn't run event loop");
+-    let text = app.editor.text();
+-    print!("{text}");
+     Ok(())
+ }
+ 
+ /// Helper function that creates a Winit window and returns it (wrapped in an Arc for sharing between threads)
+ fn create_winit_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
+     let attr = Window::default_attributes()
+-        .with_inner_size(LogicalSize::new(1044, 800))
++        .with_inner_size(LogicalSize::new(1028, 760))
+         .with_resizable(true)
+         .with_title(WINDOW_TITLE)
+         .with_visible(false);
+--- a/text.rs
++++ b/text.rs
+@@ -8,9 +8,8 @@
+ 
+ use accesskit::{Node, TextDecoration, TextDecorationStyle, TreeUpdate};
+ use core::default::Default;
+-use parley::editing::SplitString;
++use parley::StyleProperty;
+ use parley::layout::{PositionedLayoutItem, Style};
+-use parley::{GenericFamily, StyleProperty};
+ use std::time::Duration;
+ use ui_events::pointer::PointerButton;
+ use ui_events::{
+@@ -30,7 +29,7 @@
+ 
+ use crate::access_ids::next_node_id;
+ 
+-pub const BACKGROUND_COLOR: AlphaColor<Srgb> = palette::css::STEEL_BLUE;
++pub const BACKGROUND_COLOR: AlphaColor<Srgb> = palette::css::WHITE;
+ pub const INSET: f32 = 32.0;
+ 
+ pub struct Editor {
+@@ -40,6 +39,10 @@
+     cursor_visible: bool,
+     start_time: Option<Instant>,
+     blink_period: Duration,
++    pub origin: (f32, f32),
++    pub scale: f64,
++    pub hint: bool,
++    font_stack: &'static str,
+ }
+ 
+ fn convert_rect(rect: &parley::BoundingBox) -> peniko::kurbo::Rect {
+@@ -83,21 +86,30 @@
+ }
+ 
+ impl Editor {
+-    pub fn new(text: &str) -> Self {
+-        let mut editor = PlainEditor::new(32.0);
++    pub fn new(text: &str, fonts: &FontContext) -> Self {
++        let mut editor = PlainEditor::new(16.0);
+         editor.set_text(text);
+         editor.set_scale(1.0);
+         let styles = editor.edit_styles();
+-        styles.insert(GenericFamily::SystemUi.into());
+-        styles.insert(StyleProperty::Brush(palette::css::WHITE.into()));
++        styles.insert(parley::FontFamily::Source("Segoe UI".into()).into());
++        styles.insert(StyleProperty::LineHeight(parley::LineHeight::Absolute(
++            26.0,
++        )));
++        styles.insert(StyleProperty::Brush(
++            AlphaColor::from_rgb8(31, 35, 41).into(),
++        ));
+         Self {
+-            font_cx: FontContext::default(),
++            font_cx: fonts.clone(),
+             layout_cx: LayoutContext::default(),
+             editor,
+             cursor_visible: false,
+             start_time: None,
+             // TODO: Why initialize to zero?
+-            blink_period: Duration::ZERO,
++            blink_period: Duration::from_millis(500),
++            origin: (INSET, INSET),
++            scale: 1.0,
++            hint: true,
++            font_stack: crate::fonts::CHOICES[0].stack,
+         }
+     }
+ 
+@@ -109,8 +121,85 @@
+         &mut self.editor
+     }
+ 
+-    pub fn text(&self) -> SplitString<'_> {
+-        self.editor.text()
++    pub fn configure(&mut self, size: f32, line: f32, weight: f32) {
++        let styles = self.editor.edit_styles();
++        styles.insert(StyleProperty::FontSize(size));
++        styles.insert(StyleProperty::LineHeight(parley::LineHeight::Absolute(
++            line,
++        )));
++        styles.insert(StyleProperty::FontWeight(parley::FontWeight::new(weight)));
++    }
++
++    pub fn height(&mut self) -> f32 {
++        self.editor
++            .layout(&mut self.font_cx, &mut self.layout_cx)
++            .height()
++    }
++
++    pub fn set_weight(&mut self, weight: f32) {
++        self.editor
++            .edit_styles()
++            .insert(StyleProperty::FontWeight(parley::FontWeight::new(weight)));
++    }
++
++    pub fn set_font(&mut self, stack: &'static str) {
++        self.font_stack = stack;
++        self.editor
++            .edit_styles()
++            .insert(parley::FontFamily::Source(stack.into()).into());
++    }
++
++    pub fn font_report(&mut self) -> String {
++        use skrifa::MetadataProvider;
++        let layout = self.editor.layout(&mut self.font_cx, &mut self.layout_cx);
++        let mut result = String::new();
++        for line in layout.lines() {
++            for item in line.items() {
++                let PositionedLayoutItem::GlyphRun(glyphs) = item else {
++                    continue;
++                };
++                let run = glyphs.run();
++                let data = run.font();
++                if let Ok(font) = skrifa::FontRef::from_index(data.data.as_ref(), data.index) {
++                    let name = font
++                        .localized_strings(skrifa::string::StringId::FULL_NAME)
++                        .english_or_first()
++                        .map(|name| name.to_string())
++                        .unwrap_or_default();
++                    result.push_str(&format!("face={name}; attributes={:?}; run weight={}; synthesis={:?}; variations={:?}\n", font.attributes(), run.font_attrs().weight.value(), run.synthesis(), run.normalized_coords()));
++                }
++            }
++        }
++        result
++    }
++
++    pub fn label(
++        &mut self,
++        scene: &mut Scene,
++        text: &str,
++        x: f32,
++        y: f32,
++        size: f32,
++        color: AlphaColor<Srgb>,
++    ) {
++        let mut layout = parley::Layout::new();
++        let mut builder = self
++            .layout_cx
++            .ranged_builder(&mut self.font_cx, text, 1.0, true);
++        builder.push_default(parley::FontFamily::Source(self.font_stack.into()));
++        builder.push_default(StyleProperty::FontSize(size));
++        builder.push_default(StyleProperty::LineHeight(parley::LineHeight::Absolute(
++            26.0,
++        )));
++        builder.push_default(StyleProperty::Brush(color.into()));
++        builder.build_into(&mut layout, text);
++        layout.break_all_lines(None);
++        paint_layout(
++            scene,
++            &layout,
++            Affine::scale(self.scale) * Affine::translate((x.into(), y.into())),
++            self.hint,
++        );
+     }
+ 
+     pub fn cursor_reset(&mut self) {
+@@ -304,8 +393,8 @@
+                 self.cursor_reset();
+                 let mut drv = self.editor.driver(&mut self.font_cx, &mut self.layout_cx);
+                 let cursor_pos = (
+-                    state.position.x as f32 - INSET,
+-                    state.position.y as f32 - INSET,
++                    state.position.x as f32 - self.origin.0,
++                    state.position.y as f32 - self.origin.1,
+                 );
+                 match state.count {
+                     2 => drv.select_word_at_point(cursor_pos.0, cursor_pos.1),
+@@ -323,8 +412,8 @@
+                 if pressed(&u.pointer, &u.current) && !self.editor.is_composing() =>
+             {
+                 let cursor_pos = (
+-                    u.current.position.x as f32 - INSET,
+-                    u.current.position.y as f32 - INSET,
++                    u.current.position.x as f32 - self.origin.0,
++                    u.current.position.y as f32 - self.origin.1,
+                 );
+                 self.cursor_reset();
+                 self.driver()
+@@ -336,10 +425,6 @@
+ 
+     pub fn handle_event(&mut self, event: WindowEvent) {
+         match event {
+-            WindowEvent::Resized(size) => {
+-                self.editor
+-                    .set_width(Some(size.width as f32 - 2_f32 * INSET));
+-            }
+             WindowEvent::Ime(Ime::Disabled) => {
+                 self.driver().clear_compose();
+             }
+@@ -365,21 +450,17 @@
+         }
+     }
+ 
+-    /// Return the current `Generation` of the layout.
+-    pub fn generation(&self) -> Generation {
+-        self.editor.generation()
+-    }
+-
+     /// Draw into scene.
+     ///
+     /// Returns drawn `Generation`.
+     pub fn draw(&mut self, scene: &mut Scene) -> Generation {
+-        let transform = Affine::translate((INSET as f64, INSET as f64));
++        let transform = Affine::scale(self.scale)
++            * Affine::translate((self.origin.0.into(), self.origin.1.into()));
+         self.editor.selection_geometry_with(|rect, _| {
+             scene.fill(
+                 Fill::NonZero,
+                 transform,
+-                BACKGROUND_COLOR,
++                AlphaColor::from_rgba8(58, 133, 247, 61),
+                 None,
+                 &convert_rect(&rect),
+             );
+@@ -389,112 +470,14 @@
+                 scene.fill(
+                     Fill::NonZero,
+                     transform,
+-                    palette::css::WHITE,
++                    AlphaColor::from_rgb8(31, 35, 41),
+                     None,
+                     &convert_rect(&cursor),
+                 );
+             }
+         }
+         let layout = self.editor.layout(&mut self.font_cx, &mut self.layout_cx);
+-        for line in layout.lines() {
+-            for item in line.items() {
+-                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+-                    continue;
+-                };
+-                let style = glyph_run.style();
+-                // We draw underlines under the text, then the strikethrough on top, following:
+-                // https://drafts.csswg.org/css-text-decor/#painting-order
+-                if let Some(underline) = &style.underline {
+-                    let underline_brush = &style.brush;
+-                    let run_metrics = glyph_run.run().metrics();
+-                    let offset = match underline.offset {
+-                        Some(offset) => offset,
+-                        None => run_metrics.underline_offset,
+-                    };
+-                    let width = match underline.size {
+-                        Some(size) => size,
+-                        None => run_metrics.underline_size,
+-                    };
+-                    // The `offset` is the distance from the baseline to the top of the underline
+-                    // so we move the line down by half the width
+-                    // Remember that we are using a y-down coordinate system
+-                    // If there's a custom width, because this is an underline, we want the custom
+-                    // width to go down from the default expectation
+-                    let y = glyph_run.baseline() - offset + width / 2.;
+-
+-                    let line = Line::new(
+-                        (glyph_run.offset() as f64, y as f64),
+-                        ((glyph_run.offset() + glyph_run.advance()) as f64, y as f64),
+-                    );
+-                    scene.stroke(
+-                        &Stroke::new(width.into()),
+-                        transform,
+-                        underline_brush,
+-                        None,
+-                        &line,
+-                    );
+-                }
+-                let mut x = glyph_run.offset();
+-                let y = glyph_run.baseline();
+-                let run = glyph_run.run();
+-                let font = run.font();
+-                let font_size = run.font_size();
+-                let synthesis = run.synthesis();
+-                let glyph_xform = synthesis
+-                    .skew()
+-                    .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
+-                scene
+-                    .draw_glyphs(font)
+-                    .brush(&style.brush)
+-                    .hint(true)
+-                    .transform(transform)
+-                    .glyph_transform(glyph_xform)
+-                    .font_size(font_size)
+-                    .normalized_coords(run.normalized_coords())
+-                    .draw(
+-                        Fill::NonZero,
+-                        glyph_run.glyphs().map(|glyph| {
+-                            let gx = x + glyph.x;
+-                            let gy = y + glyph.y;
+-                            x += glyph.advance;
+-                            vello::Glyph {
+-                                id: glyph.id,
+-                                x: gx,
+-                                y: gy,
+-                            }
+-                        }),
+-                    );
+-                if let Some(strikethrough) = &style.strikethrough {
+-                    let strikethrough_brush = &style.brush;
+-                    let run_metrics = glyph_run.run().metrics();
+-                    let offset = match strikethrough.offset {
+-                        Some(offset) => offset,
+-                        None => run_metrics.strikethrough_offset,
+-                    };
+-                    let width = match strikethrough.size {
+-                        Some(size) => size,
+-                        None => run_metrics.strikethrough_size,
+-                    };
+-                    // The `offset` is the distance from the baseline to the *top* of the strikethrough
+-                    // so we calculate the middle y-position of the strikethrough based on the font's
+-                    // standard strikethrough width.
+-                    // Remember that we are using a y-down coordinate system
+-                    let y = glyph_run.baseline() - offset + run_metrics.strikethrough_size / 2.;
+-
+-                    let line = Line::new(
+-                        (glyph_run.offset() as f64, y as f64),
+-                        ((glyph_run.offset() + glyph_run.advance()) as f64, y as f64),
+-                    );
+-                    scene.stroke(
+-                        &Stroke::new(width.into()),
+-                        transform,
+-                        strikethrough_brush,
+-                        None,
+-                        &line,
+-                    );
+-                }
+-            }
+-        }
++        paint_layout(scene, layout, transform, self.hint);
+         self.editor.generation()
+     }
+ 
+@@ -504,13 +487,112 @@
+             update,
+             node,
+             next_node_id,
+-            INSET.into(),
+-            INSET.into(),
++            self.origin.0.into(),
++            self.origin.1.into(),
+             set_accesskit_brush_properties,
+         );
+     }
+ }
+ 
+-pub const LOREM: &str = r" Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi cursus mi sed euismod euismod. Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Nullam placerat efficitur tellus at semper. Morbi ac risus magna. Donec ut cursus ex. Etiam quis posuere tellus. Mauris posuere dui et turpis mollis, vitae luctus tellus consectetur. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur eu facilisis nisl.
+-
+-Phasellus in viverra dolor, vitae facilisis est. Maecenas malesuada massa vel ultricies feugiat. Vivamus venenatis et gהתעשייה בנושא האינטרנטa nibh nec pharetra. Phasellus vestibulum elit enim, nec scelerisque orci faucibus id. Vivamus consequat purus sit amet orci egestas, non iaculis massa porttitor. Vestibulum ut eros leo. In fermentum convallis magna in finibus. Donec justo leo, maximus ac laoreet id, volutpat ut elit. Mauris sed leo non neque laoreet faucibus. Aliquam orci arcu, faucibus in molestie eget, ornare non dui. Donec volutpat nulla in fringilla elementum. Aliquam vitae ante egestas ligula tempus vestibulum sit amet sed ante. ";
++// The upstream example's glyph painting path, shared by document blocks and labels.
++fn paint_layout(scene: &mut Scene, layout: &parley::Layout<Brush>, transform: Affine, hint: bool) {
++    for line in layout.lines() {
++        for item in line.items() {
++            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
++                continue;
++            };
++            let style = glyph_run.style();
++            // We draw underlines under the text, then the strikethrough on top, following:
++            // https://drafts.csswg.org/css-text-decor/#painting-order
++            if let Some(underline) = &style.underline {
++                let underline_brush = &style.brush;
++                let run_metrics = glyph_run.run().metrics();
++                let offset = match underline.offset {
++                    Some(offset) => offset,
++                    None => run_metrics.underline_offset,
++                };
++                let width = match underline.size {
++                    Some(size) => size,
++                    None => run_metrics.underline_size,
++                };
++                // The `offset` is the distance from the baseline to the top of the underline
++                // so we move the line down by half the width
++                // Remember that we are using a y-down coordinate system
++                // If there's a custom width, because this is an underline, we want the custom
++                // width to go down from the default expectation
++                let y = glyph_run.baseline() - offset + width / 2.;
++
++                let line = Line::new(
++                    (glyph_run.offset() as f64, y as f64),
++                    ((glyph_run.offset() + glyph_run.advance()) as f64, y as f64),
++                );
++                scene.stroke(
++                    &Stroke::new(width.into()),
++                    transform,
++                    underline_brush,
++                    None,
++                    &line,
++                );
++            }
++            let mut x = glyph_run.offset();
++            let y = glyph_run.baseline();
++            let run = glyph_run.run();
++            let font = run.font();
++            let font_size = run.font_size();
++            let synthesis = run.synthesis();
++            let glyph_xform = synthesis
++                .skew()
++                .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
++            scene
++                .draw_glyphs(font)
++                .brush(&style.brush)
++                .hint(hint)
++                .transform(transform)
++                .glyph_transform(glyph_xform)
++                .font_size(font_size)
++                .normalized_coords(run.normalized_coords())
++                .draw(
++                    Fill::NonZero,
++                    glyph_run.glyphs().map(|glyph| {
++                        let gx = x + glyph.x;
++                        let gy = y + glyph.y;
++                        x += glyph.advance;
++                        vello::Glyph {
++                            id: glyph.id,
++                            x: gx,
++                            y: gy,
++                        }
++                    }),
++                );
++            if let Some(strikethrough) = &style.strikethrough {
++                let strikethrough_brush = &style.brush;
++                let run_metrics = glyph_run.run().metrics();
++                let offset = match strikethrough.offset {
++                    Some(offset) => offset,
++                    None => run_metrics.strikethrough_offset,
++                };
++                let width = match strikethrough.size {
++                    Some(size) => size,
++                    None => run_metrics.strikethrough_size,
++                };
++                // The `offset` is the distance from the baseline to the *top* of the strikethrough
++                // so we calculate the middle y-position of the strikethrough based on the font's
++                // standard strikethrough width.
++                // Remember that we are using a y-down coordinate system
++                let y = glyph_run.baseline() - offset + run_metrics.strikethrough_size / 2.;
++
++                let line = Line::new(
++                    (glyph_run.offset() as f64, y as f64),
++                    ((glyph_run.offset() + glyph_run.advance()) as f64, y as f64),
++                );
++                scene.stroke(
++                    &Stroke::new(width.into()),
++                    transform,
++                    strikethrough_brush,
++                    None,
++                    &line,
++                );
++            }
++        }
++    }
++}

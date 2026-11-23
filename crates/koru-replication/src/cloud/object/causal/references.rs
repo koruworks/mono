@@ -49,23 +49,25 @@ impl RestoredContent {
         mut budget: ReferenceBudget,
     ) -> Result<StrictBlobReferences, StrictReferenceError> {
         let (schema, hashes) = match self.proof.unit {
+            // A helper document uses no file; it reports no page schema (0).
+            Unit::WorkspaceDocument { .. } if helper_document(&self.doc, &mut budget)? => {
+                (0, BTreeSet::new())
+            }
             Unit::WorkspaceDocument { document_id } => {
                 let inspected = inspect_file_references(&self.doc, budget)?;
+                // `meta.id` is not checked against the storing Workspace. It is
+                // the Workspace the document was created in, stamped once and
+                // never moved with the document, so a document moved between
+                // Workspaces keeps its old one; the storage binding of this
+                // unit already proves where it is held. `meta.document` names
+                // the document itself and must still match.
                 let meta = self.doc.get_map("meta");
-                for (key, expected) in [
-                    (
-                        "id",
-                        identity::uuid_text(identity::parts(self.proof.dataset).1),
-                    ),
-                    ("document", identity::uuid_text(document_id)),
-                ] {
-                    if let Some(value) = meta.get(key) {
-                        let Some(LoroValue::String(value)) = value.as_value() else {
-                            return Err(StrictReferenceError::Scope);
-                        };
-                        if value.as_str() != expected {
-                            return Err(StrictReferenceError::Scope);
-                        }
+                if let Some(value) = meta.get("document") {
+                    let Some(LoroValue::String(value)) = value.as_value() else {
+                        return Err(StrictReferenceError::Scope);
+                    };
+                    if value.as_str() != identity::uuid_text(document_id) {
+                        return Err(StrictReferenceError::Scope);
                     }
                 }
                 // Feed the canonical walker only after every raw slot has been
@@ -399,4 +401,47 @@ fn check_map(
         }
     }
     Ok(())
+}
+
+/// Roots of the Workspace system document (`koru_core::system`: `meta`,
+/// `definitions`, `tags`, `lists`, `pages`) and of an OCR reading document
+/// (`koru_read::document::ROOT`). Spelled here because both crates keep them
+/// private; a renamed root there is caught by the helper-document tests.
+const SYSTEM_ROOTS: [&str; 5] = ["meta", "definitions", "tags", "lists", "pages"];
+const SYSTEM_SCHEMA_KEY: &str = "system_schema_version";
+const READING_ROOT: &str = "readings";
+
+/// **A helper document uses no file of its own.** The Workspace system document
+/// holds tags, lists, definitions and page records; an OCR reading document
+/// holds text keyed by the hash of the file it read, which names that file but
+/// is not a use of it. Both are recognized by their exact root shape only —
+/// every root a map, and the system document's `meta` holding nothing but its
+/// schema key — so anything else still goes to the page inspector and is
+/// refused when unknown. Structure is budgeted like any other unit.
+fn helper_document(
+    doc: &LoroDoc,
+    budget: &mut ReferenceBudget,
+) -> Result<bool, StrictReferenceError> {
+    let LoroValue::Map(roots) = doc.get_value() else {
+        return Ok(false);
+    };
+    let all_maps = roots.values().all(|value| {
+        matches!(value, LoroValue::Container(id) if id.container_type() == loro::ContainerType::Map)
+    });
+    if roots.is_empty() || !all_maps {
+        return Ok(false);
+    }
+    let reading = roots.len() == 1 && roots.contains_key(READING_ROOT);
+    let system = roots.contains_key("meta")
+        && roots.keys().all(|key| SYSTEM_ROOTS.contains(&key.as_str()))
+        && {
+            let meta = doc.get_map("meta");
+            let keys = meta.keys().collect::<Vec<_>>();
+            keys.len() == 1 && keys[0].as_str() == SYSTEM_SCHEMA_KEY
+        };
+    if !reading && !system {
+        return Ok(false);
+    }
+    structural_budget(doc, budget)?;
+    Ok(true)
 }

@@ -7,6 +7,175 @@
 //! would pass with a control missing.
 
 use crate::action::FontRole;
+
+#[test]
+fn appearance_zoom_follows_app_font_and_fast_wheel_choices_apply() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let speed = theme::wheel_speed();
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
+    surface.relayout();
+    let drawn = page_lines(&surface);
+    let app = drawn.iter().position(|line| line == "App font").unwrap();
+    let zoom = drawn.iter().position(|line| line == "Zoom").unwrap();
+    let chat = drawn.iter().position(|line| line == "Chat font").unwrap();
+    assert!(app < zoom && zoom < chat);
+    let position = |label| drawn.iter().position(|line| line == label).unwrap();
+    assert!(position("Text rendering") < position("Caret"));
+    assert!(position("Caret") < position("App fonts"));
+    assert!(position("App fonts") < app);
+    assert!(chat < position("Density"));
+    assert!(!drawn.iter().any(|line| line == "Document fonts"));
+    assert!(crate::tests::press_on(
+        &mut surface,
+        PageId::Appearance,
+        "See editor settings"
+    ));
+    assert_eq!(surface.page(), PageId::Editor);
+    surface.relayout();
+    assert!(
+        page_lines(&surface)
+            .iter()
+            .any(|line| line == "Heading weight")
+    );
+    for choice in [
+        koru_settings::ScrollSpeedChoice::X8,
+        koru_settings::ScrollSpeedChoice::X16,
+    ] {
+        surface.perform(crate::action::Action::ScrollSpeed(choice));
+        assert_eq!(theme::wheel_speed(), choice.factor());
+    }
+    surface.perform(crate::action::Action::ZoomIn);
+    assert!(surface.take_requests().contains(&Request::ZoomIn));
+    theme::set_wheel_speed(speed);
+}
+
+#[test]
+fn appearance_colors_follow_the_active_theme_without_changing_the_other() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was_dark = theme::is_dark();
+    let was = [theme::caret_color_for(false), theme::caret_color_for(true)];
+    let mut surface = koru();
+    surface.show_page(PageId::Appearance);
+    for (dark, color, _active, _hidden) in [
+        (
+            false,
+            koru_settings::CaretColorChoice::Blue,
+            "light",
+            "dark",
+        ),
+        (
+            true,
+            koru_settings::CaretColorChoice::Violet,
+            "dark",
+            "light",
+        ),
+    ] {
+        theme::set_dark(dark);
+        surface.relayout();
+        let lines = page_lines(&surface);
+        let at = |label: &str| lines.iter().position(|line| line == label).unwrap();
+        assert!(at("Theme") < at("Base color"));
+        assert!(at("Accent color") < at("Text rendering"));
+        assert_eq!(
+            lines.iter().filter(|l| l.as_str() == "Base color").count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.as_str() == "Accent color")
+                .count(),
+            1
+        );
+        surface.perform(crate::action::Action::CaretColor(color));
+    }
+    theme::set_dark(false);
+    assert_eq!(theme::caret_color(), theme::CaretColor::Blue);
+    theme::set_dark(true);
+    assert_eq!(theme::caret_color(), theme::CaretColor::Violet);
+    theme::set_caret_color_for(false, was[0]);
+    theme::set_caret_color_for(true, was[1]);
+    theme::set_dark(was_dark);
+}
+
+#[test]
+fn rendering_choices_and_resets_belong_to_the_resolved_theme() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was = koru_draw::text_rendering::preferences();
+    let dark = theme::is_dark();
+    koru_draw::text_rendering::set_preferences(Default::default());
+    let mut surface = koru();
+    for (dark, gamma) in [(false, 2.5), (true, 0.5)] {
+        theme::set_dark(dark);
+        surface.perform(crate::action::Action::TextGamma(gamma));
+        assert_eq!(koru_draw::text_rendering::current().gamma, gamma);
+    }
+    theme::set_dark(false);
+    assert_eq!(koru_draw::text_rendering::current().gamma, 2.5);
+    assert!(crate::tests::press_on(
+        &mut surface,
+        PageId::Appearance,
+        "Restore defaults"
+    ));
+    assert_eq!(
+        koru_draw::text_rendering::saved(),
+        koru_settings::TextRendering::DEFAULT
+    );
+    theme::set_dark(true);
+    assert_eq!(koru_draw::text_rendering::current().gamma, 0.5);
+    assert!(crate::tests::press_on(
+        &mut surface,
+        PageId::Appearance,
+        "Restore defaults"
+    ));
+    assert_eq!(
+        koru_draw::text_rendering::saved(),
+        koru_settings::TextRendering::DARK_DEFAULT
+    );
+    theme::set_dark(dark);
+    koru_draw::text_rendering::set_preferences(was);
+}
+
+#[test]
+fn text_controls_apply_immediately_and_raster_reset_keeps_heading_weight() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let was_raster = koru_draw::text_rendering::current();
+    let was_weight = theme::heading_weight();
+    koru_draw::text_rendering::set(koru_settings::TextRendering::default());
+    theme::set_heading_weight(600);
+    let mut surface = koru();
+    let choose = |surface: &mut SettingsSurface, word| {
+        crate::tests::press_on(
+            surface,
+            if word == "500" {
+                PageId::Editor
+            } else {
+                PageId::Appearance
+            },
+            word,
+        )
+    };
+    assert!(choose(&mut surface, "500"));
+    assert_eq!(theme::headings_font().weight_for(Some(1)), 500.0);
+    assert_eq!(theme::headings_font().weight_for(Some(6)), 500.0);
+    assert!(choose(&mut surface, "1.25"));
+    assert_eq!(koru_draw::text_rendering::current().gamma, 1.25);
+    assert!(choose(&mut surface, "MSAA8"));
+    assert_eq!(
+        koru_draw::text_rendering::current().antialiasing,
+        koru_settings::TextAntialiasing::Msaa8
+    );
+    assert_eq!(koru_draw::text_rendering::current().gamma, 1.25);
+    assert!(choose(&mut surface, "Restore defaults"));
+    assert_eq!(
+        koru_draw::text_rendering::current(),
+        koru_settings::TextRendering::defaults(theme::is_dark())
+    );
+    assert_eq!(theme::heading_weight(), 500);
+    koru_draw::text_rendering::set(was_raster);
+    theme::set_heading_weight(was_weight);
+}
 use crate::page::Block;
 use crate::tests::{
     GLOBALS, flip, goto, is_active, koru, labels, lines, page_lines, press, press_rect, rect_of,
@@ -415,6 +584,10 @@ fn font_field(surface: &SettingsSurface, role: FontRole) -> Rect {
 
 /// Press the option labelled `label` in `role`'s list.
 fn choose_in(surface: &mut SettingsSurface, role: FontRole, label: &str) {
+    surface.show_page(match role {
+        FontRole::App | FontRole::Chat => PageId::Appearance,
+        FontRole::Body | FontRole::Headings | FontRole::Code => PageId::Editor,
+    });
     surface.relayout();
     assert!(press_rect(surface, font_field(surface, role)));
     let open = surface.open.as_ref().expect("the list is open");
@@ -565,13 +738,10 @@ fn every_font_option_is_set_in_its_own_face() {
         .expect("the app font dropdown");
     // The family rows; *More fonts…* opens a picker rather than naming one.
     for (action, option) in &app_font.options {
-        if !matches!(action, crate::action::Action::Font(..)) {
+        let crate::action::Action::Font(_, family) = action else {
             continue;
-        }
-        let family = theme::FontChoice::ALL
-            .iter()
-            .find(|f| f.label() == option.label)
-            .expect("a family");
+        };
+        assert_eq!(option.label, family.label());
         assert_eq!(option.font_stack, Some(family.stack()));
     }
 }
@@ -620,7 +790,7 @@ fn the_page_background_is_offered_only_in_page_mode() {
     surface.show_page(PageId::Editor);
     theme::set_default_view_mode(theme::ViewMode::Page);
     surface.relayout();
-    assert_eq!(swatches(&surface, "Page background").len(), 1);
+    assert_eq!(swatches(&surface, "Page background").len(), 4);
     theme::set_default_view_mode(theme::ViewMode::Full);
     surface.relayout();
     assert!(swatches(&surface, "Page background").is_empty());
@@ -676,18 +846,22 @@ fn the_closing_row_asks_the_host_to_record_the_choice() {
 }
 
 #[test]
-fn the_page_background_asks_the_host_to_cycle_it() {
+fn the_page_background_offers_every_color_and_selects_directly() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     let was = theme::default_view_mode();
     theme::set_default_view_mode(theme::ViewMode::Page);
     surface.show_page(PageId::Editor);
     surface.relayout();
-    let rect = swatches(&surface, "Page background")[0];
+    let colors = swatches(&surface, "Page background");
+    assert_eq!(colors.len(), 4);
+    let rect = colors[2];
     assert!(press_rect(&mut surface, rect));
     assert_eq!(
         surface.take_requests(),
-        vec![Request::CycleCanvasBackground]
+        vec![Request::SetCanvasBackground(Some(
+            theme::canvas_presets()[1]
+        ))]
     );
     surface.set_canvas_background(Some([1, 2, 3, 255]));
     assert_eq!(surface.canvas_background(), Some([1, 2, 3, 255]));
@@ -977,7 +1151,7 @@ fn advanced_is_always_shown() {
 fn document_fonts_links_to_the_sample_document() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
-    surface.show_page(PageId::Appearance);
+    surface.show_page(PageId::Editor);
     surface.relayout();
     let link = "Preview in sample document";
     let caption = surface.laid.blocks.iter().find_map(|block| match block {
@@ -985,7 +1159,7 @@ fn document_fonts_links_to_the_sample_document() {
             title,
             link: Some((text, _, _)),
             ..
-        } => Some((title.clone(), text.clone())),
+        } if title == "Document fonts" => Some((title.clone(), text.clone())),
         _ => None,
     });
     assert_eq!(
@@ -1003,7 +1177,7 @@ fn a_host_without_a_sample_document_draws_no_link() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
     let mut surface = koru();
     surface.offer_sample_document(false);
-    surface.show_page(PageId::Appearance);
+    surface.show_page(PageId::Editor);
     surface.relayout();
     assert!(page_lines(&surface).iter().any(|l| l == "Document fonts"));
     assert!(!goto(&mut surface, "Preview in sample document"));

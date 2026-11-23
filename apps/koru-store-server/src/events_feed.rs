@@ -11,12 +11,24 @@
 //! lose that in-memory retry buffer; Piece 4's startup/reconnect reconciliation
 //! repairs it from a current authoritative snapshot.
 //!
+//! **It also says when a workspace's tasks changed** (`projection.tasks.changed`). The
+//! Tasks surfaces read the read model, and until this they learned it had
+//! moved only from their own writes and a half-minute timer, so a task moved
+//! on another device sat in its old place until the timer or a change of
+//! view. The feed is told of every projection whatever its source, so it is
+//! where *the answer moved* can be said once for all of them: it keeps a
+//! digest of each document's task rows, and a document projected with a
+//! different one marks its workspace. One note per marked workspace leaves
+//! on the next projector tick — a renumbered list of forty tasks is one
+//! event, not forty.
+//!
 //! Before the consumer is registered, [`prepare`] seeds the worker's baseline
 //! from the projection's own listings — an upgrade on an existing store must
 //! not announce every document as born today. Seeding is idempotent on the
 //! worker's side, so a crash between the seed and the mark re-runs safely.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use koru_events_server::{BaselineEntry, EventsHandle, FeedNote, IdentityWake, ReminderWake};
@@ -61,6 +73,8 @@ pub fn prepare(root: &Path, handle: EventsHandle) -> Option<Box<dyn Consumer>> {
         sink: Box::new(handle),
         projections,
         pending: BTreeMap::new(),
+        task_digests: HashMap::new(),
+        tasks_dirty: BTreeSet::new(),
     }))
 }
 
@@ -137,6 +151,45 @@ struct EventsFeed {
     /// Latest undelivered fact per content-free identity. Repeated writes to
     /// one document/reminder collapse while the journal is unavailable.
     pending: BTreeMap<String, FeedNote>,
+    /// What each document's task rows came to when it was last projected in
+    /// this process ([`task_digest`]). In memory only: a consumer owns its
+    /// cursor, and losing this one costs a single extra `projection.tasks.changed` per
+    /// document after a restart, never a missed one.
+    task_digests: HashMap<(WorkspaceId, DocumentId), u64>,
+    /// The workspaces whose task rows moved since the last projector tick.
+    tasks_dirty: BTreeSet<WorkspaceId>,
+}
+
+/// The digest of a document with no task rows at all.
+const NO_TASKS: u64 = 0;
+
+/// What a document's task rows hash to.
+///
+/// **Every node that carries an attribute**, whole. A task is a node with
+/// `koru.task` or a due, and everything a task row shows beside its words —
+/// its date, level, colour, list and place in the list — is an attribute
+/// too, so the attributed nodes are a superset of the rows the task query
+/// can answer with. A superset is the right side to err on: an attributed
+/// node that is not a task costs one query nobody needed, and a narrower
+/// rule would have to track the read model's own derivation to stay right.
+/// Plain text — the paragraph somebody is typing — has no attributes and
+/// moves nothing.
+fn task_digest(projection: &DocumentProjection) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut any = false;
+    for node in projection
+        .nodes
+        .iter()
+        .filter(|node| !node.attrs.is_empty())
+    {
+        any = true;
+        node.hash(&mut hasher);
+    }
+    match (any, hasher.finish()) {
+        (false, _) => NO_TASKS,
+        (true, NO_TASKS) => 1,
+        (true, digest) => digest,
+    }
 }
 
 trait FeedSink: Send {
@@ -155,6 +208,16 @@ impl EventsFeed {
             self.pending.insert(note_key(&note), note);
         }
         self.flush();
+    }
+
+    /// One `projection.tasks.changed` per workspace marked since the last tick.
+    fn announce_tasks(&mut self) {
+        for workspace in std::mem::take(&mut self.tasks_dirty) {
+            let note = FeedNote::TasksChanged {
+                workspace: workspace.to_string(),
+            };
+            self.pending.insert(note_key(&note), note);
+        }
     }
 
     fn flush(&mut self) {
@@ -182,6 +245,7 @@ fn note_key(note: &FeedNote) -> String {
             document,
         } => format!("document:{workspace}:{document}"),
         FeedNote::Listing { workspace, .. } => format!("listing:{workspace}"),
+        FeedNote::TasksChanged { workspace } => format!("tasks:{workspace}"),
         FeedNote::ReminderChanged { profile, change } => {
             format!("reminder:{profile}:{change:?}")
         }
@@ -208,6 +272,9 @@ impl Consumer for EventsFeed {
     }
 
     fn flush_pending(&mut self) {
+        // Once per projector tick, idle ticks included: everything that
+        // marked a workspace during the last one leaves as a single note.
+        self.announce_tasks();
         self.flush();
     }
 
@@ -217,6 +284,21 @@ impl Consumer for EventsFeed {
             document: projection.document.to_string(),
             revision: projection.source_revision.clone(),
         }]);
+        let digest = task_digest(projection);
+        let moved = match self
+            .task_digests
+            .insert((projection.workspace, projection.document), digest)
+        {
+            Some(previous) => previous != digest,
+            // First sight since this process started. A document that holds
+            // tasks may have just changed one; one that holds none either
+            // never did or lost its last, and that is said by the attribute
+            // and removal diffs below.
+            None => digest != NO_TASKS,
+        };
+        if moved {
+            self.tasks_dirty.insert(projection.workspace);
+        }
     }
 
     fn removed(&mut self, workspace: WorkspaceId, document: DocumentId) {
@@ -224,9 +306,16 @@ impl Consumer for EventsFeed {
             workspace: workspace.to_string(),
             document: document.to_string(),
         }]);
+        // Gone with whatever tasks it held; unknown counts as held.
+        if self.task_digests.remove(&(workspace, document)) != Some(NO_TASKS) {
+            self.tasks_dirty.insert(workspace);
+        }
     }
 
     fn listing_changed(&mut self, workspace: WorkspaceId) {
+        // A document binned, restored, renamed or moved changes which tasks
+        // the query lists and the path each row shows.
+        self.tasks_dirty.insert(workspace);
         let listing = match self.projections.listing(workspace) {
             Ok(Some(listing)) => listing,
             Ok(None) => return,
@@ -248,6 +337,10 @@ impl Consumer for EventsFeed {
 
     fn attribute_events(&mut self, events: &[koru_projection::AttributeEvent]) {
         self.deliver(due_notes(events));
+        // An attribute set, moved or cleared is a task row changing — and
+        // the one way a document seen for the first time says it lost one.
+        self.tasks_dirty
+            .extend(events.iter().map(|event| event.workspace));
     }
 
     fn reminder_changes(&mut self, events: &[koru_store_core::ReminderCommitted]) {
@@ -282,6 +375,9 @@ impl Consumer for EventsFeed {
 
     fn entities_removed(&mut self, workspace: WorkspaceId, document: DocumentId, nodes: &[String]) {
         self.deliver(entity_removed_notes(workspace, document, nodes));
+        if !nodes.is_empty() {
+            self.tasks_dirty.insert(workspace);
+        }
     }
 }
 

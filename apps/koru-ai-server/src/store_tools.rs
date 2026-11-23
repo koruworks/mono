@@ -23,6 +23,8 @@ use koru_store_wire::search::{SearchRequest, SearchResponse};
 use koru_store_wire::tasks::{TaskQuery, TaskQueryResponse};
 use koru_store_wire::{CaptureHistory, HistoryEntry, HistoryPage, HistoryQuery, Status};
 
+mod mini_apps;
+
 /// Executes provider-requested tools through the same catalog, authorization,
 /// and CRDT-aware implementation exposed by Koru MCP, without HTTP or an MCP
 /// serialization hop inside the desktop process.
@@ -415,6 +417,7 @@ mod tests {
         profile: Option<ProfileId>,
     ) -> AiToolExecutionContext {
         AiToolExecutionContext {
+            mini_app: None,
             chat_id: ChatId::new(),
             attempt_id: InferenceAttemptId::new(),
             invocation_id: ToolInvocationId::new(),

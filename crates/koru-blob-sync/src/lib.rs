@@ -42,6 +42,7 @@
 //! The contract is `docs/cloud-platform/contracts/cloud-blob-object-v1.md`;
 //! the decision is ADR-000-blobobjectworker.
 
+pub mod admission;
 pub mod allowlist;
 pub mod control;
 pub mod coverage;

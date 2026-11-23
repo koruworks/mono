@@ -67,6 +67,8 @@ pub enum Section {
     /// screen's *Getting around* list, the status bar's standing line. The kind
     /// somebody turns off first, because it is the kind you stop reading.
     Guide,
+    /// The complete shortcut reference, including feature-gated bindings.
+    Reference,
 }
 
 impl Section {
@@ -139,6 +141,7 @@ pub fn show_hint(chord: impl Into<Hinted>, section: Section) -> Option<String> {
     // A chord whose surface this build hides is not taught anywhere
     // (`ShortcutId::shown_in_product`).
     if let Hinted::Id(id) = chord
+        && section != Section::Reference
         && !id.shown_in_product()
     {
         return None;

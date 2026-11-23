@@ -103,6 +103,13 @@ impl WindowHandle for FakeWindow {
     fn activate_app(&self) {
         self.say("activate_app");
     }
+
+    fn set_ime_cursor_area(&self, area: Rect) {
+        self.say(format!(
+            "set_ime_cursor_area {} {} {} {}",
+            area.x, area.y, area.w, area.h
+        ));
+    }
 }
 
 fn moments_ago(millis: u64) -> Instant {
@@ -246,4 +253,41 @@ fn seating_a_window_forgets_the_last_one_s_border_and_cursor() {
     assert!(input.pinned);
     assert_eq!(input.pointer, (12.0, 34.0));
     assert_eq!(input.mods, ModifiersState::SHIFT);
+}
+
+#[test]
+fn the_composition_area_reaches_the_os_once_per_change() {
+    let window = FakeWindow::default();
+    let mut input = WindowInput::default();
+    let caret = Rect::new(40.0, 12.0, 1.0, 18.0);
+
+    // An app with no opinion leaves the area alone.
+    sync_ime_area(&mut input, Some(&window), None);
+    assert!(window.taken().is_empty());
+
+    sync_ime_area(&mut input, Some(&window), Some(caret));
+    assert_eq!(window.taken(), ["set_ime_cursor_area 40 12 1 18"]);
+
+    // The pointer moving over a field whose caret has not moved asks again
+    // with the same answer, and that must not be a native call each time.
+    sync_ime_area(&mut input, Some(&window), Some(caret));
+    sync_ime_area(&mut input, Some(&window), None);
+    assert!(window.taken().is_empty());
+
+    let typed = Rect::new(48.0, 12.0, 1.0, 18.0);
+    sync_ime_area(&mut input, Some(&window), Some(typed));
+    assert_eq!(window.taken(), ["set_ime_cursor_area 48 12 1 18"]);
+
+    // A new window has been told nothing, whatever the last one was told.
+    input.seat(false);
+    sync_ime_area(&mut input, Some(&window), Some(typed));
+    assert_eq!(window.taken(), ["set_ime_cursor_area 48 12 1 18"]);
+}
+
+#[test]
+fn a_composition_area_with_no_window_is_not_remembered_as_applied() {
+    let mut input = WindowInput::default();
+    let caret = Rect::new(40.0, 12.0, 1.0, 18.0);
+    sync_ime_area::<FakeWindow>(&mut input, None, Some(caret));
+    assert_eq!(input.ime_area, None);
 }

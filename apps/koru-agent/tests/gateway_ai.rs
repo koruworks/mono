@@ -10,6 +10,7 @@
 //! other build. Everything below the fixture is the suite as it stood.
 
 mod gateway_process;
+mod managed_mini_apps_live;
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -131,6 +132,8 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
         .ai()
         .send_turn(&SendTurnRequest {
             destination_workspace: None,
+            mini_app_host: None,
+            mini_app_refinement: None,
             operation_id,
             chat_id,
             surface: AiSurface::Standalone,
@@ -179,6 +182,8 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
         .ai()
         .send_turn(&SendTurnRequest {
             destination_workspace: None,
+            mini_app_host: None,
+            mini_app_refinement: None,
             operation_id,
             chat_id,
             surface: AiSurface::Standalone,
@@ -200,6 +205,8 @@ fn public_client_streams_and_recovers_ai_through_one_gateway_session() {
         .ai()
         .send_turn(&SendTurnRequest {
             destination_workspace: None,
+            mini_app_host: None,
+            mini_app_refinement: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,
@@ -260,6 +267,8 @@ fn public_stream_disconnect_then_cancel_is_durable_and_not_duplicated() {
         .ai()
         .send_turn(&SendTurnRequest {
             destination_workspace: None,
+            mini_app_host: None,
+            mini_app_refinement: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,
@@ -318,6 +327,8 @@ fn an_existing_client_recovers_interrupted_history_after_gateway_restart() {
         .ai()
         .send_turn(&SendTurnRequest {
             destination_workspace: None,
+            mini_app_host: None,
+            mini_app_refinement: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,
@@ -422,6 +433,8 @@ fn every_in_flight_stream_reaches_one_terminal_outcome_when_the_host_dies() {
                 .ai()
                 .send_turn(&SendTurnRequest {
                     destination_workspace: None,
+                    mini_app_host: None,
+                    mini_app_refinement: None,
                     operation_id: Uuid::new_v4(),
                     chat_id,
                     surface: AiSurface::Standalone,

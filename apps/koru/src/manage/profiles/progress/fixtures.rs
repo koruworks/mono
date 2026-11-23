@@ -60,6 +60,7 @@ pub(crate) fn controller_with(work_on: bool) -> ProfilesController {
             request_id,
             current: Some(true),
             access: Some(true),
+            subscription_kind: None,
         }
     ));
     let (AccountCommand::InspectCloudSync { request_id }, Some(submission)) =

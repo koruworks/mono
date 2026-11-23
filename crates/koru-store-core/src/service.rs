@@ -66,6 +66,7 @@ use crate::reminders::{
 };
 use crate::text::Locale;
 
+mod account_live;
 mod availability;
 mod inspection;
 pub use availability::{
@@ -81,10 +82,12 @@ mod pins;
 mod preparation;
 mod removal;
 mod replacement;
+mod restore_to;
 mod root_conflict;
 mod root_lifecycle;
 mod root_move;
 mod root_repair;
+pub use account_live::{AccountLiveFact, AccountLiveOutcome, TrashedInAccount};
 pub use pins::PinnedWorkspace;
 pub use replacement::{ListingState, MovedWorkspace, RemovedWorkspace, Replacement};
 pub use root_conflict::{
@@ -1127,6 +1130,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 if profile.account.as_deref() != Some(binding.to_storage().as_str()) {
                     return Err(Error::bare(Code::ProfileAccountConflict));
                 }
+                // A retry, or a device that held the Profile before pending
+                // placements were applied on arrival: catch its rows up.
+                self.apply_pending_placements(id)?;
                 return Ok(profile);
             }
             None => {}
@@ -1144,6 +1150,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         // exchange, and a lifecycle write before then mints one here
         // (`root_lifecycle::plan_profile_write`).
         self.catalog.put_profile(&profile)?;
+        // Workspaces moved to this Profile before it was put on this device
+        // were left under the Profile they came from; they are its now.
+        self.apply_pending_placements(id)?;
         Ok(profile)
     }
 
@@ -1271,6 +1280,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         manifest.set_peer_id(self.peer_id)?;
         let outcome = self.catalog.restore_profile_local(id)?;
         self.open_profiles.insert(id, manifest);
+        // Back on this device: the Workspaces moved to it while it was away.
+        self.apply_pending_placements(id)?;
         Ok(outcome)
     }
 
@@ -1462,7 +1473,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         match self.catalog.profile_catalog_state(profile.id)? {
             Some(ProfileCatalogState::Removed) => return Err(Error::bare(Code::ProfileRemoved)),
             Some(ProfileCatalogState::Active) => {}
-            None => self.catalog.put_profile(profile)?,
+            None => {
+                self.catalog.put_profile(profile)?;
+                // Workspaces moved to it before it arrived were left pending.
+                self.apply_pending_placements(profile.id)?;
+            }
         }
         Ok(())
     }
@@ -1527,7 +1542,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if self.catalog.profile(owner)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
         }
-        self.ensure_profile_manifest(owner)?;
+        // Creating a Workspace writes its own manifest and root Workspace unit
+        // — never the Profile's IdentityManifest — so a provisioned Profile
+        // whose identity bytes have not arrived yet (for example, one with no
+        // other device online and no Cloud Workspaces yet) can still receive a
+        // new Workspace without synthesizing a competing Profile identity
+        // lineage. Once that Workspace syncs to Cloud, Cloud's ProfileUnits
+        // admission can pull any existing Profile identity/private bytes too.
         let prepared = self.prepare_workspace(owner, name, None, None, at)?;
         // The root Workspace unit is published with the row (Plan 1.3); a
         // replica a peer provisions publishes or receives its unit too
@@ -1741,6 +1762,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             None => match profile {
                 Some(incoming) if incoming.id == resolved => {
                     self.catalog.put_profile(incoming)?;
+                    self.apply_pending_placements(resolved)?;
                 }
                 _ => {
                     tracing::info!(

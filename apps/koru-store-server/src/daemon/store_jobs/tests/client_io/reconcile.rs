@@ -11,6 +11,7 @@ use loro::{ExportMode, LoroDoc, VersionVector};
 
 type SyncClient = Reconciler<'static, ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 
+mod admission;
 mod claim;
 mod live;
 
@@ -366,6 +367,9 @@ async fn exercise(
                         assert!(start.total_length > transfer::RESTRICTED_LIMIT);
                         assert!(if upload { hold_upload } else { hold_download });
                         deferred += 1;
+                    }
+                    Event::AdmissionHeld { unit, reason } => {
+                        panic!("no admission refuses here: {unit:?} {reason:?}")
                     }
                     Event::Refused { unit, code } => {
                         panic!("no Store job refuses here: {unit:?} {code}")

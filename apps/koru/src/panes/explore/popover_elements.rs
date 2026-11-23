@@ -60,6 +60,19 @@ pub(crate) const MANAGE: &str = "manage";
 pub(crate) const PIN: &str = "pin";
 
 pub(crate) const PAGE: Key = Key::surface(SURFACE, "popover");
+
+/// The Profile menu and its Help submenu share the same action-row geometry.
+pub(super) fn menu_action_row(name: &'static str) -> El {
+    use koru_ui::menu::ActionRow;
+    row(name)
+        .min_h(metrics::ROW_MIN)
+        .pad_x(ActionRow::PAD)
+        .pad_y(ActionRow::PAD)
+        .gap(ActionRow::GAP)
+        .radius(ActionRow::RADIUS)
+        .states(&WORKSPACE_ROW_STATES)
+}
+
 pub(crate) const HEADING: Key = Key::surface(SURFACE, "heading");
 /// The quick switcher's search field.
 pub(crate) const WORKSPACE_FILTER: Key = Key::surface(SURFACE, "workspace-filter");
@@ -214,7 +227,7 @@ impl Leaf for TileLeaf {
 /// while the row is lit, the tick on the current row otherwise, nothing
 /// else; the gear's own plate when the gear itself is hot. Paint-only — the
 /// gear's node, name and actions are the element's, always there. A
-/// workspace row's and a Profile row's alike.
+/// workspace row's trailing control.
 pub(crate) struct TrailingAdapter {
     pub current: bool,
     /// The gear's own key, so the lane can tell the gear being lit from the
@@ -265,6 +278,17 @@ impl ExploreView {
         y: f32,
     ) -> Option<(Rect, String, Option<koru_keys::ShortcutId>)> {
         self.with_page(area, viewport, |frame| {
+            if let Some(rect) = self.profiles.iter().find_map(|profile| {
+                let rect = frame.node(profiles::manage(profile.id))?.rect;
+                rect.contains(x, y).then_some(rect)
+            }) {
+                return Some((
+                    rect,
+                    koru_i18n::t(crate::format::lang(), koru_i18n::Key::ProfileOpenNewWindow)
+                        .to_owned(),
+                    None,
+                ));
+            }
             if let Some((rect, description)) = self.profiles.iter().find_map(|profile| {
                 let rect = frame.node(profiles::primary(profile.id))?.rect;
                 rect.contains(x, y)
@@ -384,6 +408,9 @@ impl ExploreView {
             .name(koru_i18n::Key::Workspaces)
             .pad_y(alias::PANEL_PAD);
         if let Some(group) = self.unassigned_group() {
+            page = page.child(group);
+        }
+        if let Some(group) = self.trashed_in_account_group() {
             page = page.child(group);
         }
         page.child(
@@ -680,7 +707,11 @@ impl ExploreView {
     ) -> Option<(El, Frame)> {
         let tree = self.page_tree(kind, scroll, avatar)?;
         let interaction = Interaction {
-            hot: self.lit_key(hover),
+            hot: if kind == PopoverKind::Profiles && self.help_parent.is_some() {
+                Some(profiles::MenuAction::Help.key())
+            } else {
+                self.lit_key(hover)
+            },
             ..Interaction::default()
         };
         let mut layout = self.page_layout.borrow_mut();
@@ -703,9 +734,20 @@ impl ExploreView {
         let mut workspaces = row_rects(frame).into_iter();
         let mut profiles = frame.named(profiles::ROW).map(|node| node.rect);
         let unassigned = self.unassigned_rows();
+        let trashed = self.trashed_in_account_rows();
         self.rows_for(kind)
             .into_iter()
             .filter_map(|row| match row {
+                PopoverRow::TrashedInAccount(i) | PopoverRow::TrashedRestoreTo(i) => {
+                    let id = crate::manage::workspaces::app_workspace(trashed.get(i)?.id);
+                    let key = match row {
+                        PopoverRow::TrashedInAccount(_) => {
+                            super::workspace_menu_elements::trashed(id)
+                        }
+                        _ => super::workspace_menu_elements::trashed_restore(id),
+                    };
+                    frame.node(key).map(|node| (row, node.rect))
+                }
                 PopoverRow::WorkspaceAction(action) => {
                     frame.node(action.key()).map(|node| (row, node.rect))
                 }
@@ -858,6 +900,24 @@ pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, P
             _ => return None,
         };
         return Some((row, PopoverPart::Row));
+    }
+    // The trashed-in-account group's row and its one action, the same way.
+    if let Some(i) = view
+        .trashed_in_account_rows()
+        .iter()
+        .position(|row| row.id.as_uuid().as_u128() == id)
+    {
+        match key.part {
+            super::workspace_menu_elements::TRASHED => {
+                return Some((PopoverRow::TrashedInAccount(i), PopoverPart::Row));
+            }
+            super::workspace_menu_elements::TRASHED_RESTORE => {
+                return Some((PopoverRow::TrashedRestoreTo(i), PopoverPart::Row));
+            }
+            // A trashed workspace is not also one of this menu's live rows,
+            // but the key decides, not the list.
+            _ => {}
+        }
     }
     let part = match key.part {
         MANAGE => PopoverPart::Gear,

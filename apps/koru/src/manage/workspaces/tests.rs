@@ -55,6 +55,34 @@ fn manage(rows: &[Catalog]) -> (ManageView, ProfileSummary, ProfileSummary) {
     (view, personal, work)
 }
 
+#[test]
+fn the_workspaces_page_reuses_the_catalog_without_profile_account_controls() {
+    let (mut view, personal, work, rows) = manage_with(|personal, work| {
+        vec![
+            row("Personal notes", personal, 0),
+            row("Work notes", work, 0),
+        ]
+    });
+    view.show(Page::Workspaces(work.id));
+    assert_eq!(view.page_title(), "Workspaces");
+    assert_eq!(view.laid.head.as_ref().unwrap().lead_text, work.name);
+    assert!(
+        view.workspace_name_rect(app_workspace(rows[1].id))
+            .is_some()
+    );
+    assert!(
+        view.workspace_name_rect(app_workspace(rows[0].id))
+            .is_none()
+    );
+    assert!(view.laid.sign_in.is_none());
+    assert!(view.laid.footer.is_none());
+    assert_eq!(view.c.current(), Some(personal.id));
+    assert!(view.laid.placed(Control::NewWorkspace).is_some());
+    assert!(view.laid.placed(Control::ImportWorkspaces).is_none());
+    view.show(Page::Workspaces(personal.id));
+    assert!(view.laid.placed(Control::ImportWorkspaces).is_some());
+}
+
 /// The fixtures need the Profiles before the rows; this is `manage` for rows
 /// that name its Profiles.
 fn manage_with(
@@ -522,4 +550,135 @@ fn f2_has_a_row_to_rename_only_once_one_is_selected() {
     assert_eq!(view.selected_workspace(), None);
     assert!(press(&mut view, Control::WorkspaceRow(rows[0].id)));
     assert_eq!(view.selected_workspace(), Some(app_workspace(rows[0].id)));
+}
+
+// ------------------------------------------------------------- the sync choice
+
+#[test]
+fn a_live_row_carries_its_own_sync_choice_left_of_its_menu() {
+    use koru_store_core::TransportMode::{Cloud, LocalOnly, P2p};
+    let (mut view, _, _, rows) =
+        manage_with(|personal, _| vec![row("Notes", personal, 0), row("Plans", personal, 1)]);
+    let (notes, plans) = (rows[0].id, rows[1].id);
+    // Before the settings are read a row has no strip: nothing is chosen yet,
+    // and a strip with nothing filled would say something untrue.
+    assert!(
+        view.laid
+            .placed(Control::SyncMode(Some(notes), P2p))
+            .is_none()
+    );
+
+    view.c
+        .set_sync_settings_for_test(koru_store_wire::ProfileTransportSettings {
+            mode: "p2p".into(),
+            explicit_choice: true,
+            revision: 2,
+            workspaces: vec![koru_store_wire::WorkspaceTransportSettings {
+                id: notes.to_storage(),
+                name: "Notes".into(),
+                mode: "local_only".into(),
+                explicit_choice: true,
+                revision: 3,
+            }],
+        });
+    view.delegate(|_| ());
+
+    // The three choices in reading order, inside the row, left of its `•••`.
+    let strip =
+        [LocalOnly, P2p, Cloud].map(|mode| rect_of(&view, Control::SyncMode(Some(notes), mode)));
+    assert!(strip[0].x + strip[0].w <= strip[1].x && strip[1].x + strip[1].w <= strip[2].x);
+    let more = rect_of(&view, Control::WorkspaceMore(notes));
+    assert!(strip[2].x + strip[2].w <= more.x);
+    let listed = section(&view).row(notes).expect("listed").clone();
+    for choice in &strip {
+        assert!(choice.y >= listed.rect.y && choice.y + choice.h <= listed.rect.y + listed.rect.h);
+    }
+    assert!(
+        listed.name.x + listed.name.w <= strip[0].x,
+        "the name ends short of the choice"
+    );
+    // What is chosen is filled; what the Profile's own choice does not reach
+    // is dimmed, and what it does reach is not.
+    assert!(matches!(
+        view.laid
+            .placed(Control::SyncMode(Some(notes), LocalOnly))
+            .unwrap()
+            .look,
+        Look::Action(ActionStyle::Primary)
+    ));
+    assert!(
+        view.laid
+            .disabled
+            .contains(&Control::SyncMode(Some(notes), Cloud))
+    );
+    assert!(
+        !view
+            .laid
+            .disabled
+            .contains(&Control::SyncMode(Some(notes), P2p))
+    );
+    // The Profile's own choice is on the head, not among the rows.
+    let head = rect_of(&view, Control::SyncMode(None, P2p));
+    assert!(head.y + head.h <= section(&view).rect.y);
+    // A row the settings do not name keeps to its menu alone, and keyboard
+    // order is visual order: the row, its choice, then its menu.
+    assert!(
+        view.laid
+            .placed(Control::SyncMode(Some(plans), P2p))
+            .is_none()
+    );
+    let order: Vec<Control> = view
+        .laid
+        .controls
+        .iter()
+        .map(|placed| placed.control)
+        .collect();
+    let at = |control| order.iter().position(|c| *c == control).unwrap();
+    assert!(at(Control::WorkspaceRow(notes)) < at(Control::SyncMode(Some(notes), LocalOnly)));
+    assert!(at(Control::SyncMode(Some(notes), Cloud)) < at(Control::WorkspaceMore(notes)));
+}
+
+/// A row in the Trash that the account still keeps says so on its second
+/// line, naming the Profile the account keeps it under, in place of when it
+/// was last opened (trash-recovery P4). Another trashed row keeps its line.
+#[test]
+fn a_trashed_row_the_account_still_keeps_says_under_which_profile() {
+    use koru_workspaces_ui::{Recovery, TrashedInAccountRow};
+    let (mut view, _, work, rows) = manage_with(|personal, _| {
+        let mut kept = row("PM", personal, 0);
+        kept.deleted = true;
+        kept.last_opened_at = Some(1_000);
+        let mut gone = row("Gone", personal, 1);
+        gone.deleted = true;
+        vec![row("Notes", personal, 2), kept, gone]
+    });
+    let (pm, gone) = (rows[1].id, rows[2].id);
+    view.with_workspaces(|c| {
+        c.set_show_trash(true);
+        c.fixture_recovery(Recovery {
+            trashed_in_account: vec![TrashedInAccountRow {
+                id: pm,
+                name: "PM".into(),
+                icon: None,
+                color: None,
+                profile: catalog_profile(work.id),
+                acknowledged: true,
+            }],
+            ..Recovery::default()
+        });
+    });
+    view.refresh_workspaces();
+    let laid = section(&view);
+    assert_eq!(
+        laid.row(pm)
+            .and_then(|row| row.sub.as_ref())
+            .map(|(_, text)| text.as_str()),
+        Some("Still in your account under Work"),
+        "in place of *Opened …*"
+    );
+    assert_eq!(
+        laid.row(gone).and_then(|row| row.sub.as_ref()),
+        None,
+        "a workspace the account does not hold says nothing new"
+    );
 }

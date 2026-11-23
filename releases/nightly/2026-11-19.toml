@@ -1,0 +1,57 @@
+title = "A New menu on Ctrl+T, and find the words in pictures"
+
+summary = [
+  "Ctrl+T now opens the New menu, with letter keys for each row, your task lists, and a Move flyout that splits the current tab into its own pane.",
+  "Ctrl+Tab switches tabs on release, and the command bar moves to Ctrl+K.",
+  "Find in page (Ctrl+F) now finds the words in pictures, and a picture's menu can copy them.",
+  "Turning on Cloud sync for the first time asks for a Koru Free place, on the computer and on the phone.",
+]
+
+body = """
+## The New menu
+
+The `+` beside the tabs is now the New menu, and **Ctrl+T** (⌘T on a Mac)
+opens it instead of making a document straight away. *New document* is still
+its first row.
+
+- Every row has an underlined letter that opens it: **D** for Documents, **T**
+  for Tasks, **C** for Chats, **I** for Import and so on, so Ctrl+T then D
+  opens the document list.
+- A **Tasks** flyout lists your task lists, nested and in their colours.
+  Choosing one opens it ready for *Add a task*; *New list* starts a new one.
+- A **Move** flyout splits the pane and moves the current tab to the top,
+  right, bottom or left. The arrow keys pick the side directly. It is dimmed
+  when the pane has only one tab.
+- With the panes split, pressing Ctrl+T again moves the menu to the next
+  pane's `+`.
+
+## Tabs and shortcuts
+
+- **Ctrl+Tab** now works like a tab switcher: hold Ctrl to show the open tabs
+  and press Tab to step through them, then let go to switch. Hover a row to
+  close that tab with its ✕. *View open tabs* in the New menu opens the same
+  list and keeps it open.
+- The **command bar** moves from Ctrl+P to **Ctrl+K** (⌘K).
+- **Insert link** moves from Ctrl+K to **Ctrl+Shift+L** (⇧⌘L). Some Windows
+  utilities take Ctrl+Shift+L for themselves; if yours does, insert a link
+  from the format menu.
+- The `+` on a document in the sidebar now opens a new, empty child page right
+  away instead of asking for a name first. Type to keep it; Esc drops it.
+- Pressing a task list's colour dot in the sidebar opens its colour picker.
+
+## Words in pictures
+
+Find in page (Ctrl+F) now also finds the words Koru has read from the
+pictures in a document. Landing on a match scrolls the picture into view and
+flashes its frame. Replace leaves pictures alone. Once a picture's words are
+read, its right-click menu offers **Copy text**, and screen readers read
+those words as the picture's description.
+
+## Cloud sync and Koru Free
+
+Turning on Cloud sync for the first time is now how an account without Koru
+Cloud asks for a place on **Koru Free**, on the computer and on Android. If
+Koru Free has no open place, Koru says so on the Profile's sync row and your
+work stays on the device. It does not ask again on its own, and it never adds
+you to the waitlist for you.
+"""

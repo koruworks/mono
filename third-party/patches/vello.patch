@@ -1,0 +1,68 @@
+diff --git a/src/scene.rs b/src/scene.rs
+index 99b67a2..f4202ba 100644
+--- a/src/scene.rs
++++ b/src/scene.rs
+@@ -95,10 +95,6 @@ impl Scene {
+     ///
+     /// **However, the transforms are *not* saved or modified by the layer stack.**
+     /// That is, the `transform` argument to this function only applies a transform to the `clip` shape.
+-    #[expect(
+-        single_use_lifetimes,
+-        reason = "False positive: https://github.com/rust-lang/rust/issues/129255"
+-    )]
+     #[track_caller]
+     pub fn push_layer<'a>(
+         &mut self,
+@@ -145,10 +141,6 @@ impl Scene {
+     /// This issue only occurs if there are no intermediate opaque layers, so can be worked around
+     /// by drawing something opaque (or having an opaque `base_color`), then putting a layer around your entire scene
+     /// with a [`Compose::SrcOver`].
+-    #[expect(
+-        single_use_lifetimes,
+-        reason = "False positive: https://github.com/rust-lang/rust/issues/129255"
+-    )]
+     pub fn push_luminance_mask_layer<'a>(
+         &mut self,
+         clip_style: impl Into<StyleRef<'a>>,
+@@ -183,10 +175,6 @@ impl Scene {
+     ///
+     /// **However, the transforms are *not* saved or modified by the layer stack.**
+     /// That is, the `transform` argument to this function only applies a transform to the `clip` shape.
+-    #[expect(
+-        single_use_lifetimes,
+-        reason = "False positive: https://github.com/rust-lang/rust/issues/129255"
+-    )]
+     pub fn push_clip_layer<'a>(
+         &mut self,
+         clip_style: impl Into<StyleRef<'a>>,
+@@ -307,10 +295,6 @@ impl Scene {
+     }
+ 
+     /// Fills a shape using the specified style and brush.
+-    #[expect(
+-        single_use_lifetimes,
+-        reason = "False positive: https://github.com/rust-lang/rust/issues/129255"
+-    )]
+     pub fn fill<'b>(
+         &mut self,
+         style: Fill,
+@@ -338,10 +322,6 @@ impl Scene {
+     }
+ 
+     /// Strokes a shape using the specified style and brush.
+-    #[expect(
+-        single_use_lifetimes,
+-        reason = "False positive: https://github.com/rust-lang/rust/issues/129255"
+-    )]
+     pub fn stroke<'b>(
+         &mut self,
+         style: &Stroke,
+@@ -633,7 +613,7 @@ impl<'a> DrawGlyphs<'a> {
+         resources.patches.push(Patch::GlyphRun { index });
+         self.scene
+             .encoding
+-            .encode_brush(self.brush, self.brush_alpha);
++            .encode_glyph_brush(self.brush, self.brush_alpha);
+         // Glyph run resolve step affects transform and style state in a way
+         // that is opaque to the current encoding.
+         // See <https://github.com/linebender/vello/issues/424>

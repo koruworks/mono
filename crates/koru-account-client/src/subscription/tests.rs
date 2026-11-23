@@ -115,12 +115,109 @@ fn cancellation_during_the_final_http_response_discards_the_decision() {
 }
 
 #[test]
-fn cloud_access_is_independent_of_a_purchase_to_manage() {
-    for (subscriptions, access, current) in [
-        (json!([]), true, false),
-        (json!([]), false, false),
-        (json!([{"status":"past_due"}]), false, true),
-        (json!([{"status":"active"}]), true, true),
+fn checkout_handoff_sends_ab_codes_and_falls_back_on_legacy_400() {
+    struct HandoffTransport {
+        responses: Mutex<std::collections::VecDeque<HttpResponse>>,
+        bodies: Mutex<Vec<serde_json::Value>>,
+    }
+    impl Transport for HandoffTransport {
+        fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
+            self.bodies
+                .lock()
+                .unwrap()
+                .push(serde_json::from_slice(&request.body).unwrap());
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or(TransportError::Unavailable)
+        }
+    }
+    let transport = Arc::new(HandoffTransport {
+        responses: Mutex::new(
+            vec![
+                HttpResponse {
+                    status: 400,
+                    body: serde_json::to_vec(&json!({"error":{"code":"invalid_request"}})).unwrap(),
+                },
+                HttpResponse {
+                    status: 200,
+                    body: serde_json::to_vec(&json!({
+                        "checkout_url": "https://www.koru.do/en/subscribe?handoff=tok"
+                    }))
+                    .unwrap(),
+                },
+            ]
+            .into(),
+        ),
+        bodies: Mutex::new(vec![]),
+    });
+    let client = AccountClient::with_transport(transport.clone());
+    let url = client
+        .create_checkout_handoff(
+            &AccountAuthorization::Bearer(&AccessToken("secret".into())),
+            "y1",
+            "en",
+            43210,
+            "state-1",
+            CheckoutHandoffAb {
+                code: Some("sync"),
+                header: Some("purpose"),
+                billing: Some("yearly"),
+            },
+        )
+        .unwrap();
+    assert_eq!(url, "https://www.koru.do/en/subscribe?handoff=tok");
+    let bodies = transport.bodies.lock().unwrap();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies[0]["code"], "sync");
+    assert_eq!(bodies[0]["header"], "purpose");
+    assert_eq!(bodies[0]["billing"], "yearly");
+    assert!(bodies[1].get("code").is_none());
+    assert!(bodies[1].get("header").is_none());
+    assert!(bodies[1].get("billing").is_none());
+}
+
+#[test]
+fn checkout_handoff_route_is_admitted_by_transport_path_guard() {
+    assert!(crate::is_allowed_api_path(
+        "/v1/billing/stripe/checkout-handoff"
+    ));
+    assert!(!crate::is_allowed_api_path(
+        "/v1/billing/stripe/checkout-handoff#frag"
+    ));
+    assert!(!crate::is_allowed_api_path("/v1/other"));
+}
+
+#[test]
+fn cloud_access_is_independent_of_a_purchase_to_manage_and_reports_kind() {
+    for (subscriptions, access, current, kind) in [
+        (json!([]), true, false, Some(SubscriptionKind::Complimentary)),
+        (json!([]), false, false, None),
+        (
+            json!([{"status":"past_due"}]),
+            false,
+            true,
+            Some(SubscriptionKind::PastDue),
+        ),
+        (
+            json!([{"status":"trialing"}]),
+            true,
+            true,
+            Some(SubscriptionKind::Trialing),
+        ),
+        (
+            json!([{"status":"trialing"},{"status":"active"}]),
+            true,
+            true,
+            Some(SubscriptionKind::Active),
+        ),
+        (
+            json!([{"status":"canceled"}]),
+            false,
+            false,
+            None,
+        ),
     ] {
         let client = AccountClient::with_transport(script(vec![json!({
             "subscriptions": subscriptions, "next_cursor": null, "cloud_access": access
@@ -134,7 +231,8 @@ fn cloud_access_is_independent_of_a_purchase_to_manage() {
                 .unwrap(),
             CloudSubscriptionStatus {
                 current,
-                cloud_access: access
+                cloud_access: access,
+                kind,
             }
         );
     }

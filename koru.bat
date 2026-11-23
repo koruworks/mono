@@ -9,6 +9,8 @@ rem                     .env.production; --profile gives only
 rem                     the Koru workspace an explicit profile. Stops this
 rem                     checkout's stack first and, on the shared debug channel
 rem                     (no KORU_ROOT), every other checkout's debug stack too
+rem   koru.bat ui       open the UI Lab: Koru's components over synthetic data
+rem   koru.bat font-test build and launch the font/pixel comparison editor
 rem   koru.bat stop-all stop this worktree's Koru and services
 rem   koru.bat root     the same stack on one isolated root (.env.production too)
 rem   koru.bat build-root-signed  build/register a signed rooted Windows test
@@ -20,17 +22,16 @@ rem   koru.bat setup-envs walk the runtime switches; choices persist in this cmd
 rem   koru.bat setup    set up sccache, jobs, fonts and third-party code
 rem                     --check reports; --defender-exclusions and --agent-skills opt in
 rem
-rem Everything after the subcommand is forwarded to cargo, except the optional
-rem path consumed by `root`, `root-open` and `root-stop`; the rooted signed verbs take none.
-setlocal enabledelayedexpansion
+rem Root and MCP registration arguments are parsed before any setup side effects.
+setlocal disabledelayedexpansion
 cd /d "%~dp0"
 
 set "SUB=%~1"
-rem The root verbs take one script argument rather than cargo args.
-rem Capture it before `shift`; the general collector below deliberately loses
-rem argument positions because every other verb forwards the whole tail.
-set "ROOT_COMMAND_PATH=%~2"
-set "ROOT_COMMAND_EXTRA=%~3"
+if /i "%SUB%"=="root" goto collect_root_command
+if /i "%SUB%"=="root-open" goto collect_root_command
+if /i "%SUB%"=="root-stop" goto collect_root_command
+if /i "%SUB%"=="mcp-add" goto collect_root_command
+setlocal enabledelayedexpansion
 if "%SUB%"=="" set "SUB=run"
 rem `--window-size` is an app flag, not a verb. Leave it in the arg list so
 rem `koru.bat --window-size 1024x768` is the same launch as `koru.bat run -- --window-size 1024x768`.
@@ -61,6 +62,24 @@ set "ARGS=!ARGS! %1"
 shift
 goto collect
 
+:collect_root_command
+set "ROOT_COMMAND_COUNT=0"
+shift
+:collect_root_argument
+if [%1]==[] goto validate_root_command
+set "ROOT_COMMAND_ARG_%ROOT_COMMAND_COUNT%=%~1"
+set /a ROOT_COMMAND_COUNT+=1 >nul
+shift
+goto collect_root_argument
+:validate_root_command
+rem Environment transport avoids native argv's trailing-backslash quoting and
+rem cmd's delayed expansion of exclamation marks in an explicit path.
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -LauncherCommand "%SUB%" -ValidateOnly
+if errorlevel 1 exit /b %ERRORLEVEL%
+setlocal enabledelayedexpansion
+set "ARGS="
+goto dispatch
+
 :dispatch
 rem `setup` is the verb that tells you sccache is missing, so it runs before
 rem the gate below rather than being refused by it.
@@ -89,6 +108,13 @@ rem is worth a special case.
 if /i not "%SUB%"=="help" if /i not "%SUB%"=="-h" if /i not "%SUB%"=="--help" (
   call :ensure_third_party || exit /b 1
 )
+
+rem These handlers read the original environment in PowerShell. Do not route
+rem their paths through the legacy cargo command-line string below.
+if /i "%SUB%"=="root" goto do_root
+if /i "%SUB%"=="root-open" goto do_root_open
+if /i "%SUB%"=="root-stop" goto do_root_stop
+if /i "%SUB%"=="mcp-add" goto do_mcp_add
 
 rem One channel root for every verb that talks to this stack.
 rem
@@ -146,6 +172,8 @@ if /i "%SUB%"=="run"     goto do_run
 if /i "%SUB%"=="run-all" goto do_run_all
 if /i "%SUB%"=="stop-all" goto do_stop_all
 if /i "%SUB%"=="jank"    goto do_jank
+if /i "%SUB%"=="ui"      goto do_ui
+if /i "%SUB%"=="font-test" goto do_font_test
 if /i "%SUB%"=="root"    goto do_root
 if /i "%SUB%"=="root-open" goto do_root_open
 if /i "%SUB%"=="root-stop" goto do_root_stop
@@ -366,6 +394,31 @@ REM Same launch with the stall watch on, writing where it can be attached to a
 REM report. A verb rather than "set these two variables" because the moment
 REM somebody needs this is the moment they are annoyed, and the log is only
 REM useful if it was already running when the freeze happened.
+REM The UI Lab: this binary as `koru --ui`, in its own process. It is not a kind
+REM of `run`, so it shares none of run's preparation. No .env.production is
+REM read and KORU_ROOT is not forwarded: the Lab opens no profile, Store or
+REM Cloud, and `--ui` refuses `--root` rather than ignore it. Nothing is stopped
+REM first either, because the Lab is meant to sit beside the Koru you are
+REM working in; if that Koru is this checkout's own debug build and the source
+REM has changed, cargo cannot replace the running exe and says so.
+REM Everything after the verb goes to the app, with or without a leading `--`:
+REM   koru.bat ui --window-size 1280x800
+:do_ui
+call :ensure_fonts || exit /b 1
+set "UI_ARGS=!ARGS!"
+if "!UI_ARGS!"==" --" set "UI_ARGS="
+if "!UI_ARGS:~0,4!"==" -- " set "UI_ARGS=!UI_ARGS:~3!"
+cargo run -- --ui!UI_ARGS!
+exit /b %ERRORLEVEL%
+
+:do_font_test
+call :ensure_fonts || exit /b 1
+set "FONT_TEST_ARGS=!ARGS!"
+if "!FONT_TEST_ARGS!"==" --" set "FONT_TEST_ARGS="
+if "!FONT_TEST_ARGS:~0,4!"==" -- " set "FONT_TEST_ARGS=!FONT_TEST_ARGS:~3!"
+cargo run -p koru-font-test --!FONT_TEST_ARGS!
+exit /b %ERRORLEVEL%
+
 :do_jank
 call :ensure_fonts || exit /b 1
 set "KORU_JANK=1"
@@ -384,33 +437,17 @@ REM The same .env.production as `run`, for the same reason: an isolated root
 REM that quietly used a different Cloud from `run` is how somebody tests against
 REM the wrong API for an afternoon. root-stack.ps1 prints which file it read.
 :do_root
-if not "%ROOT_COMMAND_EXTRA%"=="" (
-  echo koru: root takes at most one path
-  echo usage: koru.bat root [path]
-  exit /b 2
-)
 call :ensure_fonts || exit /b 1
 call :ensure_voice_runtime || exit /b 1
-call :announce_environment
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -Action Start -Root "%ROOT_COMMAND_PATH%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -LauncherCommand root
 exit /b %ERRORLEVEL%
 
 :do_root_open
-if not "%ROOT_COMMAND_EXTRA%"=="" (
-  echo koru: root-open takes at most one path
-  echo usage: koru.bat root-open [path]
-  exit /b 2
-)
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -Action Open -Root "%ROOT_COMMAND_PATH%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -LauncherCommand root-open
 exit /b %ERRORLEVEL%
 
 :do_root_stop
-if not "%ROOT_COMMAND_EXTRA%"=="" (
-  echo koru: root-stop takes at most one path
-  echo usage: koru.bat root-stop [path]
-  exit /b 2
-)
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -Action Stop -Root "%ROOT_COMMAND_PATH%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -LauncherCommand root-stop
 exit /b %ERRORLEVEL%
 
 REM Build and register the signed sparse Windows identity used to prove real
@@ -531,8 +568,8 @@ REM Codex and Gemini - under a name, "koru" unless one is given, so testing an
 REM agent against a dev build is one verb rather than a path to type into
 REM each. The debug bridge beside the other binaries, with the channel root
 REM every other verb here uses, so the agent reaches the store the window
-REM shows. A CLI that is not installed is skipped and said so; the verb fails
-REM only when none of the three is there. `mcp-remove` undoes it.
+REM shows. Missing CLIs are skipped; any installed CLI's failure is reported.
+REM `mcp-remove` undoes it.
 REM
 REM The build is the point: the registered path is this checkout's bridge, so
 REM running the verb again after a change ships the change. A bridge an MCP
@@ -547,37 +584,10 @@ REM keeps one global config. Grok, Kimi, Copilot and Muse are left alone: no
 REM registration command of theirs is verified here, and each has its own MCP
 REM settings to paste the Welcome page's command into.
 REM
-REM `call`, because the npm CLIs are .cmd shims and cmd.exe would otherwise
-REM hand them this script's remaining lines.
+REM PowerShell shares registration with root --mcp and safely invokes npm shims.
 :do_mcp_add
-call :mcp_name || exit /b 1
-call :stop_exact_exe "%CD%\target\debug\koru-mcp.exe" || exit /b 1
-cargo build -p koru-mcp || exit /b 1
-set "MCP_BRIDGE=%CD%\target\debug\koru-mcp.exe"
-set "MCP_ANY="
-where claude >nul 2>&1
-if errorlevel 1 (
-  echo [Koru] claude is not on PATH; skipped
-) else (
-  call claude mcp add --scope user %MCP_NAME% -- "%MCP_BRIDGE%" serve --stdio%ROOTONLY% && set "MCP_ANY=1"
-)
-where codex >nul 2>&1
-if errorlevel 1 (
-  echo [Koru] codex is not on PATH; skipped
-) else (
-  call codex mcp add %MCP_NAME% -- "%MCP_BRIDGE%" serve --stdio%ROOTONLY% && set "MCP_ANY=1"
-)
-where gemini >nul 2>&1
-if errorlevel 1 (
-  echo [Koru] gemini is not on PATH; skipped
-) else (
-  call gemini mcp add --scope user %MCP_NAME% "%MCP_BRIDGE%" -- serve --stdio%ROOTONLY% && set "MCP_ANY=1"
-)
-if not defined MCP_ANY (
-  echo koru: none of claude, codex or gemini is on PATH; nothing was registered.
-  exit /b 1
-)
-exit /b 0
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -LauncherCommand mcp-add
+exit /b %ERRORLEVEL%
 
 :do_mcp_remove
 call :mcp_name || exit /b 1
@@ -877,7 +887,12 @@ echo              KORU_JANK) and logs Koru's output for a stall summary on exit
 echo              run, run-all and root with no .env.production start with Koru Cloud not configured
 echo   stop-all   stop this worktree's Koru, Agent and services
 echo   jank       ...with the stall watch on, logging to koru-jank.log
+echo   ui         open the UI Lab in its own window: Koru's real components over
+echo              synthetic data, no profile or services; ui [--window-size WxH]
+echo   font-test  open the font comparison editor with pixel zoom and rendering controls
 echo   root       build and start Agent + API Gateway + Koru on one isolated root;
+echo              root [path] [--mcp] also builds the sibling MCP bridge;
+echo              --mcp registers it with agent CLIs as koru_^<branch^>
 echo              its interactive Agent registers real global shortcuts
 echo   root-open  open an isolated root using built binaries, without rebuilding
 echo   root-stop  stop that root's Agent and services (close windows first)

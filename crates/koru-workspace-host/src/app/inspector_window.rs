@@ -371,6 +371,7 @@ impl<H: Host> App<H> {
         let Some(renderer) = self.renderers.get_mut(&native.surface.dev_id) else {
             return false;
         };
+        koru_window::renderer::prepare_window_text(&mut self.scene);
         if let Err(error) = renderer.render_to_texture(
             &device.device,
             &device.queue,
@@ -380,7 +381,7 @@ impl<H: Host> App<H> {
                 base_color: theme::p().panel_bg,
                 width,
                 height,
-                antialiasing_method: AaConfig::Area,
+                antialiasing_method: koru_window::renderer::window_antialiasing(),
             },
         ) {
             tracing::error!("Inspector rendering failed: {error}");
@@ -763,6 +764,7 @@ impl<H: Host> OnboardingApp<H> {
         let Some(renderer) = self.renderers.get_mut(&native.surface.dev_id) else {
             return false;
         };
+        koru_window::renderer::prepare_window_text(&mut self.scene);
         if let Err(error) = renderer.render_to_texture(
             &device.device,
             &device.queue,
@@ -772,7 +774,7 @@ impl<H: Host> OnboardingApp<H> {
                 base_color: theme::p().panel_bg,
                 width,
                 height,
-                antialiasing_method: AaConfig::Area,
+                antialiasing_method: koru_window::renderer::window_antialiasing(),
             },
         ) {
             tracing::error!("Inspector rendering failed: {error}");

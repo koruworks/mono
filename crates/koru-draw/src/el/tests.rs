@@ -55,6 +55,28 @@ fn near(a: Rect, b: Rect) -> bool {
         && (a.h - b.h).abs() < 0.01
 }
 
+#[test]
+fn mixed_host_paint_uses_one_visible_traversal_and_preserves_clipping() {
+    let tree = scroll_y("viewport").h(Space::S8).children([
+        text("visible").named("visible"),
+        col("native").h(Space::S8),
+        text("hidden").named("hidden"),
+    ]);
+    let frame = lay(&tree, Rect::new(0.0, 0.0, 200.0, 32.0), FrameCx::root());
+    let mut painted = Vec::new();
+    let mut scene = vello::Scene::new();
+    frame.paint_with_host(
+        &tree,
+        &mut scene,
+        vello::kurbo::Affine::IDENTITY,
+        &mut TextEngine::new(),
+        |node, _, _, _| painted.push(node.name),
+    );
+    assert_eq!(painted, ["viewport", "visible", "native"]);
+    assert!(frame.named("visible").next().unwrap().lines().is_some());
+    assert!(frame.named("native").next().unwrap().clip.is_some());
+}
+
 #[track_caller]
 fn assert_rect(frame: &Frame, name: &str, want: Rect) {
     let got = frame.rect_of(name).unwrap_or_else(|| panic!("no {name}"));
@@ -220,12 +242,12 @@ fn clip_cuts_at_a_word_and_truncate_elides() {
     let long = "Alexandra Konstantinopoulou-Whitfield";
     let tree = |el: El| {
         row("Row")
-            .w(Length::Px(186.0))
+            .w(Length::Px(120.0))
             .child(el.named("Name").fill())
     };
     let clipped = lay(
         &tree(text(long).role(roles::ROW).clip()),
-        Rect::new(0.0, 0.0, 186.0, 18.0),
+        Rect::new(0.0, 0.0, 120.0, 18.0),
         FrameCx::root(),
     );
     let node = clipped.named("Name").next().unwrap();
@@ -239,12 +261,12 @@ fn clip_cuts_at_a_word_and_truncate_elides() {
 
     let elided = lay(
         &tree(text(long).role(roles::ROW).truncate()),
-        Rect::new(0.0, 0.0, 186.0, 18.0),
+        Rect::new(0.0, 0.0, 120.0, 18.0),
         FrameCx::root(),
     );
     let layout = elided.named("Name").next().unwrap().text.as_ref().unwrap();
     assert_eq!(layout.lines().count(), 1);
-    assert!(layout.width() <= 186.01);
+    assert!(layout.width() <= 120.01);
 }
 
 /// **A line taller than its box is still seen past the box.** A name set

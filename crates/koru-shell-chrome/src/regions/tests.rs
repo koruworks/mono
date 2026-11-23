@@ -81,10 +81,10 @@ fn the_lane_owns_its_squares_and_drags_by_the_rest() {
     let (x, y) = l.leading.centre();
     assert_eq!(
         at_leading(&r, 3, all_leading(), x, y),
-        Hit::Caption,
-        "the mark drags"
+        Hit::ToggleSidebar,
+        "the toggle occupies the former mark slot"
     );
-    let gap = (l.leading.x + l.leading.w + l.search.x) * 0.5;
+    let gap = (l.toggle.x + l.toggle.w + l.search.x) * 0.5;
     assert_eq!(
         at_leading(&r, 3, all_leading(), gap, y),
         Hit::Caption,
@@ -761,7 +761,7 @@ fn a_hidden_context_toggle_beside_settings_gives_its_room_to_the_tabs() {
     let slots = banner_slots(90.0);
     let shown = caption::tab_strip_with_banner(r.caption, true, true, false, slots);
     let hidden = caption::tab_strip_with_banner(r.caption, true, false, false, slots);
-    assert_eq!(hidden.w - shown.w, theme::CAPTION_H);
+    assert_eq!(hidden.w - shown.w, theme::CAPTION_CONTROL_W);
     assert_eq!(
         hidden.x + hidden.w,
         banner::settings_slot(r.caption, true, slots).x,

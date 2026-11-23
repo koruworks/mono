@@ -7,7 +7,9 @@ mock services, so demonstration data resets when the process ends.
 
 - macOS with Xcode 26.5 or newer selected by `xcode-select`. Xcode 26.5 is the
   first release whose simulator runs the iOS 26.5 runtime the tests need, and
-  it needs macOS Tahoe 26.2 or newer.
+  it needs macOS Tahoe 26.2 or newer. A build for TestFlight or the App Store
+  needs Xcode 27 or newer: App Store Connect refuses an iOS 26 SDK build from
+  April 2027 (ITMS-90725), and Koru Nightly is built with Xcode 27.2.
 - An iOS 18 or newer simulator runtime or physical device. The deployment
   target is iOS 18.0 because iroh's `netdev` strong-imports an iOS 18
   Network.framework symbol, and on iOS 17 dyld refuses to launch the app. The

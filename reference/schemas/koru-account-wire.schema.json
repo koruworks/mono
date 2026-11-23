@@ -5050,6 +5050,13 @@
           "grant": {
             "$ref": "#/$defs/OneUseGrant"
           },
+          "native_redirect": {
+            "description": "Where a native client's loopback or App Link listener is waiting,\nwhen the flow was started via [`RouteId::EmailBrowserStart`].",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "outcome": {
             "const": "completed",
             "type": "string"
@@ -5426,6 +5433,13 @@
           },
           "grant": {
             "$ref": "#/$defs/OneUseGrant"
+          },
+          "native_redirect": {
+            "description": "Where a native client's loopback or App Link listener is waiting,\nwhen the flow was started via [`RouteId::EmailBrowserStart`].",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "outcome": {
             "const": "completed",
@@ -6481,6 +6495,13 @@
       "app_version": {
         "type": "string"
       },
+      "billing": {
+        "description": "Optional onboarding A/B preselected billing code (`\"monthly\"` | `\"yearly\"`).",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "callback_port": {
         "description": "Zero exactly when `app_link_return` is set.",
         "format": "uint16",
@@ -6491,6 +6512,13 @@
       "client_state": {
         "$ref": "#/$defs/OAuthState"
       },
+      "code": {
+        "description": "Optional onboarding A/B copy code (`\"sync\"` | `\"backup\"` | `\"founding\"`).",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "descriptor": {
         "$ref": "#/$defs/SignedDeviceDescriptorV1"
       },
@@ -6500,6 +6528,13 @@
         "minimum": 0,
         "type": [
           "integer",
+          "null"
+        ]
+      },
+      "header": {
+        "description": "Optional onboarding A/B header code (`\"speed\"` | `\"ownership\"` | `\"purpose\"`).",
+        "type": [
+          "string",
           "null"
         ]
       },
@@ -6829,8 +6864,20 @@
       "app_version": {
         "type": "string"
       },
+      "billing": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "client_state": {
         "$ref": "#/$defs/OAuthState"
+      },
+      "code": {
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "descriptor": {
         "$ref": "#/$defs/SignedDeviceDescriptorV1"
@@ -6840,6 +6887,12 @@
         "minimum": 0,
         "type": [
           "integer",
+          "null"
+        ]
+      },
+      "header": {
+        "type": [
+          "string",
           "null"
         ]
       },
@@ -10240,9 +10293,6 @@
                       "const": "finite"
                     }
                   }
-                },
-                "mcp_allowed": {
-                  "const": false
                 }
               }
             }

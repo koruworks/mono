@@ -132,7 +132,36 @@ impl ManageView {
             lead_text: header.status_text.clone(),
         };
         self.paint_head(canvas, root, &head);
-        for control in [Control::Switch, Control::CloudPointer] {
+        {
+            let s = header.sync;
+            let _choices = inspect::scope(
+                "Manage sync choices",
+                "part",
+                root,
+                scene::rect(s.x, s.y, s.w, s.h),
+                |r| {
+                    r.property("whose", "the Profile's", "page content");
+                    r.property("layout", "ManageView::lay_sync_strip", "shared strip");
+                },
+            );
+            for placed in &laid.controls {
+                if matches!(placed.control, Control::SyncMode(None, _)) {
+                    self.paint_control(canvas, root, placed);
+                }
+            }
+        }
+        let (hint_at, hint) = &header.sync_hint;
+        KoruTextParagraph::new(hint, theme::role::meta(), "theme::role::meta()", p.text_dim).draw(
+            canvas,
+            root,
+            &mut self.engine,
+            *hint_at,
+        );
+        for control in [
+            Control::Switch,
+            Control::CloudSettings,
+            Control::CloudPointer,
+        ] {
             if let Some(placed) = laid.placed(control) {
                 self.paint_control(canvas, root, placed);
             }

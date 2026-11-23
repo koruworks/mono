@@ -7,7 +7,9 @@ use crate::{KoruMcp, published_schema};
 fn published() -> Vec<rmcp::model::Tool> {
     let mut router = KoruMcp::tool_router();
     published_schema::compact_router(&mut router);
-    router.list_all()
+    let mut tools = router.list_all();
+    tools.extend(crate::mini_apps::tools());
+    tools
 }
 
 /// Each toolset's bytes in the reply: its tools, each serialized as it is
@@ -73,7 +75,7 @@ fn toolsets_parse_strictly_and_always_include_core() {
         1
     );
     assert!(
-        Toolsets::parse("core,docs,files,versions,tasks,chat")
+        Toolsets::parse("core,docs,files,versions,tasks,chat,mini-apps")
             .expect("every name")
             .is_all()
     );
@@ -125,7 +127,10 @@ fn the_note_says_which_toolsets_are_on_only_when_some_are_off() {
         .note()
         .expect("narrowed");
     assert!(note.contains("core, docs, tasks"), "{note}");
-    assert!(note.contains("files, versions, chat are off"), "{note}");
+    assert!(
+        note.contains("files, versions, chat, mini-apps are off"),
+        "{note}"
+    );
 }
 
 /// Each toolset's share of `tools/list` stays within its budget, so growth

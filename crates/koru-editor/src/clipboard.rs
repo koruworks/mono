@@ -2865,7 +2865,7 @@ mod tests {
         );
     }
 
-    /// A pasted URL becomes a link, the way a typed one does — no `Ctrl+K`
+    /// A pasted URL becomes a link, the way a typed one does — no `Ctrl+Shift+L`
     /// needed. This is the path external text takes (`paste_plain_text`), so it
     /// does not touch the process-global clipboard and needs no lock.
     #[test]

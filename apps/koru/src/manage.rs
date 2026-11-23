@@ -41,6 +41,7 @@ mod nav;
 mod new_profile;
 mod page;
 mod profile_page;
+mod profile_tabs;
 pub mod profiles;
 mod recovery;
 mod sign_in;
@@ -127,6 +128,10 @@ pub struct ManageView {
     /// polled only while it does.
     in_front: bool,
     viewport: (f32, f32),
+    embedded: Option<(koru_draw::geometry::Rect, koru_draw::geometry::Rect)>,
+    embedded_nav: Vec<(nav::Entry, koru_draw::geometry::Rect)>,
+    profile_tabs: Vec<(nav::Entry, String, koru_draw::geometry::Rect)>,
+    embedded_sidebar: koru_draw::geometry::Rect,
     engine: TextEngine,
     pointer: (f32, f32),
     /// The compact nav's chips, from the last relayout — empty while the nav
@@ -177,6 +182,10 @@ impl ManageView {
             disclosed: None,
             in_front: false,
             viewport: (900.0, 600.0),
+            embedded: None,
+            embedded_nav: Vec::new(),
+            profile_tabs: Vec::new(),
+            embedded_sidebar: koru_draw::geometry::Rect::new(0.0, 0.0, 0.0, 0.0),
             engine: TextEngine::new(),
             pointer: (-1.0, -1.0),
             nav_chips: Vec::new(),
@@ -197,6 +206,54 @@ impl ManageView {
     /// the controller says about "the selected Profile" is about this page;
     /// the New profile page opens the embedded create form, as Manage
     /// Profiles' *Create Profile* does.
+    pub(crate) fn current_page(&self) -> Option<Page> {
+        self.page
+    }
+    pub(crate) fn modal_open(&self) -> bool {
+        self.dialog.is_some() || self.switcher.open || self.c.prompts().next().is_some()
+    }
+    pub(crate) fn profile_needs_attention(&self, id: ProfileId) -> bool {
+        self.c.needs_attention(id)
+    }
+    pub(crate) fn linked_count_label(&self) -> String {
+        self.linked_count().to_string()
+    }
+    pub(crate) fn embed_navigation(
+        &mut self,
+        sidebar: koru_draw::geometry::Rect,
+        rows: Vec<(u128, koru_draw::geometry::Rect)>,
+    ) {
+        self.embedded_sidebar = sidebar;
+        self.embedded_nav = rows
+            .into_iter()
+            .filter_map(|(id, rect)| {
+                let entry = match id {
+                    1 => nav::Entry::Cloud,
+                    2 => nav::Entry::Devices,
+                    3 => nav::Entry::Profiles,
+                    4 => nav::Entry::Workspaces,
+                    _ => return None,
+                };
+                Some((entry, rect))
+            })
+            .collect();
+    }
+
+    pub(crate) fn profile_rows(&self) -> &[ProfileSummary] {
+        self.c.profiles()
+    }
+
+    pub(crate) fn embed(
+        &mut self,
+        viewport: (f32, f32),
+        area: koru_draw::geometry::Rect,
+        column: koru_draw::geometry::Rect,
+    ) {
+        self.embedded = Some((area, column));
+        self.viewport = viewport;
+        self.relayout();
+    }
+
     pub fn show(&mut self, page: Page) {
         // **The Koru Cloud page is unreachable in a build that hides Koru
         // Cloud** (koru-features). Whoever asks for it — the nav, a pointer
@@ -228,7 +285,7 @@ impl ManageView {
         }
         self.page = Some(page);
         match page {
-            Page::Profile(profile) => {
+            Page::Profile(profile) | Page::Workspaces(profile) => {
                 self.c.perform(Intent::Select(profile));
             }
             Page::NewProfile => self.c.start_profile_creation(),
@@ -327,6 +384,9 @@ impl ManageView {
         };
         let next = match self.page {
             None => self.c.current().map(Page::Profile),
+            Some(Page::Workspaces(id)) if !self.c.profiles().iter().any(|row| row.id == id) => {
+                self.c.current().map(Page::Workspaces)
+            }
             Some(Page::Profile(id)) if !self.c.profiles().iter().any(|row| row.id == id) => {
                 if self.c.profiles().is_empty() {
                     return;
@@ -343,7 +403,7 @@ impl ManageView {
             self.page_scroll = 0.0;
             // Not `Intent::Select`: nobody chose this Profile, and the notice
             // that explains why the page moved has to survive the move.
-            if let Page::Profile(profile) = page
+            if let Page::Profile(profile) | Page::Workspaces(profile) = page
                 && self.c.selected() != Some(profile)
             {
                 self.c.follow_page(profile);
@@ -357,6 +417,8 @@ impl ManageView {
         self.focus = Some(entry);
         self.page_focus = None;
         match entry {
+            nav::Entry::Workspaces => self.show(self.workspaces_page()),
+            nav::Entry::Profiles => self.show(self.profiles_page()),
             nav::Entry::Profile(profile) => self.show(Page::Profile(profile)),
             nav::Entry::NewProfile => self.show(Page::NewProfile),
             nav::Entry::Devices => self.show(Page::Devices),
@@ -388,6 +450,17 @@ impl ManageView {
             (None, None) => None,
         };
         let Some(at) = here.and_then(|here| order.iter().position(|stop| *stop == here)) else {
+            if self.embedded.is_some() {
+                if let Some(entry) = self.focus_order().into_iter().next() {
+                    self.focus = Some(entry);
+                    self.page_focus = None;
+                    return;
+                }
+                self.page_focus = self.page_focus_order().into_iter().next();
+                self.focus = None;
+                self.reveal_page_focus();
+                return;
+            }
             self.move_focus(forward);
             return;
         };
@@ -414,6 +487,10 @@ impl ManageView {
     /// page, along the nav's rows otherwise.
     fn move_arrow_focus(&mut self, forward: bool) {
         let Some(focus) = self.page_focus else {
+            if self.embedded.is_some() {
+                self.move_tab_focus(forward);
+                return;
+            }
             self.move_focus(forward);
             return;
         };
@@ -736,7 +813,9 @@ impl ManageView {
     fn paint(&mut self, canvas: &mut Scene, root: Affine) {
         let (vw, vh) = self.viewport;
         let p = theme::p();
-        scene::fill(canvas, root, p.bg, &scene::rect(0.0, 0.0, vw, vh));
+        if self.embedded.is_none() {
+            scene::fill(canvas, root, p.bg, &scene::rect(0.0, 0.0, vw, vh));
+        }
         let _manage = inspect::scope(
             "KoruManage",
             "component",
@@ -761,7 +840,10 @@ impl ManageView {
         // changed since the state last did.
         self.relayout();
         self.paint_page(canvas, root);
-        self.paint_nav(canvas, root);
+        self.paint_profile_tabs(canvas, root);
+        if self.embedded.is_none() {
+            self.paint_nav(canvas, root);
+        }
         self.paint_dialog(canvas, root);
         for confirm in self.c.prompts() {
             let _prompt = inspect::scope(

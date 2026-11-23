@@ -301,6 +301,13 @@ pub struct RowFacts {
     /// text is closed. `None` on every other row, and on a diagram whose text
     /// is open — that is the code row it is, and is read as one.
     pub diagram: Option<DiagramFact>,
+    /// A stamp of the words read out of this row's picture, when it is one
+    /// and the host has them (OCR). Compared rather than the text, so a
+    /// picture whose reading arrives or changes is republished with its
+    /// description and an unchanged one costs a `u64` comparison. Set by
+    /// [`DocumentAccessibility::body`] from
+    /// [`DocumentAccessibility::set_picture_texts`]; `None` everywhere else.
+    pub picture_text: Option<u64>,
 }
 
 impl RowFacts {
@@ -316,6 +323,7 @@ impl RowFacts {
                 .diagram
                 .as_ref()
                 .and_then(|state| DiagramFact::of(state, koru_i18n::current())),
+            picture_text: None,
         }
     }
 }
@@ -391,6 +399,25 @@ pub struct RowUpdate {
     /// not drawn. A picture row's whole name; a not-drawn block's name over
     /// its text. Built here, once, for a row a publish carries.
     pub diagram: Option<String>,
+    /// The words read out of this row's picture, when it is one and they are
+    /// known: what a screen reader is given as the picture's description when
+    /// the author wrote none. Capped at [`PICTURE_TEXT_LIMIT`] characters.
+    /// Built here, once, for a row a publish carries.
+    pub picture_text: Option<String>,
+}
+
+/// How many characters of a picture's read words its description carries.
+/// A screenshot of a page can hold thousands; a description is a summary a
+/// person hears, and the whole text is one *Copy text* away.
+pub const PICTURE_TEXT_LIMIT: usize = 500;
+
+/// `text` cut to [`PICTURE_TEXT_LIMIT`] characters, marked when it was cut.
+fn capped_picture_text(text: &str) -> String {
+    let text = text.trim();
+    match text.char_indices().nth(PICTURE_TEXT_LIMIT) {
+        Some((at, _)) => format!("{}...", text[..at].trim_end()),
+        None => text.to_owned(),
+    }
 }
 
 /// What a published paragraph says about its text.
@@ -480,6 +507,11 @@ pub struct DocumentAccessibility {
     /// from an edit inside a paragraph.
     order: Vec<KoruNodeId>,
     counters: Counters,
+    /// The words read out of each picture, by blob address, with a stamp of
+    /// each, as of [`Self::picture_revision`]. See
+    /// [`Self::set_picture_texts`].
+    picture_texts: HashMap<String, (u64, std::sync::Arc<str>)>,
+    picture_revision: Option<u64>,
 }
 
 #[derive(Default)]
@@ -533,6 +565,37 @@ struct Published {
 }
 
 impl DocumentAccessibility {
+    /// **The words read out of the document's pictures**, for the next
+    /// [`body`](Self::body): the editor's `ViewState::picture_texts` and its
+    /// revision. Copies (an `Arc` each) only when the revision moved, so
+    /// calling it before every publish costs one comparison.
+    pub fn set_picture_texts(
+        &mut self,
+        texts: &HashMap<String, std::sync::Arc<str>>,
+        revision: u64,
+    ) {
+        if self.picture_revision == Some(revision) {
+            return;
+        }
+        self.picture_revision = Some(revision);
+        self.picture_texts = texts
+            .iter()
+            .map(|(hash, text)| {
+                let mut hasher = DefaultHasher::new();
+                text.hash(&mut hasher);
+                (hash.clone(), (hasher.finish(), text.clone()))
+            })
+            .collect();
+    }
+
+    /// The stamp and words of the picture `row` shows, when it is one whose
+    /// words are known.
+    fn picture_text_of(&self, row: &Paragraph) -> Option<&(u64, std::sync::Arc<str>)> {
+        row.image
+            .as_ref()
+            .and_then(|image| self.picture_texts.get(&image.hash.0))
+    }
+
     /// Project one **laid-out** paragraph, whole.
     ///
     /// `base` is the AccessKit id of the paragraph control itself — the node an
@@ -637,7 +700,11 @@ impl DocumentAccessibility {
             });
             let focused = focus == Some(index);
             let height = if origin.is_some() { row.height } else { 0.0 };
-            let facts = RowFacts::of(row);
+            // Read before any row entry is borrowed: an `Arc` clone, and only
+            // for a picture whose words are known.
+            let picture = self.picture_text_of(row).cloned();
+            let mut facts = RowFacts::of(row);
+            facts.picture_text = picture.as_ref().map(|(stamp, _)| *stamp);
             // Whether this row has text to publish at all: shaped, and not an
             // image, a divider or a diagram showing its picture.
             let textual = shaped != 0 && has_text_layout(row);
@@ -750,6 +817,7 @@ impl DocumentAccessibility {
                     .diagram
                     .as_ref()
                     .and_then(|state| diagram::narration_text(lang, state)),
+                picture_text: picture.map(|(_, text)| capped_picture_text(&text)),
             });
         }
 

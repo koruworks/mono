@@ -865,6 +865,26 @@ impl Client {
         self.get("/v1/workspaces/unassigned")
     }
 
+    /// Workspaces in this device's trash that the account still holds live,
+    /// each with the Profile the account keeps it under.
+    pub fn trashed_in_account(&self) -> Result<Vec<koru_store_wire::TrashedInAccount>> {
+        self.get("/v1/workspaces/trashed-in-account")
+    }
+
+    /// Record that the person was told about one, so they are told once.
+    pub fn acknowledge_trashed_in_account(&self, id: WorkspaceId) -> Result<()> {
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .post(format!(
+                    "{}/v1/workspaces/{}/trashed-in-account/acknowledge",
+                    discovery.base_url(),
+                    id.to_storage()
+                ))
+                .bearer_auth(&discovery.token)
+        })?;
+        self.decode(response)
+    }
+
     pub fn rename_profile(&self, id: ProfileId, name: &str) -> Result<Profile> {
         let response = self.send_with_retry(|discovery| {
             self.http
@@ -1310,6 +1330,23 @@ impl Client {
                     id.to_storage()
                 ))
                 .bearer_auth(&discovery.token)
+        })?;
+        self.decode(response)
+    }
+
+    /// Restore a workspace out of the trash and under `owner`, in one step:
+    /// for one whose own profile is no longer on this device.
+    pub fn restore_workspace_to(&self, id: WorkspaceId, owner: ProfileId) -> Result<Workspace> {
+        let body = koru_store_wire::MoveWorkspace { owner };
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .post(format!(
+                    "{}/v1/workspaces/{}/restore-to",
+                    discovery.base_url(),
+                    id.to_storage()
+                ))
+                .bearer_auth(&discovery.token)
+                .json(&body)
         })?;
         self.decode(response)
     }

@@ -4,7 +4,6 @@ records 51 truncated false
     fill = "#FFFFFF / alpha 1.000" (scene::Panel::fill)
     elevation = "Raised" (scene::Panel::elevation)
     radius = "8" (scene::Panel::radius)
-    shadow opacity = "1" (scene::Panel::shadow_alpha)
 1 ^0 part "Shadow" b[478.00 382.00 858.00 606.00] c[0.00 0.00 900.00 700.00] z1
     rings = "16" (one soft shadow drawn as expanding fills; vello has no blur)
     spread / dy = "20 / 3" (SHADOW_SPREAD / SHADOW_DY)

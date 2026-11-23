@@ -28,6 +28,7 @@ pub mod pill;
 pub mod scene;
 pub mod scrollbar;
 pub mod text;
+pub mod text_rendering;
 pub mod theme;
 pub mod tile;
 pub mod tween;

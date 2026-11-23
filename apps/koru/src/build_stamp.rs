@@ -21,7 +21,7 @@ pub(crate) fn branch() -> Option<&'static str> {
         .filter(|name| !name.is_empty())
 }
 
-/// The branch the caption names, which is not every branch.
+/// The development branch named in the window menu, which is not every branch.
 ///
 /// **This app's judgement, not the pill's.** `koru_shell_chrome::branch` draws
 /// whatever name it is given; deciding that `dev` and `main` are unremarkable
@@ -31,13 +31,13 @@ pub(crate) fn branch() -> Option<&'static str> {
 /// `worth_showing` until then, and it belongs here anyway — beside the
 /// `option_env!` that decides what a build is stamped with in the first place.
 ///
-/// Still one function rather than an `if` per caller: the container's caption
-/// and a popped-out document's must not be able to disagree about it.
+/// The historical function name is retained; the main window now places this
+/// read-only information in the internal window-menu footer below All settings.
 pub(crate) fn caption_branch() -> Option<&'static str> {
     worth_naming(branch())
 }
 
-/// Whether this branch is one worth naming in the caption.
+/// Whether this branch is one worth naming in the window menu.
 ///
 /// `dev` and `main` are the ordinary places to be, so a pill on them would be
 /// permanent furniture that stops being read — and a label nobody reads is

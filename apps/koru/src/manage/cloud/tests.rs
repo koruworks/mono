@@ -132,6 +132,7 @@ fn storage_refresh_keeps_focus_control_and_exposes_the_drawn_status() {
                     request_id,
                     current: Some(true),
                     access: Some(true),
+                    subscription_kind: None,
                 }
             }
             AccountCommand::InspectCloudSync { request_id } => AccountOperationResult::CloudSync {
@@ -607,7 +608,7 @@ fn a_held_progress_row_opens_onto_its_waiting_documents() {
     );
 
     assert!(press(&mut view, Control::ProgressRow(photos_id)));
-    let lines = view.c.cloud_progress_lines().unwrap();
+    let lines = view.c.cloud_progress_lines(0).unwrap();
     assert_eq!(lines.rows[1].waiting, Some(Waiting::Reading));
     let laid = cloud(&view).rows[0].progress.clone().unwrap();
     assert!(laid.rows[1].open);

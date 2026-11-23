@@ -102,6 +102,11 @@ mod windows_impl {
     /// The shortcut is part of the key: a chord arriving is itself a change the
     /// list has to be rebuilt for.
     static INSTALLED: Mutex<Option<JumpList>> = Mutex::new(None);
+    /// **One registration at a time.** Two commits of the shell's custom
+    /// destination list at once fail the second with "Unable to remove the
+    /// file to be replaced" (0x80070497) — which the start of every window
+    /// did, because its recents and its shortcut arrive in the same moment.
+    static REGISTERING: Mutex<()> = Mutex::new(());
     /// A proxy into the winit loop, so the listener thread can *wake* it after
     /// setting a flag — `SetForegroundWindow`'s focus side effect is not a
     /// wake, and a loop asleep would leave the flag sitting until the next
@@ -317,6 +322,11 @@ mod windows_impl {
             }
             *installed = Some(now);
         }
+        let asked = JumpList {
+            recents: recents.clone(),
+            pinned: pinned.clone(),
+            shortcut: shortcut.clone(),
+        };
         tracing::info!(
             target: "koru::taskbar",
             recents = recents.len(),
@@ -327,6 +337,16 @@ mod windows_impl {
         let _ = std::thread::Builder::new()
             .name("koru-jump-list".into())
             .spawn(move || {
+                let _one_at_a_time = REGISTERING.lock();
+                // A newer list was asked for while this one waited its turn:
+                // that one is registered, and this one is already stale.
+                if INSTALLED
+                    .lock()
+                    .ok()
+                    .is_some_and(|installed| installed.as_ref() != Some(&asked))
+                {
+                    return;
+                }
                 match unsafe { register_jump_list(&recents, &pinned, shortcut.as_deref()) } {
                     Ok(()) => tracing::info!(target: "koru::taskbar", "Jump List registered"),
                     Err(error) => tracing::error!(
@@ -339,6 +359,7 @@ mod windows_impl {
 
     pub(super) fn install_jump_list() {
         tracing::info!(target: "koru::taskbar", "installing the initial Jump List");
+        let _one_at_a_time = REGISTERING.lock();
         match unsafe { register_jump_list(&[], &[], None) } {
             Ok(()) => tracing::info!(target: "koru::taskbar", "initial Jump List registered"),
             Err(error) => tracing::error!(

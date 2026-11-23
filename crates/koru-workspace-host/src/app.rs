@@ -6,12 +6,14 @@
 //! saved or opened, and the host decides *what* a window shows. Nothing here
 //! knows what a row is.
 
+mod child_document;
 mod delegate_folder;
 mod file_paste;
 mod image_file;
 mod inspector_window;
 mod key_release;
 mod modifiers;
+mod native_input;
 mod profile_creation;
 mod profile_delivery;
 mod profile_removal;
@@ -31,7 +33,7 @@ use std::time::{Duration, Instant};
 use vello::kurbo::Affine;
 use vello::util::{RenderContext, RenderSurface};
 use vello::wgpu;
-use vello::{AaConfig, Renderer, Scene};
+use vello::{Renderer, Scene};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -287,11 +289,14 @@ fn effective_dark(pref: theme::ThemePreference) -> bool {
 /// The theme has to be set before the first layout is built, since brushes are
 /// baked into parley layouts.
 fn apply_settings(settings: &Settings) {
+    koru_draw::text_rendering::set_preferences(settings.text_rendering);
+    theme::set_heading_weight(settings.heading_weight);
     theme::set_tabs_per_workspace(settings.tabs_per_workspace);
     koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
-    theme::set_caret_color(settings.caret_color);
+    theme::set_caret_color_for(false, settings.caret_color);
+    theme::set_caret_color_for(true, settings.caret_color_dark);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
     theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
@@ -356,10 +361,13 @@ fn apply_accent_colors(light: Option<u32>, dark: Option<u32>) {
 }
 
 fn apply_pre_identity_preferences(settings: &PreIdentityPreferences) {
+    koru_draw::text_rendering::set_preferences(settings.text_rendering);
+    theme::set_heading_weight(settings.heading_weight);
     koru_draw::icons::set_icon_pack_setting(settings.icon_pack);
     theme::set_theme_preference(settings.theme);
     theme::set_dark(effective_dark(settings.theme));
-    theme::set_caret_color(settings.caret_color);
+    theme::set_caret_color_for(false, settings.caret_color);
+    theme::set_caret_color_for(true, settings.caret_color_dark);
     theme::set_caret_width(settings.caret_width);
     theme::set_caret_height(settings.caret_height);
     theme::set_font_setting(theme::FontSlot::Ui, settings.font.clone());
@@ -1216,6 +1224,13 @@ enum ImportMessage {
         target: crate::reading_file::ReadingTarget,
         offers: Option<crate::reading_requests::ReadingOffers>,
     },
+    /// The words read out of pictures (OCR), by blob address, for in-page
+    /// find, *Copy text* and accessibility. `None`: the picture has no
+    /// reading. A picture whose reading could not be asked for is left out,
+    /// so a failed fetch never takes away words a view already has.
+    PictureTexts {
+        texts: Vec<(String, Option<String>)>,
+    },
     ReadingRescanFinished(Result<reading_rescan::Summary, ()>),
     FileOpened {
         name: String,
@@ -1842,13 +1857,41 @@ fn fetch_offers(
     target: &crate::reading_file::ReadingTarget,
     workspace: Option<koru_store_core::ids::WorkspaceId>,
 ) -> Option<crate::reading_requests::ReadingOffers> {
-    let (client, workspace, hash, _) =
-        locate_reading_item(segment, root, target, workspace).ok()?;
-    client
-        .reading(workspace, &hash)
+    fetch_reading(segment, root, target, workspace)
         .ok()
         .flatten()
         .map(|answer| answer.offers)
+}
+
+/// **One item's reading**, on a worker. `Ok(None)` when nothing has been
+/// read of it; `Err` when the Store could not be asked.
+fn fetch_reading(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Result<Option<koru_api_client::ReadingAnswer>, String> {
+    let (client, workspace, hash, _) = locate_reading_item(segment, root, target, workspace)?;
+    client.reading(workspace, &hash).map_err(|e| e.to_string())
+}
+
+/// A picture's words from the reading its menu just fetched (OCR), so *Copy
+/// text* is as fresh as *Read again*. `None` for a file, or when the Store
+/// could not be asked: no answer is not the answer "no words".
+fn picture_text_message(
+    target: &crate::reading_file::ReadingTarget,
+    answer: &Result<Option<koru_api_client::ReadingAnswer>, String>,
+) -> Option<ImportMessage> {
+    let crate::reading_file::ReadingTarget::Picture { hash } = target else {
+        return None;
+    };
+    let answer = answer.as_ref().ok()?;
+    Some(ImportMessage::PictureTexts {
+        texts: vec![(
+            hash.clone(),
+            crate::reading_details::picture_text(answer.as_ref()),
+        )],
+    })
 }
 
 /// **Fetch one item's reading and turn it into the file's text**, on a
@@ -2189,6 +2232,7 @@ struct Pane<V> {
     /// window is still being activated; treating that as click-away would make
     /// the global shortcut flash and immediately disappear.
     focused_once: bool,
+    native_input: native_input::State,
     /// What the last `Focused` event said. Gates key-press dispatch: Windows
     /// delivers the trailing key of a window-switching chord — Alt+Tab's Tab —
     /// *after* the focus-loss event, when the modifier bookkeeping has already
@@ -2502,7 +2546,8 @@ struct PendingConnectedProfileCreation {
     submission: Option<crate::account_ui::CommandSubmissionId>,
     generation: Option<u64>,
     source: WindowId,
-    owner_display_name: String,
+    /// `None` from Manage → New profile: the account's name is left alone.
+    owner_display_name: Option<String>,
     profile_name: String,
     workspace_name: String,
     connect_account: bool,
@@ -2524,6 +2569,8 @@ impl PendingConnectedProfileCreation {
 }
 
 struct App<H: Host> {
+    child_loads: HashMap<WindowId, child_document::Pending>,
+    task_queue: child_document::TaskQueue,
     /// What makes a view. The one question the loop cannot answer itself.
     host: H,
     context: RenderContext,
@@ -3007,7 +3054,13 @@ struct OnboardingApp<H: Host> {
     last_caption_click: Option<(Instant, f32, f32)>,
     creation_tx: mpsc::Sender<OnboardingCreation>,
     creation_rx: mpsc::Receiver<OnboardingCreation>,
-    first_minutes: Option<(String, String, String)>,
+    sync_probe_tx: mpsc::Sender<Option<koru_workspace::fromstore::OpenedFromStore>>,
+    sync_probe_rx: mpsc::Receiver<Option<koru_workspace::fromstore::OpenedFromStore>>,
+    sync_probe_in_flight: bool,
+    sync_poll_at: Option<Instant>,
+    /// The owner, Profile and workspace names the Welcome tab greets with. The
+    /// first-run window always has an owner; `None` would greet plainly.
+    first_minutes: Option<(Option<String>, String, String)>,
     connect_created_profile: bool,
     open_manage_after_creation: bool,
     pending_connected_open: Option<koru_workspace::fromstore::OpenedFromStore>,
@@ -3024,6 +3077,20 @@ struct OnboardingApp<H: Host> {
     /// `ListProfiles` immediately requested another list and its response reset
     /// an in-progress Profile form back to step one.
     signed_in_profiles_requested: bool,
+    /// True while a new user-initiated sign-in from the workspace modal is in
+    /// flight; ignores any pre-existing `AccountStage::SignedIn` broadcast from
+    /// an earlier session until the new sign-in command itself settles.
+    awaiting_modal_signin: bool,
+    /// When the user starts a fresh sign-in from Screen 1 while an earlier
+    /// account is still bound to the active scope, sign out of that scope
+    /// first so any Koru account can sign in without an identity-mismatch
+    /// refusal.
+    pending_modal_signin: Option<koru_agent_wire::AccountCommand>,
+    cloud_access_request_seq: u64,
+    pending_cloud_access_request: Option<u64>,
+    checkout_poll_at: Option<Instant>,
+    checkout_submission: Option<crate::account_ui::CommandSubmissionId>,
+    checkout_generation: Option<u64>,
     /// The installation must remain protected while onboarding is open too.
     #[allow(dead_code)]
     update_lease: Option<koru_update::InstanceLease>,
@@ -3182,7 +3249,11 @@ impl<H: Host> ContentState<H> {
                     (&mut next, first_minutes)
                     && let Some(view) = app.pending.as_mut()
                 {
-                    let _ = view.show_first_minutes(&owner, &profile, &workspace);
+                    let _ = view.show_first_minutes(
+                        owner.as_deref().unwrap_or(""),
+                        &profile,
+                        &workspace,
+                    );
                 }
                 Some(next)
             }
@@ -3369,11 +3440,25 @@ fn roadmap_template_files(slug: &str) -> koru_store_core::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn retryable_template_failure(template: &str, error: impl std::fmt::Display) -> OnboardingCreation {
+/// The packaged files a first workspace starts from: the starter "What Koru
+/// means" document and its fern image. There is no template choice (welcome D4).
+const FIRST_WORKSPACE_TEMPLATE: &str = "empty";
+
+/// **The packaged starter document could not be read**: this installation
+/// is missing a file it needs. There is no other template to choose, so the
+/// person is told, in their language, to repair Koru (welcome Q-D); the
+/// technical cause goes to the log once and is not shown.
+fn installation_needs_repair(error: impl std::fmt::Display) -> OnboardingCreation {
+    tracing::warn!(
+        target: "koru::onboarding",
+        "the packaged first-workspace document could not be read: {error}"
+    );
     OnboardingCreation::Retryable {
-        message: format!(
-            "This Workspace template isn't available\nKoru couldn't read the packaged files for {template}. Choose another template or repair this Koru installation. ({error})"
-        ),
+        message: koru_i18n::t(
+            koru_i18n::current(),
+            koru_i18n::Key::SetupInstallationNeedsRepair,
+        )
+        .to_owned(),
     }
 }
 
@@ -3434,7 +3519,6 @@ fn create_onboarding_profile(
     id: koru_core::ProfileId,
     profile_name: &str,
     workspace_name: &str,
-    template: &str,
     profile_icon: Option<&str>,
     profile_color: Option<&str>,
     workspace_icon: Option<&str>,
@@ -3445,19 +3529,19 @@ fn create_onboarding_profile(
 ) -> OnboardingCreation {
     use koru_import::Importer;
 
-    let files = match roadmap_template_files(template) {
+    let files = match roadmap_template_files(FIRST_WORKSPACE_TEMPLATE) {
         Ok(files) => files,
-        Err(error) => return retryable_template_failure(template, error),
+        Err(error) => return installation_needs_repair(error),
     };
     // `inspect` reads and parses every packaged file before the first durable
-    // write. A malformed template disables only that choice and cannot leave a
-    // half-created Profile.
+    // write. A missing or malformed file stops creation before anything is
+    // saved and cannot leave a half-created Profile.
     let prepared = match koru_import_markdown::MarkdownImporter.inspect(
         koru_import::ImportSource::Files(files),
         &koru_import::NoProgress,
     ) {
         Ok(prepared) => prepared,
-        Err(error) => return retryable_template_failure(template, error),
+        Err(error) => return installation_needs_repair(error),
     };
 
     let segment = koru_workspace::fromstore::segment();
@@ -3721,6 +3805,29 @@ fn restore_deleted_onboarding_profile(
     }
 }
 
+fn probe_synced_onboarding_profile(
+    root: Option<&Path>,
+    profile_ids: &[String],
+) -> Option<koru_workspace::fromstore::OpenedFromStore> {
+    for raw in profile_ids {
+        let Some(profile) = koru_core::ProfileId::parse(raw) else {
+            continue;
+        };
+        if let Ok(koru_workspace::fromstore::StoreLaunch::Open(opened)) =
+            koru_workspace::fromstore::open_from_store_profile_preferring_empty(
+                koru_workspace::fromstore::segment(),
+                root,
+                profile,
+                None,
+            )
+            && opened.has_workspace
+        {
+            return Some(opened);
+        }
+    }
+    None
+}
+
 fn restore_onboarding_profile(root: Option<&Path>, raw_profile: &str) -> OnboardingCreation {
     let Some(profile) = koru_core::ProfileId::parse(raw_profile) else {
         return OnboardingCreation::RestoreFailed {
@@ -3794,8 +3901,83 @@ impl<H: Host> OnboardingApp<H> {
         ) {
             self.host.account_command_owned(
                 self.view.account_scope(),
-                koru_agent_wire::AccountCommand::ListProfileChoices,
+                koru_agent_wire::AccountCommand::InspectAccountSession,
             );
+            if self.view.workspace_modal {
+                self.request_cloud_access_check();
+            } else {
+                self.host.account_command_owned(
+                    self.view.account_scope(),
+                    koru_agent_wire::AccountCommand::ListProfileChoices,
+                );
+            }
+        }
+    }
+
+    fn request_cloud_access_check(&mut self) {
+        self.cloud_access_request_seq = self.cloud_access_request_seq.wrapping_add(1).max(1);
+        let request_id = self.cloud_access_request_seq;
+        self.pending_cloud_access_request = Some(request_id);
+        self.host.account_command_owned(
+            self.view.account_scope(),
+            koru_agent_wire::AccountCommand::InspectCloudAccess { request_id },
+        );
+    }
+
+    fn begin_onboarding_checkout(&mut self, plan: &'static str) {
+        if let Some(generation) = self.checkout_generation.take() {
+            self.host.account_command_owned(
+                self.view.account_scope(),
+                koru_agent_wire::AccountCommand::Cancel { generation },
+            );
+        }
+        self.pending_cloud_access_request = None;
+        self.checkout_poll_at = None;
+        self.view.show_checkout_pending();
+        let submission = crate::account_ui::CommandSubmissionId::next();
+        self.checkout_submission = Some(submission);
+        let locale = self.view.language().tag().to_owned();
+        self.host.account_command_tracked_owned(
+            submission,
+            self.view.account_scope(),
+            koru_agent_wire::AccountCommand::StartCheckout {
+                plan: plan.to_owned(),
+                locale,
+                ab: Some(self.view.onboarding_ab()),
+            },
+        );
+    }
+
+    fn cancel_onboarding_checkout(&mut self) {
+        self.checkout_poll_at = None;
+        self.checkout_submission = None;
+        if let Some(generation) = self.checkout_generation.take() {
+            self.host.account_command_owned(
+                self.view.account_scope(),
+                koru_agent_wire::AccountCommand::Cancel { generation },
+            );
+        }
+    }
+
+    fn start_modal_signin(&mut self, command: koru_agent_wire::AccountCommand) {
+        self.signed_in_profiles_requested = false;
+        self.awaiting_modal_signin = self.view.workspace_modal;
+        self.pending_cloud_access_request = None;
+        self.cancel_onboarding_checkout();
+        self.view.clear_account_email();
+        let state = self.host.account_state();
+        let bound_to_prior_account = self.view.workspace_modal
+            && (state.stage == koru_agent_wire::AccountStage::SignedIn
+                || state.active_account_id.is_some());
+        if bound_to_prior_account {
+            self.pending_modal_signin = Some(command);
+            self.host.account_command_owned(
+                self.view.account_scope(),
+                koru_agent_wire::AccountCommand::Logout,
+            );
+        } else {
+            self.pending_modal_signin = None;
+            self.submit_account_command(command);
         }
     }
 
@@ -3811,18 +3993,17 @@ impl<H: Host> OnboardingApp<H> {
         self.context = Some(warmed.context);
         self.renderers = warmed.renderer.into_iter().collect();
 
+        let size = crate::cli::window_size_from_args().unwrap_or((1000.0, 680.0));
         let mut attributes = Window::default_attributes()
             .with_title(self.name.clone())
             .with_visible(false)
-            // The welcome split has to continue through the title area. On
-            // macOS the native traffic-light titlebar remains platform-owned;
-            // elsewhere onboarding draws the same compact direct controls as
-            // the rest of Koru's custom-caption windows.
+            // The host paints the workspace; setup owns input until creation.
+            // On macOS the native traffic lights remain platform-owned.
             .with_decorations(cfg!(target_os = "macos"))
-            .with_inner_size(winit::dpi::LogicalSize::new(1000.0, 680.0))
+            .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1))
             // The shared emoji picker is 420 px wide and about 590 px tall;
             // keep its 16 px modal gutter reachable without clipping.
-            .with_min_inner_size(winit::dpi::LogicalSize::new(452.0, 640.0))
+            .with_min_inner_size(winit::dpi::LogicalSize::new(720.0, 640.0))
             .with_theme(window_theme_for_pref());
         if let Some(icon) = self.host.window_icon().or_else(app_icon) {
             attributes = attributes.with_window_icon(Some(icon));
@@ -3907,6 +4088,25 @@ impl<H: Host> OnboardingApp<H> {
         if let Some(live) = &self.live {
             live.window.request_redraw();
         }
+    }
+
+    /// Bring the onboarding window back to the foreground after an external
+    /// browser flow returns so the person lands straight on profile selection
+    /// or setup. Never steals focus while the person is completing checkout in
+    /// the browser.
+    fn bring_to_front(&self) {
+        if self.view.is_checkout_pending() {
+            return;
+        }
+        if let Some(live) = &self.live {
+            live.window.set_minimized(false);
+            live.window.focus_window();
+            if !self.focused {
+                live.window
+                    .request_user_attention(Some(winit::window::UserAttentionType::Informational));
+            }
+        }
+        activate_app();
     }
 
     /// The first-run window's half of the F12 inspector: the toggle itself,
@@ -4011,8 +4211,9 @@ impl<H: Host> OnboardingApp<H> {
     }
 
     fn settle_actions(&mut self) {
+        let ab = self.view.onboarding_ab_attrs();
         for telemetry in self.view.take_telemetry() {
-            crate::events_host::onboarding(telemetry);
+            crate::events_host::onboarding(telemetry, ab);
         }
         while let Some(action) = self.view.take_action() {
             match action {
@@ -4037,21 +4238,67 @@ impl<H: Host> OnboardingApp<H> {
                     },
                 ),
                 crate::onboarding::Action::StartGoogle => {
-                    self.submit_account_command(koru_agent_wire::AccountCommand::StartGoogle {
+                    let ab = self.view.workspace_modal.then(|| self.view.onboarding_ab());
+                    self.start_modal_signin(koru_agent_wire::AccountCommand::StartGoogle {
                         locale: "en".into(),
+                        ab,
                     })
                 }
                 crate::onboarding::Action::StartApple => {
-                    self.submit_account_command(koru_agent_wire::AccountCommand::StartApple {
+                    let ab = self.view.workspace_modal.then(|| self.view.onboarding_ab());
+                    self.start_modal_signin(koru_agent_wire::AccountCommand::StartApple {
                         locale: "en".into(),
+                        ab,
                     })
                 }
-                crate::onboarding::Action::ContinueWithEmail { address, password } => self
-                    .submit_account_command(koru_agent_wire::AccountCommand::ContinueWithEmail {
+                crate::onboarding::Action::StartEmailBrowser => {
+                    let ab = self.view.workspace_modal.then(|| self.view.onboarding_ab());
+                    self.start_modal_signin(koru_agent_wire::AccountCommand::StartEmailBrowser {
                         locale: "en".into(),
-                        address,
-                        password,
-                    }),
+                        ab,
+                    })
+                }
+                crate::onboarding::Action::ReopenBrowserSignin => {
+                    if let Some(url) = self.host.account_browser_url(self.view.account_scope()) {
+                        self.host.open_uri(&url);
+                    }
+                }
+                crate::onboarding::Action::CopyBrowserSigninLink => {
+                    if let Some(url) = self.host.account_browser_url(self.view.account_scope())
+                        && koru_clipboard::system().set_text(&url).is_ok()
+                    {
+                        self.view.mark_browser_link_copied();
+                    }
+                }
+                crate::onboarding::Action::SwitchAccount => {
+                    self.awaiting_modal_signin = false;
+                    self.pending_modal_signin = None;
+                    self.signed_in_profiles_requested = false;
+                    self.host.account_command_owned(
+                        self.view.account_scope(),
+                        koru_agent_wire::AccountCommand::Logout,
+                    );
+                }
+                crate::onboarding::Action::OpenPricing => {
+                    let url = self.view.pricing_url();
+                    self.host.open_uri(&url);
+                }
+                crate::onboarding::Action::StartCheckout { plan } => {
+                    self.begin_onboarding_checkout(plan);
+                }
+                crate::onboarding::Action::CancelCheckout => {
+                    self.cancel_onboarding_checkout();
+                }
+                crate::onboarding::Action::ContinueWithEmail { address, password } => {
+                    self.signed_in_profiles_requested = false;
+                    self.submit_account_command(
+                        koru_agent_wire::AccountCommand::ContinueWithEmail {
+                            locale: "en".into(),
+                            address,
+                            password,
+                        },
+                    )
+                }
                 crate::onboarding::Action::SubmitEmailCode { code } => {
                     self.submit_account_command(koru_agent_wire::AccountCommand::SubmitEmailCode {
                         code,
@@ -4098,6 +4345,8 @@ impl<H: Host> OnboardingApp<H> {
                         });
                 }
                 crate::onboarding::Action::CancelGoogle => {
+                    self.pending_modal_signin = None;
+                    self.awaiting_modal_signin = false;
                     self.submit_account_command(koru_agent_wire::AccountCommand::Cancel {
                         generation: self.view.account_generation(),
                     })
@@ -4111,7 +4360,6 @@ impl<H: Host> OnboardingApp<H> {
                     owner_display_name,
                     name,
                     workspace_name,
-                    template,
                     workspace_icon,
                     workspace_color,
                     profile_icon,
@@ -4133,7 +4381,6 @@ impl<H: Host> OnboardingApp<H> {
                                 id,
                                 &name,
                                 &workspace_name,
-                                &template,
                                 profile_icon.as_deref(),
                                 profile_color.as_deref(),
                                 workspace_icon.as_deref(),
@@ -4164,11 +4411,13 @@ impl<H: Host> OnboardingApp<H> {
             .as_ref()
             .map(|(_, profile, _)| profile.clone())
             .unwrap_or_else(|| "Personal".into());
+        // The tuple's owner as it is; the first-run window always has one, and
+        // the fallback to the Profile name covers a tuple it cannot lack.
         let owner_display_name = self
             .first_minutes
             .as_ref()
             .map(|(owner, _, _)| owner.clone())
-            .unwrap_or_else(|| name.clone());
+            .unwrap_or_else(|| Some(name.clone()));
         self.pending_connected_open = Some(opened);
         self.connect_created_profile = false;
         self.awaiting_hosted_profile = true;
@@ -4284,6 +4533,14 @@ impl<H: Host> OnboardingApp<H> {
     }
 
     fn poll_account(&mut self) {
+        // Required local setup stays independent of background broadcasts until
+        // the person explicitly starts an account flow from the welcome modal.
+        if self.view.workspace_modal && !self.view.modal_account_active() {
+            self.host.take_account_dirty();
+            self.view
+                .observe_account_projection(&self.host.account_state());
+            return;
+        }
         self.poll_local_profile_binding();
         if (self.awaiting_hosted_profile || self.awaiting_local_binding)
             && !self.host.agent_available()
@@ -4299,13 +4556,26 @@ impl<H: Host> OnboardingApp<H> {
             }
         }
         if self.host.take_account_dirty() {
+            if self.view.synced_workspace_candidates().is_some() {
+                self.sync_poll_at = None;
+            }
             let state = self.host.account_state().clone();
             if self.view.select_account_context(&state) {
                 self.signed_in_profiles_requested = false;
             }
+            if state.stage == koru_agent_wire::AccountStage::SignedOut
+                && state.active_account_id.is_none()
+                && let Some(command) = self.pending_modal_signin.take()
+            {
+                self.view.arm_browser_signin(&command);
+                self.submit_account_command(command);
+                return;
+            }
             if state.stage == koru_agent_wire::AccountStage::SignedIn {
-                self.view.account_creation_finished();
-                self.request_signed_in_profiles_once();
+                if !self.awaiting_modal_signin && !self.view.is_checkout_pending() {
+                    self.view.account_creation_finished();
+                    self.request_signed_in_profiles_once();
+                }
             } else if matches!(
                 state.stage,
                 koru_agent_wire::AccountStage::Restoring
@@ -4341,6 +4611,11 @@ impl<H: Host> OnboardingApp<H> {
                 && self.connected_owner_scope == admission.owner_scope
             {
                 self.connected_generation = Some(admission.generation);
+            }
+            if self.checkout_submission == Some(admission.submission)
+                && self.view.account_scope() == admission.owner_scope
+            {
+                self.checkout_generation = Some(admission.generation);
             }
         }
         if self.pending_connected_open.is_some()
@@ -4379,20 +4654,29 @@ impl<H: Host> OnboardingApp<H> {
             }
             match result {
                 koru_agent_wire::AccountOperationResult::AccountCreationRequired => {
+                    self.bring_to_front();
                     self.view
                         .account_creation_required(&self.host.account_state());
                 }
                 koru_agent_wire::AccountOperationResult::SignedIn => {
-                    self.view.account_creation_finished();
-                    self.request_signed_in_profiles_once();
+                    self.awaiting_modal_signin = false;
+                    if !self.view.workspace_modal {
+                        self.bring_to_front();
+                    }
+                    if !self.view.is_checkout_pending() {
+                        self.view.account_creation_finished();
+                        self.request_signed_in_profiles_once();
+                    }
                 }
                 koru_agent_wire::AccountOperationResult::Profiles { profiles } => {
+                    self.bring_to_front();
                     self.view.show_account_profiles(profiles);
                 }
                 koru_agent_wire::AccountOperationResult::ProfileChoices {
                     display_name,
                     choices,
                 } => {
+                    self.bring_to_front();
                     self.view
                         .show_account_profile_choices(&display_name, choices);
                 }
@@ -4430,15 +4714,100 @@ impl<H: Host> OnboardingApp<H> {
                     );
                     self.view.profiles_selected(profiles);
                 }
-                koru_agent_wire::AccountOperationResult::Cancelled => self.view.account_cancelled(),
-                koru_agent_wire::AccountOperationResult::Failed { code } => {
-                    let mut state = self.host.account_state().clone();
-                    state.stage = koru_agent_wire::AccountStage::Failed;
-                    state.failure_code = Some(code);
-                    self.view.show_account_state(&state);
+                koru_agent_wire::AccountOperationResult::Cancelled => {
+                    self.awaiting_modal_signin = false;
+                    self.bring_to_front();
+                    self.view.account_cancelled();
                 }
-                koru_agent_wire::AccountOperationResult::SignedInIdentity { .. }
-                | koru_agent_wire::AccountOperationResult::ProfileAuthorizationRemoved { .. }
+                koru_agent_wire::AccountOperationResult::Failed { code } => {
+                    self.awaiting_modal_signin = false;
+                    if self.checkout_generation == Some(generation)
+                        || self.view.is_checkout_pending()
+                    {
+                        self.checkout_submission = None;
+                        self.checkout_generation = None;
+                        self.checkout_poll_at = None;
+                        self.view.show_checkout_incomplete();
+                        self.bring_to_front();
+                    } else {
+                        self.bring_to_front();
+                        let mut state = self.host.account_state().clone();
+                        state.stage = koru_agent_wire::AccountStage::Failed;
+                        state.failure_code = Some(code);
+                        self.view.show_account_state(&state);
+                    }
+                }
+                koru_agent_wire::AccountOperationResult::SignedInIdentity {
+                    provider,
+                    verified_email,
+                    ..
+                } => {
+                    self.view.set_account_provider(&provider);
+                    self.view.set_account_email(verified_email);
+                }
+                koru_agent_wire::AccountOperationResult::CloudAccess { request_id, active } => {
+                    if self.pending_cloud_access_request == Some(request_id) {
+                        self.pending_cloud_access_request = None;
+                        if self.view.is_checkout_pending() {
+                            match active {
+                                Some(true) => {
+                                    self.cancel_onboarding_checkout();
+                                    self.view.set_cloud_access(true);
+                                    self.bring_to_front();
+                                    if !self.view.finish_signed_in_welcome_after_checkout() {
+                                        self.host.account_command_owned(
+                                            self.view.account_scope(),
+                                            koru_agent_wire::AccountCommand::ListProfileChoices,
+                                        );
+                                    }
+                                }
+                                Some(false) | None => {
+                                    self.checkout_poll_at =
+                                        Some(Instant::now() + Duration::from_secs(4));
+                                }
+                            }
+                        } else {
+                            // Post-sign-in inspection: record whether the account
+                            // already has Cloud access and list its profiles. Existing
+                            // profiles go straight to the profile chooser; accounts
+                            // with no profiles return to the signed-in Welcome screen
+                            // with inputs prefilled and ready for checkout (or direct
+                            // start when Cloud is already active).
+                            self.view.set_cloud_access(active.unwrap_or(false));
+                            self.bring_to_front();
+                            self.host.account_command_owned(
+                                self.view.account_scope(),
+                                koru_agent_wire::AccountCommand::ListProfileChoices,
+                            );
+                        }
+                    }
+                }
+                koru_agent_wire::AccountOperationResult::CheckoutFinished { active, .. } => {
+                    self.checkout_submission = None;
+                    self.checkout_generation = None;
+                    self.checkout_poll_at = None;
+                    if active {
+                        self.view.set_cloud_access(true);
+                        if !self.view.finish_signed_in_welcome_after_checkout() {
+                            self.host.account_command_owned(
+                                self.view.account_scope(),
+                                koru_agent_wire::AccountCommand::ListProfileChoices,
+                            );
+                        }
+                    } else if self.view.is_checkout_pending() {
+                        self.view.show_checkout_incomplete();
+                    }
+                    self.bring_to_front();
+                }
+                koru_agent_wire::AccountOperationResult::SignedOut => {
+                    if let Some(command) = self.pending_modal_signin.take() {
+                        let state = self.host.account_state().clone();
+                        self.view.select_account_context(&state);
+                        self.view.arm_browser_signin(&command);
+                        self.submit_account_command(command);
+                    }
+                }
+                koru_agent_wire::AccountOperationResult::ProfileAuthorizationRemoved { .. }
                 | koru_agent_wire::AccountOperationResult::ProfileDeleted { .. }
                 | koru_agent_wire::AccountOperationResult::ProfileRestored { .. }
                 | koru_agent_wire::AccountOperationResult::ProfileLifecycle { .. }
@@ -4448,7 +4817,6 @@ impl<H: Host> OnboardingApp<H> {
                 | koru_agent_wire::AccountOperationResult::AddGoogleCandidate { .. }
                 | koru_agent_wire::AccountOperationResult::GoogleAuthorizationAdded { .. }
                 | koru_agent_wire::AccountOperationResult::AddGoogleCancelled { .. }
-                | koru_agent_wire::AccountOperationResult::SignedOut
                 | koru_agent_wire::AccountOperationResult::AccountSelected { .. }
                 | koru_agent_wire::AccountOperationResult::CloudSubscription { .. }
                 | koru_agent_wire::AccountOperationResult::CloudPlan { .. }
@@ -4465,7 +4833,17 @@ impl<H: Host> OnboardingApp<H> {
             {
                 self.pause_created_profile_connection(retry);
             }
-            self.view.account_command_failed(failure);
+            if self.checkout_submission == Some(failure.submission) {
+                self.checkout_submission = None;
+                self.checkout_generation = None;
+                self.checkout_poll_at = None;
+                if self.view.is_checkout_pending() {
+                    self.view.show_checkout_incomplete();
+                }
+            }
+            if self.view.account_command_failed(failure) {
+                self.awaiting_modal_signin = false;
+            }
         }
     }
 
@@ -4501,7 +4879,7 @@ impl<H: Host> OnboardingApp<H> {
                 let frame =
                     koru_draw::inspect::Frame::begin(inspector.frame, inspection_root, viewport);
                 let owner = koru_draw::inspect::scope(
-                    "First-run window",
+                    "Workspace setup",
                     "container",
                     inspection_root,
                     viewport,
@@ -4515,6 +4893,15 @@ impl<H: Host> OnboardingApp<H> {
                 );
                 (started, frame, owner)
             });
+        self.host.draw_profile_setup_background(
+            &mut self.scene,
+            Affine::scale(scale),
+            (
+                live.surface.config.width as f32 / scale as f32,
+                live.surface.config.height as f32 / scale as f32,
+            ),
+            live.window.is_maximized(),
+        );
         self.view.draw(&mut self.scene, Affine::scale(scale));
         if let Some((started, frame, owner)) = inspection_frame {
             drop(owner);
@@ -4538,6 +4925,7 @@ impl<H: Host> OnboardingApp<H> {
         let Some(renderer) = self.renderers.get_mut(&live.surface.dev_id) else {
             return;
         };
+        koru_window::renderer::prepare_window_text(&mut self.scene);
         if renderer
             .render_to_texture(
                 &device.device,
@@ -4548,7 +4936,7 @@ impl<H: Host> OnboardingApp<H> {
                     base_color: theme::p().bg,
                     width,
                     height,
-                    antialiasing_method: AaConfig::Area,
+                    antialiasing_method: koru_window::renderer::window_antialiasing(),
                 },
             )
             .is_err()
@@ -4817,6 +5205,47 @@ impl<H: Host> OnboardingApp<H> {
 }
 
 impl<H: Host> OnboardingApp<H> {
+    /// Checks whether any selected account Profile has finished syncing both
+    /// its Profile and at least one live workspace into the local Store so
+    /// onboarding never transitions into an empty profile-wait state.
+    fn poll_sync_probe(&mut self) {
+        while let Ok(found) = self.sync_probe_rx.try_recv() {
+            self.sync_probe_in_flight = false;
+            if let Some(opened) = found
+                && self.view.synced_workspace_candidates().is_some()
+            {
+                self.sync_poll_at = None;
+                let _ = self.creation_tx.send(OnboardingCreation::Opened(opened));
+                let _ = self.proxy.send_event(Wake::Onboarding);
+                return;
+            }
+        }
+        let Some(candidates) = self.view.synced_workspace_candidates() else {
+            self.sync_poll_at = None;
+            return;
+        };
+        if self.sync_probe_in_flight {
+            return;
+        }
+        let now = Instant::now();
+        if self.sync_poll_at.is_some_and(|due| due > now) {
+            return;
+        }
+        self.sync_probe_in_flight = true;
+        self.sync_poll_at = Some(now + Duration::from_millis(500));
+        let profile_ids = candidates.to_vec();
+        let root = self.gateway_root.clone();
+        let tx = self.sync_probe_tx.clone();
+        let proxy = self.proxy.clone();
+        let _ = std::thread::Builder::new()
+            .name("koru-onboarding-sync-probe".into())
+            .spawn(move || {
+                let opened = probe_synced_onboarding_profile(root.as_deref(), &profile_ids);
+                let _ = tx.send(opened);
+                let _ = proxy.send_event(Wake::Onboarding);
+            });
+    }
+
     /// The marker writer answered: ask the Agent to bind, or report that the
     /// intent could not be recorded — the failure the synchronous write used
     /// to raise, one tick later.
@@ -4850,11 +5279,12 @@ impl<H: Host> OnboardingApp<H> {
 
 impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if self
-            .host
-            .account_command_deadline()
-            .is_some_and(|due| due <= Instant::now())
-        {
+        let account_deadline = if self.view.workspace_modal && !self.view.modal_account_active() {
+            None
+        } else {
+            self.host.account_command_deadline()
+        };
+        if account_deadline.is_some_and(|due| due <= Instant::now()) {
             self.poll_account();
             self.request_redraw();
         }
@@ -4868,11 +5298,42 @@ impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
         if self.view.caret_needs_frame() {
             self.request_redraw();
         }
-        let blink = self.view.caret_blink_deadline(Instant::now());
-        let deadline = match (self.host.account_command_deadline(), blink) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        let mut checkout_deadline = None;
+        if self.view.is_browser_waiting() {
+            self.request_redraw();
+            checkout_deadline = Some(Instant::now() + Duration::from_millis(50));
+        }
+        if self.view.is_checkout_pending() {
+            self.request_redraw();
+            checkout_deadline = Some(Instant::now() + Duration::from_millis(50));
+            if self.checkout_submission.is_none()
+                && self.checkout_generation.is_none()
+                && self
+                    .checkout_poll_at
+                    .is_some_and(|due| due <= Instant::now())
+                && self.pending_cloud_access_request.is_none()
+            {
+                self.checkout_poll_at = Some(Instant::now() + Duration::from_secs(4));
+                self.request_cloud_access_check();
+            }
+        }
+        let now = Instant::now();
+        if self.view.maintain_tooltip(now) {
+            self.request_redraw();
+        }
+        self.poll_sync_probe();
+        let blink = self.view.caret_blink_deadline(now);
+        let tip = self.view.tooltip_deadline(now);
+        let deadline = [
+            account_deadline,
+            blink,
+            tip,
+            checkout_deadline,
+            self.sync_poll_at,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -4883,6 +5344,7 @@ impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
         self.service_binding_markers();
         self.poll_account();
         self.settle_actions();
+        self.poll_sync_probe();
         // An asynchronous change — an account answer landing, a binding
         // written — is what the inspector's refresh follows, the same
         // `host_changed` the workspace window's inspector gets on any wake
@@ -5508,6 +5970,7 @@ impl<H: Host> App<H> {
                     // not the later Profile acknowledgement.
                     ProfileRuntime::start_events(gateway_root.clone(), proxy.clone());
                     let (creation_tx, creation_rx) = mpsc::channel();
+                    let (sync_probe_tx, sync_probe_rx) = mpsc::channel();
                     // What this empty catalog can still recover (root-catalog
                     // §6.3): the restorable Trash and the unassigned
                     // workspaces, read off the loop and offered from the form
@@ -5529,6 +5992,7 @@ impl<H: Host> App<H> {
                     // the start, rather than for one frame with them.
                     let mut view = crate::onboarding::OnboardingView::default();
                     view.observe_account_projection(&host.account_state());
+                    view.show_workspace_setup();
                     return Some(ContentState::Onboarding(Box::new(OnboardingApp {
                         host,
                         name: name.to_owned(),
@@ -5551,6 +6015,10 @@ impl<H: Host> App<H> {
                         last_caption_click: None,
                         creation_tx,
                         creation_rx,
+                        sync_probe_tx,
+                        sync_probe_rx,
+                        sync_probe_in_flight: false,
+                        sync_poll_at: None,
                         first_minutes: None,
                         connect_created_profile: false,
                         open_manage_after_creation: false,
@@ -5571,6 +6039,13 @@ impl<H: Host> App<H> {
                             },
                         ),
                         signed_in_profiles_requested: false,
+                        awaiting_modal_signin: false,
+                        pending_modal_signin: None,
+                        cloud_access_request_seq: 0,
+                        pending_cloud_access_request: None,
+                        checkout_poll_at: None,
+                        checkout_submission: None,
+                        checkout_generation: None,
                         profile_dir,
                         proxy,
                     })));
@@ -5964,6 +6439,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
             recording_tx,
             recording_rx,
             transfer_tx,
+            child_loads: HashMap::new(),
+            task_queue: child_document::TaskQueue::default(),
             transfer_rx,
             transfers_in_flight: HashSet::new(),
             selection_move_tx,
@@ -6920,49 +7397,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // the borrow, then served one at a time — `crate::tasks::serve` owns the
         // ordering and the activity attempt, so this stays a sweep rather than a
         // second copy of ADR-273.
-        let commands: Vec<crate::tasks::TaskCommand> = self
-            .panes
-            .iter_mut()
-            .flat_map(|(_, pane)| pane.view.take_wants_task_commands())
-            .collect();
-        for command in commands {
-            edited = true;
-            let outcome = crate::tasks::serve(&mut self.runtime.workspace, &command);
-            // **The switch says what it is documented to say.** `ENV.md` promises
-            // `KORU_TASKS_DEBUG` reports "task command outcomes and the desktop
-            // wrapper's coalesced counters", and until this line the only thing
-            // that ever printed was the content-burst flush — so the one
-            // question the switch exists to answer, *did the command run*, was
-            // the one it could not. Closed tokens and counts only: the command's
-            // shape, never a title, a date or a row's text.
-            tasks_debug_log(format_args!(
-                "served {} -> {} | {}",
-                command.token(),
-                match &outcome {
-                    Ok(landed) if landed.published => "ok".to_owned(),
-                    Ok(_) => "ok, unpublished".to_owned(),
-                    Err(error) => format!("refused: {error}"),
-                },
-                crate::tasks::counters().describe()
-            ));
-            // **Both halves of the return channel**, to every pane: a refusal
-            // gives a capture its typing back, and a receipt is what lets the
-            // Tasks surfaces ask the read model again *because* the write
-            // landed — after it, with its version in hand — rather than on
-            // the turn the command was merely queued.
-            match outcome {
-                Ok(landed) => {
-                    for pane in self.panes.values_mut() {
-                        pane.view.task_command_landed(&landed);
-                    }
-                }
-                Err(error) => {
-                    for pane in self.panes.values_mut() {
-                        pane.view.task_command_failed(&command, &error);
-                    }
-                }
-            }
-        }
+        self.collect_task_commands();
+        edited |= self.service_task_commands();
         // **The delegation's crumb** (D7, D8). Same sweep and same reason as
         // the task commands above: the document a delegation came from may not
         // be the one on screen, so the surface asks and the shell writes.
@@ -7142,6 +7578,20 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 crate::reading_file::ReadingTarget::Picture { hash },
                 crate::reading_requests::ReadRequestKind::ReadAgain,
             );
+        }
+        // The pictures whose read words a view has not had yet (OCR), for
+        // in-page find, *Copy text* and accessibility. Nothing to do, and no
+        // worker, when no view has anything new.
+        let mut picture_asks: Vec<String> = Vec::new();
+        for pane in self.panes.values_mut() {
+            for hash in pane.view.take_wants_picture_texts() {
+                if !picture_asks.contains(&hash) {
+                    picture_asks.push(hash);
+                }
+            }
+        }
+        if !picture_asks.is_empty() {
+            self.fetch_picture_texts(picture_asks);
         }
         // /attach and /image both open a native picker on the main thread,
         // matching each other: no parent window (a parented rfd dialog from
@@ -7952,6 +8402,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 needs_frame: std::cell::Cell::new(true),
                 maximize_on_reveal: std::cell::Cell::new(maximize_on_reveal),
                 focused_once: false,
+                native_input: native_input::State::default(),
                 focused: false,
                 quarantine: Default::default(),
                 access,
@@ -9630,7 +10081,6 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             draft.id,
                             &draft.profile_name,
                             &draft.workspace_name,
-                            &draft.template,
                             draft.profile_icon.as_deref(),
                             draft.profile_color.as_deref(),
                             draft.workspace_icon.as_deref(),
@@ -9953,6 +10403,19 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::CloseDocument(id) => self.release_document(id),
             PaneRequest::SwitchProfile(id) => {
                 self.begin_profile_switch(source, id, None);
+            }
+            PaneRequest::OpenProfileInNewWindow(id) => {
+                if let Err(error) =
+                    startup::launch_profile_new_window(&self.runtime.profile_dir, id)
+                {
+                    self.report(
+                        ErrorReport::new(
+                            "Couldn't open profile in a new window",
+                            "The current window was not changed.",
+                        )
+                        .with_details(error),
+                    );
+                }
             }
             PaneRequest::LandIn {
                 profile,
@@ -11163,6 +11626,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .with_details(error),
                 ),
             },
+            ImportMessage::PictureTexts { texts } => {
+                for pane in self.panes.values_mut() {
+                    let mut changed = false;
+                    for (hash, text) in &texts {
+                        changed |= pane.view.set_picture_text(hash, text.as_deref());
+                    }
+                    if changed {
+                        pane.needs_frame.set(true);
+                        pane.window.request_redraw();
+                    }
+                }
+            }
             ImportMessage::ReadingOffers { target, offers } => {
                 for pane in self.panes.values_mut() {
                     if pane.view.set_reading_offers(&target, offers) {
@@ -11480,7 +11955,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let spawned = std::thread::Builder::new()
             .name("koru-reading-offers".into())
             .spawn(move || {
-                let offers = fetch_offers(&segment, root.as_deref(), &target, workspace);
+                let answer = fetch_reading(&segment, root.as_deref(), &target, workspace);
+                if let Some(message) = picture_text_message(&target, &answer) {
+                    let _ = tx.send(message);
+                }
+                let offers = answer.ok().flatten().map(|answer| answer.offers);
                 let _ = tx.send(ImportMessage::ReadingOffers { target, offers });
                 let _ = proxy.send_event(Wake::Import);
             });
@@ -11528,6 +12007,43 @@ Nothing was written. The store starts on demand, so this usually means it could 
             });
         if let Err(error) = spawned {
             tracing::debug!(%error, "a reading request could not be sent");
+        }
+    }
+
+    /// **Ask the Store for the words read out of pictures** (OCR), for in-page
+    /// find, *Copy text* and accessibility. One worker for the batch, which
+    /// asks for each in turn and answers once; the words reach every view
+    /// through `View::set_picture_text`.
+    fn fetch_picture_texts(&mut self, hashes: Vec<String>) {
+        let Some(workspace) = self.current_store_workspace() else {
+            return;
+        };
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let spawned = std::thread::Builder::new()
+            .name("koru-picture-texts".into())
+            .spawn(move || {
+                let Ok(client) = client_at_segment(&segment, root.as_deref()) else {
+                    return;
+                };
+                let texts: Vec<(String, Option<String>)> = hashes
+                    .into_iter()
+                    .filter_map(|hash| {
+                        let blob = koru_store_core::model::BlobHash::parse(&hash).ok()?;
+                        let answer = client.reading(workspace, &blob).ok()?;
+                        let text = crate::reading_details::picture_text(answer.as_ref());
+                        Some((hash, text))
+                    })
+                    .collect();
+                if !texts.is_empty() {
+                    let _ = tx.send(ImportMessage::PictureTexts { texts });
+                    let _ = proxy.send_event(Wake::Import);
+                }
+            });
+        if let Err(error) = spawned {
+            tracing::debug!(%error, "the pictures' words could not be asked for");
         }
     }
 
@@ -12933,7 +13449,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// caret. It is not dropped on the floor: it is remembered and retried after
     /// the next open, which is the only moment it stops being active.
     fn release_document(&mut self, id: koru_core::DocumentId) {
-        if !self.runtime.workspace.close_document(id) && self.runtime.workspace.active() == Some(id)
+        if !self.runtime.workspace.close_document(id)
+            && self.runtime.workspace.document(id).is_some()
+            && !self.releasing.contains(&id)
         {
             self.releasing.push(id);
         }
@@ -12947,14 +13465,182 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// only moment it can be.
     fn opened_document(&mut self, id: koru_core::DocumentId) {
         self.releasing.retain(|&owed| owed != id);
+        self.retry_document_releases();
+    }
+
+    fn collect_task_commands(&mut self) {
+        let commands: Vec<_> = self
+            .panes
+            .iter_mut()
+            .flat_map(|(source, pane)| {
+                pane.view
+                    .take_wants_task_commands()
+                    .into_iter()
+                    .map(|command| (*source, command))
+            })
+            .collect();
+        let mut refused = Vec::new();
+        for (source, command) in commands {
+            if let Err(command) = self.task_queue.push_from(
+                Some(source),
+                self.runtime.profile_id(),
+                self.runtime.current,
+                command,
+            ) {
+                refused.push((source, command));
+            }
+        }
+        for (source, command) in refused.into_iter().rev() {
+            if let Some(pane) = self.panes.get_mut(&source) {
+                pane.view
+                    .task_command_rejected(&command, profile_switch::pending_tasks_reason());
+                pane.window.request_redraw();
+            }
+        }
+    }
+
+    fn may_leave_pending_tasks(&mut self) -> bool {
+        if !self.prepare_private_creation_close(None) {
+            return false;
+        }
+        self.collect_task_commands();
+        if !self.task_queue.has_pending() {
+            return true;
+        }
+        self.report(ErrorReport::new(
+            koru_i18n::t(
+                crate::accessibility::ui_lang(),
+                koru_i18n::Key::A11yTasksHeading,
+            ),
+            profile_switch::pending_tasks_reason(),
+        ));
+        false
+    }
+
+    pub(super) fn prepare_private_creation_close(&mut self, source: Option<WindowId>) -> bool {
+        let ids: Vec<_> = self
+            .panes
+            .keys()
+            .copied()
+            .filter(|id| source.is_none_or(|source| source == *id))
+            .collect();
+        let mut ready = true;
+        for id in ids {
+            self.interrupt_native_input(id);
+            if self.dictation_pane == Some(id) {
+                self.interrupt_dictation(Interruption::WindowClosed);
+            }
+            if let Some(pane) = self.panes.get_mut(&id)
+                && !pane.view.prepare_document_creation_close()
+            {
+                ready = false;
+                pane.window.request_redraw();
+            }
+        }
+        ready
+    }
+
+    fn service_task_commands(&mut self) -> bool {
+        let mut edited = false;
+        loop {
+            let source = self.task_queue.source();
+            let in_scope = self
+                .task_queue
+                .in_scope(self.runtime.profile_id(), self.runtime.current);
+            let Some((command, prepared)) = self.task_queue.poll(
+                self.runtime.profile_id(),
+                self.runtime.current,
+                &mut self.runtime.workspace,
+            ) else {
+                break;
+            };
+            // Replacement gates normally make this unreachable. An external
+            // scope change still gets a visible terminal refusal, without
+            // consuming a new scope's unrelated optimistic echo.
+            if !in_scope {
+                self.report(ErrorReport::new(
+                    koru_i18n::t(
+                        crate::accessibility::ui_lang(),
+                        koru_i18n::Key::A11yTasksHeading,
+                    ),
+                    koru_i18n::t(
+                        crate::accessibility::ui_lang(),
+                        koru_i18n::Key::MiniAppTaskFailed,
+                    ),
+                ));
+                continue;
+            }
+            // Canonical commands may have edited before a later failure.
+            edited |= prepared.is_ok();
+            let outcome =
+                prepared.and_then(|()| crate::tasks::serve(&mut self.runtime.workspace, &command));
+            // **The switch says what it is documented to say.** `ENV.md` promises
+            // `KORU_TASKS_DEBUG` reports "task command outcomes and the desktop
+            // wrapper's coalesced counters", and until this line the only thing
+            // that ever printed was the content-burst flush — so the one
+            // question the switch exists to answer, *did the command run*, was
+            // the one it could not. Closed tokens and counts only: the command's
+            // shape, never a title, a date or a row's text.
+            tasks_debug_log(format_args!(
+                "served {} -> {} | {}",
+                command.token(),
+                match &outcome {
+                    Ok(landed) if landed.published => "ok".to_owned(),
+                    Ok(_) => "ok, unpublished".to_owned(),
+                    Err(error) => format!("refused: {error}"),
+                },
+                crate::tasks::counters().describe()
+            ));
+            // **Both halves of the return channel**, to every pane: a refusal
+            // gives a capture its typing back, and a receipt is what lets the
+            // Tasks surfaces ask the read model again *because* the write
+            // landed — after it, with its version in hand — rather than on
+            // the turn the command was merely queued.
+            match outcome {
+                Ok(landed) => {
+                    for (id, pane) in self.panes.iter_mut() {
+                        let changed = if Some(*id) == source {
+                            pane.view.task_command_landed(&landed)
+                        } else {
+                            pane.view.task_command_observed(&landed)
+                        };
+                        if changed {
+                            pane.window.request_redraw();
+                        }
+                    }
+                }
+                Err(error) => {
+                    if let Some(pane) = source.and_then(|id| self.panes.get_mut(&id)) {
+                        if pane.view.task_command_failed(&command, &error) {
+                            pane.window.request_redraw();
+                        }
+                    } else {
+                        self.report(ErrorReport::new(
+                            koru_i18n::t(
+                                crate::accessibility::ui_lang(),
+                                koru_i18n::Key::A11yTasksHeading,
+                            ),
+                            koru_i18n::t(
+                                crate::accessibility::ui_lang(),
+                                koru_i18n::Key::MiniAppTaskFailed,
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        edited
+    }
+
+    fn retry_document_releases(&mut self) {
         if self.releasing.is_empty() {
             return;
         }
         for owed in std::mem::take(&mut self.releasing) {
-            if self.runtime.workspace.active() == Some(owed) {
+            if !self.runtime.workspace.close_document(owed)
+                && self.runtime.workspace.document(owed).is_some()
+            {
                 self.releasing.push(owed);
-            } else {
-                self.runtime.workspace.close_document(owed);
             }
         }
     }
@@ -12984,7 +13670,20 @@ Nothing was written. The store starts on demand, so this usually means it could 
             self.runtime.workspace.create_canvas(title)
         } else {
             let after = self.runtime.workspace.active();
-            self.runtime.workspace.create_document_after(title, after)
+            match self.panes.get(&source).and_then(|pane| {
+                pane.view
+                    .draft_document_content(self.runtime.profile_id(), Some(self.runtime.current))
+            }) {
+                Some(Ok(cutting)) => self
+                    .runtime
+                    .workspace
+                    .create_document_from_cutting_after(title, after, &cutting),
+                Some(Err(_)) => Err(koru_store_core::errors::Error::new(
+                    koru_store_core::errors::Code::InvalidRequest,
+                    "the private draft could not be read for initialization",
+                )),
+                None => self.runtime.workspace.create_document_after(title, after),
+            }
         };
         self.settle_created_document(source, created, canvas);
     }
@@ -12999,7 +13698,22 @@ Nothing was written. The store starts on demand, so this usually means it could 
         parent: koru_core::DocumentId,
         title: &str,
     ) {
-        let created = self.runtime.workspace.create_document_in(title, parent);
+        // A draft made by the row's `+` is promoted here, with what was typed
+        // into it, exactly as `create_document` promotes any other draft.
+        let created = match self.panes.get(&source).and_then(|pane| {
+            pane.view
+                .draft_document_content(self.runtime.profile_id(), Some(self.runtime.current))
+        }) {
+            Some(Ok(cutting)) => self
+                .runtime
+                .workspace
+                .create_document_from_cutting_in(title, parent, &cutting),
+            Some(Err(_)) => Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "the private draft could not be read for initialization",
+            )),
+            None => self.runtime.workspace.create_document_in(title, parent),
+        };
         self.settle_created_document(source, created, false);
     }
 
@@ -13022,14 +13736,32 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         )
                         .with_details(e),
                     );
+                    if !canvas && let Some(pane) = self.panes.get_mut(&source) {
+                        pane.view.create_document_failed();
+                    }
+                    return;
                 }
                 self.opened_document(id);
                 // Creation changed the manifest locally. `workspace.tick()`
                 // reports imported changes, so waiting for it leaves Explore
                 // and document-id routing on the old list until a workspace
                 // switch rebuilds everything.
+                let before = self.runtime.workspace.ws.version();
+                // take_pane_request arms the exact draft origin only at
+                // dispatch. Complete it synchronously before exposing this
+                // new document or taking another view/Agent request.
+                let claimed = !canvas
+                    && self.panes.get_mut(&source).is_some_and(|pane| {
+                        pane.view
+                            .created_document(&mut self.runtime.workspace.ws, id)
+                    });
+                if self.runtime.workspace.ws.version() != before {
+                    self.runtime.workspace.touched();
+                }
                 self.push_entries();
-                self.show_active_document();
+                if !claimed {
+                    self.show_active_document();
+                }
                 self.sync_pane_context();
                 self.invalidate_everywhere();
             }
@@ -14027,6 +14759,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
 
     /// Replace the active Store workspace with a local, unsaved welcome state.
     fn show_empty_workspace(&mut self) -> Result<(), String> {
+        self.prepare_profile_replacement().map_err(str::to_owned)?;
         self.capture_geometry();
         self.runtime.settings.workspace = None;
         self.runtime.settings.save_all(
@@ -14518,9 +15251,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .then_some(source)
             .or(self.primary);
         if let Some(pane) = target.and_then(|id| self.panes.get_mut(&id)) {
-            let _ =
-                pane.view
-                    .show_first_minutes(&owner_display_name, &profile_name, &workspace_name);
+            // No owner name (Manage → New profile) greets plainly.
+            let _ = pane.view.show_first_minutes(
+                owner_display_name.as_deref().unwrap_or(""),
+                &profile_name,
+                &workspace_name,
+            );
             if connection_was_requested && !account_connected {
                 let _ = pane.view.show_notice(
                     "The Profile was created and remains available offline, but Koru could not finish its account connection.".into(),
@@ -14595,6 +15331,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
         if self.runtime.profile.id() == Some(id) {
             return;
         }
+        // Gate this synchronous caller before the
+        // synchronous incoming open, so it cannot join a second authority for
+        // a document whose outgoing retirement still owns accepted edits.
+        if let Err(reason) = self.prepare_profile_replacement() {
+            self.report(ErrorReport::new("Couldn't switch profiles", reason));
+            return;
+        }
         let began = Instant::now();
         let opened = match koru_workspace::fromstore::open_from_store_profile_preferring_empty(
             koru_workspace::fromstore::segment(),
@@ -14652,7 +15395,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 &self.instance.slot,
                 &mut self.runtime.written,
             );
-            self.runtime.workspace.save();
+            // switch_profile_inner already saved and checked accepted work
+            // before opening the incoming profile.
         }
         let outgoing_profile = self.runtime.profile.id();
         let outgoing_workspace = self.runtime.current;
@@ -14749,6 +15493,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 trace_profile(self.runtime.profile.id()),
                 id.to_storage(),
             );
+            return;
+        }
+        if !self.may_leave_pending_tasks() {
             return;
         }
         // Re-armed here rather than after the swap, so the span covers the save
@@ -14983,8 +15730,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// Icon identities and slots do not change; repaint without document reflow.
-    fn repaint_icons(&self) {
+    /// Paint preferences do not change layout; redraw without document reflow.
+    fn repaint_everywhere(&self) {
         for pane in self.panes.values() {
             pane.needs_frame.set(true);
             pane.window.request_redraw();
@@ -14999,8 +15746,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         if now.typography_moved(before) {
             self.invalidate_everywhere();
             true
-        } else if now.icon_paint_moved(before) {
-            self.repaint_icons();
+        } else if now.paint_moved(before) {
+            self.repaint_everywhere();
             true
         } else {
             false
@@ -15107,7 +15854,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // The choice, not the pack drawn: following the default stays `None`.
         self.runtime.settings.icon_pack = koru_draw::icons::chosen_pack();
         self.runtime.settings.theme = theme::theme_preference();
-        self.runtime.settings.caret_color = theme::caret_color();
+        self.runtime.settings.caret_color = theme::caret_color_for(false);
+        self.runtime.settings.caret_color_dark = theme::caret_color_for(true);
         self.runtime.settings.caret_width = theme::caret_width();
         self.runtime.settings.caret_height = theme::caret_height();
         // The fonts chosen, not one Settings is previewing.
@@ -15120,6 +15868,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.runtime.settings.code_font = theme::font_setting(theme::FontSlot::Code);
         // Following the app font stays following: the setting, not the face.
         self.runtime.settings.chat_font = theme::font_setting(theme::FontSlot::Chat);
+        self.runtime.settings.text_rendering = koru_draw::text_rendering::preferences();
+        self.runtime.settings.heading_weight = theme::chosen_heading_weight();
         // The size chosen, not one Settings is previewing; `None` follows.
         self.runtime.settings.doc_text_size = theme::chosen_doc_text_size();
         self.runtime.settings.base_color_light = theme::base_color(false);
@@ -15161,6 +15911,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// machine can be shut down from, and "I put it in the tray last night" must
     /// not be how a day's work is lost.
     fn hide_to_tray(&mut self) -> bool {
+        // A handled refusal keeps the window visible. Returning false here
+        // would ask callers to fall back to destroying it.
+        if !self.prepare_private_creation_close(None) {
+            return true;
+        }
         // **The Agent says whether it has an icon**, rather than this build
         // assuming one from its platform: Linux's comes and goes with its
         // StatusNotifierItem host, and an icon can fail to appear anywhere. A
@@ -15206,6 +15961,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             if !pane.view.visible_after_restore() {
                 continue;
             }
+            pane.view.adopt(&self.runtime.workspace.ws);
             pane.window.set_visible(true);
             pane.view.window_shown();
             if let Some(native) = pane.inspector_window.as_ref() {
@@ -15269,6 +16025,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     fn close_pane(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        if !self.prepare_private_creation_close(Some(id)) {
+            return;
+        }
+        self.collect_task_commands();
+        if self.panes.len() == 1 && !self.may_leave_pending_tasks() {
+            return;
+        }
         self.profile_waits.leave(id);
         if self
             .panes
@@ -15356,6 +16119,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// points (the ✕ the view drew, and the OS's `CloseRequested`) both come
     /// here, so the dialog is shown either way.
     fn initiate_close(&mut self, event_loop: &ActiveEventLoop, id: WindowId) {
+        if !self.prepare_private_creation_close(Some(id)) {
+            return;
+        }
+        self.collect_task_commands();
         // Before the veto question, deliberately: whether the window survives
         // or not, nothing may commit into a document somebody is closing.
         if self.dictation_pane == Some(id) {
@@ -15383,6 +16150,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .values()
             .filter(|pane| !pane.view.is_auxiliary())
             .count();
+        let mut notify_last_close = false;
         if !closing_auxiliary
             && last_window_close_asks_about_the_tray(documents, self.closing_for_update)
         {
@@ -15436,7 +16204,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 }
                 // With no tray, "keep running in the background" is a quit too.
                 if !background || !self.host.agent_has_notification_area() {
-                    self.host.last_window_closing();
+                    notify_last_close = true;
                 }
             }
         }
@@ -15446,6 +16214,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // still running, still owed, still fine.
         if !closing_auxiliary && documents == 1 && !self.may_close_with_unsent_work() {
             return;
+        }
+        if notify_last_close {
+            self.host.last_window_closing();
         }
         self.close_pane_with_restore(event_loop, id);
     }
@@ -15462,6 +16233,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// still owed rather than what was owed a moment ago — and so that a person
     /// who quits without reading has already had their work written down.
     fn may_close_with_unsent_work(&mut self) -> bool {
+        if !self.may_leave_pending_tasks() {
+            return false;
+        }
         self.runtime.workspace.buffer_everything_owed();
         let unconfirmed = self.runtime.workspace.unconfirmed();
         if unconfirmed.is_empty() {
@@ -15515,6 +16289,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     "{} that could not be sent to the Koru Store, and could not be saved on \
                      this computer either.\n\n{why}\n\nClose Koru anyway?",
                     unconfirmed.describe(),
+                    why = profile_switch::saving_reason(why, crate::accessibility::ui_lang()),
                 ))
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .show(),
@@ -15724,7 +16499,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         if !crate::preferences::adopt(&section, &mut self.runtime.settings) {
             if icons_moved {
                 koru_draw::icons::set_icon_pack_setting(icons);
-                self.repaint_icons();
+                self.repaint_everywhere();
             }
             return;
         }
@@ -16367,6 +17142,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         id: WindowId,
         resolved: &crate::accessibility::Resolved,
     ) -> bool {
+        self.interrupt_native_input(id);
+        self.restore_window_document(id);
         let document_before = self.runtime.workspace.ws.version();
         let Some(pane) = self.panes.get_mut(&id) else {
             return false;
@@ -16944,6 +17721,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let t = framestats::Phase::start();
         let rendered = {
             let _phase = timing::Watch::start("redraw.render");
+            koru_window::renderer::prepare_window_text(&mut self.scene);
             renderer.render_to_texture(
                 &device.device,
                 &device.queue,
@@ -16953,7 +17731,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     base_color: theme::p().bg,
                     width,
                     height,
-                    antialiasing_method: AaConfig::Area,
+                    antialiasing_method: koru_window::renderer::window_antialiasing(),
                 },
             )
         };
@@ -18156,7 +18934,36 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         if self.inspector_event(event_loop, id, &event) {
             return;
         }
+        if !matches!(&event, WindowEvent::Ime(_)) {
+            self.sync_native_input(id);
+        }
+        if let WindowEvent::KeyboardInput { event, .. } = &event
+            && event.state == ElementState::Pressed
+            && self.native_key_in_flight(id)
+            && !is_modifier_key(event.physical_key, &event.logical_key)
+        {
+            if self.mods.control_key()
+                || self.mods.super_key()
+                || event.logical_key == Key::Named(NamedKey::Escape)
+            {
+                self.interrupt_native_input(id);
+            } else {
+                // Candidate navigation and confirmation belong to the native
+                // composition. Only its committed string writes authored text.
+                return;
+            }
+        }
+        if matches!(
+            &event,
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            } | WindowEvent::Focused(false)
+        ) {
+            self.interrupt_native_input(id);
+        }
         match event {
+            WindowEvent::Ime(event) => self.native_input(id, &event),
             WindowEvent::CloseRequested => self.initiate_close(event_loop, id),
 
             WindowEvent::Focused(focused) => {
@@ -18180,6 +18987,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 if let Some(pane) = self.panes.get_mut(&id) {
                     pane.focused = focused;
                     pane.view.set_window_focused(focused);
+                }
+                if focused {
+                    self.restore_window_document(id);
                 }
                 self.show_appearance_change(&was_shown);
                 // **The tie-break between two windows on one workspace.** The
@@ -18715,8 +19525,8 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 let typography_moved = shown.typography_moved(&was_shown);
                 let voice_moved = crate::voice_prefs::snapshot() != was_voice;
                 let choice_moved = shown.choice_moved(&was_shown);
-                if !typography_moved && shown.icon_paint_moved(&was_shown) {
-                    self.repaint_icons();
+                if !typography_moved && shown.paint_moved(&was_shown) {
+                    self.repaint_everywhere();
                 }
                 if typography_moved || voice_moved || choice_moved {
                     // A font, size or density change is baked into every layout,
@@ -18746,6 +19556,22 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                     self.persist_if_changed();
                 }
                 self.wake(id);
+            }
+
+            WindowEvent::CursorLeft { .. } => {
+                let Some(pane) = self.panes.get_mut(&id) else {
+                    return;
+                };
+                // A captured drag owns its real coordinates until release.
+                // Resting hover surfaces must also dismiss when leaving the window.
+                if !pane.pressed {
+                    pane.cursor = (-1.0, -1.0);
+                    let shown = AppearanceShown::now();
+                    let changed = pane.view.mouse_move(-1.0, -1.0);
+                    if !self.show_appearance_change(&shown) && changed {
+                        self.request_redraw(id);
+                    }
+                }
             }
 
             // **Losing focus ends any press in flight.**
@@ -19133,8 +19959,8 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         // committed — a second later is a second in which the
                         // app can be closed, and a preference that did not
                         // survive that is a preference nobody trusts.
-                        if shown.icon_paint_moved(&was_shown) {
-                            self.repaint_icons();
+                        if shown.paint_moved(&was_shown) {
+                            self.repaint_everywhere();
                         }
                         if theme_pref_moved
                             || typography_moved
@@ -19347,6 +20173,10 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 .unwrap_or(now + WINDOW_MOVE_SETTLE);
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline.max(now)));
             return;
+        }
+        self.service_child_documents();
+        for id in self.panes.keys().copied().collect::<Vec<_>>() {
+            self.sync_native_input(id);
         }
         // The connected-Profile worker wakes this loop after every filesystem
         // boundary. Only this drain advances to the hosted acknowledgement.
@@ -20144,6 +20974,15 @@ pub fn run_with_args<H: Host, I: IntoIterator<Item = String>>(host: H, name: &st
             print!("{}", koru_env::table());
             return;
         }
+        Ok(cli::Command::Ui(_)) => {
+            // The UI Lab is not a workspace window, so this function has
+            // nothing to open for it. The binary that hosts the Lab takes
+            // `--ui` before it gets here; any other binary on this parser is
+            // refusing a flag it cannot honour, exactly as it would a typo,
+            // rather than opening its ordinary window as if nothing was said.
+            cli::Rejected::ui_unsupported().report(&program);
+            std::process::exit(2);
+        }
         Err(bad) => {
             bad.report(&program);
             // 2 for a usage error, the same code `koru.sh` exits with for an
@@ -20724,7 +21563,7 @@ mod tests {
             submission: Some(submission),
             generation: None,
             source: WindowId::from(1u64),
-            owner_display_name: "A owner".into(),
+            owner_display_name: Some("A owner".into()),
             profile_name: "Existing local Profile".into(),
             workspace_name: "Work".into(),
             connect_account: true,
@@ -20735,7 +21574,7 @@ mod tests {
         pending.stage = ConnectedProfileCreationStage::AwaitingAccountReturn(profile);
         assert_eq!(pending.retry_command(profile), original);
         assert!(
-            matches!(original,koru_agent_wire::AccountCommand::CreateProfile { ref profile_id,ref owner_display_name,.. } if *profile_id==profile.to_storage() && owner_display_name=="A owner")
+            matches!(original,koru_agent_wire::AccountCommand::CreateProfile { ref profile_id,ref owner_display_name,.. } if *profile_id==profile.to_storage() && owner_display_name.as_deref()==Some("A owner"))
         );
         assert!(
             !pending.accepts_admission(crate::account_ui::CommandAdmission {
@@ -20768,6 +21607,34 @@ mod tests {
             ConnectedProfileCreationStage::AwaitingLocalBinding(profile)
         );
         assert_eq!(pending.owner_scope, 17);
+    }
+
+    /// **A Profile created from Manage retries without an owner name**
+    /// (welcome Q-G): the parked retry is the command that was meant, so a
+    /// retry cannot rename the account either.
+    #[test]
+    fn an_embedded_creation_retries_without_an_owner_name() {
+        let profile = koru_core::ProfileId::new();
+        let pending = PendingConnectedProfileCreation {
+            owner_scope: 17,
+            submission: None,
+            generation: None,
+            source: WindowId::from(1u64),
+            owner_display_name: None,
+            profile_name: "Work".into(),
+            workspace_name: "Personal".into(),
+            connect_account: true,
+            stage: ConnectedProfileCreationStage::CreatingLocally,
+        };
+        assert!(matches!(
+            pending.retry_command(profile),
+            koru_agent_wire::AccountCommand::CreateProfile {
+                ref profile_id,
+                owner_display_name: None,
+                ref name,
+                ..
+            } if *profile_id == profile.to_storage() && name == "Work"
+        ));
     }
 
     #[test]
@@ -20946,6 +21813,116 @@ mod tests {
         assert!(!take_created_profile_connection(
             &mut connect_created_profile
         ));
+    }
+
+    #[test]
+    fn first_workspace_template_imports_welcome_document_and_image() {
+        use koru_import::Importer;
+        use std::sync::Mutex;
+
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        struct RecordingBlobSink {
+            blobs: Mutex<Vec<(String, Option<String>, usize)>>,
+        }
+
+        impl koru_import::BlobSink for RecordingBlobSink {
+            fn put(
+                &self,
+                bytes: Vec<u8>,
+                mime: &str,
+                filename: Option<&str>,
+            ) -> Result<koru_import::StoredBlob, koru_import::ImportError> {
+                let mut blobs = self.blobs.lock().unwrap();
+                let index = blobs.len() + 1;
+                blobs.push((
+                    mime.to_owned(),
+                    filename.map(str::to_owned),
+                    bytes.len(),
+                ));
+                Ok(koru_import::StoredBlob {
+                    hash: format!("b3:{index:064x}"),
+                    mime: mime.to_owned(),
+                })
+            }
+
+            fn put_from(
+                &self,
+                factory: &(dyn Fn() -> Box<dyn std::io::Read + Send> + Send + Sync),
+                mime: &str,
+                filename: Option<&str>,
+            ) -> Result<koru_import::StoredBlob, koru_import::ImportError> {
+                let mut reader = factory();
+                let mut bytes = Vec::new();
+                reader
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| koru_import::ImportError::new(error.to_string()))?;
+                self.put(bytes, mime, filename)
+            }
+        }
+
+        let files = roadmap_template_files(FIRST_WORKSPACE_TEMPLATE).unwrap();
+        let prepared = koru_import_markdown::MarkdownImporter
+            .inspect(
+                koru_import::ImportSource::Files(files),
+                &koru_import::NoProgress,
+            )
+            .unwrap();
+        let blobs = RecordingBlobSink {
+            blobs: Mutex::new(Vec::new()),
+        };
+        let occupied = std::collections::BTreeSet::new();
+        let context = koru_import::ImportContext {
+            target_profile: Some(koru_store_core::ids::ProfileId::new()),
+            target_workspace: Some(koru_store_core::ids::WorkspaceId::new()),
+            occupied_titles: &occupied,
+            blobs: &blobs,
+            tags: &koru_import::NoTagSink,
+        };
+        let koru_import::ImportProduct::Documents(content) = prepared
+            .build(
+                koru_import::ImportOptions {
+                    identity: koru_import::IdentityMode::Copy,
+                    accept_warnings: true,
+                },
+                &context,
+                &koru_import::NoProgress,
+            )
+            .unwrap()
+        else {
+            panic!("first workspace template must import as documents");
+        };
+
+        assert!(content.warnings.is_empty(), "{:?}", content.warnings);
+        assert_eq!(content.documents.len(), 1);
+        let imported = &content.documents[0];
+        assert_eq!(imported.title, "What Koru means");
+
+        let stored = blobs.blobs.lock().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].0, "image/jpeg");
+        assert_eq!(stored[0].1.as_deref(), Some("koru-fern.jpg"));
+        assert!(stored[0].2 > 0);
+
+        let doc = koru_core::WorkspaceDoc::from_snapshot(&imported.snapshot).unwrap();
+        let root = doc.children(koru_core::schema::Parent::Root).unwrap()[0];
+        let mut kinds = Vec::new();
+        let mut has_heading = false;
+        let mut stack = doc.children(koru_core::schema::Parent::Node(root)).unwrap();
+        while let Some(id) = stack.pop() {
+            let node = doc.read(id).unwrap();
+            kinds.push(node.kind);
+            if node.meta.heading.is_some() {
+                has_heading = true;
+            }
+            stack.extend(doc.children(koru_core::schema::Parent::Node(id)).unwrap());
+        }
+        assert!(kinds.contains(&koru_core::Kind::Image));
+        assert!(kinds.contains(&koru_core::Kind::Callout));
+        assert!(has_heading);
+        assert!(kinds.contains(&koru_core::Kind::Task));
     }
 
     #[test]
@@ -21135,6 +22112,41 @@ mod tests {
 
         theme::set_font_setting(theme::FontSlot::Ui, was_ui);
         theme::set_font_setting(theme::FontSlot::Chat, was_chat);
+    }
+
+    #[test]
+    fn appearance_changes_distinguish_layout_from_paint_and_save_both() {
+        let before = AppearanceShown::now();
+        let mut after = before.clone();
+        after.raster.gamma = if before.raster.gamma == 1.25 {
+            1.5
+        } else {
+            1.25
+        };
+        assert!(!after.typography_moved(&before));
+        assert!(after.paint_moved(&before));
+        assert!(!after.choice_moved(&before), "hovering must not save");
+        after.saved_text.0.light = after.raster;
+        assert!(after.choice_moved(&before));
+        let mut after = before.clone();
+        after.heading_weight = if before.heading_weight == 600 {
+            500
+        } else {
+            600
+        };
+        assert!(after.typography_moved(&before));
+        assert!(!after.choice_moved(&before), "hovering must not save");
+        after.saved_text.1 = after.heading_weight;
+        assert!(after.choice_moved(&before));
+        let mut after = before.clone();
+        after.base[0] = if before.base[0].is_none() {
+            Some(0x123456)
+        } else {
+            None
+        };
+        assert!(!after.typography_moved(&before));
+        assert!(after.paint_moved(&before));
+        assert!(after.choice_moved(&before));
     }
 
     #[test]
@@ -22289,6 +23301,9 @@ fn reveal_due(
 /// separate before-and-after copies on every event path.
 #[derive(Clone, PartialEq)]
 struct AppearanceShown {
+    saved_text: (koru_settings::TextRenderingPreferences, u16),
+    raster: koru_settings::TextRendering,
+    heading_weight: u16,
     /// App, body, headings, code and the chat's — the chat's as drawn, so
     /// an App font change moves it too while it follows.
     faces: [theme::FontChoice; 5],
@@ -22312,6 +23327,12 @@ impl AppearanceShown {
     fn now() -> Self {
         use theme::FontSlot;
         Self {
+            raster: koru_draw::text_rendering::current(),
+            saved_text: (
+                koru_draw::text_rendering::preferences(),
+                theme::chosen_heading_weight(),
+            ),
+            heading_weight: theme::heading_weight(),
             faces: [
                 theme::ui_font(),
                 theme::body_font(),
@@ -22341,19 +23362,25 @@ impl AppearanceShown {
     /// Text is set differently now: every window lays out again.
     fn typography_moved(&self, before: &Self) -> bool {
         self.faces != before.faces
+            || self.heading_weight != before.heading_weight
             || self.doc_text_size != before.doc_text_size
             || self.density != before.density
             || self.accent != before.accent
     }
 
-    /// Only the icons' artwork changed: a repaint, never a layout.
-    fn icon_paint_moved(&self, before: &Self) -> bool {
-        self.icon_paint != before.icon_paint || self.base != before.base
+    /// Artwork, backgrounds and text rasterization need paint, never layout.
+    fn paint_moved(&self, before: &Self) -> bool {
+        self.icon_paint != before.icon_paint
+            || self.base != before.base
+            || self.raster != before.raster
     }
 
     /// A saved choice changed, whether or not anything drawn did. The base
     /// color is both: a swatch has no preview, so what is drawn is the choice.
     fn choice_moved(&self, before: &Self) -> bool {
-        self.choices != before.choices || self.base != before.base || self.accent != before.accent
+        self.choices != before.choices
+            || self.saved_text != before.saved_text
+            || self.base != before.base
+            || self.accent != before.accent
     }
 }

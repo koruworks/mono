@@ -43,6 +43,9 @@ fn the_manifest_names_only_what_a_neutral_controller_may_link() {
             "koru-i18n",
             "koru-store-core",
             "koru-ui",
+            // The link worker's log. A facade that writes lines and reads
+            // nothing, already in the graph through koru-ui.
+            "tracing",
         ]),
         "the workspace controller holds rows and talks to the typed client; it \
          draws nothing, and a dependency beyond this list is one it has no use \

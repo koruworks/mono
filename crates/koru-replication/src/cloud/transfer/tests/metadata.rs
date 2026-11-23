@@ -19,6 +19,33 @@ fn scope() -> Scope {
 }
 
 #[test]
+fn admission_errors_round_trip_without_ack_or_new_frame_fields() {
+    for code in [
+        "cloud_policy_unavailable",
+        "cloud_plan_required",
+        "cloud_document_count_limit",
+        "cloud_stored_document_bytes_limit",
+        "cloud_physical_bytes_limit",
+        "cloud_staging_bytes_limit",
+        "cloud_removal_capacity_limit",
+        "file_exceeds_plan_allowance",
+        "usage_unknown",
+        "account_over_quota",
+    ] {
+        let error = transfer::Error::from_admission_code(code).unwrap();
+        assert_eq!(error.code(), code);
+        assert_eq!(
+            serde_json::to_value(error.frame()).unwrap(),
+            serde_json::json!({"kind":"error", "code":code})
+        );
+        assert!(
+            matches!(metadata::decode(scope(), error.frame(), 1), Err(value) if value == error)
+        );
+    }
+    assert!(transfer::Error::from_admission_code("feedback_due").is_none());
+}
+
+#[test]
 fn uuid_v5_documents_keep_their_identity_across_control_and_loro_metadata() {
     let mut bytes = *id(2).as_bytes();
     bytes[6] = 0x52;

@@ -249,8 +249,8 @@ impl Validate for PolicyV1 {
                     && self.access.state == CloudAccessState::None
                     && self.mcp_allowed == Some(false)
             }
-            CloudTier::Free => known && finite && self.mcp_allowed == Some(false),
-            CloudTier::Plus => known && finite,
+            // Cloud MCP is a capability of its own on both finite tiers.
+            CloudTier::Free | CloudTier::Plus => known && finite,
             CloudTier::Unbilled => {
                 known && self.allowance == AllowanceV1::Unbounded && self.mcp_allowed == Some(true)
             }

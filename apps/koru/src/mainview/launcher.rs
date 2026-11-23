@@ -48,6 +48,8 @@ pub(crate) enum NewKind {
     /// Never made on its own: it always asks what — files, or content in
     /// one of the import formats.
     Import,
+    /// The bounded task/document fixture opens as one transient tab.
+    MiniApp,
 }
 
 impl NewKind {
@@ -70,6 +72,9 @@ impl NewKind {
         }
         kinds.push(Self::Shell);
         kinds.push(Self::Import);
+        if koru_features::tasks() {
+            kinds.push(Self::MiniApp);
+        }
         kinds
     }
 
@@ -83,6 +88,9 @@ impl NewKind {
             Self::Agent => 'a',
             Self::Shell => 's',
             Self::Import => 'i',
+            // No mnemonic: retain the existing letters and use the launcher's
+            // arrows/Enter, pointer or accessible activation for this tile.
+            Self::MiniApp => '\0',
         }
     }
 
@@ -96,6 +104,7 @@ impl NewKind {
             Self::Agent => icons::ROBOT,
             Self::Shell => icons::TERMINAL,
             Self::Import => icons::IMPORT,
+            Self::MiniApp => icons::CHECK_SQUARE,
         }
     }
 
@@ -108,6 +117,7 @@ impl NewKind {
             Self::Agent => I18nKey::TerminalKindAgent,
             Self::Shell => I18nKey::TerminalKindShell,
             Self::Import => I18nKey::LauncherImport,
+            Self::MiniApp => I18nKey::MiniAppTitle,
         }
     }
 
@@ -243,6 +253,9 @@ impl MainView {
         if kind == NewKind::Bot {
             return self.create_new(kind, OpenWhere::NewTab);
         }
+        if kind == NewKind::MiniApp {
+            return self.open_mini_app_fixture();
+        }
         if alt {
             return self.open_place_chooser(PlaceTarget::New(kind), at.point());
         }
@@ -258,10 +271,17 @@ impl MainView {
     /// The Tasks pages a new task can be written on, under the Task tile:
     /// the queues, then the person's lists.
     fn open_task_destinations(&mut self, at: AskAt) -> bool {
-        context_menu::set_task_list_names(
+        context_menu::set_task_lists(
             self.list_table
                 .iter()
-                .map(|node| (node.entry.id, node.entry.name.clone()))
+                .map(|node| {
+                    (
+                        node.entry.id,
+                        node.entry.name.clone(),
+                        context_menu::static_accent_token(node.entry.color.as_deref()),
+                        node.depth,
+                    )
+                })
                 .collect(),
         );
         let mut menu = ContextMenu::aligned(
@@ -338,6 +358,7 @@ impl MainView {
             NewKind::Chat => self.new_chat(split),
             NewKind::Bot => self.open_new_bot_dialog(super::new_bot::Opener::Elsewhere),
             NewKind::Import => self.open_import_list(self.next_ask_at(false)),
+            NewKind::MiniApp => self.open_mini_app_fixture(),
             NewKind::Agent | NewKind::Shell => match self.default_profile(kind) {
                 Some(index) => self.open_session_tab_where(index, None, split),
                 // Nothing of that kind is installed: the list says so — a
@@ -350,6 +371,9 @@ impl MainView {
 
     /// A draft document, in a new tab or a split.
     fn new_document_tab(&mut self, split: Option<SplitSide>) -> bool {
+        if self.current_workspace().is_none() {
+            return self.new_tab();
+        }
         let Some(side) = split else {
             return self.new_tab();
         };

@@ -15,7 +15,13 @@ use koru_core::node::Node;
 use koru_core::schema::{Parent, WorkspaceDoc};
 use koru_core::{Kind, NodeId};
 
+mod document_init;
+pub mod document_load;
+use document_init::InitialContents;
+pub use document_init::initialize_document_from_cutting;
+mod document_retirement;
 pub mod durability;
+pub use document_retirement::DocumentReplacementError;
 pub mod explore;
 pub mod fromstore;
 mod store_open;
@@ -179,6 +185,9 @@ pub struct Workspace {
     /// One connection per open document — the store gives each its own room, so
     /// a tab syncs what it is showing and nothing else.
     doc_sessions: std::collections::HashMap<koru_core::DocumentId, store::StoreSession>,
+    retirements: std::collections::HashMap<koru_core::DocumentId, document_retirement::Retirement>,
+    document_epochs: std::collections::HashMap<koru_core::DocumentId, u64>,
+    retirement_retries: std::collections::HashSet<koru_core::DocumentId>,
     /// Where to reach the store, so a document opened later finds the same one.
     ///
     /// The channel and an optional explicit root, which is what a test passes so
@@ -297,6 +306,10 @@ pub struct Unconfirmed {
 }
 
 impl Unconfirmed {
+    /// Known diagnostics translated by the presentation layer. Transport
+    /// failure details remain untouched; this crate has no UI dependency.
+    pub const NOT_BUFFERED: &'static str = "Document changes have not been saved on this computer.";
+    pub const SAVING_PENDING: &'static str = "Document changes are still being saved.";
     /// Nothing outstanding at all.
     pub fn is_empty(&self) -> bool {
         self.documents == 0 && !self.document_list
@@ -345,6 +358,9 @@ impl Workspace {
             manifest_session: None,
             waker: None,
             doc_sessions: std::collections::HashMap::new(),
+            retirements: std::collections::HashMap::new(),
+            document_epochs: std::collections::HashMap::new(),
+            retirement_retries: std::collections::HashSet::new(),
             store: None,
             session: None,
             current: None,
@@ -390,6 +406,9 @@ impl Workspace {
             manifest_session: None,
             waker: None,
             doc_sessions: std::collections::HashMap::new(),
+            retirements: std::collections::HashMap::new(),
+            document_epochs: std::collections::HashMap::new(),
+            retirement_retries: std::collections::HashSet::new(),
             store: None,
             session,
             current,
@@ -623,6 +642,28 @@ impl Workspace {
         Ok(id)
     }
 
+    /// Create a document whose first published content is an authored subtree.
+    ///
+    /// The joined document is initialized before it becomes active. An existing
+    /// seed is never replaced: it may already have reached a peer whose edits
+    /// have not arrived here yet. On failure the previous document stays active
+    /// and the caller retains its cutting; registration itself may have succeeded.
+    pub fn create_document_from_cutting_after(
+        &mut self,
+        title: &str,
+        after: Option<koru_core::DocumentId>,
+        cutting: &koru_core::schema::Cutting,
+    ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        let placement = self.placement_after(after);
+        self.register_document_placed_with_contents(
+            title,
+            placement,
+            after,
+            koru_core::explore::KIND_DOCUMENT,
+            InitialContents::Cutting { cutting, title },
+        )
+    }
+
     /// Create a document as the **last child** of `parent` and return its id
     /// — a row's `+` in the sidebar (the review's note). Placed by the store
     /// under that parent, and shown there at once by the provisional entry,
@@ -632,6 +673,46 @@ impl Workspace {
         title: &str,
         parent: koru_core::DocumentId,
     ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        let placement = self.placement_in(parent);
+        let id = self.register_document_placed(
+            title,
+            placement,
+            None,
+            koru_core::explore::KIND_DOCUMENT,
+        )?;
+        self.note_pending_parent(id, parent);
+        self.seed_new_document(title, koru_core::explore::KIND_DOCUMENT);
+        Ok(id)
+    }
+
+    /// [`create_document_in`](Self::create_document_in) whose first published
+    /// content is an authored subtree — a draft opened by a row's `+` and
+    /// promoted with what was typed into it. The same placement, and the same
+    /// initialization as
+    /// [`create_document_from_cutting_after`](Self::create_document_from_cutting_after).
+    pub fn create_document_from_cutting_in(
+        &mut self,
+        title: &str,
+        parent: koru_core::DocumentId,
+        cutting: &koru_core::schema::Cutting,
+    ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        let placement = self.placement_in(parent);
+        let id = self.register_document_placed_with_contents(
+            title,
+            placement,
+            None,
+            koru_core::explore::KIND_DOCUMENT,
+            InitialContents::Cutting { cutting, title },
+        )?;
+        self.note_pending_parent(id, parent);
+        Ok(id)
+    }
+
+    /// The last-child slot under `parent`.
+    fn placement_in(
+        &self,
+        parent: koru_core::DocumentId,
+    ) -> (Option<koru_store_core::ids::DocumentId>, Option<usize>) {
         let anchor = explore::store_document(parent);
         let index = self.manifest.as_ref().map_or(0, |manifest| {
             manifest
@@ -640,17 +721,14 @@ impl Workspace {
                 .filter(|entry| entry.parent == Some(anchor))
                 .count()
         });
-        let id = self.register_document_placed(
-            title,
-            (Some(anchor), Some(index)),
-            None,
-            koru_core::explore::KIND_DOCUMENT,
-        )?;
+        (Some(anchor), Some(index))
+    }
+
+    /// The provisional entry shows under `parent` until the manifest says so.
+    fn note_pending_parent(&mut self, id: koru_core::DocumentId, parent: koru_core::DocumentId) {
         if let Some(pending) = self.pending_documents.iter_mut().find(|p| p.id == id) {
             pending.parent = Some(parent);
         }
-        self.seed_new_document(title, koru_core::explore::KIND_DOCUMENT);
-        Ok(id)
     }
 
     /// Create a **canvas** in this workspace and return its id.
@@ -1011,9 +1089,26 @@ impl Workspace {
     fn register_document_placed(
         &mut self,
         title: &str,
+        placement: (Option<koru_store_core::ids::DocumentId>, Option<usize>),
+        near: Option<koru_core::DocumentId>,
+        kind: &str,
+    ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
+        self.register_document_placed_with_contents(
+            title,
+            placement,
+            near,
+            kind,
+            InitialContents::SeedOnOpen,
+        )
+    }
+
+    fn register_document_placed_with_contents(
+        &mut self,
+        title: &str,
         (parent, index): (Option<koru_store_core::ids::DocumentId>, Option<usize>),
         near: Option<koru_core::DocumentId>,
         kind: &str,
+        contents: InitialContents<'_>,
     ) -> Result<koru_core::DocumentId, koru_store_core::errors::Error> {
         let workspace = self.current.ok_or_else(|| {
             koru_store_core::errors::Error::new(
@@ -1060,9 +1155,13 @@ impl Workspace {
         // The store has the document from here on, whatever happens next:
         // a failed open is not *nothing was changed*, and the message says
         // so rather than letting the window claim the opposite.
-        self.open_document(id).map_err(|e| {
-            koru_store_core::errors::Error::new(e.code(), format!("{CREATED_BUT_NOT_OPENED}: {e}"))
-        })?;
+        self.open_document_in_with_contents(workspace, id, contents)
+            .map_err(|e| {
+                koru_store_core::errors::Error::new(
+                    e.code(),
+                    format!("{CREATED_BUT_NOT_OPENED}: {e}"),
+                )
+            })?;
         // **The schema marker, on the document the store made.**
         //
         // `WorkspaceDoc::create` writes it and nothing here calls `create`: the
@@ -1073,12 +1172,14 @@ impl Workspace {
         // was noticed. Stamped here rather than in either caller, because
         // `create_document_after` and `copy_document` both come through here
         // and only one of them seeds.
-        self.ws.stamp_schema_version().map_err(|e| {
-            koru_store_core::errors::Error::new(
-                koru_store_core::errors::Code::Internal,
-                format!("stamping the document schema version: {e}"),
-            )
-        })?;
+        if matches!(contents, InitialContents::SeedOnOpen) {
+            self.ws.stamp_schema_version().map_err(|e| {
+                koru_store_core::errors::Error::new(
+                    koru_store_core::errors::Code::Internal,
+                    format!("stamping the document schema version: {e}"),
+                )
+            })?;
+        }
         Ok(id)
     }
 
@@ -1350,8 +1451,31 @@ impl Workspace {
         workspace: koru_core::WorkspaceId,
         id: koru_core::DocumentId,
     ) -> Result<(), koru_store_core::errors::Error> {
+        self.open_document_in_with_contents(workspace, id, InitialContents::SeedOnOpen)
+    }
+
+    fn open_document_in_with_contents(
+        &mut self,
+        workspace: koru_core::WorkspaceId,
+        id: koru_core::DocumentId,
+        contents: InitialContents<'_>,
+    ) -> Result<(), koru_store_core::errors::Error> {
+        if matches!(contents, InitialContents::Cutting { .. })
+            && (self.active == Some(id) || self.others.contains_key(&id))
+        {
+            return Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "document initialization requires a newly registered document",
+            ));
+        }
         if self.active == Some(id) {
             return Ok(());
+        }
+        if self.document_retiring(id) {
+            return Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "document is retiring",
+            ));
         }
         let _current = self.current.ok_or_else(|| {
             koru_store_core::errors::Error::new(
@@ -1362,6 +1486,7 @@ impl Workspace {
 
         // Already an open tab: swap it in without asking the store again.
         if let Some(doc) = self.others.remove(&id) {
+            self.retirement_retries.remove(&id);
             self.park_active();
             self.ws = doc;
             // Its `UndoManager` came with it — it is bound to the `LoroDoc`, and
@@ -1399,6 +1524,14 @@ impl Workspace {
         // two can be put back together.
         self.replay_trouble
             .extend(session.replay_buffered(&mut doc));
+        if matches!(contents, InitialContents::Cutting { .. }) {
+            document_load::validate(&doc, workspace, id).map_err(|reason| {
+                koru_store_core::errors::Error::new(
+                    koru_store_core::errors::Code::CorruptState,
+                    reason,
+                )
+            })?;
+        }
         // **The workspace this document is in, before undo is switched on.**
         //
         // `WorkspaceDoc::create` writes the id and nothing on this path calls
@@ -1436,7 +1569,20 @@ impl Workspace {
         })?;
         // **After the replay**, so a seed this machine buffered while offline
         // lands first and the document is no longer empty to seed.
-        let seeded = self.seed_empty_document(id, &mut doc);
+        let seeded = match contents {
+            InitialContents::SeedOnOpen => self.seed_empty_document(id, &mut doc),
+            InitialContents::Cutting { cutting, title } => {
+                // Still unpublished and not installed: a failed plant can leave
+                // partial operations, so discard this local document on error.
+                initialize_document_from_cutting(&mut doc, cutting, title).map_err(|e| {
+                    koru_store_core::errors::Error::new(
+                        koru_store_core::errors::Code::InvalidRequest,
+                        format!("initializing the new document: {e}"),
+                    )
+                })?;
+                true
+            }
+        };
         self.park_active();
         self.ws = doc;
         // **Undo is per document, and this is where it becomes true.**
@@ -1474,18 +1620,19 @@ impl Workspace {
         &mut self,
         id: koru_core::DocumentId,
     ) -> Result<koru_core::WorkspaceId, koru_store_core::errors::Error> {
-        if self.active == Some(id) || self.others.contains_key(&id) {
-            // Prefer a live locate so a background tab stamped under the wrong
-            // window workspace can still learn its real home.
-            let located = self.store_client().and_then(|client| {
-                client
-                    .locate_document(explore::store_document(id))
-                    .ok()
-                    .map(|location| koru_core::WorkspaceId::from_uuid(location.workspace.as_uuid()))
-            });
-            return Ok(located
+        if let Some(doc) = self.document(id) {
+            // Prepared and parked documents carry their authenticated home.
+            // A warm command must not rediscover a Store on the window thread.
+            return Ok(doc
+                .id()
                 .or(self.current)
                 .unwrap_or_else(koru_core::WorkspaceId::new));
+        }
+        if self.document_retiring(id) {
+            return Err(koru_store_core::errors::Error::new(
+                koru_store_core::errors::Code::InvalidRequest,
+                "document is retiring",
+            ));
         }
         // Locate first — the same catalog click uses. Joining `self.current`
         // with the pill's id 404s when the document lives in another workspace
@@ -1756,26 +1903,7 @@ impl Workspace {
         if self.take_page_back(id) {
             return true;
         }
-        // **Correctness, and the case the outbox is easiest to get wrong.**
-        // Closing a tab drops its session, and with it everything that knew
-        // work was owed on that document. If the store has not confirmed it,
-        // this is the last moment anything can write it down.
-        if let Some(doc) = self.others.get(&id)
-            && let Some(session) = self.doc_sessions.get_mut(&id)
-        {
-            session.buffer_now(doc);
-        }
-        // Politeness, not correctness: the store drops a connection's rooms
-        // when it goes, and the socket is about to. It saves the store from
-        // relaying to somebody who has stopped listening in the meantime.
-        if let Some(session) = self.doc_sessions.get(&id) {
-            session.leave();
-        }
-        // Dropping the session joins its thread, so this is where the cost is
-        // reclaimed rather than merely forgotten.
-        let had_session = self.doc_sessions.remove(&id).is_some();
-        let had_doc = self.others.remove(&id).is_some();
-        had_session || had_doc
+        self.retire_document(id)
     }
 
     // ------------------------------------------------- several documents
@@ -2094,6 +2222,23 @@ impl Workspace {
         self.others.get(&id)
     }
 
+    /// Borrow an existing replica for transient editor cancellation. This
+    /// never opens, activates, publishes or marks a document dirty. Authored
+    /// edits must continue to use the normal command/session path.
+    pub fn resident_document_mut(
+        &mut self,
+        id: koru_core::DocumentId,
+    ) -> Option<&mut WorkspaceDoc> {
+        if self.document_retiring(id) {
+            return None;
+        }
+        if self.active == Some(id) {
+            Some(&mut self.ws)
+        } else {
+            self.others.get_mut(&id)
+        }
+    }
+
     /// Every blob referenced by anything open.
     ///
     /// `WorkspaceDoc::blob_hashes` answers for one document; the shell asks this
@@ -2189,6 +2334,7 @@ impl Workspace {
     /// One turn of the sync loop. Returns true if a remote change arrived, in
     /// which case every view over this document has to rebuild.
     pub fn tick(&mut self) -> bool {
+        self.poll_document_retirements();
         let folder = match &mut self.session {
             Some(s) => s.tick(&mut self.ws),
             None => false,
@@ -2516,10 +2662,13 @@ impl Workspace {
             if !session.owes(doc) {
                 return false;
             }
-            if why_not_buffered.is_none()
-                && let Some(why) = session.buffer_failure()
-            {
-                why_not_buffered = Some(why.to_owned());
+            if why_not_buffered.is_none() && !session.buffered_covers(doc) {
+                why_not_buffered = Some(
+                    session
+                        .buffer_failure()
+                        .unwrap_or(Unconfirmed::NOT_BUFFERED)
+                        .to_owned(),
+                );
             }
             true
         };
@@ -2549,6 +2698,11 @@ impl Workspace {
             why_not_buffered = pages_not_buffered;
         }
 
+        let (retiring, unsafe_to_close) = document_retirement::unconfirmed(&self.retirements);
+        out.documents += retiring;
+        if unsafe_to_close && why_not_buffered.is_none() {
+            why_not_buffered = Some(Unconfirmed::SAVING_PENDING.into());
+        }
         out.not_buffered = why_not_buffered;
         out
     }

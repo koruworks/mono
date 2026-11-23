@@ -74,7 +74,10 @@ fn a_preview_stands_in_for_the_chosen_size_and_saving_never_sees_it() {
         .unwrap_or_else(|held| held.into_inner());
     set_doc_text_size(None);
     assert_eq!(chosen_doc_text_size(), None);
-    assert_eq!(doc_text_size(), FONT_SIZE);
+    assert_eq!(doc_text_size(), 14.0);
+    assert_eq!(doc_scale(), 14.0 / FONT_SIZE);
+    set_doc_text_size(Some(16));
+    assert_eq!(doc_text_size(), 16.0, "an explicit size keeps its value");
     set_doc_text_size(Some(20));
     assert_eq!(doc_scale(), 1.25);
     let preview = Preview::new(PreviewSlot::DocTextSize, 22);
@@ -83,7 +86,7 @@ fn a_preview_stands_in_for_the_chosen_size_and_saving_never_sees_it() {
     drop(preview);
     assert_eq!(doc_text_size(), 20.0);
     set_doc_text_size(None);
-    assert_eq!(doc_text_size(), FONT_SIZE);
+    assert_eq!(doc_text_size(), 14.0);
 }
 
 /// **A role keeps what it was set to, apart from what it draws.** An
@@ -153,7 +156,7 @@ fn the_chat_font_follows_the_app_font_until_chosen() {
     {
         let _preview = Preview::new(
             PreviewSlot::Font(FontSlot::Ui),
-            font_preview_value(FontChoice::Lora),
+            u32::from(font_preview_value(FontChoice::Lora)),
         );
         assert_eq!(chat_font(), FontChoice::Lora, "an App font preview too");
     }
@@ -169,7 +172,7 @@ fn the_chat_font_follows_the_app_font_until_chosen() {
     {
         let _preview = Preview::new(
             PreviewSlot::Font(FontSlot::Chat),
-            font_preview_value(FontChoice::Manrope),
+            u32::from(font_preview_value(FontChoice::Manrope)),
         );
         assert_eq!(chat_font(), FontChoice::Manrope);
         assert_eq!(chosen_font(FontSlot::Chat), FontChoice::SourceSerif4);

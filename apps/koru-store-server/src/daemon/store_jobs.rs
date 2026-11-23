@@ -197,6 +197,15 @@ impl StoreWorkerClient {
         self.submit_store(move |store| request.run(store, at, authorize))
     }
 
+    /// Tell the surfaces that list the workspaces in the Trash here that the
+    /// account still holds to read again, after a Store write this client
+    /// made itself changed that list. Queued behind that write, so a reader
+    /// woken by it sees the write. Best effort: a full queue loses a
+    /// refresh, never data.
+    pub fn notify_catalog_change(&self) {
+        let _ = self.requests.try_send(WorkerCommand::CatalogChanged);
+    }
+
     /// Execute one typed operation on the worker-owned Store. The closure and
     /// its owned result cross the bounded worker queue; no Store handle, lock,
     /// HTTP request, or serialized envelope crosses back into the caller.

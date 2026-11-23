@@ -107,7 +107,7 @@ fn a_tick_on_a_profile_that_has_since_arrived_here_is_dropped() {
 }
 
 #[test]
-fn a_selection_sends_only_profiles_that_are_not_here_and_opens_the_first_once_durable() {
+fn a_selection_sends_only_profiles_that_are_not_here_and_waits_for_a_synced_workspace() {
     let mut view = view();
     view.account_state.enrollments = vec![koru_agent_wire::AccountProfileEnrollment {
         profile_id: id(11),
@@ -133,12 +133,20 @@ fn a_selection_sends_only_profiles_that_are_not_here_and_opens_the_first_once_du
     }]);
     assert_eq!(
         view.take_action(),
-        Some(Action::RestoreLocalProfile { profile_id: id(12) })
+        None,
+        "do not leave onboarding until at least one synced workspace arrives"
     );
+    assert_eq!(view.screen, Screen::ExistingProfiles);
+    assert_eq!(
+        view.synced_workspace_candidates(),
+        Some(&[id(12)][..])
+    );
+    assert!(view.selection.locked());
+    assert!(view.selection_controls().contains(&Hit::CancelSelection));
 }
 
 #[test]
-fn first_selected_profile_opens_as_soon_as_it_is_durable_while_others_continue() {
+fn selected_profiles_stay_in_chooser_until_a_workspace_syncs_and_cancel_clears_wait() {
     let mut view = view();
     view.activate(Hit::Existing(1));
     view.activate(Hit::Existing(2));
@@ -158,17 +166,21 @@ fn first_selected_profile_opens_as_soon_as_it_is_durable_while_others_continue()
             retry_at_millis: None,
         },
     ]);
+    assert_eq!(view.take_action(), None);
     assert_eq!(
-        view.take_action(),
-        Some(Action::RestoreLocalProfile { profile_id: id(12) })
+        view.synced_workspace_candidates(),
+        Some(&[id(12), id(13)][..])
     );
     let mut projection = state(1);
     projection.enrollments = view.account_state.enrollments.clone();
     view.show_account_state(&projection);
     assert!(
         view.take_action().is_none(),
-        "do not launch a second restore"
+        "background progress does not launch an empty-profile restore"
     );
+    view.account_cancelled();
+    assert_eq!(view.synced_workspace_candidates(), None);
+    assert!(!view.selection.locked());
 }
 
 #[test]
@@ -559,7 +571,8 @@ fn same_account_success_or_cancel_before_ack_only_settles_its_exact_submission()
             owner_scope: 1,
             generation: 11,
         });
-        assert!(!a.selection.locked());
+        assert!(!a.selection.waiting && !a.selection.uncertain);
+        assert_eq!(a.selection.syncing_workspaces, !cancel);
         b.account_command_admitted(crate::account_ui::CommandAdmission {
             submission: sb,
             owner_scope: 1,
@@ -570,7 +583,8 @@ fn same_account_success_or_cancel_before_ack_only_settles_its_exact_submission()
             "another form's pre-ACK result cannot finish B"
         );
         b.selection_result(1, 12, &result);
-        assert!(!b.selection.locked());
+        assert!(!b.selection.waiting && !b.selection.uncertain);
+        assert_eq!(b.selection.syncing_workspaces, !cancel);
     }
 }
 
@@ -637,19 +651,21 @@ fn local_form_and_its_return_choice_survive_late_selection_completion() {
     let mut view = view();
     let submission = submit(&mut view);
     view.activate(Hit::ContinueOffline);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     view.owner_name
+        .borrow_mut()
         .set_text(&mut view.engine, "My edited display name");
-    view.profile_name
-        .set_text(&mut view.engine, "My edited Profile name");
+    view.workspace_name
+        .borrow_mut()
+        .set_text(&mut view.engine, "My edited workspace");
     let mut progress = state(1);
     progress.stage = AccountStage::Refreshing;
     view.show_account_state(&progress);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     view.show_account_profile_choices("A refreshed provider display name", choices(1));
-    assert_eq!(view.screen, Screen::Profile);
-    assert_eq!(view.owner_name.value(), "My edited display name");
-    assert_eq!(view.profile_name.value(), "My edited Profile name");
+    assert_eq!(view.screen, Screen::Setup);
+    assert_eq!(view.owner_name.borrow().value(), "My edited display name");
+    assert_eq!(view.workspace_name.borrow().value(), "My edited workspace");
     view.account_command_admitted(crate::account_ui::CommandAdmission {
         submission,
         owner_scope: 1,
@@ -660,7 +676,7 @@ fn local_form_and_its_return_choice_survive_late_selection_completion() {
         11,
         &AccountOperationResult::ProfilesSelected { profiles: vec![] },
     );
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     assert!(view.reopen_account_creation());
     assert_eq!(view.screen, Screen::ExistingProfiles);
 }
@@ -670,11 +686,11 @@ fn separately_owned_created_profile_failure_preserves_its_retry_with_a_pending_s
     let mut view = view();
     let submission = submit(&mut view);
     view.activate(Hit::CreateNew);
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     let profile = koru_core::ProfileId::new();
     let retry = AccountCommand::CreateProfile {
         profile_id: profile.to_storage(),
-        owner_display_name: "Owner".into(),
+        owner_display_name: Some("Owner".into()),
         name: "New local Profile".into(),
         locale: Some("en".into()),
     };
@@ -730,7 +746,7 @@ fn background_failed_cancelled_and_admission_failure_do_not_interrupt_local_form
                 }
             },
         );
-        assert_eq!(view.screen, Screen::Profile);
+        assert_eq!(view.screen, Screen::Setup);
         assert_eq!(
             view.error.as_deref(),
             Some("local validation remains owned by this form")
@@ -749,7 +765,7 @@ fn background_failed_cancelled_and_admission_failure_do_not_interrupt_local_form
         submission,
         uncertain: true,
     });
-    assert_eq!(view.screen, Screen::Profile);
+    assert_eq!(view.screen, Screen::Setup);
     assert_eq!(
         view.selection.notice,
         Some(koru_i18n::Key::ProfileChooserUncertain)
@@ -767,4 +783,35 @@ fn named_space_activates_the_focused_checkbox_without_losing_keyboard_focus() {
     assert!(view.key(&Key::Named(NamedKey::Space), None, ModifiersState::empty()));
     assert_eq!(view.selection.checked, set(&[&id(12)]));
     assert_eq!(view.controls().get(view.focus), Some(&Hit::Existing(1)));
+}
+
+#[test]
+fn workspace_modal_chooser_preselects_syncable_profiles_and_supports_not_you_without_resume_on_setup()
+{
+    let mut view = OnboardingView::default();
+    view.language = koru_i18n::Lang::En;
+    view.show_workspace_setup();
+    view.select_account_context(&state(1));
+    view.show_account_profile_choices("Steven Liechti", choices(1));
+    assert_eq!(view.screen, Screen::ExistingProfiles);
+    // Two remote profiles (ids 12 & 13) pre-selected; local profile (id 11) is not ticked.
+    assert_eq!(view.selection.checked, set(&[&id(12), &id(13)]));
+    let layout = view.profiles_modal_layout();
+    assert_eq!(layout.primary_label, "Sync 2 profiles");
+    assert!(layout.primary_enabled);
+
+    // Moving to "Create a new profile" opens the unified signed-in Welcome modal
+    // with no "Return to account choice".
+    let create = layout.create_new.centre();
+    assert!(view.mouse_down(create.0, create.1));
+    assert_eq!(view.screen, Screen::Entry);
+    assert!(view.welcome_signed_in);
+    assert!(!view.controls().contains(&Hit::ResumeAccount));
+
+    // Going back to ExistingProfiles and clicking "Not you?" logs out and returns to Screen 1.
+    view.screen = Screen::ExistingProfiles;
+    let not_you = view.profiles_modal_layout().not_you.centre();
+    assert!(view.mouse_down(not_you.0, not_you.1));
+    assert_eq!(view.screen, Screen::Entry);
+    assert_eq!(view.take_action(), Some(Action::SwitchAccount));
 }

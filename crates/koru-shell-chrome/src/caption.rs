@@ -66,11 +66,11 @@ use koru_draw::theme;
 
 use crate::{banner, lane};
 
-/// The panel toggles are square and the height of the strip; the window buttons
+/// The panel toggles keep their control width; the window buttons
 /// are wider, as they are on Windows, so the pointer can slam into the
 /// top-right corner and still land on close.
-fn toggle_w(caption: Rect) -> f32 {
-    caption.h.min(theme::CAPTION_H)
+fn toggle_w(_caption: Rect) -> f32 {
+    theme::CAPTION_CONTROL_W
 }
 
 /// Collapse or expand the explore pane. Leftmost in the caption — which, once

@@ -81,6 +81,8 @@ fn retired_chats_are_hidden_and_rejected_even_with_manage_bots_scope() {
         owner.clone(),
         SendTurnRequest {
             destination_workspace: None,
+            mini_app_host: None,
+            mini_app_refinement: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,

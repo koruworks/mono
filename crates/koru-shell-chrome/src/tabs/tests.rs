@@ -123,7 +123,7 @@ fn a_tab_is_drawn_clear_of_the_row_it_sits_in() {
 }
 
 #[test]
-fn the_pill_is_inset_evenly_apart_from_the_hairline() {
+fn the_pill_keeps_halved_internal_padding_in_the_full_header() {
     let s = strip();
     let t = layout(s, &uniform(3, 120.0), 0.0)[0];
     let top = t.pill.y - t.body.y;
@@ -133,7 +133,13 @@ fn the_pill_is_inset_evenly_apart_from_the_hairline() {
     assert_eq!(
         bottom - top,
         1.0,
-        "the only asymmetry is the hairline; anything more is a design change"
+        "the bottom retains its extra hairline clearance"
+    );
+    assert_eq!(t.body.h, s.h, "the header hit area stays full height");
+    assert_eq!(
+        t.pill.h - theme::CAPTION_ICON,
+        7.5,
+        "half the original 15 px of internal padding"
     );
 }
 

@@ -378,6 +378,9 @@ impl ListFace {
 }
 
 pub struct TasksView {
+    /// The declared host projects existing tasks; creation remains in the
+    /// ordinary Tasks surface. This gates the shared capture path itself.
+    pub(super) collection_only: bool,
     pub(super) viewport: (f32, f32),
     pub(super) engine: TextEngine,
     pub(super) panel: TaskListPanel,
@@ -537,6 +540,7 @@ impl TasksView {
             theme::role::content_row(),
         );
         Self {
+            collection_only: false,
             viewport: (900.0, 600.0),
             engine,
             idle_input,
@@ -591,6 +595,13 @@ impl TasksView {
 
     pub fn target(&self) -> RailTarget {
         self.target
+    }
+
+    pub(crate) fn collection_only(mut self) -> Self {
+        self.collection_only = true;
+        self.capture = None;
+        self.relayout();
+        self
     }
 
     /// Point the tab at another bucket or list. Answers whether it moved.
@@ -960,7 +971,16 @@ impl TasksView {
     /// The receipt for the oldest command still waiting for one. A capture's
     /// provisional row takes the real ids, so it is a row that can be acted
     /// on from this moment rather than after the store answers.
+    #[cfg(test)]
     pub fn echo_landed(&mut self, landed: &koru_workspace_host::tasks::Landed) {
+        self.echo_landed_command(landed, None);
+    }
+
+    pub fn echo_landed_command(
+        &mut self,
+        landed: &koru_workspace_host::tasks::Landed,
+        command: Option<&koru_workspace_host::tasks::TaskCommand>,
+    ) {
         // **The receipt, and whether anything can wait on it.** This is the
         // fork the tick-that-unticks-itself turns on: a receipt that is not
         // published, or that names no workspace, arms the echo but arms no
@@ -976,7 +996,11 @@ impl TasksView {
             },
             self.echoes.len(),
         ));
-        let Some(echo) = self.echoes.iter_mut().find(|e| !e.armed) else {
+        let Some(echo) = self
+            .echoes
+            .iter_mut()
+            .find(|e| !e.armed && command.is_none_or(|command| e.matches_command(command)))
+        else {
             crate::tasks::debug_line(format_args!("page: receipt matched no unarmed echo"));
             return;
         };
@@ -1003,13 +1027,30 @@ impl TasksView {
 
     /// A command the shell refused: its echo was a promise, and it is taken
     /// back with the refusal.
+    #[cfg(test)]
     pub fn echo_failed(&mut self) {
-        if let Some(i) = self.echoes.iter().position(|e| !e.armed) {
+        self.echo_failed_command(None, false);
+        self.relayout();
+    }
+
+    pub fn echo_failed_command(
+        &mut self,
+        command: Option<&koru_workspace_host::tasks::TaskCommand>,
+        newest: bool,
+    ) {
+        let matches = |echo: &Echo| {
+            !echo.armed && command.is_none_or(|command| echo.matches_command(command))
+        };
+        let index = if newest {
+            self.echoes.iter().rposition(matches)
+        } else {
+            self.echoes.iter().position(matches)
+        };
+        if let Some(i) = index {
             self.echoes.remove(i);
             self.rows = self.panel.rows().to_vec();
             self.apply_echoes();
-            self.merge_from_search();
-            self.relayout();
+            self.mark_stale();
         }
     }
 
@@ -1104,7 +1145,7 @@ impl TasksView {
     }
 
     #[cfg(test)]
-    pub(super) fn echoes_for_test(&self) -> usize {
+    pub(crate) fn echoes_for_test(&self) -> usize {
         self.echoes.len()
     }
 
@@ -1128,6 +1169,9 @@ impl TasksView {
     /// including the date word, which is re-parsed and previews again exactly
     /// as it did before Enter.
     pub fn restore_capture(&mut self, title: &str) {
+        if self.collection_only {
+            return;
+        }
         let today = self.today;
         let mut capture = Capture::with_text(&mut self.engine, title, today);
         capture.set_anchor(self.capture_anchor());
@@ -1368,7 +1412,7 @@ impl TasksView {
         } else {
             Vec::new()
         };
-        if self.target != RailTarget::Bucket(Bucket::Completed) {
+        if !self.collection_only && self.target != RailTarget::Bucket(Bucket::Completed) {
             lines.push(Line::Capture);
         }
         let grouped = self.target == RailTarget::Bucket(Bucket::Upcoming)
@@ -2126,10 +2170,10 @@ impl TasksView {
         if self.header_dots().contains(x, y) {
             return Some(Hit::HeaderDots);
         }
-        if self.plus_rect().contains(x, y) {
+        if !self.collection_only && self.plus_rect().contains(x, y) {
             return Some(Hit::HeaderPlus);
         }
-        if self.lane_plus_rect().is_some_and(|r| r.contains(x, y)) {
+        if !self.collection_only && self.lane_plus_rect().is_some_and(|r| r.contains(x, y)) {
             return Some(Hit::LanePlus);
         }
         if self.swatch_rect().is_some_and(|r| r.contains(x, y)) {
@@ -2509,6 +2553,9 @@ impl TasksView {
     }
 
     pub(crate) fn begin_capture(&mut self) {
+        if self.collection_only {
+            return;
+        }
         if self.capture.is_none() {
             let mut capture = Capture::new(&mut self.engine);
             capture.set_anchor(self.capture_anchor());
@@ -3708,7 +3755,8 @@ impl View for TasksView {
             // `begin_capture` a press on that row already makes, reached by the
             // arrow that was walking the list anyway. Escape leaves it again.
             Key::Named(NamedKey::ArrowUp)
-                if self.selected_row() == Some(0) || self.rows.is_empty() =>
+                if !self.collection_only
+                    && (self.selected_row() == Some(0) || self.rows.is_empty()) =>
             {
                 self.clear_selection();
                 self.begin_capture();
@@ -4495,6 +4543,9 @@ impl TasksView {
     /// Whether the pointer is over the heading line, on or off its controls
     /// — the page's `+` shows then, and only then.
     pub(super) fn plus_visible(&self) -> bool {
+        if self.collection_only {
+            return false;
+        }
         matches!(
             self.hover,
             Some(Hit::Heading | Hit::HeaderPlus | Hit::Swatch | Hit::HeaderDots)
@@ -4503,6 +4554,9 @@ impl TasksView {
 
     /// Whether the pointer is over the lane — its `+` shows then.
     pub(super) fn lane_plus_visible(&self) -> bool {
+        if self.collection_only {
+            return false;
+        }
         matches!(
             self.hover,
             Some(Hit::Lane | Hit::LanePlus | Hit::Attachment(_))
@@ -4764,6 +4818,11 @@ impl TasksView {
 
     /// Lay the band out for this frame: the note's content up to its share
     /// of the page (D8). The rows move down by it.
+    #[cfg(test)]
+    pub(crate) fn layout_note_for_test(&mut self) {
+        self.layout_band();
+    }
+
     pub(super) fn layout_band(&mut self) {
         let before = self.band_h;
         let (top, w, h) = (

@@ -230,6 +230,7 @@ impl ProfilesController {
             let lang = crate::format::lang();
             self.pending = Some(AccountCommand::StartGoogle {
                 locale: lang.tag().to_owned(),
+                ab: None,
             });
             self.notice = Some(fill(
                 t(lang, TextKey::ProfileConnectSignInAgain),

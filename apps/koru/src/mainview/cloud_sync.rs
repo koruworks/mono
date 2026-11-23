@@ -800,6 +800,17 @@ fn file_note(lang: Lang, file: &BlobFileReport) -> Option<String> {
 /// same hold must read the same way on both surfaces.
 pub(crate) fn hold_sentence(lang: Lang, code: &str) -> String {
     let key = match code {
+        "cloud_policy_unavailable" => Some(Key::CloudUploadPolicyUnavailable),
+        "cloud_plan_required" => Some(Key::CloudUploadPlanRequired),
+        "file_exceeds_plan_allowance" => Some(Key::CloudUploadFileAllowance),
+        "usage_unknown" => Some(Key::CloudUploadUsageUnknown),
+        "account_over_quota" => Some(Key::CloudUploadAccountQuota),
+        "cloud_document_count_limit" => Some(Key::CloudUploadDocumentCount),
+        "cloud_stored_document_bytes_limit" => Some(Key::CloudUploadDocumentBytes),
+        "cloud_physical_bytes_limit" => Some(Key::CloudUploadPhysicalBytes),
+        "cloud_staging_bytes_limit" => Some(Key::CloudUploadStagingBytes),
+        "cloud_removal_capacity_limit" => Some(Key::CloudUploadRemovalCapacity),
+
         "network_metered" => Some(Key::CloudTabPausedMetered),
         "network_low_data" => Some(Key::CloudTabPausedLowData),
         "network_offline" => Some(Key::CloudTabWaitingOffline),

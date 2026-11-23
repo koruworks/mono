@@ -224,6 +224,7 @@ pub struct Paragraph {
     /// Set by [`Body`](crate::Body) after every row re-read and cleared by
     /// [`adopt`](Self::adopt); see [`crate::dictation`].
     pub composition: Option<crate::dictation::ProvisionalRun>,
+    pub(crate) ime_caret_hidden: bool,
     /// Part of a multi-row selection.
     ///
     /// **Not stored, and it must never be.** A selection is one person's, in one
@@ -329,6 +330,7 @@ impl Paragraph {
             shaped: 0,
             is_title: false,
             composition: None,
+            ime_caret_hidden: false,
             selected: false,
         }
     }
@@ -589,6 +591,7 @@ impl Paragraph {
         // trusting that is what makes the re-splice in `Body` idempotent: a row
         // that has been adopted is authored, full stop.
         let composed = self.composition.take().is_some();
+        self.ime_caret_hidden = false;
         if !same || composed {
             self.text.clear();
             self.text.push_str(text);
@@ -939,6 +942,10 @@ impl Paragraph {
     /// Formatting armed for the next keystroke, so a toolbar can show it.
     pub fn armed(&self) -> (Option<MarkSet>, Option<TextStyle>) {
         (self.pending_marks, self.pending_style.clone())
+    }
+
+    pub(crate) fn restore_armed(&mut self, armed: (Option<MarkSet>, Option<TextStyle>)) {
+        (self.pending_marks, self.pending_style) = armed;
     }
 
     /// Forget formatting armed for the next keystroke.

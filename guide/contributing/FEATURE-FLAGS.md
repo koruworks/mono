@@ -26,8 +26,10 @@ and Voice. Eight larger surfaces are built and tested behind flags — the
 first five from 2026-10-08, canvases and Socials from 2026-10-10, agent views
 from 2026-10-16. **Cloud sync, agent sessions, Tasks and Koru AI ship on by
 default**. Cloud sync defaults on in every build (maintainers, 2026-11-07).
-Explore's Agents and Artifacts views, reminders, canvases and Socials are
-**hidden** until switched on. Nothing was deleted, and the flags are **UI only**:
+Explore's Agents and Artifacts views were on from 2026-11-15 and are hidden
+again after the A2UI merge (maintainers, 2026-11-20); saved mini apps stay
+reachable, since their discovery runs with Koru AI on as well. Agent views,
+reminders, canvases and Socials are **hidden** until switched on. Nothing was deleted, and the flags are **UI only**:
 every background worker (reminders, sync, the delegate runner, the session
 host) starts exactly as it does with the flag on. **The one exception is the
 Socials publisher**, which Koru Agent starts only while `ENABLE_SOCIALS` is on
@@ -156,8 +158,8 @@ inspector does not see it (it is not drawn), and session restore drops it.
 
 ### `ENABLE_AGENT_VIEWS` off
 
-The default, also when agents are on (maintainers, 2026-10-16): agent tabs
-ship, the views over their runs and results do not.
+An explicit opt-out: agent tabs remain available when agents are on, but
+the views over their runs and results are hidden.
 
 - **Explore**: no *Agents* or *Artifacts* mode icons. The icons close up; the
   `Alt+digit` chords **skip rather than renumber** — `Alt+5` and `Alt+6` do

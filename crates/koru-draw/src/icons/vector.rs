@@ -107,7 +107,7 @@ pub fn set_icon_pack_setting(pack: Option<IconPack>) {
 /// Artwork to paint now; persistence must continue to read `active_pack`.
 pub fn rendered_pack() -> IconPack {
     preview::previewed(PreviewSlot::IconPack)
-        .and_then(|i| IconPack::ALL.get(usize::from(i)).copied())
+        .and_then(|i| IconPack::ALL.get(i as usize).copied())
         .unwrap_or_else(active_pack)
 }
 
@@ -118,11 +118,11 @@ pub struct IconPreview(Preview);
 
 impl IconPreview {
     pub fn new(pack: IconPack) -> Self {
-        Self(Preview::new(PreviewSlot::IconPack, pack as u16))
+        Self(Preview::new(PreviewSlot::IconPack, pack as u32))
     }
 
     pub fn set(&mut self, pack: IconPack) {
-        self.0.set(pack as u16);
+        self.0.set(pack as u32);
     }
 }
 

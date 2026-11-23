@@ -120,7 +120,12 @@ const WATCH_HINT: &str = "Reminders and quick task ticks on your wrist.";
 
 const AI_TITLE: &str = "Set up your AI";
 const AI_HINT: &str = "Pick a model and connect a key — Koru works fine without it.";
-const MCP_TITLE: &str = "Manage documents over MCP";
+const MCP_TITLE: &str = "Access your Koru workspace via MCP";
+const CLOUD_MCP_URL: &str = "https://mcp.koru.do/mcp";
+const CLOUD_PRICING_URL: &str = "https://koru.do/pricing";
+pub(crate) fn cloud_pricing_url() -> &'static str {
+    CLOUD_PRICING_URL
+}
 const MCP_HINT: &str = "Let your coding agent read and write this workspace. Pick it, then run the command in a terminal.";
 const MCP_COPY: &str = "Copy";
 const AGENT_TITLE: &str = "Run an agent in a terminal";
@@ -156,13 +161,15 @@ fn progress(done: usize, of: usize) -> String {
 /// performs — each of these is an existing command the container already has.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WelcomeWant {
-    /// *Make your first document* — what Ctrl+T does: a new tab with a page
-    /// to type on, no name asked first.
+    /// *Make your first document* — a new tab with a page to type on, no name
+    /// asked first.
     NewDocument,
     /// *set up your mic* — Settings, scrolled to Voice.
     VoiceSettings,
     /// *turn on text recognition* — Settings, scrolled to that section.
     ReaderSettings,
+    TerminalSettings,
+    SubscribeCloud,
     /// One import format's chip, by the format registry's stable id.
     Import(&'static str),
     /// *Choose files…* — the file picker behind `PaneRequest::ImportFiles`.
@@ -211,6 +218,8 @@ pub(crate) enum Target {
     MicLink,
     /// *turn on text recognition*, in the files row.
     ReaderLink,
+    TerminalSettings,
+    SubscribeCloud,
     Import(&'static str),
     ChooseFiles,
     FeedbackForm,
@@ -407,11 +416,21 @@ impl WelcomeView {
         }
     }
 
+    pub(crate) fn scroll_offset(&self) -> f32 {
+        self.scroll
+    }
+    pub(crate) fn restore_scroll(&mut self, scroll: f32) {
+        self.ensure_laid();
+        self.scroll = scroll.clamp(0.0, self.max_scroll());
+    }
+
     fn activate(&mut self, target: Target) {
         match target {
             Target::Customize => self.wants.push(WelcomeWant::Settings),
             Target::MicLink => self.wants.push(WelcomeWant::VoiceSettings),
             Target::ReaderLink => self.wants.push(WelcomeWant::ReaderSettings),
+            Target::TerminalSettings => self.wants.push(WelcomeWant::TerminalSettings),
+            Target::SubscribeCloud => self.wants.push(WelcomeWant::SubscribeCloud),
             Target::Import(format) => {
                 self.wants.push(WelcomeWant::Import(format));
                 self.tick(RowId::Documents);

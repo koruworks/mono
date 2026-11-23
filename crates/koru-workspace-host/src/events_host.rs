@@ -191,26 +191,26 @@ pub fn search_opened(surface: SearchSurface) {
     emit(koru_events::SearchOpened { surface });
 }
 
-pub fn onboarding(telemetry: crate::onboarding::Telemetry) {
-    use crate::onboarding::{Purpose, Telemetry};
+pub fn onboarding(telemetry: crate::onboarding::Telemetry, ab: koru_events::OnboardingAbAttrs) {
+    use crate::onboarding::Telemetry;
     match telemetry {
+        Telemetry::Shown => emit(koru_events::OnboardingShown { ab }),
         Telemetry::EntryOffline => emit(koru_events::OnboardingEntrySelected {
             choice: koru_events::OnboardingEntryChoice::Offline,
+            ab,
         }),
         Telemetry::EntryGoogle => emit(koru_events::OnboardingEntrySelected {
             choice: koru_events::OnboardingEntryChoice::Google,
+            ab,
         }),
         Telemetry::EntryApple => emit(koru_events::OnboardingEntrySelected {
             choice: koru_events::OnboardingEntryChoice::Apple,
+            ab,
         }),
-        Telemetry::ProfilePurpose(purpose) => {
-            let purpose = match purpose {
-                Purpose::Work => koru_events::ProfilePurpose::Work,
-                Purpose::School => koru_events::ProfilePurpose::School,
-                Purpose::Personal => koru_events::ProfilePurpose::Personal,
-            };
-            emit(koru_events::OnboardingProfilePurposeSelected { purpose });
-        }
+        Telemetry::EntryEmail => emit(koru_events::OnboardingEntrySelected {
+            choice: koru_events::OnboardingEntryChoice::Email,
+            ab,
+        }),
     }
 }
 

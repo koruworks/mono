@@ -95,6 +95,69 @@ impl Segmented {
         hovered: Option<usize>,
         alpha: f32,
     ) {
+        self.draw_focused(
+            canvas, root, engine, labels, selected, hovered, false, alpha,
+        );
+    }
+
+    /// Paint the control with an optional keyboard-focus ring round its
+    /// track.
+    ///
+    /// The control is one stop for the keyboard — the arrows move the choice
+    /// inside it — so the mark is the track's, not a segment's. It is the
+    /// shared controls' ring ([`crate::chip::Chip`]'s and
+    /// [`crate::toggle::Toggle`]'s), drawn on the track's own edge: nothing
+    /// moves and no room is needed round the control.
+    #[allow(clippy::too_many_arguments)]
+    #[track_caller]
+    pub fn draw_focused(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        labels: &[&str],
+        selected: Option<usize>,
+        hovered: Option<usize>,
+        focused: bool,
+        alpha: f32,
+    ) {
+        self.draw_tinted(
+            canvas, root, engine, labels, selected, hovered, focused, alpha, None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_tinted(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        labels: &[&str],
+        selected: Option<usize>,
+        hovered: Option<usize>,
+        focused: bool,
+        alpha: f32,
+        dangerous: Option<usize>,
+    ) {
+        self.draw_highlighted(
+            canvas, root, engine, labels, selected, hovered, focused, alpha, dangerous, "",
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_highlighted(
+        &self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        labels: &[&str],
+        selected: Option<usize>,
+        hovered: Option<usize>,
+        focused: bool,
+        alpha: f32,
+        dangerous: Option<usize>,
+        query: &str,
+    ) {
         let b = self.bounds;
         let _component = inspect::scope(
             "KoruSegmented",
@@ -119,6 +182,9 @@ impl Segmented {
         let p = theme::p();
         let track = scene::rrect(b.x, b.y, b.w, b.h, Self::RADIUS);
         scene::fill(canvas, root, p.chip_bg.multiply_alpha(alpha), &track);
+        if focused {
+            crate::button::focus_stroke(canvas, root, p, b, Self::RADIUS, alpha);
+        }
         for (index, (rect, label)) in self.segments.iter().zip(labels).enumerate() {
             let chosen = selected == Some(index);
             let _segment = inspect::scope(
@@ -144,18 +210,42 @@ impl Segmented {
             } else if hovered == Some(index) {
                 scene::fill(canvas, root, p.hover_tint.multiply_alpha(alpha), &shape);
             }
+            if dangerous == Some(index) {
+                scene::fill(
+                    canvas,
+                    root,
+                    p.close_hover
+                        .multiply_alpha(if chosen { 0.18 } else { 0.08 } * alpha),
+                    &shape,
+                );
+            }
             let layout = engine.simple_layout(label, theme::role::row());
-            let line_h = scene::first_line_height(&layout);
+            crate::text_paragraph::highlight_layout(
+                canvas,
+                root,
+                &layout,
+                label,
+                query,
+                rect.x + (rect.w - layout.width()) * 0.5,
+                crate::typography::control_label_y(engine, *rect),
+            );
             crate::typography::line(
                 "Segment label",
                 canvas,
                 root,
                 &layout,
                 rect.x + (rect.w - layout.width()) * 0.5,
-                rect.y + (rect.h - line_h) * 0.5,
+                crate::typography::control_label_y(engine, *rect),
                 theme::role::row(),
                 "theme::role::row()",
-                if chosen { p.text } else { p.text_dim }.multiply_alpha(alpha),
+                if dangerous == Some(index) {
+                    p.close_hover
+                } else if chosen {
+                    p.text
+                } else {
+                    p.text_dim
+                }
+                .multiply_alpha(alpha),
             );
         }
     }
@@ -186,6 +276,44 @@ mod tests {
             Segmented::width(&mut engine, &labels),
             "width() is the laid-out width"
         );
+    }
+
+    fn painted(focused: Option<bool>) -> Scene {
+        let mut engine = TextEngine::new();
+        let labels = ["Light", "Dark"];
+        let control = Segmented::layout(&mut engine, &labels, 4.0, 4.0);
+        let mut canvas = Scene::new();
+        let root = Affine::IDENTITY;
+        match focused {
+            None => control.draw(&mut canvas, root, &mut engine, &labels, Some(0), None, 1.0),
+            Some(focused) => control.draw_focused(
+                &mut canvas,
+                root,
+                &mut engine,
+                &labels,
+                Some(0),
+                None,
+                focused,
+                1.0,
+            ),
+        }
+        canvas
+    }
+
+    /// `draw` is `draw_focused` without the ring, path for path, so no
+    /// existing caller changed; the ring adds one stroke and moves nothing.
+    #[test]
+    fn the_focus_ring_is_one_stroke_more_and_only_when_asked_for() {
+        let (plain, unfocused, focused) =
+            (painted(None), painted(Some(false)), painted(Some(true)));
+        let (a, b, c) = (plain.encoding(), unfocused.encoding(), focused.encoding());
+        assert!(a.path_tags == b.path_tags);
+        assert_eq!(a.path_data, b.path_data);
+        assert!(a.draw_tags == b.draw_tags);
+        assert_eq!(a.draw_data, b.draw_data);
+        assert_eq!(a.styles, b.styles);
+        assert_eq!(c.draw_tags.len(), a.draw_tags.len() + 1);
+        assert!(c.path_data.len() > a.path_data.len());
     }
 
     #[test]

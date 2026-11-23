@@ -250,6 +250,7 @@ fn the_store_catalog_rows_carry_ids_and_closed_tokens_only() {
         "workspace.catalog.moved",
         "workspace.catalog.imported",
         "workspace.catalog.reordered",
+        "workspace.catalog.trashed_in_account_changed",
     ];
     for name in CATALOG {
         let spec = registry::spec(name).unwrap_or_else(|| panic!("{name} is not declared"));
@@ -1320,6 +1321,14 @@ fn the_serialization_vectors_are_current() {
                 scope: TerminalProjectScope::Unscoped,
             })
             .build(&ctx, fixed_event_id(), FIXED_TIME),
+        ),
+        (
+            "settings.mini_app_pins_changed",
+            Draft::from(crate::SettingsMiniAppPinsChanged).build(
+                &ctx,
+                fixed_event_id(),
+                FIXED_TIME,
+            ),
         ),
         (
             "settings.global_changed",

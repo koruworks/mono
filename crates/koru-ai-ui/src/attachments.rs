@@ -1251,12 +1251,10 @@ pub struct ViewerLift {
 
 /// A picture open in the shared viewer (R3, F3).
 pub(crate) struct ChatViewer {
-    pub id: ChatAttachmentId,
-    pub file_name: String,
     pub viewer: MediaViewer,
     /// The original's bytes, kept while the viewer is up for *Open in
-    /// external app*; released when it closes.
-    pub bytes: bytes::Bytes,
+    /// external app*; a vector diagram has no attachment to open.
+    pub attachment: Option<(ChatAttachmentId, String, bytes::Bytes)>,
 }
 
 /// The drafts of every chat, kept per chat so a draft survives a switch to
@@ -1689,8 +1687,7 @@ impl ChatSurface {
         };
         let viewport = self.viewer_viewport();
         self.viewer = Some(ChatViewer {
-            id,
-            file_name: file_name.clone(),
+            attachment: Some((id, file_name.clone(), bytes)),
             viewer: MediaViewer::open(
                 Stage::Bitmap { image },
                 ViewerOptions {
@@ -1699,7 +1696,6 @@ impl ChatSurface {
                 },
                 viewport,
             ),
-            bytes,
         });
     }
 
@@ -1809,12 +1805,29 @@ impl ChatSurface {
     /// modal and the input was its own.
     fn settle_viewer(&mut self, outcome: ViewerOutcome) -> bool {
         match outcome {
-            // Not offered for a chat's picture.
-            ViewerOutcome::Handled | ViewerOutcome::Copy | ViewerOutcome::SaveAs => {}
+            ViewerOutcome::Handled => {}
+            ViewerOutcome::Copy => {
+                self.diagrams.copy = self
+                    .viewer
+                    .as_ref()
+                    .and_then(|open| open.viewer.diagram())
+                    .cloned();
+            }
+            ViewerOutcome::SaveAs => {
+                self.diagrams.save = self
+                    .viewer
+                    .as_ref()
+                    .and_then(|open| open.viewer.diagram())
+                    .cloned();
+            }
             ViewerOutcome::OpenExternally => {
-                if let Some(open) = &self.viewer {
-                    let (id, name, bytes) = (open.id, open.file_name.clone(), open.bytes.clone());
-                    self.attachment_work.open_externally(id, &name, bytes);
+                if let Some((id, name, bytes)) = self
+                    .viewer
+                    .as_ref()
+                    .and_then(|open| open.attachment.as_ref())
+                {
+                    self.attachment_work
+                        .open_externally(*id, name, bytes.clone());
                 }
             }
             ViewerOutcome::Close => {

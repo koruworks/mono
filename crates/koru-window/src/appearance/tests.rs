@@ -40,6 +40,7 @@ fn every_appearance_value_comes_from_the_section() {
         theme: ThemeChoice::Dark,
         icon_pack: Some(koru_settings::IconPackChoice::Lucide),
         caret_color: CaretColorChoice::Amber,
+        caret_color_dark: CaretColorChoice::Violet,
         caret_width: CaretWidthChoice::Thick,
         caret_height: koru_settings::CaretHeightChoice::Short,
         ui_font: FontSetting::Chosen(FontFamily::Poppins),
@@ -59,6 +60,7 @@ fn every_appearance_value_comes_from_the_section() {
         Some(koru_draw::icons::IconPack::Lucide)
     );
     assert_eq!(appearance.caret.color, CaretColor::Amber);
+    assert_eq!(appearance.caret.color_dark, CaretColor::Violet);
     assert_eq!(appearance.caret.width, CaretWidth::Thick);
     assert_eq!(appearance.caret.height, CaretHeight::Short);
     assert_eq!(appearance.ui_font, FontChoice::Poppins);

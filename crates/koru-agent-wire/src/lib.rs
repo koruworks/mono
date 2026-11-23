@@ -251,7 +251,11 @@ use serde::{Deserialize, Serialize};
 /// 50 adds [`Target::kind`] and [`Target::list`], so a search result can open a
 /// task or a task list in Tasks. A 49 shell would read a task target, by its
 /// missing kind, as a document or a workspace; the handshake refuses it.
-pub const PROTOCOL_VERSION: u32 = 50;
+/// 51 lets `AccountCommand::CreateProfile` carry no owner name (welcome step 1,
+/// Q-G: a Profile created from Manage never renames the account) and adds
+/// browser email sign-in, Cloud access / checkout handoff, and subscription
+/// kind labels. A 50 agent cannot read those commands; the handshake refuses it.
+pub const PROTOCOL_VERSION: u32 = 52;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -1213,6 +1217,27 @@ pub enum Push {
     },
 }
 
+/// Closed A/B experiment codes carried from desktop onboarding into OAuth start
+/// and checkout handoff requests so conversions can be attributed by variant.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnboardingAb {
+    /// Koru Cloud copy variant (`"sync"` | `"backup"` | `"founding"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// Welcome header/lead copy variant (`"speed"` | `"ownership"` | `"purpose"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Preselected billing interval variant (`"monthly"` | `"yearly"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<String>,
+}
+
+impl OnboardingAb {
+    pub fn is_empty(&self) -> bool {
+        self.code.is_none() && self.header.is_none() && self.billing.is_none()
+    }
+}
+
 /// Commands accepted by the account worker. String ids remain strings on this
 /// leaf IPC crate and are validated by the owning account/Profile domains.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1229,11 +1254,22 @@ pub enum AccountCommand {
     Status,
     StartGoogle {
         locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
     },
     /// Sign in with Apple in the system browser. Everything after the browser
     /// returns -- creation, Profile choice, the exchange -- is Google's path.
     StartApple {
         locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
+    },
+    /// Sign in with email in the system browser (`koru.do/login`), returning an
+    /// OAuth grant over the same loopback + PKCE exchange as Google and Apple.
+    StartEmailBrowser {
+        locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
     },
     /// Sign in with an email address and a password.
     ///
@@ -1284,6 +1320,20 @@ pub enum AccountCommand {
     InspectCloudSubscription {
         request_id: u64,
     },
+    /// Verify whether the signed-in account currently has active Cloud access
+    /// (trialing, active, or complimentary grant).
+    InspectCloudAccess {
+        request_id: u64,
+    },
+    /// Mint a signed desktop checkout handoff, open Koru's Stripe Embedded
+    /// Checkout page in the browser, wait for its loopback return, and verify
+    /// Cloud access afterward.
+    StartCheckout {
+        plan: String,
+        locale: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ab: Option<OnboardingAb>,
+    },
     InspectCloudPlan {
         request_id: u64,
     },
@@ -1330,7 +1380,13 @@ pub enum AccountCommand {
     ListProfileChoices,
     CreateProfile {
         profile_id: String,
-        owner_display_name: String,
+        /// The account owner's display name, set on the account before the
+        /// hosted Profile is created. **`None` leaves the account's name as
+        /// it is**: a Profile created from Manage → New profile names only
+        /// itself, so a second Profile never renames the person (protocol
+        /// 47). First run sends the one typed name.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_display_name: Option<String>,
         name: String,
         locale: Option<String>,
     },
@@ -1401,6 +1457,7 @@ impl std::fmt::Debug for AccountCommand {
             Self::Status => "AccountCommand::Status",
             Self::StartGoogle { .. } => "AccountCommand::StartGoogle(<redacted>)",
             Self::StartApple { .. } => "AccountCommand::StartApple(<redacted>)",
+            Self::StartEmailBrowser { .. } => "AccountCommand::StartEmailBrowser(<redacted>)",
             // The address and the password are the whole of these.
             Self::ContinueWithEmail { .. } => "AccountCommand::ContinueWithEmail(<redacted>)",
             Self::SubmitEmailCode { .. } => "AccountCommand::SubmitEmailCode(<redacted>)",
@@ -1419,6 +1476,8 @@ impl std::fmt::Debug for AccountCommand {
             Self::InspectCloudDocument { .. } => "AccountCommand::InspectCloudDocument",
             Self::RemoveCloudFile { .. } => "AccountCommand::RemoveCloudFile",
             Self::InspectCloudSubscription { .. } => "AccountCommand::InspectCloudSubscription",
+            Self::InspectCloudAccess { .. } => "AccountCommand::InspectCloudAccess",
+            Self::StartCheckout { .. } => "AccountCommand::StartCheckout(<redacted>)",
             Self::SetProfileCloudSync { .. } => "AccountCommand::SetProfileCloudSync(<redacted>)",
             Self::InspectCloudSync { .. } => "AccountCommand::InspectCloudSync",
             Self::ListProfiles => "AccountCommand::ListProfiles",
@@ -1786,6 +1845,18 @@ impl std::fmt::Debug for CloudSyncProfile {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudSubscriptionKind {
+    Trialing,
+    Active,
+    PastDue,
+    Unpaid,
+    Paused,
+    Incomplete,
+    Complimentary,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AccountOperationResult {
@@ -1828,6 +1899,20 @@ pub enum AccountOperationResult {
         /// Older Agents omit this; clients then retain the legacy decision.
         #[serde(default)]
         access: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subscription_kind: Option<CloudSubscriptionKind>,
+    },
+    /// Onboarding / trial verification decision (`Some(true)` = trialing,
+    /// active, or complimentary Cloud access; `Some(false)` = none; `None` =
+    /// billing unavailable).
+    CloudAccess {
+        request_id: u64,
+        active: Option<bool>,
+    },
+    /// Outcome of a browser checkout attempt started by `StartCheckout`.
+    CheckoutFinished {
+        active: bool,
+        cancelled: bool,
     },
     /// Every local Profile's Cloud sync state, after a read or a change. A
     /// Profile absent from the list has no Cloud sync state on this device.
@@ -1910,6 +1995,8 @@ impl std::fmt::Debug for AccountOperationResult {
             Self::CloudDocumentInspection { .. } => "CloudDocumentInspection(<redacted>)",
             Self::CloudFileRemoval { .. } => "CloudFileRemoval(<redacted>)",
             Self::CloudSubscription { .. } => "CloudSubscription(<redacted>)",
+            Self::CloudAccess { .. } => "CloudAccess(<redacted>)",
+            Self::CheckoutFinished { .. } => "CheckoutFinished(<redacted>)",
             Self::CloudSync { .. } => "CloudSync(<redacted>)",
             Self::AccountSelected { .. } => "AccountSelected(<redacted>)",
             Self::AccountCreationRequired => "AccountCreationRequired",

@@ -44,7 +44,8 @@ fn desktop_delivery_preserves_duplicate_fields_and_success_html() {
         callback.values("grant").collect::<Vec<_>>(),
         ["first", "second"]
     );
-    assert!(response.contains(CALLBACK_SUCCESS_HTML));
+    assert!(response.contains(callback_success_html()));
+    assert!(response.contains("data:image/png;base64,"));
     assert!(response.contains("window.close()"));
 }
 
@@ -55,7 +56,8 @@ fn desktop_delivery_rejects_wrong_state_and_keeps_error_page_visible() {
         panic!("foreign state was accepted")
     };
     assert_eq!(error.code, "callback_invalid");
-    assert!(response.contains(CALLBACK_ERROR_HTML));
+    assert!(response.contains(callback_error_html()));
+    assert!(response.contains("data:image/png;base64,"));
     assert!(!response.contains("window.close()"));
     assert!(!response.contains("secret"));
 }

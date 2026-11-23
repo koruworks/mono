@@ -22,11 +22,19 @@ pub struct State {
 /// The hover treatment. `Default` is the neutral tint; `Danger` is the
 /// caption Close's red, kept as a tone of the same button rather than a
 /// second component.
+///
+/// `Quiet` is the neutral tint with **an on state said by the glyph alone**:
+/// an `active` button still shows its filled glyph, and nothing else — no
+/// accent plate under it and no accent ink. For a toggle that sits among
+/// other chrome and is on most of the time, where a lit one would be the
+/// loudest thing in the strip: a pane toggle in a caption. What `active`
+/// means is unchanged; the tone only says how loudly it is drawn.
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub enum Tone {
     #[default]
     Default,
     Danger,
+    Quiet,
 }
 
 /// An icon control with a typed click result.
@@ -129,8 +137,8 @@ impl Metrics {
         icon_size: theme::CAPTION_ICON,
         padding_x: 0.0,
         padding_y: 0.0,
-        inset_top: theme::TAB_INSET_TOP,
-        inset_bottom: theme::TAB_INSET_BOTTOM,
+        inset_top: theme::CAPTION_INSET_TOP,
+        inset_bottom: theme::CAPTION_INSET_BOTTOM,
         radius: 6.0,
     };
 
@@ -211,6 +219,41 @@ pub fn draw_toned(
         state,
         Metrics::STANDARD,
         tone,
+        false,
+        theme::p(),
+    );
+}
+
+/// The control with everything a caller can say about it: its metrics, its
+/// [`Tone`], and whether the keyboard is on it.
+///
+/// While `focused`, the button's chip — the square its hover plate fills —
+/// is ringed in the palette's `focus_ring` at twice a border's weight: the
+/// mark [`crate::chip::Chip`] and [`crate::toggle::Toggle`] draw. A button
+/// that is switched off shows no ring: the keyboard does not stop on it.
+#[allow(clippy::too_many_arguments)]
+#[track_caller]
+pub fn draw_focused(
+    canvas: &mut Scene,
+    root: Affine,
+    engine: &mut TextEngine,
+    slot: Rect,
+    glyph: char,
+    state: State,
+    metrics: Metrics,
+    tone: Tone,
+    focused: bool,
+) {
+    paint(
+        canvas,
+        root,
+        engine,
+        slot,
+        glyph,
+        state,
+        metrics,
+        tone,
+        focused,
         theme::p(),
     );
 }
@@ -235,6 +278,7 @@ pub fn draw_with(
         state,
         metrics,
         Tone::Default,
+        false,
         theme::p(),
     );
 }
@@ -262,6 +306,7 @@ pub fn draw_with_in(
         state,
         metrics,
         Tone::Default,
+        false,
         palette,
     );
 }
@@ -276,12 +321,15 @@ fn paint(
     state: State,
     metrics: Metrics,
     tone: Tone,
+    focused: bool,
     palette: &theme::Palette,
 ) {
     let _inspection = inspect_icon(root, slot, state, metrics, tone, Some(glyph));
     let chip = hover_chip_with(slot, metrics);
     let danger = tone == Tone::Danger;
-    if state.active && !state.disabled {
+    // A quiet button's on state is its filled glyph and nothing else.
+    let lit = state.active && tone != Tone::Quiet;
+    if lit && !state.disabled {
         scene::fill(
             canvas,
             root,
@@ -302,6 +350,9 @@ fn paint(
             &scene::rrect(chip.x, chip.y, chip.w, chip.h, metrics.radius),
         );
     }
+    if focused && !state.disabled {
+        crate::button::focus_stroke(canvas, root, palette, chip, metrics.radius, 1.0);
+    }
     let layout = if state.active {
         engine.icon_layout_filled(glyph, metrics.icon_size)
     } else {
@@ -309,7 +360,7 @@ fn paint(
     };
     let colour = if state.disabled {
         palette.text_dim.multiply_alpha(0.45)
-    } else if state.active {
+    } else if lit {
         palette.accent
     } else if state.hovered {
         if danger {
@@ -495,6 +546,123 @@ mod tests {
             Metrics::COMPACT.control_height(),
             Metrics::COMPACT.icon_size + 8.0
         );
+    }
+
+    const SLOT: Rect = Rect {
+        x: 4.0,
+        y: 4.0,
+        w: 26.0,
+        h: 26.0,
+    };
+
+    fn state(hovered: bool, active: bool) -> State {
+        State {
+            hovered,
+            active,
+            disabled: false,
+        }
+    }
+
+    fn painted(state: State, tone: Tone, focused: bool) -> Scene {
+        let mut engine = TextEngine::new();
+        let mut canvas = Scene::new();
+        draw_focused(
+            &mut canvas,
+            Affine::IDENTITY,
+            &mut engine,
+            SLOT,
+            icons::PANEL_LEFT,
+            state,
+            Metrics::INLINE,
+            tone,
+            focused,
+        );
+        canvas
+    }
+
+    fn same(a: &Scene, b: &Scene) -> bool {
+        let (a, b) = (a.encoding(), b.encoding());
+        a.path_tags == b.path_tags
+            && a.path_data == b.path_data
+            && a.draw_tags == b.draw_tags
+            && a.draw_data == b.draw_data
+            && a.styles == b.styles
+    }
+
+    /// The older entry points are `draw_focused` without the ring, path for
+    /// path, so no existing caller changed.
+    #[test]
+    fn the_existing_entry_points_paint_what_they_painted() {
+        for (hovered, active) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut engine = TextEngine::new();
+            let mut canvas = Scene::new();
+            draw_with(
+                &mut canvas,
+                Affine::IDENTITY,
+                &mut engine,
+                SLOT,
+                icons::PANEL_LEFT,
+                state(hovered, active),
+                Metrics::INLINE,
+            );
+            assert!(same(
+                &canvas,
+                &painted(state(hovered, active), Tone::Default, false)
+            ));
+        }
+    }
+
+    /// A quiet button that is on is the filled glyph in the ordinary ink:
+    /// no plate at rest, the neutral plate under the pointer, exactly as
+    /// when it is off but for the glyph.
+    #[test]
+    fn a_quiet_button_says_on_with_its_glyph_alone() {
+        let plates = |scene: &Scene| scene.encoding().draw_tags.len();
+        let on = painted(state(false, true), Tone::Quiet, false);
+        let off = painted(state(false, false), Tone::Quiet, false);
+        let lit = painted(state(false, true), Tone::Default, false);
+        assert_eq!(plates(&on), plates(&off), "no plate under a quiet on state");
+        assert_eq!(
+            plates(&lit),
+            plates(&on) + 1,
+            "the accent plate is Default's"
+        );
+        assert!(!same(&on, &off), "the glyph is the filled one");
+        // The ink is the one an off button has: the same colors are drawn.
+        assert_eq!(on.encoding().draw_data, off.encoding().draw_data);
+        assert_ne!(on.encoding().draw_data, lit.encoding().draw_data);
+        // Under the pointer it lights as an off button does.
+        let hot_on = painted(state(true, true), Tone::Quiet, false);
+        let hot_off = painted(state(true, false), Tone::Quiet, false);
+        assert_eq!(plates(&hot_on), plates(&on) + 1);
+        assert_eq!(
+            hot_on.encoding().draw_data,
+            hot_off.encoding().draw_data,
+            "the neutral plate and the hover ink, on or off"
+        );
+        // Off, a quiet button is a default one.
+        assert!(same(
+            &off,
+            &painted(state(false, false), Tone::Default, false)
+        ));
+    }
+
+    #[test]
+    fn the_focus_ring_is_one_stroke_more_and_none_on_a_disabled_button() {
+        let plain = painted(state(false, false), Tone::Quiet, false);
+        let ringed = painted(state(false, false), Tone::Quiet, true);
+        assert_eq!(
+            ringed.encoding().draw_tags.len(),
+            plain.encoding().draw_tags.len() + 1
+        );
+        let off = State {
+            disabled: true,
+            ..State::default()
+        };
+        assert!(same(
+            &painted(off, Tone::Default, true),
+            &painted(off, Tone::Default, false)
+        ));
     }
 
     #[test]

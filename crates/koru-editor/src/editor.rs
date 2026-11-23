@@ -52,6 +52,19 @@ use koru_workspace::{self, Workspace};
 /// after a page-down does not wait, long enough to read as motion rather than
 /// a jump.
 const SCROLL_ANIM_SECS: f32 = 0.15;
+
+/// Prepare the editor's final geometry without shaping rows. Both resize and
+/// combined catch-up use the same effective-width invalidation rule.
+fn prepare_viewport(body: &mut Body, view: &mut ViewState, w: f32, h: f32) {
+    let mode = view.view_mode;
+    let old = mode.effective_w(view.viewport.0);
+    let new = mode.effective_w(w);
+    if (old - new).abs() > 0.5 {
+        body.invalidate();
+    }
+    view.viewport = (w, h);
+    view.content_x = mode.content_x(w);
+}
 /// Selection drags begin scrolling before the pointer has to leave the window.
 const DRAG_SCROLL_EDGE: f32 = 48.0;
 /// Maximum edge-drag speed. Distance into the edge band scales up to this.
@@ -338,6 +351,34 @@ pub fn prepare(workspace: &mut Workspace) {
 }
 
 impl Editor {
+    /// The words read out of the picture whose blob address is `hash`, when
+    /// the host has them. See [`ViewState::picture_texts`].
+    pub fn picture_text(&self, hash: &str) -> Option<&str> {
+        self.view.picture_texts.get(hash).map(|text| &**text)
+    }
+
+    /// Record the words read out of one picture, or forget them with `None`.
+    /// Text that is only whitespace counts as none: there is nothing to find,
+    /// copy or say. Returns whether anything changed.
+    pub fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        let text = text.filter(|text| !text.trim().is_empty());
+        if self.picture_text(hash) == text {
+            return false;
+        }
+        match text {
+            Some(text) => {
+                self.view
+                    .picture_texts
+                    .insert(hash.to_owned(), std::sync::Arc::from(text));
+            }
+            None => {
+                self.view.picture_texts.remove(hash);
+            }
+        }
+        self.view.picture_texts_revision = self.view.picture_texts_revision.wrapping_add(1);
+        true
+    }
+
     /// A view over a document that already exists — another window, or a test.
     /// It adds nothing to the document — pair it with [`prepare`] when the
     /// workspace may be empty.
@@ -475,12 +516,149 @@ pub trait Editing {
     fn view(&self) -> &ViewState;
     fn view_mut(&mut self) -> &mut ViewState;
 
+    /// Native input composes over one stable authored range. The host must
+    /// qualify events by editable-target lifetime and cancel before retargeting.
+    /// Preedit never writes the document; Commit uses the ordinary typing path.
+    fn ime(&mut self, ws: &mut WorkspaceDoc, event: &winit::event::Ime) -> bool {
+        use winit::event::Ime;
+        if matches!(event, Ime::Disabled) {
+            return self.ime_cancel(ws);
+        }
+        if !self.view().active
+            || self.view().read_only
+            || self.view().overlay.is_open()
+            || self.body().focused().is_none_or(|row| {
+                row.image.is_some()
+                    || row.kind == Kind::Divider
+                    || row.diagram_shows_picture()
+                    || (row.table.is_some() && !row.table_source_visible)
+            })
+            || self
+                .body()
+                .composition()
+                .is_some_and(|c| c.native_cursor.is_none())
+        {
+            return false;
+        }
+        if matches!(event, Ime::Enabled) {
+            return true;
+        }
+        if self.body().composition().is_none() {
+            let (body, view) = self.parts();
+            if !crate::dictation::begin_native(body, view, ws) {
+                return false;
+            }
+        }
+        match event {
+            Ime::Preedit(text, cursor) => {
+                let cursor = cursor.filter(|(a, f)| {
+                    *a <= text.len()
+                        && *f <= text.len()
+                        && text.is_char_boundary(*a)
+                        && text.is_char_boundary(*f)
+                });
+                let open = self.body_mut().composition_mut().unwrap();
+                let same = open.text() == text;
+                let id = open.node();
+                open.set_text(text);
+                open.native_cursor = Some(cursor);
+                if same {
+                    // A cursor-only update needs no row read or text shaping.
+                    let start = open.range(ws).map(|r| r.start);
+                    if let Some(row) = self.body_mut().row_mut(id) {
+                        row.ime_caret_hidden = cursor.is_none();
+                        if let Some(start) = start {
+                            let (a, f) = cursor.unwrap_or((text.len(), text.len()));
+                            row.place_selection(start + a, start + f);
+                            row.apply_pending();
+                        }
+                    }
+                } else {
+                    self.body_mut().refresh(ws, id);
+                    self.reflow();
+                }
+                if cursor.is_some() {
+                    self.scroll_to_caret();
+                }
+                true
+            }
+            Ime::Commit(text) => {
+                let open = self.body().composition().unwrap().clone();
+                let resolved = open.resolve(ws);
+                let id = open.node();
+                if text.is_empty() || resolved.is_none() || self.body().row(id).is_none() {
+                    self.ime_cancel(ws);
+                    return true;
+                }
+                self.body_mut().close_composition();
+                self.body_mut().refresh(ws, id);
+                self.body_mut().focus_on(id);
+                self.body_mut().clear_selection();
+                // Canonical insertion reads the authored selection from the
+                // row's layout. Shape just that row to restore it; the final
+                // settle positions the document once, after the real edit.
+                let (a, f) = resolved.unwrap();
+                let (body, view) = self.parts();
+                let row = body.row_mut(id).unwrap();
+                rowlayout::build_row(
+                    &mut view.engine,
+                    row,
+                    view.view_mode.effective_w(view.viewport.0),
+                );
+                row.select_range_now(a, f);
+                row.restore_armed(open.armed);
+                ws.checkpoint();
+                self.insert_text(ws, text);
+                if text.chars().any(char::is_whitespace) {
+                    self.view_mut().word_completed = Some(id);
+                }
+                ws.checkpoint();
+                self.settle();
+                self.sync_trigger_range(ws);
+                true
+            }
+            Ime::Enabled | Ime::Disabled => unreachable!(),
+        }
+    }
+
+    /// Discard only native preedit, restoring the directed authored selection
+    /// and armed formatting. Voice owns its independent lifecycle.
+    fn ime_cancel(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let Some(open) = self
+            .body()
+            .composition()
+            .filter(|c| c.native_cursor.is_some())
+            .cloned()
+        else {
+            return false;
+        };
+        let id = open.node();
+        let resolved = open.resolve(ws);
+        self.body_mut().close_composition();
+        self.body_mut().refresh(ws, id);
+        if let (Some((a, f)), Some(row)) = (resolved, self.body_mut().row_mut(id)) {
+            row.place_selection(a, f);
+            row.restore_armed(open.armed);
+        }
+        self.reflow();
+        true
+    }
+
+    /// Caret in this editor's local logical coordinates. A hidden native
+    /// cursor answers None without withdrawing the editable target itself.
+    fn ime_cursor_area(&self) -> Option<Rect> {
+        if self.body().focused()?.ime_caret_hidden {
+            return None;
+        }
+        self.caret_screen_rect()
+    }
+
     /// Open a dictation over the focused row's selection, or at its caret.
     /// See [`crate::dictation`] — these five are the whole seam, and the
     /// controller above them (Plan 2.4) owns when each is called.
     ///
-    /// **An ordinary local event commits an open composition and is then
-    /// re-dispatched**, which is what a keyboard IME does; a *lifecycle* event
+    /// **An ordinary local event commits an open voice composition and is then
+    /// re-dispatched**. Native preedit is cancelled instead; a *lifecycle* event
     /// — window closed, focus lost, machine slept — cancels instead.
     fn begin_dictation(&mut self, ws: &mut WorkspaceDoc) -> bool {
         let (body, view) = self.parts();
@@ -1385,20 +1563,23 @@ pub trait Editing {
 
     // ------------------------------------------------------------ layout
 
+    /// Settle a retained editor at its new viewport in one reflow, preserving
+    /// the full catch-up path's stable overlay anchors and picker refresh.
+    /// The host drains pending changes before calling, as for `catch_up`.
+    fn catch_up_at_viewport(&mut self, ws: &WorkspaceDoc, w: f32, h: f32) {
+        let (body, view) = self.parts();
+        prepare_viewport(body, view, w, h);
+        self.catch_up(ws);
+    }
+
     fn set_viewport(&mut self, w: f32, h: f32) {
-        let mode = self.view().view_mode;
         // Compare *effective* widths, not raw ones: in Page/Narrow the rows wrap
         // to the page width, so growing the window past it leaves the wrap
         // unchanged and there is nothing to invalidate. This is also what keeps
         // a live resize cheap in a page mode — only a change that actually
         // moves the wrap pays for a reflow.
-        let old = mode.effective_w(self.view().viewport.0);
-        let new = mode.effective_w(w);
-        if (old - new).abs() > 0.5 {
-            self.body_mut().invalidate();
-        }
-        self.view_mut().viewport = (w, h);
-        self.view_mut().content_x = mode.content_x(w);
+        let (body, view) = self.parts();
+        prepare_viewport(body, view, w, h);
         self.reflow();
     }
 
@@ -1888,6 +2069,35 @@ pub trait Editing {
         true
     }
 
+    /// **Land in-page find on a picture whose read words matched** (OCR
+    /// EXPERIENCE §3), the way global search lands on one: the picture's row
+    /// is brought into the search band and its frame flashed for the same
+    /// deadline. Like [`reveal_text_range`](Self::reveal_text_range) it leaves
+    /// the selection alone, so the find field keeps the keyboard; the words
+    /// that matched are not in the document, so there is nothing to light.
+    fn reveal_picture(&mut self, id: NodeId) -> bool {
+        let Some(i) = self.body().index_of(id) else {
+            return false;
+        };
+        self.shape_row_now(i);
+        let Some(row) = self.body().rows.get(i) else {
+            return false;
+        };
+        if row.image.is_none() {
+            return false;
+        }
+        let (top, bottom) = (row.y, row.y + row.height);
+        self.body_mut().focus = i;
+        self.view_mut().desired_x = None;
+        self.scroll_search_band_into_view(top, bottom);
+        self.view_mut().search_flash = Some(SearchFlash {
+            node: id,
+            range: 0..0,
+            until: Instant::now() + SEARCH_FLASH_DURATION,
+        });
+        true
+    }
+
     /// Reveal one exact local-search range without turning it into the
     /// document selection. The search field keeps keyboard focus while this
     /// moves the document underneath it.
@@ -2184,7 +2394,12 @@ pub trait Editing {
         let oy = row.y - self.view().scroll;
         let bb = rowlayout::caret_geometry(row, &self.view().engine.pills, theme::caret_w());
         let (baseline, ascent, descent) = koru_draw::text::TextEngine::line_ink(&row.layout, bb);
-        let r = theme::caret_rect(bb, baseline, ascent, descent, ox, oy);
+        let slant = if crate::draw::italic_at_caret(row) {
+            theme::CARET_ITALIC_SLANT_DEG
+        } else {
+            0.0
+        };
+        let r = theme::caret_bounds(bb, baseline, ascent, descent, ox, oy, slant);
         Some(Rect::new(
             r.x0 as f32,
             r.y0 as f32,
@@ -4420,6 +4635,7 @@ pub trait Editing {
         mods: ModifiersState,
     ) -> bool {
         let before = ws.version();
+        self.ime_cancel(ws);
         let handled = self.key_inner(ws, key, text, mods);
         if ws.version() != before {
             self.body_mut().settle_local(ws);
@@ -8599,6 +8815,7 @@ pub trait Editing {
     /// Returns true if a redraw is needed.
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         let before = ws.version();
+        self.ime_cancel(ws);
         let handled = self.mouse_down_inner(ws, x, y, ctrl);
         if ws.version() != before {
             self.body_mut().settle_local(ws);
@@ -14793,7 +15010,7 @@ mod tests {
         assert_eq!(e.view.cursor_icon(), koru_ui::cursor::PRESS);
     }
 
-    /// Ctrl+Shift+L after Ctrl+Shift+E has to bring the row back to the left.
+    /// Ctrl+L after Ctrl+E has to bring the row back to the left.
     ///
     /// `set_align`'s "press it again to undo it" rule reads the *current*
     /// alignment, and left is the value an unaligned row already reports — so

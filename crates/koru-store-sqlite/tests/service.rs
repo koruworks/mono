@@ -2729,3 +2729,67 @@ fn renaming_a_file_renames_its_note() {
         "Final report.pdf"
     );
 }
+
+#[test]
+fn a_provisioned_profile_can_create_a_workspace_before_identity_bytes_arrive() {
+    use koru_store_core::ProfileAccountBinding;
+    use koru_store_core::profile_units::{IdentityManifest, ProfileUnitRef};
+
+    let mut f = Fixture::new();
+    let profile_id = ProfileId::new();
+    let binding =
+        ProfileAccountBinding::parse_identity_id("10000000-0000-4000-8000-000000000001").unwrap();
+    let provisioned = f
+        .store
+        .provision_account_profile(profile_id, binding, "Apple", Locale::default(), at(0))
+        .unwrap();
+    assert_eq!(
+        f.store.profile_version(profile_id).unwrap_err().code(),
+        Code::VersionUnavailable
+    );
+
+    // Creating a workspace under a provisioned placeholder Profile succeeds
+    // without synthesizing a competing IdentityManifest lineage.
+    let ws = f
+        .store
+        .create_workspace(profile_id, "Personal", at(1))
+        .unwrap();
+    assert_eq!(ws.owner, profile_id);
+    assert_eq!(ws.name, "Personal");
+    assert_eq!(
+        f.store.profile_version(profile_id).unwrap_err().code(),
+        Code::VersionUnavailable
+    );
+
+    let (doc_id, _) = f
+        .store
+        .create_document(ws.id, "First note", "page", None, None, at(2))
+        .unwrap();
+    assert_eq!(f.store.documents(ws.id).unwrap()[0].id, doc_id);
+
+    // Once the authoritative Profile identity bytes later arrive, they converge
+    // cleanly without disturbing the workspace created before arrival.
+    let identity = IdentityManifest::create(&provisioned).unwrap();
+    f.store
+        .apply_profile_unit_updates(
+            ProfileUnitRef::Identity {
+                profile: profile_id,
+            },
+            &[identity.export_snapshot().unwrap()],
+        )
+        .unwrap();
+    assert_eq!(
+        f.store.profile_version(profile_id).unwrap(),
+        identity.version()
+    );
+    f.restart();
+    let owned: Vec<_> = f
+        .store
+        .workspaces()
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.owner == profile_id)
+        .collect();
+    assert_eq!(owned.len(), 1);
+    assert_eq!(owned[0].id, ws.id);
+}

@@ -8,11 +8,10 @@
 //! **Nothing here touches disk.** `Workspace::new` is in-memory; only
 //! `Session::open` reaches a directory, and only `App::new` calls it.
 
-use koru_core::node::Node;
 use koru_core::schema::WorkspaceDoc;
 use koru_core::{NodeId, WorkspaceId};
 use koru_workspace::Workspace;
-use winit::keyboard::{Key, ModifiersState};
+use winit::keyboard::Key;
 
 use super::MainView;
 use koru_workspace_host::View;
@@ -87,6 +86,10 @@ pub(super) fn on_document() -> (MainView, Workspace) {
     // already existed and recorded nothing. A test that asserts on recents
     // should start from an empty list.
     v.recents.clear();
+    // This fixture begins on the document; its setup trip from Welcome is not
+    // part of the navigation exercised by its callers.
+    v.history.clear();
+    v.history_at = 0;
     (v, w)
 }
 
@@ -166,26 +169,19 @@ pub(super) fn shell_answers_the_draft(v: &mut MainView, ws: &mut WorkspaceDoc) -
         ),
         "the draft did not ask the shell for a document"
     );
-    // What `Workspace::create_document` leaves behind: a fresh document holding
-    // a titled root and one empty line.
-    *ws = WorkspaceDoc::create(WorkspaceId::new(), "t").expect("create");
-    let root = ws
-        .insert(koru_core::schema::Parent::Root, Node::document("").unwrap())
+    let (profile, workspace) = v.draft_scope().unwrap();
+    let cutting = v
+        .draft_document_content(profile, Some(workspace))
+        .unwrap()
         .unwrap();
-    ws.insert(
-        koru_core::schema::Parent::Node(root),
-        Node::paragraph("").unwrap(),
-    )
-    .unwrap();
-    // `None`: this harness stands in for a workspace with no manifest, where a
-    // tab carries no `DocumentId` either.
-    v.show_active_document(ws, None);
-    // The swap lands on the next key, where the document is available mutably.
-    v.key(
-        ws,
-        &Key::Named(winit::keyboard::NamedKey::Shift),
-        None,
-        ModifiersState::empty(),
-    );
+    // The same pure initializer the Store-backed creation uses, before its
+    // first content publication. No seed is exposed and then deleted.
+    *ws = WorkspaceDoc::create(ws.id().unwrap(), "t").expect("create");
+    let document = koru_core::DocumentId::new();
+    ws.stamp_document_id(document).unwrap();
+    let root = koru_workspace::initialize_document_from_cutting(ws, &cutting, "").unwrap();
+    assert!(v.created_document(ws, document));
+    // The ordinary visible-frame boundary sizes the new, lazily built Leaf.
+    v.size_visible_groups();
     root
 }

@@ -54,6 +54,10 @@ const MIGRATED: &[&str] = &[
     // The composer's `$` skill list (koru-ai D121): a name and its line a
     // row; its tokens are in `skills/tokens.rs`.
     "crates/koru-ai-ui/src/skills/elements.rs",
+    // The first-run setup card (welcome PLAN.final, I1): its tree and its
+    // leaves; its tokens are in `onboarding/setup/tokens.rs`.
+    "crates/koru-workspace-host/src/onboarding/setup.rs",
+    "crates/koru-workspace-host/src/onboarding/setup/leaves.rs",
 ];
 
 const ALLOWANCES: &str = include_str!("../../ui-allowances.txt");

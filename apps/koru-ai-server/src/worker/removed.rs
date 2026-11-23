@@ -244,7 +244,7 @@ impl WorkerState {
 
     /// Ask the Store which profiles are removed. A harness with no Store
     /// has none. A profile newly removed has its replies stopped.
-    fn refresh_removed(&mut self) -> ApiResult<()> {
+    pub(in crate::worker) fn refresh_removed(&mut self) -> ApiResult<()> {
         let Some(store) = self.store.clone() else {
             return Ok(());
         };

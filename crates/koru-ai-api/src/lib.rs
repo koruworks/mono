@@ -188,6 +188,11 @@ pub trait AiServerPort: Send + Sync {
         chat: ChatId,
         request: koru_ai_wire::UpdateChatAgentSettingsRequest,
     ) -> Result<koru_ai_wire::UpdateChatAgentSettingsResponse>;
+    fn mini_app_tool(
+        &self,
+        context: RequestContext,
+        request: koru_ai_wire::MiniAppToolRequest,
+    ) -> Result<koru_ai_wire::MiniAppToolResponse>;
     fn tool_list_chats(
         &self,
         context: RequestContext,

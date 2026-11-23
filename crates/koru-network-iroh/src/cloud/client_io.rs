@@ -59,6 +59,12 @@ pub enum Event {
     Deferred(Start),
     /// The remote receiver deferred this exact upload, without admitting bytes.
     UploadDeferred(Start),
+    /// The current upload was refused, without revoking the read direction.
+    /// Never an acknowledgement and never permission to retry its payload.
+    UploadRefused {
+        start: Start,
+        reason: koru_account_core::cloud_admission::Reason,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -203,6 +209,14 @@ where
             queued_controls: self.controls.len(),
             writing: self.writing.is_some(),
         }
+    }
+    /// Whether the worker's current policy on this stream answers every
+    /// upload start before any body. A timed resource retry may send its
+    /// start only while this is true: absent, paused, not yet learned or a
+    /// closed stream are all false, and nothing carries over from an earlier
+    /// stream, so a held candidate stays held against any other worker.
+    pub fn upload_decision_required(&self) -> bool {
+        self.stream.peer_decision_required()
     }
     fn now(&self) -> u64 {
         self.observed
@@ -587,6 +601,25 @@ where
                 Ok(Event::Progress)
             }
             Record::Peer(frame) => {
+                if let koru_replication::protocol::PeerFrame::Error { code } = &frame
+                    && let Some(reason) =
+                        koru_account_core::cloud_admission::Reason::from_code(code)
+                {
+                    let upload = self.upload.as_ref().ok_or(Error::Invalid)?;
+                    if upload.start.is_some() || upload.acked {
+                        return Err(Error::Invalid);
+                    }
+                    (self.authorize)(upload.unit).map_err(Error::Authority)?;
+                    self.stream.reject_outgoing_admission(now)?;
+                    let upload = self.upload.take().ok_or(Error::Invalid)?;
+                    // Duplex retains any already-started bounded frame until
+                    // it is written. Never discard a partial frame or another
+                    // direction's retained Store job.
+                    return Ok(Event::UploadRefused {
+                        start: upload.advertised,
+                        reason,
+                    });
+                }
                 let (_, metadata) =
                     self.stream
                         .receive_peer_owned(frame, now, &mut self.authorize)?;

@@ -149,6 +149,8 @@ fn send_with(
         context(),
         SendTurnRequest {
             destination_workspace: None,
+            mini_app_host: None,
+            mini_app_refinement: None,
             operation_id: Uuid::new_v4(),
             chat_id,
             surface: AiSurface::Standalone,

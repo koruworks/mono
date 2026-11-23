@@ -28,6 +28,12 @@ pub(crate) async fn serve(
             WorkerCommand::Noop(reply) => {
                 let _ = reply.send(());
             }
+            WorkerCommand::CatalogChanged => {
+                state.notify_catalog_change();
+                // The workspaces surfaces list again on a journal fact, not
+                // on the generation above.
+                state.publish_catalog_event(koru_events::WorkspaceTrashedInAccountChanged);
+            }
             WorkerCommand::Status(reply) => {
                 let _ = reply.send(StoreWorkerInfo {
                     api_version: state.api_version(),

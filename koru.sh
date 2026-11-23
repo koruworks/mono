@@ -280,17 +280,37 @@ builds_voice_worker() {
 WORKSPACE_EXCLUDES=()
 builds_voice_worker || WORKSPACE_EXCLUDES=(--exclude koru-voice-worker)
 
+# **Where this host's read worker links ONNX Runtime from**, or nothing where
+# no library is pinned: the directory the fetch script extracts it into
+# (koru-read-paddle's artifacts module holds the pins). Linux x86_64 and Apple
+# silicon have one; an Intel Mac or Linux aarch64 builds the read worker
+# without recognition.
+host_ort_lib_dir() {
+  local archive
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64)  archive=sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib ;;
+    Darwin-arm64)  archive=sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib ;;
+    *) return 1 ;;
+  esac
+  echo "$PWD/third-party/sherpa-onnx/1.13.6/$archive/lib"
+}
+
 ensure_voice_runtime() {
-  # Status 3 is the script saying this platform has no voice runtime
-  # provisioned (Linux until its voice rung). It has said so in one line;
-  # nothing here will build voice, so the CMake and libclang checks below
-  # would only fail a command that does not need them.
-  local fetched=0
-  bash scripts/setup/fetch-voice-runtime.sh || fetched=$?
-  if [ "$fetched" = 3 ]; then
+  bash scripts/setup/fetch-voice-runtime.sh || return
+  # The script also extracted the ONNX Runtime library the read worker's
+  # recognition links; only a build with `koru-read-worker/recognition` reads
+  # ORT_LIB_PATH, and every other build ignores it.
+  local ort_lib_dir
+  if ort_lib_dir="$(host_ort_lib_dir)"; then
+    export ORT_LIB_PATH="${ORT_LIB_PATH:-$ort_lib_dir}"
+  fi
+  # **Linux places the reader's library, not a voice runtime.** The script
+  # placed upstream's TTS-free Linux archive for the library above; nothing
+  # here builds voice (D4a), so the CMake and libclang checks below would only
+  # fail a command that does not need them.
+  if ! builds_voice_worker; then
     return 0
   fi
-  [ "$fetched" = 0 ] || return "$fetched"
   export SHERPA_ONNX_ARCHIVE_DIR="$PWD/third-party/sherpa-onnx/1.13.6"
   if ! command -v cmake >/dev/null 2>&1; then
     echo "[Koru] voice build needs CMake. Install it, then retry." >&2
@@ -322,6 +342,8 @@ usage: ./koru.sh <command> [cargo args...]
              (run and run-all read .env.production; with none, Koru Cloud is not configured)
   stop-all   stop this worktree's Agent, services, voice worker and Koru
   jank       ...with the stall watch on, logging to koru-jank.log
+  ui         open the UI Lab in its own window: Koru's real components over
+             synthetic data, no profile or services; ui [--window-size WxH]
   release    launch an optimised build
   release-tool run any koru-release subcommand; dist-* ones get the fonts first
   voice-models fetch, repackage and publish the speech models (dry run by default)
@@ -487,8 +509,12 @@ run_all_verb() {
   local -a packages=(-p koru-agent -p koru)
   builds_voice_worker && packages+=(-p koru-voice-worker)
   # The read worker is the Store's sibling (resolved beside koru-agent, whose
-  # gateway worker hosts the Store). Pure Rust, so every platform builds it.
+  # gateway worker hosts the Store). Every platform builds it, and where an
+  # ONNX Runtime library is pinned (Linux x86_64, Apple silicon) it builds with
+  # recognition, as run-all.ps1 does on Windows: ensure_voice_runtime below
+  # extracts the library and points ORT_LIB_PATH at it.
   packages+=(-p koru-read-worker)
+  host_ort_lib_dir >/dev/null && packages+=(--features koru-read-worker/recognition)
   local mcp=0
   for arg in "$@"; do
     case "$arg" in
@@ -816,6 +842,15 @@ case "$sub" in
     ;;
   run-all)  run_all_verb "$@" ;;
   stop-all) stop_all_verb "$@" ;;
+  # The UI Lab: this binary as `koru --ui`, in its own process. Not a kind of
+  # `run`: no .env.production is read, because the Lab opens no profile, Store
+  # or Cloud. Everything after the verb goes to the app, with or without a
+  # leading `--`:  ./koru.sh ui --window-size 1280x800
+  ui)
+    ensure_fonts
+    [ "${1:-}" = -- ] && shift
+    exec cargo run -- --ui "$@"
+    ;;
   # The table comes from the binary, not from this script: `koru --envs`
   # prints crates/koru-env's registry, the same one reference/ENV.md is generated
   # from. The built exe answers instantly; cargo only runs when nothing is

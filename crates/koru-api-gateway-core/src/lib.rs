@@ -29,6 +29,7 @@ use koru_store_server::{StoreWorkerInfo, WorkerError, WorkerHandle};
 use koru_store_wire::search::{MAX_PAGE_SIZE, SearchRequest, SearchResponse};
 
 mod docs_viewer;
+pub mod mini_app_pins;
 mod session_bridge;
 mod session_routes;
 pub mod settings;
@@ -458,6 +459,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         client: "client.ai().tool_search_chats",
         http: "POST /v1/ai/tools/chats/search",
         reason: "Chat tools are an MCP and provider-facing surface, not a mobile chat operation",
+    },
+    MobileUnavailableOperation {
+        id: "ai.mini_app_tool",
+        client: "client.ai().mini_app_tool",
+        http: "POST /v1/ai/tools/mini-app",
+        reason: "Mini-app tools require an exact live desktop host capability",
     },
     MobileUnavailableOperation {
         id: "ai.tool_read_chat",
@@ -1461,6 +1468,7 @@ pub fn router(state: Arc<GatewayState>) -> Router {
         // is this process's own, and falling through to the Store would answer
         // a misleading 404 for a route that exists.
         .merge(settings::router())
+        .merge(mini_app_pins::router())
         // Also ahead of it, and inside the Store's own `/v1/workspaces` prefix
         // on purpose: this is the operation the Store's removal routes exist
         // underneath, and a caller that finds it beside them is a caller that
@@ -2192,6 +2200,7 @@ pub fn public_openapi() -> serde_json::Value {
     schedules::extend_openapi(&mut document);
     run_mcp::extend_openapi(&mut document);
     settings::extend_openapi(&mut document);
+    mini_app_pins::extend_openapi(&mut document);
     workspaces::extend_openapi(&mut document);
     let paths = document["paths"]
         .as_object_mut()
@@ -2377,7 +2386,7 @@ pub fn markdown_reference() -> String {
             koru_delegate_api::CAPABILITY,
         ));
     }
-    for route in settings::ROUTES {
+    for route in settings::ROUTES.iter().chain(mini_app_pins::ROUTES) {
         output.push_str(&format!(
             "## {} `{}`\n\n{}\n\nReturns: {}\n\nRequires: `{}`.\n\n",
             route.method, route.path, route.summary, route.returns, route.scope
@@ -2464,7 +2473,7 @@ pub fn internal_markdown_reference() -> String {
             route.scope.as_str()
         ));
     }
-    for route in settings::ROUTES {
+    for route in settings::ROUTES.iter().chain(mini_app_pins::ROUTES) {
         output.push_str(&format!(
             "- {} `{}` — {} ({})\n",
             route.method, route.path, route.summary, route.scope

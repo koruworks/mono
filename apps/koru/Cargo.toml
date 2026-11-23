@@ -93,6 +93,8 @@ koru-recording = { path = "../../crates/koru-recording" }
 # itself — `koru-workspace-host` does, because the directory is the host's.
 koru-voice-consent = { path = "../../crates/koru-voice-consent" }
 koru-api-client = { path = "../../crates/koru-api-client" }
+koru-artifact-wire = { path = "../../crates/koru-artifact-wire" }
+blake3.workspace = true
 # **Delegating work to an agent** (ROADMAP P1.14). The run's vocabulary,
 # the `/v1/runs` bodies, and P1.7's pin — which this window performs over
 # the gateway rather than over a `Store` it does not have, by implementing
@@ -176,6 +178,9 @@ qrcode.workspace = true
 reqwest.workspace = true
 # GitHub's public release feed remains available when its REST API is rate limited.
 quick-xml.workspace = true
+# The Help links and release list on www.koru.do carry the build as query
+# parameters, encoded by the same parser the rest of the app uses.
+url.workspace = true
 # An AI chat tab's title is capped at twenty graphemes (D22): a flag or a
 # family emoji is one character to the reader, and never cut in half.
 unicode-segmentation.workspace = true
@@ -234,6 +239,7 @@ tempfile.workspace = true
 koru-diagram = { path = "../../crates/koru-diagram" }
 koru-workspace-host = { path = "../../crates/koru-workspace-host", features = ["no-model-reader"] }
 koru-ai-ui = { path = "../../crates/koru-ai-ui", features = ["no-client", "test-support"] }
+koru-ai-server = { path = "../koru-ai-server", features = ["test-support"] }
 koru-socials-ui = { path = "../../crates/koru-socials-ui", features = ["no-reader"] }
 # **The same crate, with `no-reader` on.** A `SearchSurface` built in a test must
 # not dial the store a developer has running, and `cfg(test)` inside

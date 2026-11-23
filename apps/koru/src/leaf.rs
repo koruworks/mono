@@ -332,6 +332,36 @@ impl Leaf {
         }
     }
 
+    pub fn native_ime_target(&self) -> Option<u64> {
+        match self {
+            Self::Document(d) => d.native_ime_target(),
+        }
+    }
+
+    pub fn native_ime_owner(&self) -> u64 {
+        match self {
+            Self::Document(d) => d.native_ime_owner(),
+        }
+    }
+
+    pub fn native_ime(&mut self, ws: &mut WorkspaceDoc, event: &winit::event::Ime) -> bool {
+        match self {
+            Self::Document(d) => d.native_ime(ws, event),
+        }
+    }
+
+    pub fn native_ime_rect(&self) -> Option<Rect> {
+        match self {
+            Self::Document(d) => d.native_ime_rect(),
+        }
+    }
+
+    pub fn native_ime_cancel(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        match self {
+            Self::Document(d) => d.native_ime_cancel(ws),
+        }
+    }
+
     pub fn editable_target(
         &self,
         tab: koru_workspace_host::routing::TabId,
@@ -429,7 +459,9 @@ impl Leaf {
     }
 
     pub fn set_viewport(&mut self, w: f32, h: f32) {
-        Editing::set_viewport(self, w, h)
+        match self {
+            Self::Document(document) => View::set_viewport(document, w, h),
+        }
     }
 
     pub fn adopt(&mut self, ws: &WorkspaceDoc) {
@@ -446,6 +478,13 @@ impl Leaf {
     /// go through [`Editing::catch_up`] now — Q-B4, `ADR-343-overlaycatchup`.
     pub fn catch_up(&mut self, ws: &WorkspaceDoc) {
         Editing::catch_up(self, ws)
+    }
+
+    /// The native document wrapper also sizes any unlifted media viewer.
+    pub fn catch_up_at_viewport(&mut self, ws: &WorkspaceDoc, w: f32, h: f32) {
+        match self {
+            Self::Document(document) => document.catch_up_at_viewport(ws, w, h),
+        }
     }
 
     /// Whether the body's structure changed since the last call — a row was
@@ -1013,6 +1052,18 @@ impl View for Leaf {
     ) -> bool {
         match self {
             Self::Document(d) => View::set_reading_offers(d, target, offers),
+        }
+    }
+
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        match self {
+            Self::Document(d) => View::take_wants_picture_texts(d),
+        }
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        match self {
+            Self::Document(d) => View::set_picture_text(d, hash, text),
         }
     }
 

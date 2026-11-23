@@ -28,7 +28,7 @@ impl MainView {
         let schedules = self.schedule_pill_presentations();
         let mut changed = false;
         for tab in self.tabs_mut().iter_mut() {
-            if let super::TabView::Leaf(leaf) = &mut tab.view {
+            if let Some(leaf) = tab.view.retained_leaf_mut() {
                 changed |= leaf.set_schedule_pills(&schedules);
             }
         }

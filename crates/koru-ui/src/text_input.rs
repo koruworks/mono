@@ -166,6 +166,20 @@ pub struct TextInput {
 }
 
 impl TextInput {
+    /// OS composition shares TextField's authored-value and undo contract.
+    pub fn ime(&mut self, engine: &mut TextEngine, event: &winit::event::Ime) -> bool {
+        self.field.ime(engine, event)
+    }
+
+    pub fn ime_cancel(&mut self, engine: &mut TextEngine) -> bool {
+        self.field.ime_cancel(engine)
+    }
+
+    /// Candidate anchor for the same box passed to draw, in caller coordinates.
+    pub fn ime_cursor_area(&self, rect: Rect) -> Option<Rect> {
+        self.field.ime_cursor_area(rect)
+    }
+
     pub fn new(engine: &mut TextEngine, style: theme::TextStyle) -> Self {
         Self::from_field(TextField::new(engine, style))
     }

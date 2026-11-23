@@ -1,0 +1,17 @@
+{
+  "prompt": "Put the document on the left and tasks on the right",
+  "result": {
+    "version": "1.0",
+    "updateComponents": {
+      "surfaceId": "mini-app-00000000-0000-4000-8000-000000000001",
+      "components": [
+        {
+          "id": "root",
+          "component": "TaskDocument",
+          "children": ["selector", "tasks", "search", "document"],
+          "arrangement": "document-first"
+        }
+      ]
+    }
+  }
+}

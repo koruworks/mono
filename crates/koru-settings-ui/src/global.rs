@@ -28,6 +28,7 @@ use crate::state::{DictionaryRow, RendererRow, VoiceFacts};
 
 #[cfg(test)]
 mod tests;
+mod text_rendering;
 
 /// What the Global pages need. A struct rather than fourteen arguments, and
 /// borrowed rather than cloned: the layout pass runs on every draw.
@@ -86,6 +87,12 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
             .collect(),
     );
 
+    b.card(None);
+    base_row(b, lang, theme::is_dark());
+    accent_row(b, lang, theme::is_dark());
+    text_rendering::rows(b, lang);
+    caret_rows(b, lang);
+    app_font_rows(b, lang);
     b.card(Some(koru_i18n::t(lang, Key::SettingsInterface)));
     b.row_dropdown(
         koru_i18n::t(lang, Key::SettingsIconStyle),
@@ -96,24 +103,6 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
                 (
                     Action::IconPack(koru_settings::IconPackChoice::parse(pack.token())),
                     DropdownOption::new(pack.label(), pack == koru_draw::icons::active_pack()),
-                )
-            })
-            .collect(),
-    );
-    let density_now = theme::density();
-    // Tightest to loosest, not the registry's order. *Comfortable* is not
-    // offered: it did not hold up. A stored Comfortable still parses and still
-    // draws; the row simply ticks neither until somebody picks one.
-    b.row_choice(
-        koru_i18n::t(lang, Key::SettingsDensity),
-        Some(koru_i18n::t(lang, Key::SettingsSpacingOfTextAndControls)),
-        [DensityChoice::Compact, DensityChoice::Normal]
-            .into_iter()
-            .map(|choice| {
-                (
-                    Action::Density(choice),
-                    density_label(lang, choice).to_owned(),
-                    crate::density(choice) == density_now,
                 )
             })
             .collect(),
@@ -170,43 +159,9 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
             ),
         ],
     );
-    font_row(
-        b,
-        lang,
-        FontRole::App,
-        Some(koru_i18n::t(lang, Key::SettingsMenusSidebarAndControls)),
-    );
-    // Beside the app font, whose size it shares: the chat has no size of
-    // its own, as the app font has none.
-    font_row(
-        b,
-        lang,
-        FontRole::Chat,
-        Some(koru_i18n::t(lang, Key::SettingsChatFontHint)),
-    );
-    base_row(b, lang, false);
-    base_row(b, lang, true);
-    accent_row(b, lang, false);
-    accent_row(b, lang, true);
+}
 
-    // The document fonts are seen on a page rather than named: the link opens
-    // a short sample document beside this tab, and it follows every choice
-    // made here. A host that cannot open one gets the plain title.
-    if rows.sample_document {
-        b.caption_with_link(
-            koru_i18n::t(lang, Key::SettingsDocumentFonts),
-            koru_i18n::t(lang, Key::SettingsPreviewInSampleDocument),
-            Action::PreviewSampleDocument,
-        );
-        b.card(None);
-    } else {
-        b.card(Some(koru_i18n::t(lang, Key::SettingsDocumentFonts)));
-    }
-    font_row(b, lang, FontRole::Body, None);
-    font_row(b, lang, FontRole::Headings, None);
-    font_row(b, lang, FontRole::Code, None);
-    doc_size_row(b, lang);
-
+fn caret_rows(b: &mut Builder<'_>, lang: Lang) {
     b.card(Some(koru_i18n::t(lang, Key::SettingsCaret)));
     let color_now = crate::caret_color_choice(theme::caret_color());
     b.row_swatches(
@@ -236,7 +191,7 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
                 (
                     Action::CaretWidth(*choice),
                     DropdownOption::new(
-                        crate::terminal::width_label(rows.lang, named),
+                        crate::terminal::width_label(lang, named),
                         width == width_now,
                     ),
                 )
@@ -250,9 +205,100 @@ pub(crate) fn appearance(b: &mut Builder<'_>, rows: &Rows<'_>) {
                 (
                     Action::CaretHeight(*choice),
                     DropdownOption::new(
-                        crate::terminal::height_label(rows.lang, named),
+                        crate::terminal::height_label(lang, named),
                         height == height_now,
                     ),
+                )
+            })
+            .collect(),
+    );
+}
+
+fn app_font_rows(b: &mut Builder<'_>, lang: Lang) {
+    b.card(Some(koru_i18n::t(lang, Key::SettingsAppFonts)));
+    font_row(
+        b,
+        lang,
+        FontRole::App,
+        Some(koru_i18n::t(lang, Key::SettingsMenusSidebarAndControls)),
+    );
+    let zoom = theme::zoom();
+    let zoom_hint = crate::shortcuts::zoom_hint(lang);
+    b.row_stepper(
+        koru_i18n::t(lang, Key::SettingsZoom),
+        Some(&zoom_hint),
+        format!("{}%", koru_i18n::number::fraction(lang, zoom * 100.0)),
+        "200%",
+        (zoom > theme::ZOOM_MIN).then_some(Action::ZoomOut),
+        (zoom < theme::ZOOM_MAX).then_some(Action::ZoomIn),
+    );
+    // Beside the app font, whose size it shares: the chat has no size of
+    // its own, as the app font has none.
+    font_row(
+        b,
+        lang,
+        FontRole::Chat,
+        Some(koru_i18n::t(lang, Key::SettingsChatFontHint)),
+    );
+    let density_now = theme::density();
+    // Tightest to loosest, not the registry's order. *Comfortable* is not
+    // offered: it did not hold up. A stored Comfortable still parses and still
+    // draws; the row simply ticks neither until somebody picks one.
+    b.row_choice(
+        koru_i18n::t(lang, Key::SettingsDensity),
+        Some(koru_i18n::t(lang, Key::SettingsSpacingOfTextAndControls)),
+        [DensityChoice::Compact, DensityChoice::Normal]
+            .into_iter()
+            .map(|choice| {
+                (
+                    Action::Density(choice),
+                    density_label(lang, choice).to_owned(),
+                    crate::density(choice) == density_now,
+                )
+            })
+            .collect(),
+    );
+    b.row_link(
+        koru_i18n::t(lang, Key::SettingsEditor),
+        Action::ShowPage(crate::PageId::Editor),
+        koru_i18n::t(lang, Key::SettingsSeeEditorSettings),
+    );
+}
+
+fn document_font_rows(b: &mut Builder<'_>, rows: &Rows<'_>) {
+    let lang = rows.lang;
+    // The document fonts are seen on a page rather than named: the link opens
+    // a short sample document beside this tab, and it follows every choice
+    // made here. A host that cannot open one gets the plain title.
+    if rows.sample_document {
+        b.caption_with_link(
+            koru_i18n::t(lang, Key::SettingsDocumentFonts),
+            koru_i18n::t(lang, Key::SettingsPreviewInSampleDocument),
+            Action::PreviewSampleDocument,
+        );
+        b.card(None);
+    } else {
+        b.card(Some(koru_i18n::t(lang, Key::SettingsDocumentFonts)));
+    }
+    font_row(b, lang, FontRole::Body, None);
+    font_row(b, lang, FontRole::Headings, None);
+    font_row(b, lang, FontRole::Code, None);
+    doc_size_row(b, lang);
+    b.row_dropdown(
+        koru_i18n::t(lang, Key::SettingsHeadingWeight),
+        None,
+        [500, 600]
+            .into_iter()
+            .map(|weight| {
+                let label = koru_i18n::number::fraction(lang, weight as f32);
+                let label = if weight == koru_settings::text_rendering::DEFAULT_HEADING_WEIGHT {
+                    koru_i18n::fill(koru_i18n::t(lang, Key::SettingsTextDefaultValue), &[&label])
+                } else {
+                    label
+                };
+                (
+                    Action::HeadingWeight(weight),
+                    DropdownOption::new(label, weight == theme::chosen_heading_weight()),
                 )
             })
             .collect(),
@@ -317,7 +363,7 @@ fn accent_row(b: &mut Builder<'_>, lang: Lang, dark: bool) {
     b.row_swatches(koru_i18n::t(lang, label), None, swatches);
 }
 
-/// The document body size: last in *Document fonts*, labelled in px.
+/// The document body size in *Document fonts*, labelled in px.
 ///
 /// Ticks the size in force — the choice, or the default while there is none —
 /// never the one being previewed.
@@ -367,16 +413,28 @@ fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>)
                 .in_face(theme::chosen_font(theme::FontSlot::Ui).stack()),
         ));
     }
-    options.extend(theme::FontChoice::ALL.iter().map(|family| {
-        (
-            Action::Font(role, *family),
-            DropdownOption::new(
-                family.label(),
-                !follows && missing.is_none() && *family == current,
-            )
-            .in_face(family.stack()),
-        )
-    }));
+    // Promote the Windows face through the existing installed-family setting;
+    // do not introduce a second stored identity for a named system font.
+    let featured = if cfg!(target_os = "windows") {
+        koru_draw::installed_fonts::resolve("Segoe UI").map(theme::FontChoice::Installed)
+    } else {
+        None
+    };
+    options.extend(
+        featured
+            .into_iter()
+            .chain(theme::FontChoice::ALL.iter().copied())
+            .map(|family| {
+                (
+                    Action::Font(role, family),
+                    DropdownOption::new(
+                        family.label(),
+                        !follows && missing.is_none() && family == current,
+                    )
+                    .in_face(family.stack()),
+                )
+            }),
+    );
     if let Some(name) = missing {
         options.push((
             Action::FontSetting(role, theme::font_setting(role.slot())),
@@ -387,6 +445,7 @@ fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>)
         ));
     } else if let theme::FontChoice::Installed(_) = current
         && !follows
+        && Some(current) != featured
     {
         // The installed family in force, listed after the bundled ones, ticked
         // and drawn in its own face. Not while the chat follows the app font,
@@ -407,6 +466,7 @@ fn font_row(b: &mut Builder<'_>, lang: Lang, role: FontRole, hint: Option<&str>)
 
 pub(crate) fn editor(b: &mut Builder<'_>, rows: &Rows<'_>) {
     let lang = rows.lang;
+    document_font_rows(b, rows);
     documents(b, lang, rows.layout_applied);
     spelling(b, rows);
     voice(b, rows);
@@ -458,15 +518,17 @@ fn documents(b: &mut Builder<'_>, lang: Lang, applied: bool) {
     if mode == theme::ViewMode::Page {
         b.row_swatches(
             koru_i18n::t(lang, Key::SettingsPageBackground),
-            Some(koru_i18n::t(
-                lang,
-                Key::SettingsPressToStepThroughThePageColors,
-            )),
-            vec![(
-                Action::CanvasBackground,
-                Some(crate::canvas_swatch_color(theme::default_canvas_bg())),
-                false,
-            )],
+            None,
+            std::iter::once(None)
+                .chain(theme::canvas_presets().iter().copied().map(Some))
+                .map(|color| {
+                    (
+                        Action::CanvasBackground(color),
+                        Some(crate::canvas_swatch_color(color)),
+                        color == theme::default_canvas_bg(),
+                    )
+                })
+                .collect(),
         );
     }
 }

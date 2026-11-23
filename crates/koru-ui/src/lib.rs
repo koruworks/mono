@@ -26,6 +26,7 @@
 //! question is whether it has state or is a function of its arguments. See
 //! `README.md` in both crates.
 
+pub mod avatar;
 pub mod badge;
 pub mod button;
 pub mod button_group;
@@ -45,6 +46,7 @@ pub mod dialog_frame;
 pub mod dictation;
 pub mod divider;
 pub mod dropdown;
+pub mod emoji_row;
 pub mod exit_list;
 pub mod file_icon;
 pub mod font_preview;
@@ -88,6 +90,7 @@ pub mod tree_drag;
 mod typography;
 pub mod welcome;
 
+pub use avatar::KoruAvatar;
 pub use badge::NumericBadge;
 pub use button::{ActionButton, ActionStyle, ButtonRole, draw_button};
 pub use card::{Card, CardRow};
@@ -100,6 +103,7 @@ pub use date_grid::{DateGrid, Pick};
 pub use dialog_frame::{KoruDialogFrame, KoruDialogFrameInspection, KoruDialogFrameState};
 pub use dictation::DictationTarget;
 pub use dropdown::{Dropdown, DropdownOption};
+pub use emoji_row::EmojiRow;
 pub use exit_list::ExitList;
 pub use font_preview::{FontPreview, FontSample};
 pub use key_chip::KeyChip;

@@ -600,6 +600,9 @@ impl MainView {
                     super::ToastPayload::OpenProfiles => {
                         self.open_profiles_popover();
                     }
+                    super::ToastPayload::RestoreWorkspaceTo { workspace, profile } => {
+                        self.ask_restore_workspace_to(workspace, profile);
+                    }
                     super::ToastPayload::ImportProgress => {
                         self.ask_pane(koru_workspace_host::PaneRequest::CancelImport);
                         let _ = ws;

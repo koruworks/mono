@@ -32,6 +32,26 @@ fn a_refused_sync_credential_names_its_reason() {
     }
 }
 
+/// A root catalog unit the account will not take says why, by the same
+/// names the device's Cloud pass handles them by.
+#[test]
+fn a_refused_root_unit_names_its_reason() {
+    for code in [
+        "root_placement_foreign",
+        "root_unit_format_too_new",
+        "root_export_refused",
+        "root_unit_invalid",
+        "root_workspace_unit_required",
+        "root_unit_address_invalid",
+    ] {
+        let error = ClientError::Api {
+            status: 403,
+            code: ErrorCode::parse(code).unwrap(),
+        };
+        assert_eq!(Failure::new(Some(403), &error).code, code);
+    }
+}
+
 #[test]
 fn retry_noise_is_suppressed_per_route_until_failure_changes_or_recovers() {
     let diagnostics = Diagnostics::default();

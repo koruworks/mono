@@ -217,7 +217,7 @@ impl Fixture {
 
     fn manage_view(&mut self) -> &mut crate::manage::ManageView {
         match &mut self.v.tabs_mut().active_mut().view {
-            TabView::Manage(view) => view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => view,
             _ => panic!("the Manage tab is in front"),
         }
     }
@@ -239,28 +239,51 @@ impl Fixture {
 
 // -------------------------------------------------------------------- routes
 
-/// A workspace row's gear on the who/where popover opens Manage on the open
-/// Profile's page, where its workspaces are.
 #[test]
-fn a_workspaces_gear_opens_manage_on_the_open_profiles_page() {
+fn settings_lists_workspaces_below_profiles_and_the_row_opens_it() {
+    let mut f = fixture();
+    f.v.open_manage(Page::Profile(f.personal.id));
+    let TabView::Settings(settings) = &mut f.v.tabs_mut().active_mut().view else {
+        panic!("Settings is open")
+    };
+    View::set_viewport(settings, 1000.0, 700.0);
+    let rows = settings.surface_mut().host_page_rects();
+    let profiles = rows.iter().position(|(id, _)| *id == 3).unwrap();
+    let workspaces = rows.iter().position(|(id, _)| *id == 4).unwrap();
+    assert_eq!(workspaces, profiles + 1);
+    let (x, y) = rows[workspaces].1.centre();
+    assert!(View::mouse_down(settings, &mut f.w.ws, x, y, false));
+    assert_eq!(
+        settings.manage.current_page(),
+        Some(Page::Workspaces(f.personal.id))
+    );
+    assert_eq!(
+        settings.surface_mut().page(),
+        koru_settings_ui::PageId::Host(4)
+    );
+}
+
+/// A workspace row's gear opens the dedicated Workspaces page in Settings.
+#[test]
+fn a_workspaces_gear_opens_the_workspaces_settings_page() {
     let mut f = fixture();
     let personal = f.personal.id;
     assert!(f.v.apply(
         &f.w.ws,
         crate::panes::Outcome::ManageWorkspace(koru_core::WorkspaceId::new())
     ));
-    assert_eq!(f.manage_view().page(), Some(Page::Profile(personal)));
+    assert_eq!(f.manage_view().page(), Some(Page::Workspaces(personal)));
 }
 
 /// Port of *Ctrl+Shift+O opens the manager once and brings it forward*: it
-/// is now Manage, on the open Profile's page.
+/// is now Settings, on the open Profile's Workspaces page.
 #[test]
 fn ctrl_shift_o_opens_manage_on_the_open_profile_once() {
     let mut f = fixture();
     let ctrl_shift = koru_keys::PRIMARY.union(ModifiersState::SHIFT);
     assert!(f.v.key(&mut f.w.ws, &ch("o"), Some("o"), ctrl_shift));
     let personal = f.personal.id;
-    assert_eq!(f.manage_view().page(), Some(Page::Profile(personal)));
+    assert_eq!(f.manage_view().page(), Some(Page::Workspaces(personal)));
     let (count, at) = (f.v.tabs().len(), f.v.tabs().active());
 
     f.v.select(0);
@@ -286,10 +309,18 @@ fn a_saved_workspaces_token_restores_manage_once() {
     let manage = back
         .tabs()
         .iter()
-        .filter(|tab| matches!(tab.view, TabView::Manage(_)))
+        .filter(|tab| {
+            matches!(
+                tab.view,
+                TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+            )
+        })
         .count();
     assert_eq!(manage, 1, "one Manage tab");
-    assert!(matches!(back.tabs().active_tab().view, TabView::Manage(_)));
+    assert!(matches!(
+        back.tabs().active_tab().view,
+        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+    ));
 }
 
 /// A pending command keeps its fallback deadline when Manage is hidden.

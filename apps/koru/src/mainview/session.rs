@@ -103,6 +103,7 @@ impl MainView {
                 // welcome reads the global default view mode and canvas colour it
                 // offers, so it must not be skipped the way it used to be.
                 match &mut t.view {
+                    TabView::MiniApp(_) => {}
                     TabView::Leaf(l) => View::restore(l, workspace, settings),
                     TabView::Welcome(w) => {
                         View::restore(w, workspace, settings);
@@ -111,7 +112,6 @@ impl MainView {
                     // Koru should strand somebody on at startup; older
                     // settings still parse but reopen on the durable Welcome
                     // floor, so a restored tab is welcome-shaped.
-                    TabView::Manage(w) => View::restore(w, workspace, settings),
                     TabView::Trash(t) => View::restore(t, workspace, settings),
                     // **The rail is put back from the tab**, not the other way
                     // round: the container pushes this target into
@@ -214,9 +214,9 @@ impl MainView {
         for (_, group) in self.panes.iter_groups() {
             for t in group.tabs().iter() {
                 match &t.view {
+                    TabView::MiniApp(_) => {}
                     TabView::Leaf(l) => View::capture(l, settings),
                     TabView::Welcome(w) => View::capture(w, settings),
-                    TabView::Manage(w) => View::capture(w, settings),
                     TabView::Trash(t) => View::capture(t, settings),
                     TabView::Tasks(t) => View::capture(t, settings),
                     TabView::Reminders(r) => View::capture(r, settings),
@@ -379,9 +379,12 @@ impl MainView {
             // And one Manage tab, though a session written while both tabs
             // existed may hold both a `manage` and a `workspaces` token.
             if matches!(which, TabRef::Manage | TabRef::Workspaces)
-                && let Some(existing) = tabs
-                    .iter()
-                    .position(|tab| matches!(tab.view, TabView::Manage(_)))
+                && let Some(existing) = tabs.iter().position(|tab| {
+                    matches!(
+                        tab.view,
+                        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+                    )
+                })
             {
                 if stored_index == settings.tab {
                     restored_active = existing;
@@ -460,11 +463,21 @@ impl MainView {
                             }
                             // One Manage tab: `manage` and the legacy
                             // `workspaces` token both restore it.
-                            if matches!(tab.view, TabView::Manage(_))
-                                && main_tabs
-                                    .iter()
-                                    .any(|t| matches!(t.view, TabView::Manage(_)))
-                            {
+                            if matches!(
+                                tab.view,
+                                TabView::Settings(crate::settings_view::SettingsView {
+                                    manage: _,
+                                    ..
+                                })
+                            ) && main_tabs.iter().any(|t| {
+                                matches!(
+                                    t.view,
+                                    TabView::Settings(crate::settings_view::SettingsView {
+                                        manage: _,
+                                        ..
+                                    })
+                                )
+                            }) {
                                 continue;
                             }
                             main_tabs.push(tab);
@@ -663,6 +676,7 @@ impl MainView {
         // empty draft rather than as a node that will not parse. What it
         // *was* is a blank page, and a blank page restores perfectly.
         Some(match &t.view {
+            TabView::MiniApp(_) => return None,
             _ if t.draft.is_some() => TabRef::Draft,
             // **Before the `Leaf` arm, and that ordering is the whole
             // of it.** A notes tab *is* a `Leaf`, so the arm below
@@ -674,7 +688,7 @@ impl MainView {
             // will not tell you.
             _ if t.whats_new.is_some() => private_page_ref(t)?,
             TabView::Welcome(_) => TabRef::Welcome,
-            TabView::Manage(_) => TabRef::Manage,
+            TabView::Settings(view) if view.manage_visible() => TabRef::Manage,
             TabView::Trash(_) => TabRef::Trash,
             TabView::Tasks(t) => TabRef::Tasks(tasks_tab_ref(t.target())),
             // A Reminders page comes back as a Reminders page: one

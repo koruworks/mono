@@ -40,13 +40,18 @@ fn manage_tabs(v: &MainView) -> usize {
     v.panes
         .iter_groups()
         .flat_map(|(_, group)| group.tabs().iter())
-        .filter(|tab| matches!(tab.view, TabView::Manage(_)))
+        .filter(|tab| {
+            matches!(
+                tab.view,
+                TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+            )
+        })
         .count()
 }
 
 fn active_manage(v: &mut MainView) -> &mut crate::manage::ManageView {
     match &mut v.tabs_mut().active_mut().view {
-        TabView::Manage(view) => view,
+        TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => view,
         _ => panic!("the Manage tab is in front"),
     }
 }
@@ -55,7 +60,7 @@ fn active_manage(v: &mut MainView) -> &mut crate::manage::ManageView {
 fn the_switchers_new_profile_opens_manage_on_its_new_profile_page() {
     let (mut v, w, _) = with_profile();
     assert!(v.apply(&w.ws, crate::panes::Outcome::NewProfile));
-    assert_eq!(v.tabs().active_tab().label, "Manage");
+    assert_eq!(v.tabs().active_tab().label, "Settings");
     let manage = active_manage(&mut v);
     assert_eq!(manage.page(), Some(Page::NewProfile));
     assert!(
@@ -197,7 +202,9 @@ fn the_manage_tab_comes_back_after_a_restart_on_the_open_profile() {
         .iter_groups()
         .flat_map(|(_, group)| group.tabs().iter())
         .find_map(|tab| match &tab.view {
-            TabView::Manage(view) => Some(view.page()),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                Some(view.page())
+            }
             _ => None,
         })
         .expect("it came back");

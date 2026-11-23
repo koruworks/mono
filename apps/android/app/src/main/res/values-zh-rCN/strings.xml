@@ -410,6 +410,7 @@
     <string name="account_cloud_sync_complete">正在通过 Koru Cloud 同步</string>
     <string name="account_cloud_sync_partial">正在同步 %2$d 个工作区中的 %1$d 个</string>
     <string name="account_cloud_sync_unattached">此构建中不可用</string>
+    <string name="account_cloud_sync_free_full">Koru Free 目前没有空位。你的内容仍保留在此设备上。你可以在账户中加入候补名单。</string>
     <string name="transfers">文件和图片</string>
     <string name="transfers_on_cellular">使用移动数据传输</string>
     <string name="transfers_on_cellular_explainer">关闭时，文件和图片会等待不计流量的连接。文档仍会继续同步，你也可以在文档中单独下载某一个。</string>
@@ -490,4 +491,14 @@
     <string name="update_retry">重试</string>
     <string name="update_not_now">以后再说</string>
     <string name="update_whats_new">新功能</string>
+    <string name="cloud_upload_policy_unavailable">无法检查 Cloud 权限。此上传正在等待。</string>
+    <string name="cloud_upload_plan_required">你的套餐目前不允许上传到 Cloud。内容仍保留在此设备上。</string>
+    <string name="cloud_upload_file_allowance">此文件超过 Cloud 配额，将保留在此设备上。超过 Koru Free 1 GB 配额的文件需要 Plus。其他文件仍可同步。</string>
+    <string name="cloud_upload_usage_unknown">仍在检查 Cloud 存储。此上传正在等待；你可以继续在本地编辑。</string>
+    <string name="cloud_upload_account_quota">Cloud 空间不足以完成此上传。请释放空间或增加配额。较小的文件仍可能同步。</string>
+    <string name="cloud_upload_document_count">Cloud 已达到文档数量上限。此上传正在等待。</string>
+    <string name="cloud_upload_document_bytes">Cloud 已达到已存文档容量上限。此上传正在等待。</string>
+    <string name="cloud_upload_physical_bytes">Cloud 存储已达到物理安全上限。此上传正在等待。</string>
+    <string name="cloud_upload_staging_bytes">Cloud 临时存储已满。此上传正在等待。</string>
+    <string name="cloud_upload_removal_capacity">Cloud 清理容量暂不可用。此操作正在等待。</string>
 </resources>

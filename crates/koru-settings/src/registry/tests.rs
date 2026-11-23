@@ -116,8 +116,8 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
     };
     assert_eq!(
         count(Section::Global, StorageClass::Roaming),
-        31,
-        "Global roaming: theme, icon pack, three caret values, four fonts and \
+        43,
+        "Global roaming: theme, icon pack, four caret values, four fonts and \
          the chat font (koru-ai D79, the user's call 2026-11-04), the \
          document text size (DOCFONTSIZE, 2026-10-30), the base color per \
          theme (2026-10-31), density, the wheel's scroll speed (the user, \
@@ -125,7 +125,8 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
          per theme (2026-11-10), workspace tabs (2026-11-10), \
          zoom, view mode, canvas background, pinned title, popout close, \
          skin tone, four dictation values, two spelling values \
-         (spell-check plan P5, D7) and the model picker's favorites (D46)"
+         (spell-check plan P5, D7), the model picker's favorites (D46), and \
+         five text-rendering controls per theme and heading weight (user approval, 2026-11-21)"
     );
     assert_eq!(
         count(Section::Global, StorageClass::DeviceLocal),
@@ -159,7 +160,7 @@ fn the_plan_frozen_registry_is_exactly_this_size() {
         "every AI row is delegated: the authority faces `ai.db` and the vault, \
          it does not own them"
     );
-    assert_eq!(REGISTRY.len(), 61);
+    assert_eq!(REGISTRY.len(), 73);
 }
 
 #[test]

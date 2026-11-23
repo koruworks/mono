@@ -39,6 +39,42 @@ fn doc() -> WorkspaceDoc {
     WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t").expect("create")
 }
 
+#[test]
+fn embedded_profile_buttons_select_details_and_plus_opens_creation() {
+    let (mut view, personal, work) = manage();
+    let area = Rect::new(220.0, 20.0, 740.0, 650.0);
+    view.embed((1000.0, 700.0), area, area);
+    view.show(Page::Profile(personal.id));
+    assert_eq!(view.profile_tabs.len(), 3);
+    let last = view.profile_tabs.last().unwrap().2;
+    assert!(view.column().y > last.y + last.h);
+    assert!(click(&mut view, nav::Entry::Profile(work.id)));
+    assert_eq!(view.page, Some(Page::Profile(work.id)));
+    assert_eq!(view.c.current(), Some(personal.id));
+    assert_eq!(view.c.selected(), Some(work.id));
+    assert!(click(&mut view, nav::Entry::NewProfile));
+    assert_eq!(view.page, Some(Page::NewProfile));
+    assert!(view.c.creating());
+    view.show(Page::Devices);
+    assert!(view.profile_tabs.is_empty());
+    assert_eq!(view.column(), area);
+}
+
+#[test]
+fn embedded_profile_buttons_wrap_and_receive_keyboard_focus() {
+    let (mut view, personal, work) = manage();
+    let area = Rect::new(20.0, 20.0, 120.0, 650.0);
+    view.embed((160.0, 700.0), area, area);
+    view.show(Page::Profile(personal.id));
+    assert!(view.profile_tabs.last().unwrap().2.y > view.profile_tabs[0].2.y);
+    assert!(key(&mut view, NamedKey::Tab));
+    assert_eq!(view.focus, Some(nav::Entry::Profile(personal.id)));
+    assert!(key(&mut view, NamedKey::Tab));
+    assert_eq!(view.focus, Some(nav::Entry::Profile(work.id)));
+    assert!(key(&mut view, NamedKey::Enter));
+    assert_eq!(view.page, Some(Page::Profile(work.id)));
+}
+
 fn click(view: &mut ManageView, entry: nav::Entry) -> bool {
     let rect = row_of(view, entry);
     press(view, rect)
@@ -137,13 +173,14 @@ fn the_nav_lays_out_in_order_and_every_row_is_pressed_where_it_is_drawn() {
     assert_eq!(
         order,
         vec![
+            nav::Entry::Cloud,
+            nav::Entry::Devices,
             nav::Entry::Profile(a),
             nav::Entry::Profile(b),
             nav::Entry::Hidden,
             nav::Entry::NewProfile,
-            nav::Entry::Devices,
-            nav::Entry::Cloud,
-        ]
+        ],
+        "Sync options lead, then the Profiles"
     );
     // Top to bottom, inside the nav, none overlapping.
     for pair in laid.rows.windows(2) {
@@ -154,11 +191,18 @@ fn the_nav_lays_out_in_order_and_every_row_is_pressed_where_it_is_drawn() {
         assert_eq!(rect.h.round(), if rect.h < 30.0 { 24.0 } else { 30.0 });
     }
     assert_eq!(
-        laid.profiles_caption.y, area.y,
+        laid.sync_caption.y, area.y,
         "the first caption is level with a title"
     );
-    assert!(laid.profiles_caption.y + laid.profiles_caption.h <= laid.rows[0].1.y);
-    assert!(laid.computer_caption.y + laid.computer_caption.h <= row(&laid, nav::Entry::Devices).y);
+    assert!(laid.sync_caption.y + laid.sync_caption.h <= laid.rows[0].1.y);
+    assert!(
+        row(&laid, nav::Entry::Cloud).y + row(&laid, nav::Entry::Cloud).h
+            <= laid.profiles_caption.y,
+        "the Profiles' caption comes after the sync options"
+    );
+    assert!(
+        laid.profiles_caption.y + laid.profiles_caption.h <= row(&laid, nav::Entry::Profile(a)).y
+    );
 
     // The tab's own hit test answers each row back to itself.
     let (view, personal, work) = manage();
@@ -237,8 +281,11 @@ fn arrows_walk_the_nav_and_enter_shows_the_row() {
     assert_eq!(view.focus(), Some(nav::Entry::Profile(work.id)));
     assert!(key(&mut view, NamedKey::Enter));
     assert_eq!(view.page(), Some(Page::Profile(work.id)));
-    // Up from the first row wraps to the last.
+    // Up walks back out of the Profiles into the sync options: *Linked
+    // devices*, then *Koru Cloud* at the top.
     assert!(key(&mut view, NamedKey::ArrowUp));
+    assert!(key(&mut view, NamedKey::ArrowUp));
+    assert_eq!(view.focus(), Some(nav::Entry::Devices));
     assert!(key(&mut view, NamedKey::ArrowUp));
     assert_eq!(view.focus(), Some(nav::Entry::Cloud));
     assert!(key(&mut view, NamedKey::Enter));
@@ -284,7 +331,7 @@ fn the_nav_and_the_page_are_settings_centred_group() {
     assert_eq!(column, shell.column((1600.0, 900.0), 0.0));
     assert_eq!(column.x, nav.x + nav.w + koru_ui::PageShell::PAGE_MARGIN);
     let laid = view.nav_layout();
-    assert_eq!(laid.profiles_caption.y, column.y);
+    assert_eq!(laid.sync_caption.y, column.y);
     // The title is the Profile's name, the tile before it on its line.
     let header = &view.laid().header;
     assert_eq!(header.name_text, personal.name);
@@ -304,7 +351,7 @@ fn the_nav_and_the_page_are_settings_centred_group() {
 }
 
 /// Narrower than Settings' compact width the nav is chips across the top —
-/// every Profile, *New profile*, *Linked devices* and *Koru Cloud* — and the
+/// every Profile, *New profile*, *Koru Cloud* and *Linked devices* — and the
 /// page starts under them.
 #[test]
 fn a_narrow_tab_puts_the_nav_in_chips_above_the_page() {
@@ -317,11 +364,11 @@ fn a_narrow_tab_puts_the_nav_in_chips_above_the_page() {
     assert_eq!(
         order,
         vec![
+            nav::Entry::Cloud,
+            nav::Entry::Devices,
             nav::Entry::Profile(personal.id),
             nav::Entry::Profile(work.id),
             nav::Entry::NewProfile,
-            nav::Entry::Devices,
-            nav::Entry::Cloud,
         ]
     );
     let band = view.sidebar();
@@ -373,28 +420,53 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
         let (mut view, _, _) = manage();
         View::set_viewport(&mut view, width, height);
         view.show(Page::NewProfile);
-        view.c.with_creation_form(|form| form.show_profile());
+        view.c.with_creation_form(|form| form.show_setup());
         view.size_creation_form();
         let mut cx = context();
         cx.area.w = width;
         cx.area.h = height;
+        let lang = view
+            .c
+            .creation_form()
+            .expect("the embedded card")
+            .language();
+        // One card: the name, the workspace's tile and name, the primary.
         let tree = view.semantics(&cx);
+        let you = find(&tree, "you").expect("the first group");
         let owner = find(&tree, "owner-name").expect("embedded owner field");
-        let name = find(&tree, "profile-name").expect("embedded Profile field");
+        let name = find(&tree, "workspace-name").expect("embedded workspace field");
+        assert!(find(&tree, "workspace-icon").is_some());
+        // Under the page head the card has no lead of its own (Q-C); the
+        // form group still carries the card's title as its name.
+        assert!(
+            find(&tree, "blurb").is_none(),
+            "no lead under the page head"
+        );
+        assert!(find(&tree, "form").and_then(|form| form.label).is_some());
         let primary = find(&tree, "primary").unwrap();
+        // The host said *Profile* (D8): the field names the new Profile.
+        assert_eq!(
+            you.label.as_deref(),
+            Some(koru_i18n::t(lang, koru_i18n::Key::SetupProfileLabel))
+        );
+        assert_eq!(
+            owner.label.as_deref(),
+            Some(koru_i18n::t(lang, koru_i18n::Key::A11yFirstRunProfileName))
+        );
+        assert_eq!(owner.value.as_deref(), Some(""));
         assert!(name.bounds.unwrap().y + name.bounds.unwrap().h < primary.bounds.unwrap().y);
         assert!(view.creation_accessibility_action(
             owner.occurrence,
             Action::SetValue,
-            Some(&ActionData::Value("Ada".into()))
+            Some(&ActionData::Value("Work".into()))
         ));
         assert!(view.creation_accessibility_action(
             name.occurrence,
             Action::SetValue,
-            Some(&ActionData::Value("Personal".into()))
+            Some(&ActionData::Value("Notes".into()))
         ));
         assert!(view.creation_accessibility_action(name.occurrence, Action::Focus, None));
-        let visible = find(&view.semantics(&cx), "profile-name").unwrap();
+        let visible = find(&view.semantics(&cx), "workspace-name").unwrap();
         let bounds = visible.bounds.unwrap();
         let area = view.page_area();
         assert!(bounds.y >= cx.area.y + area.y);
@@ -409,7 +481,9 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
             view.page_scroll > 0.0,
             "the embedded form uses page scrolling"
         );
-        for _ in 0..8 {
+        // Every stop — the card has seven here, the emoji row included — and
+        // round again is revealed inside the page.
+        for _ in 0..9 {
             key(&mut view, NamedKey::Tab);
             let focus = view
                 .c
@@ -421,16 +495,7 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
             assert!(top >= area.y - 0.01);
             assert!(top + focus.h <= area.y + area.h + 0.01);
         }
-        let primary = find(&view.semantics(&cx), "primary").unwrap();
-        assert!(view.creation_accessibility_action(primary.occurrence, Action::Click, None));
-        let workspace_tree = view.semantics(&cx);
-        let workspace_name = find(&workspace_tree, "workspace-name")
-            .unwrap()
-            .bounds
-            .unwrap();
-        let create = find(&workspace_tree, "primary").unwrap().bounds.unwrap();
-        assert!(workspace_name.y + workspace_name.h < create.y);
-        let icon = find(&workspace_tree, "workspace-icon").unwrap();
+        let icon = find(&view.semantics(&cx), "workspace-icon").unwrap();
         let scroll = view.page_scroll;
         assert!(view.creation_accessibility_action(icon.occurrence, Action::Click, None));
         capture(&mut view);
@@ -446,19 +511,73 @@ fn embedded_creation_scrolls_and_exposes_the_same_fields_and_actions() {
         assert_eq!(overlay.y, cx.area.y + area.y);
         assert_eq!((overlay.w, overlay.h), (area.w, area.h));
         assert!(key(&mut view, NamedKey::Escape));
+        // Both names filled: the primary creates, and the draft carries no
+        // owner name, so the account's name is never touched (Q-G).
+        let primary = find(&view.semantics(&cx), "primary").unwrap();
+        assert!(!primary.disabled);
+        assert!(view.creation_accessibility_action(primary.occurrence, Action::Click, None));
+        let draft = view
+            .delegate(|c| c.take_profile_creation_request())
+            .expect("a creation request");
+        assert_eq!(draft.owner_display_name, None);
+        assert_eq!(draft.profile_name, "Work");
+        assert_eq!(draft.workspace_name, "Notes");
         assert!(
             !view.creation_accessibility_action(primary.occurrence, Action::Click, None),
-            "departed screen cannot create a workspace"
+            "a finishing card cannot create twice"
         );
         view.close_creation();
         view.show(Page::NewProfile);
-        view.c.with_creation_form(|form| form.show_profile());
+        view.c.with_creation_form(|form| form.show_setup());
         view.semantics(&cx);
         assert!(!view.creation_accessibility_action(
             name.occurrence,
             Action::SetValue,
             Some(&ActionData::Value("Stale".into()))
         ));
+    }
+}
+
+/// **In a narrow pane the card's rows wrap to the column** (F6): both the
+/// In a narrow Manage pane the embedded setup card's rows and primary button
+/// fit inside the page's column with no inline swatch or emoji rows.
+#[test]
+fn embedded_rows_fit_a_narrow_column() {
+    use koru_workspace_host::accessibility::{ControlPart, SemanticNode};
+    fn find(node: &SemanticNode, part: &'static str) -> Option<SemanticNode> {
+        if node.occurrence.part == ControlPart::new(part) {
+            return Some(node.clone());
+        }
+        node.children.iter().find_map(|child| find(child, part))
+    }
+    let (mut view, _, _) = manage();
+    View::set_viewport(&mut view, 330.0, 700.0);
+    view.show(Page::NewProfile);
+    view.c.with_creation_form(|form| form.show_setup());
+    view.size_creation_form();
+    let form = view.form_rect();
+    assert!(form.w < 310.0, "narrow column: {form:?}");
+    let mut cx = context();
+    cx.area.w = 330.0;
+    cx.area.h = 700.0;
+    let tree = view.semantics(&cx);
+    let (left, right) = (cx.area.x + form.x, cx.area.x + form.x + form.w);
+    for removed in ["colors", "emoji"] {
+        assert!(find(&tree, removed).is_none(), "{removed} row is removed");
+    }
+    for part in [
+        "profile-icon",
+        "owner-name",
+        "workspace-icon",
+        "workspace-name",
+        "primary",
+    ] {
+        let node = find(&tree, part).unwrap_or_else(|| panic!("{part} is present"));
+        let bounds = node.bounds.expect("a control has a rectangle");
+        assert!(
+            bounds.x >= left - 0.01 && bounds.x + bounds.w <= right + 0.01,
+            "{part} leaves the column: {bounds:?} in {left}..{right}"
+        );
     }
 }
 
@@ -470,8 +589,10 @@ fn a_conflicting_profile_create_opens_manage_without_another_creation_request() 
         assert!(c.connected_profile_creation_conflict());
         c.with_creation_form(|form| {
             // The conflict offers Open Manage even with the name field empty.
-            form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT);
-            form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::SHIFT);
+            // From Name: WorkspaceAppearance -> WorkspaceName -> Primary.
+            for _ in 0..3 {
+                form.key(&Key::Named(NamedKey::Tab), None, ModifiersState::empty());
+            }
             form.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty());
         });
         assert!(c.take_profile_creation_request().is_none());
@@ -611,23 +732,31 @@ fn a_screen_reader_hears_the_nav_as_options_and_the_page_as_a_heading() {
     let nav = &tree.children[0];
     assert_eq!(nav.role, accesskit::Role::ListBox);
     assert_eq!(nav.size_of_set, Some(nav.children.len()));
-    assert_eq!(nav.children.len(), 5, "two Profiles, New, Devices, Cloud");
+    assert_eq!(nav.children.len(), 5, "Cloud, Devices, two Profiles, New");
+    assert!(
+        nav.children[0]
+            .label
+            .as_deref()
+            .is_some_and(|label| label.starts_with("Koru Cloud")),
+        "Koru Cloud is the first sync option: {:?}",
+        nav.children[0].label
+    );
     assert!(
         nav.children
             .iter()
             .all(|option| option.role == accesskit::Role::ListBoxOption)
     );
-    assert_eq!(nav.children[0].label.as_deref(), Some("Personal, open"));
+    assert_eq!(nav.children[2].label.as_deref(), Some("Personal, open"));
     // Bounds are the drawn rows, moved into the window.
     let first = row_of(&view, nav::Entry::Profile(personal.id));
-    let bounds = nav.children[0].bounds.unwrap();
+    let bounds = nav.children[2].bounds.unwrap();
     assert_eq!((bounds.x, bounds.y), (first.x + 40.0, first.y + 60.0));
     let heading = &tree.children[1];
     assert_eq!(heading.role, accesskit::Role::Heading);
     assert_eq!(heading.label.as_deref(), Some("Personal"));
 
     // Pressing an option is the click.
-    let devices: Occurrence = nav.children[3].occurrence;
+    let devices: Occurrence = nav.children[1].occurrence;
     assert!(view.accessibility_action(&cx, devices, accesskit::Action::Click));
     assert_eq!(view.page(), Some(Page::Devices));
     let tree = view.semantics(&cx);
@@ -683,10 +812,12 @@ fn recovery_sections_appear_with_something_to_recover_and_restore_asks_the_contr
             targets: 2,
             expired_or_purged: 1,
         }],
+        trashed_in_account: Vec::new(),
     });
     view.refresh_workspaces();
     let laid = view.laid().clone();
     let section = laid.recovery.as_ref().expect("both lists");
+    assert!(section.trashed.is_none(), "nothing of the third kind");
     let unassigned = section.unassigned.as_ref().expect("the Unassigned list");
     assert_eq!(unassigned.label.1, "Unassigned (from deleted Profile)");
     assert_eq!(unassigned.rows[0].full_name, "Orphan");
@@ -797,4 +928,105 @@ fn recovery_sections_appear_with_something_to_recover_and_restore_asks_the_contr
     w.borrow_mut().fixture_recovery(Recovery::default());
     view.refresh_workspaces();
     assert!(view.laid().recovery.is_none());
+}
+
+/// **In the Trash here, still in the account** (trash-recovery P2). The row
+/// is on the page of the Profile the account keeps the workspace in and on
+/// no other; its one button names that Profile, asks the controller's
+/// question, and is dimmed with the other destructive controls.
+#[test]
+fn a_workspace_trashed_here_shows_only_on_the_accounts_profile_page_and_asks_to_restore() {
+    use koru_workspaces_ui::{Authorization, ProfileRow, Recovery, TrashedInAccountRow};
+    let w: SharedWorkspaces = std::rc::Rc::new(std::cell::RefCell::new(
+        koru_workspaces_ui::WorkspacesController::new(),
+    ));
+    let mut view = ManageView::with_workspace_controller(w.clone());
+    let personal = profile("Personal");
+    let work = profile("Work");
+    view.delegate(|c| {
+        c.take_request();
+        c.set_profiles(vec![personal.clone(), work.clone()], personal.id, &[])
+    });
+    View::set_viewport(&mut view, 1000.0, 700.0);
+
+    let pm = koru_store_core::ids::WorkspaceId::new();
+    {
+        let mut w = w.borrow_mut();
+        w.set_authorization(Authorization::Vouched);
+        w.adopt_profiles(&[
+            ProfileRow {
+                id: workspaces::catalog_profile(personal.id),
+                name: "Personal".into(),
+            },
+            ProfileRow {
+                id: workspaces::catalog_profile(work.id),
+                name: "Work".into(),
+            },
+        ]);
+        w.fixture_recovery(Recovery {
+            trashed_in_account: vec![TrashedInAccountRow {
+                id: pm,
+                name: "PM".into(),
+                icon: None,
+                color: None,
+                profile: workspaces::catalog_profile(work.id),
+                acknowledged: true,
+            }],
+            ..Recovery::default()
+        });
+    }
+
+    // Not every Profile's, unlike an Unassigned row.
+    view.show(Page::Profile(personal.id));
+    view.refresh_workspaces();
+    assert!(
+        view.laid().recovery.is_none(),
+        "not on another Profile's page"
+    );
+
+    view.show(Page::Profile(work.id));
+    view.refresh_workspaces();
+    let laid = view.laid().clone();
+    let section = laid.recovery.as_ref().expect("the third list alone");
+    assert!(section.unassigned.is_none() && section.deleted.is_none());
+    let trashed = section.trashed.as_ref().expect("the list");
+    assert_eq!(trashed.label.1, "In the Trash on this device");
+    assert_eq!(trashed.rows[0].full_name, "PM");
+    assert_eq!(
+        trashed.rows[0].sub.1,
+        "In the Trash here, still in your Koru account"
+    );
+    let button = laid
+        .placed(profile_page::Control::RestoreTrashedTo(pm))
+        .expect("the row's one action");
+    assert_eq!(button.label, "Restore to Work");
+    assert!(
+        !laid
+            .disabled
+            .contains(&profile_page::Control::RestoreTrashedTo(pm))
+    );
+    // Under the Workspaces section, above *Delete profile…*.
+    let workspaces_rect = laid.workspaces.as_ref().unwrap().rect;
+    assert!(section.rect.y >= workspaces_rect.y + workspaces_rect.h);
+    assert!(section.rect.y + section.rect.h <= laid.footer.unwrap().y);
+
+    // The press asks; nothing is sent until the question is accepted.
+    assert!(press(&mut view, button.rect));
+    {
+        let w = w.borrow();
+        let dialog = w.dialog().expect("the controller's question");
+        assert_eq!(dialog.title(), "Restore PM to Work?");
+        assert!(!w.has_pending());
+    }
+    assert!(w.borrow_mut().answer(koru_ui::confirm::Outcome::Confirm));
+    assert!(w.borrow().has_pending(), "the restore is on its way");
+
+    // An unvouched window keeps the control and dims it.
+    w.borrow_mut().set_authorization(Authorization::Refused);
+    view.refresh_workspaces();
+    assert!(
+        view.laid()
+            .disabled
+            .contains(&profile_page::Control::RestoreTrashedTo(pm))
+    );
 }

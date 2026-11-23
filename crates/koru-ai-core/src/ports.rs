@@ -211,6 +211,8 @@ pub struct AiToolExecutionContext {
     /// The calling chat's profile, from the stored chat — never from a
     /// request. `None` (a chat not yet placed) reaches no workspace.
     pub profile_id: Option<ProfileId>,
+    /// Live native renderer authority, revoked independently of ordinary chat.
+    pub mini_app: Option<crate::mini_apps::Authority>,
 }
 
 /// Narrow Store authority used for exact context and retry-safe export.

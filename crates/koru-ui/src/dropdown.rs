@@ -33,6 +33,7 @@ pub struct DropdownOption {
     /// The font stack the label is set in — a font picker's rows each show
     /// their own family. `None` is the interface face.
     pub font_stack: Option<&'static str>,
+    pub dangerous: bool,
 }
 
 impl DropdownOption {
@@ -41,6 +42,7 @@ impl DropdownOption {
             label: label.into(),
             selected,
             font_stack: None,
+            dangerous: false,
         }
     }
 
@@ -51,6 +53,9 @@ impl DropdownOption {
 }
 
 impl MenuItem for DropdownOption {
+    fn destructive(&self) -> bool {
+        self.dangerous
+    }
     fn label(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.label)
     }
@@ -67,8 +72,10 @@ impl MenuItem for DropdownOption {
 pub struct Dropdown<'a> {
     /// The value in force, as the field shows it.
     pub label: &'a str,
+    pub highlight: &'a str,
     /// The face the value is set in, for a font picker.
     pub font_stack: Option<&'static str>,
+    pub dangerous: bool,
     pub open: bool,
     pub enabled: bool,
 }
@@ -85,7 +92,9 @@ impl<'a> Dropdown<'a> {
     pub const fn new(label: &'a str) -> Self {
         Self {
             label,
+            highlight: "",
             font_stack: None,
+            dangerous: false,
             open: false,
             enabled: true,
         }
@@ -96,8 +105,18 @@ impl<'a> Dropdown<'a> {
         self
     }
 
+    pub const fn highlight(mut self, query: &'a str) -> Self {
+        self.highlight = query;
+        self
+    }
+
     pub const fn open(mut self, open: bool) -> Self {
         self.open = open;
+        self
+    }
+
+    pub const fn dangerous(mut self, dangerous: bool) -> Self {
+        self.dangerous = dangerous;
         self
     }
 
@@ -127,9 +146,11 @@ impl<'a> Dropdown<'a> {
             .map(|option| {
                 Dropdown {
                     label: &option.label,
+                    highlight: "",
                     font_stack: option.font_stack,
                     open: false,
                     enabled: true,
+                    dangerous: option.dangerous,
                 }
                 .width(engine)
             })
@@ -167,6 +188,28 @@ impl<'a> Dropdown<'a> {
         hovered: bool,
         alpha: f32,
     ) {
+        self.draw_focused(canvas, root, engine, rect, hovered, false, alpha);
+    }
+
+    /// Draw the field with an optional keyboard-focus ring.
+    ///
+    /// The field's border is the ring: while `focused` it is drawn in the
+    /// palette's `focus_ring` at twice a border's weight, the mark
+    /// [`crate::chip::Chip`] and [`crate::toggle::Toggle`] draw. An open
+    /// field already wears that color at a border's weight, so a focused
+    /// field reads as the same field, more so.
+    #[allow(clippy::too_many_arguments)]
+    #[track_caller]
+    pub fn draw_focused(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        hovered: bool,
+        focused: bool,
+        alpha: f32,
+    ) {
         let _component = inspect::scope(
             "KoruDropdown",
             "component",
@@ -196,23 +239,39 @@ impl<'a> Dropdown<'a> {
         let alpha = if self.enabled { alpha } else { alpha * 0.45 };
         let shape = scene::rrect(rect.x, rect.y, rect.w, rect.h, Self::RADIUS);
         scene::fill(canvas, root, p.panel_bg.multiply_alpha(alpha), &shape);
+        if self.dangerous {
+            scene::fill(
+                canvas,
+                root,
+                p.close_hover.multiply_alpha(0.14 * alpha),
+                &shape,
+            );
+        }
         if (hovered || self.open) && self.enabled {
             scene::fill(canvas, root, p.hover_tint.multiply_alpha(alpha), &shape);
         }
-        scene::stroke(
-            canvas,
-            root,
-            if self.open {
-                p.focus_ring
-            } else {
-                p.panel_border
-            }
-            .multiply_alpha(alpha),
-            theme::BORDER_W,
-            &shape,
-        );
+        if focused {
+            crate::button::focus_stroke(canvas, root, p, rect, Self::RADIUS, alpha);
+        } else {
+            scene::stroke(
+                canvas,
+                root,
+                if self.open {
+                    p.focus_ring
+                } else {
+                    p.panel_border
+                }
+                .multiply_alpha(alpha),
+                theme::BORDER_W,
+                &shape,
+            );
+        }
         let value = self.value_layout(engine);
-        let line_h = scene::first_line_height(&value);
+        let reference = Dropdown {
+            label: "Hgj",
+            ..self
+        }
+        .value_layout(engine);
         let chevron_x = rect.x + rect.w - Self::PAD_X - Self::CHEVRON;
         // The value clips short of the chevron rather than running under it.
         let clip = scene::rect(
@@ -222,16 +281,30 @@ impl<'a> Dropdown<'a> {
             rect.h,
         );
         canvas.push_clip_layer(vello::peniko::Fill::NonZero, root, &clip);
+        crate::text_paragraph::highlight_layout(
+            canvas,
+            root,
+            &value,
+            self.label,
+            self.highlight,
+            rect.x + Self::PAD_X,
+            scene::centre_y_in(&reference, rect),
+        );
         crate::typography::line(
             "Dropdown value",
             canvas,
             root,
             &value,
             rect.x + Self::PAD_X,
-            rect.y + (rect.h - line_h) * 0.5,
+            scene::centre_y_in(&reference, rect),
             theme::role::row(),
             "theme::role::row()",
-            p.text.multiply_alpha(alpha),
+            if self.dangerous {
+                p.close_hover
+            } else {
+                p.text
+            }
+            .multiply_alpha(alpha),
         );
         canvas.pop_layer();
         let chevron = engine.icon_layout(icons::CARET_DOWN, Self::CHEVRON);
@@ -290,6 +363,42 @@ mod tests {
         assert_eq!(menu.hover, Some(1));
         assert_eq!(menu.items()[1].checked(), Some(true));
         assert_eq!(menu.items()[0].checked(), Some(false));
+    }
+
+    fn painted(focused: Option<bool>) -> Scene {
+        let mut engine = TextEngine::new();
+        let mut canvas = Scene::new();
+        let root = Affine::IDENTITY;
+        let rect = Rect::new(4.0, 4.0, 160.0, Dropdown::H);
+        let field = Dropdown::new("Short");
+        match focused {
+            None => field.draw(&mut canvas, root, &mut engine, rect, false, 1.0),
+            Some(focused) => {
+                field.draw_focused(&mut canvas, root, &mut engine, rect, false, focused, 1.0);
+            }
+        }
+        canvas
+    }
+
+    /// `draw` is `draw_focused` without the ring, path for path, so no
+    /// existing caller changed. Focused, the border is the same one shape
+    /// drawn heavier: nothing is added and nothing moves.
+    #[test]
+    fn the_focus_ring_is_the_fields_own_border_drawn_heavier() {
+        let (plain, unfocused, focused) =
+            (painted(None), painted(Some(false)), painted(Some(true)));
+        let (a, b, c) = (plain.encoding(), unfocused.encoding(), focused.encoding());
+        assert!(a.path_tags == b.path_tags);
+        assert_eq!(a.path_data, b.path_data);
+        assert!(a.draw_tags == b.draw_tags);
+        assert_eq!(a.draw_data, b.draw_data);
+        assert_eq!(a.styles, b.styles);
+        assert!(
+            a.draw_tags == c.draw_tags,
+            "the same marks, in the same order"
+        );
+        assert_ne!(a.styles, c.styles, "the border is drawn at another weight");
+        assert_ne!(a.draw_data, c.draw_data, "and in the focus color");
     }
 
     #[test]

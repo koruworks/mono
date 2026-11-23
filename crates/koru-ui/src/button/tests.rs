@@ -5,6 +5,24 @@
 use super::*;
 
 #[test]
+fn compact_action_elision_respects_allocation_without_changing_its_name() {
+    let mut engine = TextEngine::new();
+    let name = "A very long document selection label that must remain accessible";
+    for glyph in [None, Some(koru_draw::icons::ENTER)] {
+        let button = ActionButton::new(name, ActionStyle::Secondary, glyph);
+        for width in [0.0, 8.0, 30.0, 100.0, 500.0] {
+            let (label, icon) = button.elided_content(&mut engine, width);
+            let content = engine.simple_layout(&label, theme::role::row()).width()
+                + icon.map_or(0.0, |glyph| {
+                    engine.icon_layout(glyph, ActionButton::ICON_SIZE).width() + ActionButton::GAP
+                });
+            assert!(content <= (width - ActionButton::PAD_X * 2.0).max(0.0));
+            assert_eq!(button.label, name);
+        }
+    }
+}
+
+#[test]
 fn a_row_is_laid_out_from_the_right() {
     let rects = row_from_right(400.0, 100.0, &[90.0, 120.0]);
     assert_eq!(rects.len(), 2);
@@ -167,5 +185,36 @@ fn a_lead_widens_the_action_and_is_recorded_in_its_inks() {
     assert_eq!(
         named(&inert, "label ink").as_deref(),
         Some("Ink::Secondary")
+    );
+}
+
+#[test]
+fn inverted_button_uses_foreground_ink_and_reports_its_token() {
+    let mut engine = TextEngine::new();
+    let mut canvas = Scene::new();
+    let root = Affine::IDENTITY;
+    let rect = Rect::new(0.0, 0.0, 200.0, 42.0);
+    let capture = koru_draw::inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 200.0, 42.0));
+    draw_button_enabled(
+        &mut canvas,
+        root,
+        &mut engine,
+        rect,
+        "Start using Koru",
+        ButtonRole::Inverted,
+        true,
+        false,
+        true,
+    );
+    let records = capture.finish().records;
+    let button = records
+        .iter()
+        .find(|r| r.name == "KoruButton")
+        .expect("KoruButton record");
+    assert!(
+        button
+            .properties
+            .iter()
+            .any(|p| p.name == "background token" && p.value == "theme::p().text")
     );
 }

@@ -390,6 +390,23 @@ pub const ROUTES: &[AiRoute] = &[
         path_parameters: &[],
     },
     AiRoute {
+        operation_id: "ai_mini_app_tool",
+        method: "POST",
+        path: "/v1/ai/tools/mini-app",
+        scope: AiScope::Chat,
+        summary: "Invoke a bounded mini-app tool for an exact live desktop attempt",
+        returns: "A validated result offered to the live native host; not a host acknowledgement.",
+        handler: || post(mini_app_tool),
+        request: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::MiniAppToolRequest>()
+        }),
+        response: AiBody::Json(|generator| {
+            generator.subschema_for::<koru_ai_wire::MiniAppToolResponse>()
+        }),
+        stream: false,
+        path_parameters: &[],
+    },
+    AiRoute {
         operation_id: "ai_tool_read_chat",
         method: "POST",
         path: "/v1/ai/tools/chats/read",
@@ -1327,6 +1344,21 @@ async fn tool_search_chats(
     answer(call(move || client.tool_search_chats(context, request)).await)
 }
 
+async fn mini_app_tool(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    payload: Result<Json<koru_ai_wire::MiniAppToolRequest>, JsonRejection>,
+) -> Response {
+    let request = match json_request(payload) {
+        Ok(request) => request,
+        Err(response) => return response,
+    };
+    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
+    answer(call(move || client.mini_app_tool(context, request)).await)
+}
 async fn tool_read_chat(
     State(state): State<Arc<GatewayState>>,
     Extension(principal): Extension<GatewayPrincipal>,

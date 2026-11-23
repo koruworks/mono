@@ -56,6 +56,7 @@ __pycache__/
 
 # Checksum-pinned upstream icon archives; generated Rust data is committed.
 third-party/icons/
+third-party/a2ui/v1_0/
 
 # Environment files: the `.env.production` that points a build at a Koru
 # Cloud, a root's own `.env.local`, apps/android's build settings, or any
@@ -97,3 +98,6 @@ skills-lock.json
 # A maintainer's private notes beside AGENTS.md (AGENTS.md, "Maintainers'
 # private notes"). Never part of this repository.
 AGENTS.private.md
+
+# Pinned source for the font comparison app.
+/third-party/parley-reference/

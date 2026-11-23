@@ -164,6 +164,11 @@ impl SettingsPaths {
         &self.desktop
     }
 
+    /// Device-local mini-app references, separate from scalar preferences.
+    pub fn mini_app_pins_file(&self) -> PathBuf {
+        self.desktop.with_file_name("mini-app-pins-v1.json")
+    }
+
     /// `koru-update`'s state file. **Read-only, and read for one key.**
     ///
     /// The authority never writes here: `automatic_checks` moved out into

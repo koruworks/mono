@@ -746,6 +746,7 @@ fn drawn(surface: &mut ChatSurface) -> Vec<Rect> {
         &mut vello::Scene::new(),
         vello::kurbo::Affine::IDENTITY,
         &mut |_, _, room| rooms.push(room),
+        true,
     );
     rooms
 }

@@ -43,6 +43,10 @@ pub enum ButtonRole {
     Secondary,
     /// Filled in the accent colour. The obvious next step.
     Primary,
+    /// Filled in the theme's foreground ink (`text` on `bg`). A monochrome
+    /// primary action (such as setup's *Start using Koru*) that leads without
+    /// wearing the accent hue.
+    Inverted,
     /// Outlined and red. **Never made `Primary`**: filling a destructive button
     /// in the accent colour would make "delete everything" look like the
     /// suggested route through the dialog.
@@ -368,6 +372,45 @@ impl<'a> ActionButton<'a> {
         );
     }
 
+    /// Draw a compact action whose label fits its allocated rectangle. The
+    /// caller keeps the original label for accessibility; only paint elides it.
+    #[allow(clippy::too_many_arguments)]
+    #[track_caller]
+    pub fn draw_focused_elided(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        hovered: bool,
+        focused: bool,
+    ) {
+        let (label, icon) = self.elided_content(engine, rect.w);
+        ActionButton::new(&label, self.style, icon)
+            .draw_focused(canvas, root, engine, rect, hovered, focused);
+    }
+
+    fn elided_content(self, engine: &mut TextEngine, width: f32) -> (String, Option<char>) {
+        let available = (width - Self::PAD_X * 2.0).max(0.0);
+        let icon = self
+            .trailing_icon
+            .filter(|glyph| engine.icon_layout(*glyph, Self::ICON_SIZE).width() <= available);
+        let icon_width = icon.map_or(0.0, |glyph| {
+            engine.icon_layout(glyph, Self::ICON_SIZE).width() + Self::GAP
+        });
+        let room = (available - icon_width).max(0.0);
+        let label = engine.elided(self.label, theme::role::row(), room);
+        // The text engine returns an ellipsis even when that single glyph is
+        // wider than the room. Tiny controls must still respect their bounds.
+        let label = if engine.simple_layout(&label, theme::role::row()).width() <= room {
+            label
+        } else {
+            String::new()
+        };
+        let icon = icon.filter(|_| !label.is_empty() || icon_width <= available);
+        (label, icon)
+    }
+
     /// Draw the same stable geometry without presenting it as actionable.
     #[track_caller]
     pub fn draw_disabled(
@@ -466,6 +509,28 @@ fn inspect_lead(
     );
 }
 
+/// **The keyboard-focus mark a shared control wears on its own shape**: the
+/// palette's `focus_ring`, twice a border's weight, on the control's rounded
+/// rectangle. The mark [`crate::chip::Chip`] and [`crate::toggle::Toggle`]
+/// have always drawn; the segmented control, the dropdown and the icon
+/// button draw theirs through this, so the three cannot drift apart.
+pub(crate) fn focus_stroke(
+    canvas: &mut Scene,
+    root: Affine,
+    palette: &theme::Palette,
+    rect: Rect,
+    radius: f32,
+    alpha: f32,
+) {
+    scene::stroke(
+        canvas,
+        root,
+        palette.focus_ring.multiply_alpha(alpha),
+        theme::BORDER_W * 2.0,
+        &scene::rrect(rect.x, rect.y, rect.w, rect.h, radius),
+    );
+}
+
 fn darkened(colour: vello::peniko::Color, amount: f32) -> vello::peniko::Color {
     let [r, g, b, a] = colour.components;
     vello::peniko::Color::new([r * amount, g * amount, b * amount, a])
@@ -520,14 +585,13 @@ pub fn draw_button_enabled(
     let _inspection = inspect_dialog(root, r, role, hot, focused, enabled);
     let fg = draw_button_surface(scene, root, r, role, hot, focused, enabled);
     let text = engine.simple_layout(label, LABEL);
-    let h = scene::first_line_height(&text);
     crate::typography::line(
         "Button label",
         scene,
         root,
         &text,
         r.x + (r.w - text.width()) * 0.5,
-        r.y + (r.h - h) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,
@@ -579,7 +643,7 @@ pub fn draw_google_button(
         root,
         &text,
         x + MARK + GAP,
-        r.y + (r.h - scene::first_line_height(&text)) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,
@@ -618,7 +682,7 @@ pub fn draw_apple_button(
         root,
         &text,
         x + MARK + GAP,
-        r.y + (r.h - scene::first_line_height(&text)) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,
@@ -660,7 +724,7 @@ pub fn draw_help_button(
         root,
         &text,
         x + MARK + GAP,
-        r.y + (r.h - scene::first_line_height(&text)) * 0.5,
+        scene::centre_y_in(&text, r),
         LABEL,
         "theme::role::row()",
         fg,
@@ -680,6 +744,7 @@ fn draw_button_surface(
     let (fill, fg) = if enabled {
         match role {
             ButtonRole::Primary => (p.accent, p.on_accent),
+            ButtonRole::Inverted => (p.text, p.bg),
             ButtonRole::Secondary => (p.panel_bg, p.text),
             // The one "this is bad" colour in the palette, on the ordinary panel
             // fill — red text on a red button would not survive either theme.
@@ -687,6 +752,11 @@ fn draw_button_surface(
         }
     } else {
         (p.chip_bg, p.text_dim)
+    };
+    let hover = if role == ButtonRole::Inverted {
+        fg.multiply_alpha(0.14)
+    } else {
+        p.hover_tint
     };
     let shape = scene::rrect(r.x, r.y, r.w, r.h, RADIUS);
     koru_draw::inspect::current(|r| {
@@ -702,7 +772,7 @@ fn draw_button_surface(
         );
         let mut background = fill;
         if enabled && hot {
-            let [hr, hg, hb, alpha] = p.hover_tint.components;
+            let [hr, hg, hb, alpha] = hover.components;
             let [br, bg, bb, ba] = fill.components;
             background = vello::peniko::Color::new([
                 hr * alpha + br * (1.0 - alpha),
@@ -719,7 +789,7 @@ fn draw_button_surface(
         );
     });
     scene::fill(scene, root, fill, &shape);
-    if enabled && role != ButtonRole::Primary {
+    if enabled && !matches!(role, ButtonRole::Primary | ButtonRole::Inverted) {
         scene::stroke(
             scene,
             root,
@@ -729,7 +799,7 @@ fn draw_button_surface(
         );
     }
     if enabled && hot {
-        scene::fill(scene, root, p.hover_tint, &shape);
+        scene::fill(scene, root, hover, &shape);
     }
     if enabled && focused {
         // Outside the button, so it reads as a ring around it rather than as a
@@ -813,6 +883,8 @@ fn inspect_dialog(
                     "theme::p().chip_bg"
                 } else if role == ButtonRole::Primary {
                     "theme::p().accent"
+                } else if role == ButtonRole::Inverted {
+                    "theme::p().text"
                 } else {
                     "theme::p().panel_bg"
                 },

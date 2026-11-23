@@ -53,9 +53,9 @@ pub enum PillKind {
 }
 
 impl PillKind {
-    pub fn palette(self) -> &'static crate::theme::PillPalette {
+    pub fn palette(self) -> crate::theme::PillPalette {
         let p = crate::theme::p();
-        match self {
+        let mut palette = match self {
             Self::Document
             | Self::File
             | Self::Quote
@@ -67,6 +67,11 @@ impl PillKind {
             Self::Link => &p.link,
             Self::Run | Self::Schedule | Self::SchedulePaused => &p.run,
         }
+        .clone();
+        if self == Self::Link {
+            palette.fg = p.accent;
+        }
+        palette
     }
 }
 

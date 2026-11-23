@@ -173,6 +173,21 @@ const fn token_attr(
     }
 }
 
+const fn optional_token_attr(
+    key: &'static str,
+    vocabulary: &'static [&'static str],
+    doc: &'static str,
+) -> AttrSpec {
+    AttrSpec {
+        key,
+        kind: AttrKind::Token,
+        class: FieldClass::ExactCategorical,
+        required: false,
+        vocabulary,
+        doc,
+    }
+}
+
 const fn to_build_attr() -> AttrSpec {
     count_attr(
         "to_build",
@@ -490,6 +505,13 @@ pub const AREAS: &[&str] = &[
     // emitter is the AI worker (with the gateway's Bot ingress for a stream
     // it turns away), which publishes no `delegate.*` row.
     "bots",
+    // What the Store's read model now answers, when that moved. Its own area
+    // rather than a row under `task`: ADR-273 holds `task` to the twelve
+    // facts a command on this device states, and these are a different kind
+    // of thing — derived as the read model is written, whichever device or
+    // window made the change, and content-free. `due` and `entity` are older
+    // wakes of the same kind, named before there was a second one to group.
+    "projection",
     // Reading the words out of pictures and PDFs (OCR TECHNICAL §10): the
     // reader's download installed and removed. Its own area rather than a
     // corner of `search`, whose one event is deliberately `search.opened`;
@@ -786,6 +808,25 @@ pub const REGISTRY: &[EventSpec] = &[
             doc: "The removed node id, meaningful with the document subject.",
         }],
         doc: "A previously projected entity disappeared from a current document projection. This observed transition is a cleanup wake, never permission to infer deletion from a cold projection.",
+    },
+    EventSpec {
+        name: "projection.tasks.changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "A workspace's tasks changed, as the Store's task read model now \
+              answers them: a task appeared or went, was completed or reopened, \
+              dated, prioritised, renamed, reordered in its list or moved to \
+              another. Derived from the read model as it is written, so it \
+              fires for a change made on this device and for one that arrived \
+              from a peer or the Cloud alike; subject = the workspace. \
+              COALESCED: at most one per workspace per projector tick, however \
+              many documents changed in it. Content-free — no task, document \
+              or node is named — so a consumer asks `POST /v1/tasks/query` \
+              again. A trigger, never truth: a consumer that missed one is \
+              only as stale as its own next read. The `task.*` rows say \
+              what a command on this device did; this says the answer moved.",
     },
     EventSpec {
         name: "document.created",
@@ -2511,6 +2552,20 @@ pub const REGISTRY: &[EventSpec] = &[
               (`PUT /v1/profiles/{id}/workspace-order`). There is no workspace \
               subject because every workspace the profile owns may have moved.",
     },
+    EventSpec {
+        name: "workspace.catalog.trashed_in_account_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The list of workspaces that are in this device's trash while \
+              the signed-in account still holds them live changed \
+              (`GET /v1/workspaces/trashed-in-account`): one was first seen \
+              after a sync pass, is no longer listed, or was acknowledged. \
+              There is no subject because the list is replaced as a set; a \
+              surface reads it back. A restore out of it is the ordinary \
+              `workspace.catalog.restored`.",
+    },
     // ---------------------------------------- the settings authority's facts
     //
     // **One producer, and it is the only writer of the settings files.** The
@@ -2529,6 +2584,14 @@ pub const REGISTRY: &[EventSpec] = &[
     // about one section can filter by name — the `workspace.*` precedent — and
     // the attr carries the same token so a handler that wants all three can
     // read it uniformly.
+    EventSpec {
+        name: "settings.mini_app_pins_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The device-local mini-app pin authority committed an ordered-reference mutation. No content or identity is carried; visible clients invalidate and refetch their authorized current scope.",
+    },
     EventSpec {
         name: "settings.global_changed",
         version: 1,
@@ -2577,28 +2640,57 @@ pub const REGISTRY: &[EventSpec] = &[
               the disk. Carries no value.",
     },
     EventSpec {
+        name: "app.onboarding.shown",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::AnonymousUsage,
+        attrs: &[
+            optional_token_attr(
+                "code",
+                &["sync", "backup", "founding"],
+                "Koru Cloud value-proposition copy variant shown on the Welcome modal.",
+            ),
+            optional_token_attr(
+                "header",
+                &["speed", "ownership", "purpose"],
+                "Welcome header and lead copy variant shown on the Welcome modal.",
+            ),
+            optional_token_attr(
+                "billing",
+                &["monthly", "yearly"],
+                "Preselected billing interval shown on the Welcome modal.",
+            ),
+        ],
+        doc: "The first-run Welcome modal was shown with its assigned A/B experiment variants. Provides the impression denominator for `app.onboarding.entry_selected`.",
+    },
+    EventSpec {
         name: "app.onboarding.entry_selected",
         version: 1,
         class: EventClass::Instrumentation,
         telemetry: TelemetryPolicy::AnonymousUsage,
-        attrs: &[token_attr(
-            "choice",
-            &["offline", "google", "apple"],
-            "Whether the person chose local-only setup, Google sign-in or Sign in with Apple.",
-        )],
-        doc: "The person chose the first-run path on the desktop Welcome screen. Emitted once per explicit choice, before Profile creation; carries only the closed path category.",
-    },
-    EventSpec {
-        name: "app.onboarding.profile_purpose_selected",
-        version: 1,
-        class: EventClass::Instrumentation,
-        telemetry: TelemetryPolicy::AnonymousUsage,
-        attrs: &[token_attr(
-            "purpose",
-            &["work", "school", "personal"],
-            "The selected Profile purpose card.",
-        )],
-        doc: "The person selected a Profile purpose during first-run onboarding. Emitted for each explicit card selection so changed choices remain observable; carries no name, Profile id, or content.",
+        attrs: &[
+            token_attr(
+                "choice",
+                &["offline", "google", "apple", "email"],
+                "Whether the person chose local-only setup, Google, Apple, or email sign-in.",
+            ),
+            optional_token_attr(
+                "code",
+                &["sync", "backup", "founding"],
+                "Koru Cloud value-proposition copy variant active when the choice was made.",
+            ),
+            optional_token_attr(
+                "header",
+                &["speed", "ownership", "purpose"],
+                "Welcome header and lead copy variant active when the choice was made.",
+            ),
+            optional_token_attr(
+                "billing",
+                &["monthly", "yearly"],
+                "Preselected billing interval active when the choice was made.",
+            ),
+        ],
+        doc: "The person chose the first-run path on the desktop Welcome screen. Emitted once per explicit choice, before Profile creation; carries only closed category tokens.",
     },
     EventSpec {
         name: "app.installed",
