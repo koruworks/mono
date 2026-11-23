@@ -308,9 +308,12 @@ fn the_rail_ground_runs_under_the_lane_so_no_seam_shows_under_the_mark() {
     );
 }
 
-/// The document joins the explorer with one arc, without a stray straight line.
+/// Both the docked explorer pane and the document pane wear a top-left rounded
+/// corner beneath the header's continuous top hairline: the explorer is a white
+/// pane masked against the rail/header ground, and the document's corner beside
+/// it is masked in the explorer pane with the header hairline running across it.
 #[test]
-fn the_document_corner_beside_the_pane_has_one_clean_arc() {
+fn the_docked_explorer_and_document_keep_curved_top_left_corners_and_top_line() {
     let (mut view, workspace) = crate::mainview::harness::on_document();
     view.viewport = (1200.0, 700.0);
     view.show_navigator(crate::panes::explore::NavigatorMode::Documents);
@@ -337,11 +340,11 @@ fn the_document_corner_beside_the_pane_has_one_clean_arc() {
             .map(|p| p.value.clone())
             .expect("a fill records its colour")
     };
-    let fills_of = |corner: usize| {
+    let fills_of = |parent: usize| {
         records
             .iter()
             .enumerate()
-            .filter(move |(_, r)| r.name == "fill" && r.parent == Some(corner))
+            .filter(move |(_, r)| r.name == "fill" && r.parent == Some(parent))
             .map(|(i, _)| i)
             .collect::<Vec<_>>()
     };
@@ -352,12 +355,31 @@ fn the_document_corner_beside_the_pane_has_one_clean_arc() {
             .unwrap_or_else(|| panic!("a card corner at x = {x}"))
     };
     let sb = view.sidebar_rect();
+    let pane = MainView::pane_of(sb);
     let top = view.content().y - 0.5;
+    let r = theme::PAGE_RADIUS;
     let pane_fill = inspect::color(crate::panes::explore::pane_fill());
     let ground = inspect::color(theme::base_fill());
-    assert_eq!(pane_fill, ground, "the explorer shares the rail's ground");
+    let border = inspect::color(theme::p().panel_border);
+    assert_ne!(
+        pane_fill, ground,
+        "the docked explorer uses pane_bg rather than the rail ground"
+    );
 
-    // The document's top-left, on the pane's inside hairline.
+    // The docked explorer's top-left corner: masked in the rail/header ground,
+    // with no straight hairline drawn across the corner square.
+    let outer = corner_at(pane.x - 0.5);
+    assert_eq!(records[outer].rect().y0, top as f64);
+    let fills = fills_of(outer);
+    assert_eq!(colour(fills[0]), ground);
+    assert_eq!(
+        fills.len(),
+        1,
+        "only the mask is a fill; the arc is a stroke"
+    );
+
+    // The document's top-left corner, on the explorer pane's inside hairline:
+    // masked in the white explorer pane with the header hairline across its top.
     let inner = corner_at(sb.x + sb.w - 0.5);
     assert_eq!(records[inner].rect().y0, top as f64);
     let fills = fills_of(inner);
@@ -366,13 +388,33 @@ fn the_document_corner_beside_the_pane_has_one_clean_arc() {
         pane_fill,
         "masked in the pane, not the ground"
     );
-    assert_eq!(fills.len(), 1, "only the corner mask, no crossing hairline");
+    let run = fills
+        .iter()
+        .copied()
+        .find(|&i| records[i].rect() == scene::rect(sb.x + sb.w - 0.5, top, r, 0.5))
+        .expect("the header's hairline runs across the document corner");
+    assert_eq!(colour(run), border);
 
-    // The docked explorer has a straight divider rather than outer corners.
+    // The lane draws the explorer's top hairline starting after its curved
+    // corner and draws no vertical divider up through the header ground.
+    let lane = records
+        .iter()
+        .rposition(|r| r.name == "KoruLane")
+        .expect("the window lane is drawn");
+    let lane_fills = fills_of(lane);
+    let expected_top = scene::rect(pane.x + r - 0.5, top, (pane.w - r).max(0.0), 0.5);
     assert!(
-        !records.iter().any(|record| record.name == "CardCorner"
-            && record.rect().x0 == (MainView::pane_of(sb).x - 1.0) as f64),
-        "the docked explorer has a straight divider, not card corners"
+        lane_fills
+            .iter()
+            .any(|&i| records[i].rect() == expected_top && colour(i) == border),
+        "the lane draws the explorer's top hairline"
+    );
+    assert!(
+        !lane_fills.iter().any(|&i| {
+            let rect = records[i].rect();
+            rect.width() <= 1.0 && rect.height() >= theme::CAPTION_H as f64 * 0.5
+        }),
+        "no vertical divider cuts through the header ground"
     );
 }
 

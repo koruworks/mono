@@ -19,7 +19,7 @@ use koru_draw::el::{
     Align, El, Frame, FrameCx, Interaction, Key as ElKey, Length, Spacing, col, leaf, row, spacer,
     text,
 };
-use koru_draw::theme::{Ink, Space, roles};
+use koru_draw::theme::{Ink, roles};
 use koru_i18n::{Key as T, t};
 
 const SURFACE: &str = "checkout-modal";
@@ -227,6 +227,7 @@ impl OnboardingView {
                 !is_yearly,
                 hover == Some(Hit::BillingMonthly),
                 focused == Some(Hit::BillingMonthly),
+                false,
             );
             let yearly_segment = BillingSegmentLeaf::new(
                 &mut self.engine,
@@ -235,12 +236,12 @@ impl OnboardingView {
                 is_yearly,
                 hover == Some(Hit::BillingYearly),
                 focused == Some(Hit::BillingYearly),
+                false,
             );
             let billing_track = row("Billing toggle track")
                 .id(KEY_BILLING_TRACK)
                 .items_center()
-                .pad(Space::S1)
-                .gap(Space::S1)
+                .gap(WELCOME_SEGMENT_GAP)
                 .child(
                     leaf("Monthly billing", monthly_segment)
                         .semantic()
@@ -454,20 +455,6 @@ impl OnboardingView {
             &scene::Panel::popover(WELCOME_CARD_RADIUS.value),
         );
         let p = theme::p();
-        if let Some(track) = frame.node(KEY_BILLING_TRACK).map(|node| node.rect) {
-            scene::fill(
-                canvas,
-                root,
-                p.code_bg,
-                &scene::rrect(
-                    track.x,
-                    track.y,
-                    track.w,
-                    track.h,
-                    WELCOME_SEGMENT_TRACK_RADIUS.value,
-                ),
-            );
-        }
         frame.paint(&tree, canvas, root, &mut self.engine);
         if let Some(summary) = frame.node(KEY_SUMMARY).map(|node| node.rect) {
             scene::stroke(

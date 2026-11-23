@@ -1253,14 +1253,10 @@ pub fn set_theme_preference(pref: ThemePreference) {
 /// The app font, held exactly the way the theme is and for the same reason: it
 /// is read by a dozen leaf drawing calls that have no setting to be handed.
 ///
-/// Stored as the variant's index into [`FontChoice::ALL`]. The initial value
-/// is [`default_ui_font`] spelled as an index — `System` (SF Pro) on macOS,
-/// `Inter` elsewhere — because a static cannot call `position()`.
-static UI_FONT: AtomicU16 = AtomicU16::new(if cfg!(target_os = "macos") {
-    SYSTEM
-} else {
-    INTER
-});
+/// Starts at [`ROLE_DEFAULT`] so untouched roles resolve live through
+/// [`default_ui_font`] — `System` (SF Pro) on macOS, installed `Segoe UI` on
+/// Windows (falling back to `Inter`), and `Inter` elsewhere.
+static UI_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
 
 /// The typeface the **chrome** is set in. Not what a document row is set in —
 /// that is `Paragraph::font`. A [preview](set_font_preview) stands in for the
@@ -1322,16 +1318,10 @@ fn previewed(slot: FontSlot) -> Option<FontChoice> {
 /// What `slot` is set to, without any preview: what Settings saves and
 /// what its lists tick.
 pub fn chosen_font(slot: FontSlot) -> FontChoice {
-    let (global, fallback) = match slot {
-        FontSlot::Ui => (&UI_FONT, FontChoice::default()),
-        FontSlot::Body => (&BODY_FONT, FontChoice::default()),
-        FontSlot::Headings => (&HEADINGS_FONT, FontChoice::default()),
-        FontSlot::Code => (&CODE_FONT, FontChoice::JetBrainsMono),
-        FontSlot::Chat => (&CHAT_FONT, FontChoice::default()),
-    };
-    match global.load(Ordering::Relaxed) {
+    match role_global(slot).load(Ordering::Relaxed) {
         FOLLOWS_APP => chosen_font(FontSlot::Ui),
-        value => font_of_value(value).unwrap_or(fallback),
+        ROLE_DEFAULT => role_default(slot),
+        value => font_of_value(value).unwrap_or_else(|| role_default(slot)),
     }
 }
 
@@ -1446,6 +1436,8 @@ pub fn set_font_setting(slot: FontSlot, setting: koru_settings::FontSetting) {
         };
     let value = if follows_app {
         FOLLOWS_APP
+    } else if setting == koru_settings::FontSetting::FollowDefault {
+        ROLE_DEFAULT
     } else {
         font_preview_value(face)
     };
@@ -1481,37 +1473,62 @@ pub fn missing_font(slot: FontSlot) -> Option<String> {
 // the welcome tab or the page menu) must reflow every window. Persisted by the
 // shell from `Settings` on save; loaded here at startup.
 
-/// Index of `Inter` in `FontChoice::ALL`.
-const INTER: u16 = 0;
-/// Index of `Manrope` in `FontChoice::ALL` — the headings role's default.
-const MANROPE: u16 = 5;
-/// Index of `JetBrainsMono` in `FontChoice::ALL` — the code role's default.
-const JETBRAINS_MONO: u16 = 9;
-/// Index of `System` in `FontChoice::ALL` — the app role's default on macOS.
-const SYSTEM: u16 = 12;
+/// Sentinel for an un-overridden role global that resolves through
+/// [`role_default`], allowing runtime-resolved defaults such as installed
+/// `Segoe UI` on Windows without duplicating index tables.
+const ROLE_DEFAULT: u16 = u16::MAX - 1;
 
-static BODY_FONT: AtomicU16 = AtomicU16::new(INTER);
-static HEADINGS_FONT: AtomicU16 = AtomicU16::new(MANROPE);
-static CODE_FONT: AtomicU16 = AtomicU16::new(JETBRAINS_MONO);
+static BODY_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
+static HEADINGS_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
+static CODE_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
 
-/// The shipped default per role, as a value — what the index consts above
-/// spell for the atomics. `Settings::default` reads these so the two homes of
-/// the defaults cannot drift; `defaults_and_indices_agree` holds all four
-/// pairs together.
+/// Windows' default proportional face: installed `Segoe UI`, falling back to
+/// bundled `Inter` if the family is absent. Cached once per process.
+#[cfg(target_os = "windows")]
+fn windows_default_font() -> FontChoice {
+    static SEGOE_UI: std::sync::OnceLock<FontChoice> = std::sync::OnceLock::new();
+    *SEGOE_UI.get_or_init(|| {
+        crate::installed_fonts::resolve("Segoe UI")
+            .map(FontChoice::Installed)
+            .unwrap_or(FontChoice::Inter)
+    })
+}
+
+/// The shipped default per role, as a value. Untouched role globals start at
+/// [`ROLE_DEFAULT`] and read these directly so defaults cannot drift.
 pub fn default_ui_font() -> FontChoice {
-    // The platform's own face for the platform's own chrome; elsewhere Inter,
-    // which macOS keeps as a choice rather than a default.
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         FontChoice::System
-    } else {
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows_default_font()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
         FontChoice::Inter
     }
 }
 pub fn default_body_font() -> FontChoice {
-    FontChoice::Inter
+    #[cfg(target_os = "windows")]
+    {
+        windows_default_font()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        FontChoice::Inter
+    }
 }
 pub fn default_headings_font() -> FontChoice {
-    FontChoice::Manrope
+    #[cfg(target_os = "windows")]
+    {
+        windows_default_font()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        FontChoice::Manrope
+    }
 }
 pub fn default_code_font() -> FontChoice {
     FontChoice::JetBrainsMono
@@ -3349,32 +3366,59 @@ pub const WEEKDAYS: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 mod tests {
     use super::*;
 
-    /// The defaults live twice — index consts for the atomics, value functions
-    /// for `Settings::default` — and a variant inserted mid-list would move
-    /// every index. Both hazards, one test.
+    /// Each role's shipped default resolves cleanly on this platform and stays
+    /// distinct from the sentinel values stored in the role atomics.
     #[test]
     fn defaults_and_indices_agree() {
-        assert_eq!(FontChoice::ALL[INTER as usize], FontChoice::Inter);
-        assert_eq!(FontChoice::ALL[MANROPE as usize], FontChoice::Manrope);
-        assert_eq!(
-            FontChoice::ALL[JETBRAINS_MONO as usize],
-            FontChoice::JetBrainsMono
+        assert!(
+            (FontChoice::ALL.len() as u16) < ROLE_DEFAULT && ROLE_DEFAULT < FOLLOWS_APP,
+            "sentinel values sit past bundled indices"
         );
-        assert_eq!(FontChoice::ALL[SYSTEM as usize], FontChoice::System);
-        // The UI atomic's literal initial value is default_ui_font's index.
-        let ui_index = FontChoice::ALL
-            .iter()
-            .position(|c| *c == default_ui_font())
-            .unwrap();
+        assert_eq!(default_code_font(), FontChoice::JetBrainsMono);
+        #[cfg(target_os = "windows")]
+        {
+            let expected = crate::installed_fonts::resolve("Segoe UI")
+                .map(FontChoice::Installed)
+                .unwrap_or(FontChoice::Inter);
+            assert_eq!(default_ui_font(), expected);
+            assert_eq!(default_body_font(), expected);
+            assert_eq!(default_headings_font(), expected);
+            if crate::installed_fonts::resolve("Segoe UI").is_some() {
+                assert_eq!(default_ui_font().label(), "Segoe UI");
+                assert_eq!(default_body_font().label(), "Segoe UI");
+                assert_eq!(default_headings_font().label(), "Segoe UI");
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(default_ui_font(), FontChoice::System);
+            assert_eq!(default_body_font(), FontChoice::Inter);
+            assert_eq!(default_headings_font(), FontChoice::Manrope);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            assert_eq!(default_ui_font(), FontChoice::Inter);
+            assert_eq!(default_body_font(), FontChoice::Inter);
+            assert_eq!(default_headings_font(), FontChoice::Manrope);
+        }
         assert_eq!(
-            ui_index as u8,
-            if cfg!(target_os = "macos") { 12 } else { 0 }
+            resolve_font(FontSlot::Ui, &koru_settings::FontSetting::FollowDefault),
+            default_ui_font()
         );
-        assert_eq!(default_body_font(), FontChoice::ALL[INTER as usize]);
-        assert_eq!(default_headings_font(), FontChoice::ALL[MANROPE as usize]);
         assert_eq!(
-            default_code_font(),
-            FontChoice::ALL[JETBRAINS_MONO as usize]
+            resolve_font(FontSlot::Body, &koru_settings::FontSetting::FollowDefault),
+            default_body_font()
+        );
+        assert_eq!(
+            resolve_font(
+                FontSlot::Headings,
+                &koru_settings::FontSetting::FollowDefault
+            ),
+            default_headings_font()
+        );
+        assert_eq!(
+            resolve_font(FontSlot::Code, &koru_settings::FontSetting::FollowDefault),
+            default_code_font()
         );
     }
 

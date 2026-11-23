@@ -11,6 +11,9 @@ pub(super) struct SelectionDraft {
     pub submission: Option<crate::account_ui::CommandSubmissionId>,
     pub waiting: bool,
     pub uncertain: bool,
+    /// True after `ProfilesSelected` while onboarding waits for at least one
+    /// selected Profile and one live workspace to finish syncing locally.
+    pub syncing_workspaces: bool,
     pub generation: Option<u64>,
     pub floor: u64,
     pub notice: Option<koru_i18n::Key>,
@@ -34,7 +37,7 @@ impl SelectionDraft {
     }
 
     pub fn locked(&self) -> bool {
-        self.waiting || self.uncertain
+        self.waiting || self.uncertain || self.syncing_workspaces
     }
 
     pub fn choice(
@@ -59,6 +62,7 @@ impl SelectionDraft {
         self.generation = None;
         self.early_results.clear();
         self.waiting = true;
+        self.syncing_workspaces = false;
         self.notice = None;
         true
     }
@@ -80,6 +84,7 @@ impl SelectionDraft {
         self.generation = None;
         self.waiting = false;
         self.uncertain = false;
+        self.syncing_workspaces = false;
         self.notice = None;
     }
 }
@@ -325,7 +330,8 @@ impl OnboardingView {
                 .any(|row| row.state != koru_agent_wire::EnrollmentState::Complete)
     }
     pub(super) fn member_retry(&self, index: usize) -> bool {
-        !self.selection.locked()
+        !self.selection.waiting
+            && !self.selection.uncertain
             && self.account_profiles.get(index).is_some_and(|profile| {
                 self.account_state.enrollments.iter().any(|row| {
                     row.profile_id == profile.profile_id
@@ -386,8 +392,11 @@ impl OnboardingView {
                 let selected = self.selection_ids();
                 let ids = self.enrollment_selection_ids();
                 if ids.is_empty() {
-                    self.selection.submitted = Some(selected);
-                    self.open_first_connected_selection();
+                    if !selected.is_empty() {
+                        self.selection.submitted = Some(selected);
+                        self.selection.syncing_workspaces = true;
+                        self.error = None;
+                    }
                     return;
                 }
                 self.selection.floor = self.selection.floor.max(self.account_state.generation);

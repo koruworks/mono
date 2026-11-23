@@ -231,12 +231,12 @@ fn clip_cuts_at_a_word_and_truncate_elides() {
     let long = "Alexandra Konstantinopoulou-Whitfield";
     let tree = |el: El| {
         row("Row")
-            .w(Length::Px(186.0))
+            .w(Length::Px(120.0))
             .child(el.named("Name").fill())
     };
     let clipped = lay(
         &tree(text(long).role(roles::ROW).clip()),
-        Rect::new(0.0, 0.0, 186.0, 18.0),
+        Rect::new(0.0, 0.0, 120.0, 18.0),
         FrameCx::root(),
     );
     let node = clipped.named("Name").next().unwrap();
@@ -250,12 +250,12 @@ fn clip_cuts_at_a_word_and_truncate_elides() {
 
     let elided = lay(
         &tree(text(long).role(roles::ROW).truncate()),
-        Rect::new(0.0, 0.0, 186.0, 18.0),
+        Rect::new(0.0, 0.0, 120.0, 18.0),
         FrameCx::root(),
     );
     let layout = elided.named("Name").next().unwrap().text.as_ref().unwrap();
     assert_eq!(layout.lines().count(), 1);
-    assert!(layout.width() <= 186.01);
+    assert!(layout.width() <= 120.01);
 }
 
 /// **A line taller than its box is still seen past the box.** A name set

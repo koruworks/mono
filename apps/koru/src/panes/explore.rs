@@ -5000,13 +5000,21 @@ impl ExploreView {
             },
             &scene::rect(r.band.x, r.band.y - lane_h, r.band.w, r.band.h + lane_h),
         );
-        // Hairline between the rail and the docked pane.
+        // Hairline between the rail and the docked pane, starting below the
+        // pane's top-left rounded corner so no straight edge sits under the
+        // antialiased arc.
         if !self.floating {
+            let top = theme::PAGE_RADIUS - 0.5;
             scene::fill(
                 scene,
                 root,
                 p.panel_border,
-                &scene::rect(r.band.x + r.band.w - 0.5, r.band.y, 0.5, r.band.h),
+                &scene::rect(
+                    r.band.x + r.band.w - 0.5,
+                    r.band.y + top,
+                    0.5,
+                    (r.band.h - top).max(0.0),
+                ),
             );
         }
         self.paint_rail_elements(scene, root, engine, rail);
@@ -8422,7 +8430,7 @@ impl ExploreView {
 /// window reads it too: the document's top-left corner, where it meets the
 /// pane, is masked in it (`MainView::draw_cards`).
 pub(crate) fn pane_fill() -> peniko::Color {
-    theme::base_fill()
+    theme::p().pane_bg
 }
 
 /// The trailing lane of a popover row: the tick, the gear, a caret.

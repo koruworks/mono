@@ -170,3 +170,98 @@ fn phase_is_physical_and_does_not_change_layout_or_cached_fragments() {
     assert!(!unhinted.encoding().resources.glyph_runs[0].hint);
     assert_eq!(unhinted.encoding().draw_data, fragment.encoding().draw_data);
 }
+
+#[test]
+fn light_ink_on_dark_surfaces_in_light_theme_uses_dark_text_rendering() {
+    let font = FontData::new(
+        Blob::new(Arc::new(vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
+        0,
+    );
+    let light = koru_settings::TextRendering {
+        hinting: true,
+        antialiasing: koru_settings::TextAntialiasing::Msaa16,
+        offset: 0.0,
+        gamma: 1.75,
+        cutoff: 0.05,
+    };
+    let dark = koru_settings::TextRendering {
+        hinting: true,
+        antialiasing: koru_settings::TextAntialiasing::Msaa16,
+        offset: 0.25,
+        gamma: 0.75,
+        cutoff: 0.15,
+    };
+    let draw = |scene: &mut Scene, color: Color| {
+        scene.draw_glyphs(&font).font_size(13.0).brush(color).draw(
+            Fill::NonZero,
+            [Glyph {
+                id: 1,
+                x: 0.0,
+                y: 10.0,
+            }]
+            .into_iter(),
+        );
+    };
+
+    // Light theme: ordinary text and placeholders keep light settings;
+    // white button labels and faded dark-tooltip labels use dark settings.
+    let mut light_scene = Scene::new();
+    let lp = &koru_draw::theme::LIGHT;
+    draw(&mut light_scene, lp.text);
+    draw(&mut light_scene, lp.placeholder);
+    draw(&mut light_scene, lp.bg); // Inverted button ("Start using Koru")
+    draw(&mut light_scene, lp.on_accent); // Primary accent button
+    draw(&mut light_scene, lp.bubble_fg.multiply_alpha(0.5)); // Fading tooltip
+    prepare_themed(&mut light_scene, light, dark, false);
+
+    let read = |scene: &Scene, index: usize| {
+        let run = &scene.encoding().resources.glyph_runs[index];
+        let off = run.stream_offsets.draw_data;
+        (
+            f32::from_bits(scene.encoding().draw_data[off + 1]),
+            f32::from_bits(scene.encoding().draw_data[off + 2]),
+            run.transform.translation[0],
+        )
+    };
+    assert_eq!(
+        read(&light_scene, 0),
+        (light.gamma, light.cutoff, light.offset)
+    );
+    assert_eq!(
+        read(&light_scene, 1),
+        (light.gamma, light.cutoff, light.offset)
+    );
+    assert_eq!(
+        read(&light_scene, 2),
+        (dark.gamma, dark.cutoff, dark.offset)
+    );
+    assert_eq!(
+        read(&light_scene, 3),
+        (dark.gamma, dark.cutoff, dark.offset)
+    );
+    assert_eq!(
+        read(&light_scene, 4),
+        (dark.gamma, dark.cutoff, dark.offset)
+    );
+
+    // Dark theme mirror: ordinary text and dim text keep dark settings;
+    // dark text on light inverted/accent buttons uses light settings.
+    let mut dark_scene = Scene::new();
+    let dp = &koru_draw::theme::DARK;
+    draw(&mut dark_scene, dp.text);
+    draw(&mut dark_scene, dp.placeholder);
+    draw(&mut dark_scene, dp.bg); // White inverted button in dark theme
+    draw(&mut dark_scene, dp.on_accent); // Light accent button in dark theme
+    prepare_themed(&mut dark_scene, light, dark, true);
+
+    assert_eq!(read(&dark_scene, 0), (dark.gamma, dark.cutoff, dark.offset));
+    assert_eq!(read(&dark_scene, 1), (dark.gamma, dark.cutoff, dark.offset));
+    assert_eq!(
+        read(&dark_scene, 2),
+        (light.gamma, light.cutoff, light.offset)
+    );
+    assert_eq!(
+        read(&dark_scene, 3),
+        (light.gamma, light.cutoff, light.offset)
+    );
+}

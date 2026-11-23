@@ -1047,24 +1047,23 @@ impl OnboardingView {
             .with_toggled(self.welcome_cloud_enabled)
             .disabled(finishing),
         ];
-        if self.welcome_cloud_enabled {
-            children.push(
-                button(
-                    cx.at(parts::BILLING_MONTHLY),
-                    t(lang, Key::WelcomeModalBillingMonthly),
-                    rect(WM_BILLING_MONTHLY),
-                )
-                .disabled(finishing),
-            );
-            children.push(
-                button(
-                    cx.at(parts::BILLING_YEARLY),
-                    t(lang, Key::WelcomeModalBillingYearly),
-                    rect(WM_BILLING_YEARLY),
-                )
-                .disabled(finishing),
-            );
-        }
+        let billing_disabled = finishing || !self.welcome_cloud_enabled;
+        children.push(
+            button(
+                cx.at(parts::BILLING_MONTHLY),
+                t(lang, Key::WelcomeModalBillingMonthly),
+                rect(WM_BILLING_MONTHLY),
+            )
+            .disabled(billing_disabled),
+        );
+        children.push(
+            button(
+                cx.at(parts::BILLING_YEARLY),
+                t(lang, Key::WelcomeModalBillingYearly),
+                rect(WM_BILLING_YEARLY),
+            )
+            .disabled(billing_disabled),
+        );
         if frame.node(WM_STATUS).is_some() {
             children.extend(self.status_semantics(cx, rect(WM_STATUS)));
         }

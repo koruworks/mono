@@ -991,8 +991,9 @@ impl MainView {
             theme::base_fill(),
             &scene::rect(cap.x, cap.y, cap.w, cap.h),
         );
-        // Leave the curved join to draw_document_corner. Painting a straight
-        // edge underneath its antialiased mask leaves a faint corner remnant.
+        // Leave the curved join to draw_top_left_corner, which owns both the
+        // arc and the straight top hairline across the document's corner square
+        // without double-painting underneath the antialiased arc.
         let corner = if Self::pane_of(self.sidebar_rect()).w > 0.0 {
             theme::PAGE_RADIUS - 0.5
         } else {
@@ -1011,13 +1012,30 @@ impl MainView {
         );
     }
 
-    /// The document meets the docked explorer with one rounded corner.
-    /// The remaining edges are flush with the window, without card gutters.
+    /// The docked explorer and document panes each meet the chrome above them
+    /// with a top-left rounded corner. The remaining outer edges sit flush with
+    /// the window, without card gutters.
     fn draw_cards(&mut self, scene: &mut Scene, root: Affine) {
         let pane = Self::pane_of(self.sidebar_rect());
+        if pane.w <= 0.0 {
+            return;
+        }
+        let top = self.content().y - 0.5;
+        // The docked explorer's top-left corner, where the white pane meets
+        // the rail and header ground.
+        draw_top_left_corner(scene, root, pane.x - 0.5, top, None);
+        // The document's top-left corner, where it meets the docked explorer.
+        // Outside the arc is the explorer pane, so the header's hairline runs
+        // straight across the corner square.
         let cap = self.drawn_caption();
-        if pane.w > 0.0 && cap.x > 0.0 {
-            draw_document_corner(scene, root, cap.x - 0.5, self.content().y - 0.5);
+        if cap.x > 0.0 {
+            draw_top_left_corner(
+                scene,
+                root,
+                cap.x - 0.5,
+                top,
+                Some(crate::panes::explore::pane_fill()),
+            );
         }
     }
 
@@ -1129,7 +1147,10 @@ impl MainView {
             },
         );
         let p = theme::p();
-        // Keep the header continuous over the persistent rail.
+        // Keep the header continuous over the persistent rail. When the
+        // explorer is docked, the top hairline begins after the pane's top-left
+        // curved corner and hands off to the document corner at the right edge;
+        // no vertical line cuts through the header ground.
         scene::fill(
             scene,
             root,
@@ -1143,19 +1164,19 @@ impl MainView {
                 p.panel_border,
                 &scene::rect(lane.x, lane.y + lane.h - 0.5, lane.w, 0.5),
             );
-        }
-        if cfg!(target_os = "windows") && self.sidebar.is_open() {
-            scene::fill(
-                scene,
-                root,
-                p.panel_border,
-                &scene::rect(
-                    lane.x + theme::RAIL_W.min(lane.w) - 0.5,
-                    lane.y,
-                    0.5,
-                    lane.h,
-                ),
-            );
+        } else {
+            let pane_x = lane.x + theme::RAIL_W.min(lane.w);
+            let from = pane_x + theme::PAGE_RADIUS - 0.5;
+            let to = lane.x + lane.w - 0.5;
+            let w = (to - from).max(0.0);
+            if w > 0.0 {
+                scene::fill(
+                    scene,
+                    root,
+                    p.panel_border,
+                    &scene::rect(from, lane.y + lane.h - 0.5, w, 0.5),
+                );
+            }
         }
         let rects = koru_shell_chrome::lane::solve(lane, leading);
         let hovered = |h: Hit| self.hover == Some(h);
@@ -1626,31 +1647,54 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
     (missing, waiting)
 }
 
-/// Mask the old straight edges and join them with a single top-left arc.
-/// The header and docked explorer share a fill, so no straight hairline
-/// crosses the rounded corner.
-fn draw_document_corner(scene: &mut Scene, root: Affine, x: f32, y: f32) {
+/// One top-left rounded corner whose straight hairlines stop at the arc's
+/// endpoints. `(x, y)` is the corner's outer hairline edge.
+///
+/// `beside` is `None` for an outer corner against the window's ground (the
+/// docked explorer beside the rail and header) and `Some(pane_fill)` for the
+/// document corner beside the explorer pane — where the header's horizontal
+/// hairline runs straight across the corner square so no gap opens above the
+/// pane's top-right wedge.
+fn draw_top_left_corner(scene: &mut Scene, root: Affine, x: f32, y: f32, beside: Option<Color>) {
     use vello::kurbo::{BezPath, Point};
     let r = theme::PAGE_RADIUS;
+    let p = theme::p();
+    let outside = beside.unwrap_or_else(theme::base_fill);
     let _corner =
         koru_draw::inspect::scope("CardCorner", "part", root, scene::rect(x, y, r, r), |rec| {
-            rec.property("corner", "top-left", "draw_document_corner");
+            rec.property("corner", "top-left", "draw_top_left_corner");
             rec.property("radius", r, "theme::PAGE_RADIUS");
+            rec.property(
+                "outside",
+                if beside.is_some() {
+                    "the pane"
+                } else {
+                    "the ground"
+                },
+                "draw_top_left_corner",
+            );
         });
     const K: f64 = 0.552_284_75;
-    let (x, y, r) = (x as f64, y as f64, r as f64);
-    let pt = |dx: f64, dy: f64| Point::new(x + dx, y + dy);
+    let (x64, y64, r64) = (x as f64, y as f64, r as f64);
+    let pt = |dx: f64, dy: f64| Point::new(x64 + dx, y64 + dy);
     let mut mask = BezPath::new();
     mask.move_to(pt(0.0, 0.0));
-    mask.line_to(pt(r, 0.0));
-    mask.curve_to(pt(r - K * r, 0.0), pt(0.0, r - K * r), pt(0.0, r));
+    mask.line_to(pt(r64, 0.0));
+    mask.curve_to(pt(r64 - K * r64, 0.0), pt(0.0, r64 - K * r64), pt(0.0, r64));
     mask.close_path();
-    scene::fill(scene, root, crate::panes::explore::pane_fill(), &mask);
-    let rr = r - 0.25;
+    scene::fill(scene, root, outside, &mask);
+    if beside.is_some() {
+        scene::fill(scene, root, p.panel_border, &scene::rect(x, y, r, 0.5));
+    }
+    let rr = r64 - 0.25;
     let mut arc = BezPath::new();
-    arc.move_to(pt(r, 0.25));
-    arc.curve_to(pt(r - K * rr, 0.25), pt(0.25, r - K * rr), pt(0.25, r));
-    scene::stroke(scene, root, theme::p().panel_border, 0.5, &arc);
+    arc.move_to(pt(r64, 0.25));
+    arc.curve_to(
+        pt(r64 - K * rr, 0.25),
+        pt(0.25, r64 - K * rr),
+        pt(0.25, r64),
+    );
+    scene::stroke(scene, root, p.panel_border, 0.5, &arc);
 }
 
 /// One faint device-pixel outline. A centered fractional-width stroke on a

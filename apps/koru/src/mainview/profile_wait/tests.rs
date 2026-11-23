@@ -22,7 +22,7 @@ fn lease_expiry_updates_the_menu_sentence_without_a_catalog_push() {
         Timestamp,
         profile_removal::{RemovalKind, RemovalMark},
     };
-    let (mut view, _) = container();
+    let (mut view, _) = on_document();
     let mark = RemovalMark {
         attempt: koru_store_core::ids::RemovalAttemptId::new(),
         kind: RemovalKind::Local,
@@ -52,7 +52,7 @@ fn interrupted_removal_has_exact_recovery_controls_and_live_lease_has_only_cance
     use koru_store_core::profile_removal::{RemovalKind, RemovalMark};
     for kind in [RemovalKind::Local, RemovalKind::HostedCleanup] {
         for stopped in [false, true] {
-            let (mut view, _) = container();
+            let (mut view, _) = on_document();
             let mark = RemovalMark {
                 attempt: koru_store_core::ids::RemovalAttemptId::new(),
                 kind,
@@ -106,6 +106,21 @@ fn interrupted_removal_has_exact_recovery_controls_and_live_lease_has_only_cance
 }
 
 #[test]
+fn welcome_tab_is_never_blocked_by_profile_wait() {
+    let (mut view, _) = container();
+    let wait = waiting(
+        WaitReading::ContentFailed {
+            code: Some("unknown_future_code".into()),
+            automatic: false,
+            retry_at_millis: None,
+        },
+        1,
+    );
+    View::set_profile_wait(&mut view, Some(wait));
+    assert!(!view.profile_wait_visible());
+}
+
+#[test]
 fn every_wait_reading_has_cancel_from_the_element_frame_and_no_hidden_document() {
     for reading in [
         WaitReading::Unknown,
@@ -130,7 +145,7 @@ fn every_wait_reading_has_cancel_from_the_element_frame_and_no_hidden_document()
             retry_at_millis: None,
         },
     ] {
-        let (mut view, _) = container();
+        let (mut view, _) = on_document();
         let wait = waiting(reading, 1);
         View::set_profile_wait(&mut view, Some(wait.clone()));
         assert!(view.profile_wait_visible());
@@ -152,7 +167,7 @@ fn every_wait_reading_has_cancel_from_the_element_frame_and_no_hidden_document()
 
 #[test]
 fn retry_and_sign_in_are_reading_specific_and_old_accessibility_actions_are_refused() {
-    let (mut view, _) = container();
+    let (mut view, _) = on_document();
     let wait = waiting(
         WaitReading::EnrollmentFailed {
             code: None,
@@ -185,7 +200,7 @@ fn retry_and_sign_in_are_reading_specific_and_old_accessibility_actions_are_refu
 
 #[test]
 fn waiting_keystrokes_cannot_promote_a_hidden_draft_and_escape_cancels() {
-    let (mut view, _) = container();
+    let (mut view, _) = on_document();
     let wait = waiting(WaitReading::Unknown, 1);
     View::set_profile_wait(&mut view, Some(wait.clone()));
     assert!(view.profile_wait_key(&ch("x"), ModifiersState::empty()));
@@ -229,7 +244,7 @@ fn waiting_withholds_document_semantics_and_dictation_and_uses_painted_bounds() 
 
 #[test]
 fn only_active_work_animates_and_failure_never_claims_admission_counts() {
-    let (mut view, _) = container();
+    let (mut view, _) = on_document();
     for (reading, animated) in [
         (WaitReading::Unknown, false),
         (WaitReading::Preparing, true),

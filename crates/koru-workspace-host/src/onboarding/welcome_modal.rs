@@ -294,16 +294,18 @@ impl OnboardingView {
                 self.error = None;
             }
             Hit::BillingMonthly => {
-                self.welcome_billing = WelcomeBillingInterval::Monthly;
-                self.welcome_cloud_enabled = true;
-                self.welcome_path = WelcomePath::CreateAccount;
-                self.error = None;
+                if self.welcome_cloud_enabled {
+                    self.welcome_billing = WelcomeBillingInterval::Monthly;
+                    self.welcome_path = WelcomePath::CreateAccount;
+                    self.error = None;
+                }
             }
             Hit::BillingYearly => {
-                self.welcome_billing = WelcomeBillingInterval::Yearly;
-                self.welcome_cloud_enabled = true;
-                self.welcome_path = WelcomePath::CreateAccount;
-                self.error = None;
+                if self.welcome_cloud_enabled {
+                    self.welcome_billing = WelcomeBillingInterval::Yearly;
+                    self.welcome_path = WelcomePath::CreateAccount;
+                    self.error = None;
+                }
             }
             Hit::StartWithoutCloud => {
                 self.welcome_cloud_enabled = false;
@@ -683,108 +685,98 @@ impl OnboardingView {
         .id(KEY_CLOUD_TOGGLE)
         .hit();
 
-        let cloud_pad_y = if !cloud_on && !signed_in {
-            WELCOME_CLOUD_COLLAPSED_PAD_Y
-        } else {
-            WELCOME_CLOUD_PAD_Y
-        };
         let mut cloud_card = col("Koru Cloud card")
             .id(KEY_CLOUD_CARD)
             .pad_x(WELCOME_OPTION_PAD_X)
-            .pad_y(cloud_pad_y)
+            .pad_y(WELCOME_CLOUD_PAD_Y)
             .gap(Space::S2_5);
 
+        let billing_disabled = !cloud_on || finishing;
+        let monthly_segment = BillingSegmentLeaf::new(
+            &mut self.engine,
+            t(lang, T::WelcomeModalBillingMonthly),
+            None,
+            !is_yearly,
+            hover == Some(Hit::BillingMonthly),
+            focused_ring == Some(Hit::BillingMonthly),
+            billing_disabled,
+        );
+        let yearly_segment = BillingSegmentLeaf::new(
+            &mut self.engine,
+            t(lang, T::WelcomeModalBillingYearly),
+            Some(t(lang, T::WelcomeModalSave16)),
+            is_yearly,
+            hover == Some(Hit::BillingYearly),
+            focused_ring == Some(Hit::BillingYearly),
+            billing_disabled,
+        );
+        let mut monthly_leaf = leaf("Monthly billing", monthly_segment)
+            .semantic()
+            .id(KEY_BILLING_MONTHLY);
+        let mut yearly_leaf = leaf("Yearly billing", yearly_segment)
+            .semantic()
+            .id(KEY_BILLING_YEARLY);
         if cloud_on {
-            let monthly_segment = BillingSegmentLeaf::new(
-                &mut self.engine,
-                t(lang, T::WelcomeModalBillingMonthly),
-                None,
-                !is_yearly,
-                hover == Some(Hit::BillingMonthly),
-                focused_ring == Some(Hit::BillingMonthly),
-            );
-            let yearly_segment = BillingSegmentLeaf::new(
-                &mut self.engine,
-                t(lang, T::WelcomeModalBillingYearly),
-                Some(t(lang, T::WelcomeModalSave16)),
-                is_yearly,
-                hover == Some(Hit::BillingYearly),
-                focused_ring == Some(Hit::BillingYearly),
-            );
-            let billing_track = row("Billing toggle track")
-                .id(KEY_BILLING_TRACK)
-                .items_center()
-                .pad(Space::S1)
-                .gap(Space::S1)
-                .child(
-                    leaf("Monthly billing", monthly_segment)
-                        .semantic()
-                        .id(KEY_BILLING_MONTHLY)
-                        .hit(),
-                )
-                .child(
-                    leaf("Yearly billing", yearly_segment)
-                        .semantic()
-                        .id(KEY_BILLING_YEARLY)
-                        .hit(),
-                );
-
-            let price_key = if is_yearly {
-                T::WelcomeModalPlusPriceYearly
-            } else {
-                T::WelcomeModalPlusPrice
-            };
-            let price_col = col("Founding price")
-                .items_end()
-                .gap(Space::S0)
-                .child(text(t(lang, price_key)).role(roles::ROW).emphasis(true))
-                .child(
-                    text(t(lang, T::WelcomeCloudFoundingPriceLock))
-                        .role(roles::META)
-                        .ink(Ink::Secondary),
-                );
-
-            let cloud_top = row("Koru Cloud header")
-                .gap(WELCOME_ROW_GAP)
-                .child(
-                    col("Koru Cloud copy")
-                        .fill()
-                        .gap(WELCOME_OPTION_TEXT_GAP)
-                        .child(
-                            text(t(lang, T::WelcomeCloudTitle))
-                                .role(roles::ROW)
-                                .emphasis(true),
-                        )
-                        .child(
-                            text(t(lang, self.welcome_cloud_variant.body_key()))
-                                .role(roles::META)
-                                .ink(Ink::Secondary)
-                                .wrap(),
-                        ),
-                )
-                .child(cloud_toggle.align_self(Align::Start));
-
-            let billing_row = row("Billing interval row")
-                .items_center()
-                .gap(WELCOME_ROW_GAP)
-                .child(billing_track)
-                .child(spacer())
-                .child(price_col);
-
-            cloud_card = cloud_card.child(cloud_top).child(billing_row);
-        } else {
-            let cloud_top = row("Koru Cloud header")
-                .items_center()
-                .gap(WELCOME_ROW_GAP)
-                .child(
-                    text(t(lang, T::WelcomeCloudTitle))
-                        .role(roles::ROW)
-                        .emphasis(true),
-                )
-                .child(spacer())
-                .child(cloud_toggle);
-            cloud_card = cloud_card.child(cloud_top);
+            monthly_leaf = monthly_leaf.hit();
+            yearly_leaf = yearly_leaf.hit();
         }
+        let billing_track = row("Billing toggle track")
+            .id(KEY_BILLING_TRACK)
+            .items_center()
+            .gap(WELCOME_SEGMENT_GAP)
+            .child(monthly_leaf)
+            .child(yearly_leaf);
+
+        let price_key = if is_yearly {
+            T::WelcomeModalPlusPriceYearly
+        } else {
+            T::WelcomeModalPlusPrice
+        };
+        let price_ink = if cloud_on { Ink::Primary } else { Ink::Hint };
+        let secondary_ink = if cloud_on { Ink::Secondary } else { Ink::Hint };
+        let price_col = col("Founding price")
+            .items_end()
+            .gap(Space::S0)
+            .child(
+                text(t(lang, price_key))
+                    .role(roles::ROW)
+                    .emphasis(true)
+                    .ink(price_ink),
+            )
+            .child(
+                text(t(lang, T::WelcomeCloudFoundingPriceLock))
+                    .role(roles::META)
+                    .ink(secondary_ink),
+            );
+
+        let cloud_top = row("Koru Cloud header")
+            .gap(WELCOME_ROW_GAP)
+            .child(
+                col("Koru Cloud copy")
+                    .fill()
+                    .gap(WELCOME_OPTION_TEXT_GAP)
+                    .child(
+                        text(t(lang, T::WelcomeCloudTitle))
+                            .role(roles::ROW)
+                            .emphasis(true),
+                    )
+                    .child(
+                        text(t(lang, self.welcome_cloud_variant.body_key()))
+                            .role(roles::META)
+                            .ink(secondary_ink)
+                            .wrap(),
+                    ),
+            )
+            .child(cloud_toggle.align_self(Align::Start));
+
+        let billing_row = row("Billing interval row")
+            .items_center()
+            .gap(WELCOME_ROW_GAP)
+            .child(billing_track)
+            .child(spacer())
+            .child(price_col);
+
+        cloud_card = cloud_card.child(cloud_top).child(billing_row);
 
         if signed_in {
             cloud_card = cloud_card.child(
@@ -1125,20 +1117,6 @@ impl OnboardingView {
             &scene::Panel::popover(WELCOME_CARD_RADIUS.value),
         );
         let p = theme::p();
-        if let Some(track) = frame.node(KEY_BILLING_TRACK).map(|node| node.rect) {
-            scene::fill(
-                canvas,
-                root,
-                p.code_bg,
-                &scene::rrect(
-                    track.x,
-                    track.y,
-                    track.w,
-                    track.h,
-                    WELCOME_SEGMENT_TRACK_RADIUS.value,
-                ),
-            );
-        }
         frame.paint(&tree, canvas, root, &mut self.engine);
         if let Some(rect) = frame.node(KEY_CLOUD_CARD).map(|node| node.rect) {
             scene::stroke(

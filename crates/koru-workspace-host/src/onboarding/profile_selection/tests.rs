@@ -107,7 +107,7 @@ fn a_tick_on_a_profile_that_has_since_arrived_here_is_dropped() {
 }
 
 #[test]
-fn a_selection_sends_only_profiles_that_are_not_here_and_opens_the_first_once_durable() {
+fn a_selection_sends_only_profiles_that_are_not_here_and_waits_for_a_synced_workspace() {
     let mut view = view();
     view.account_state.enrollments = vec![koru_agent_wire::AccountProfileEnrollment {
         profile_id: id(11),
@@ -133,12 +133,20 @@ fn a_selection_sends_only_profiles_that_are_not_here_and_opens_the_first_once_du
     }]);
     assert_eq!(
         view.take_action(),
-        Some(Action::RestoreLocalProfile { profile_id: id(12) })
+        None,
+        "do not leave onboarding until at least one synced workspace arrives"
     );
+    assert_eq!(view.screen, Screen::ExistingProfiles);
+    assert_eq!(
+        view.synced_workspace_candidates(),
+        Some(&[id(12)][..])
+    );
+    assert!(view.selection.locked());
+    assert!(view.selection_controls().contains(&Hit::CancelSelection));
 }
 
 #[test]
-fn first_selected_profile_opens_as_soon_as_it_is_durable_while_others_continue() {
+fn selected_profiles_stay_in_chooser_until_a_workspace_syncs_and_cancel_clears_wait() {
     let mut view = view();
     view.activate(Hit::Existing(1));
     view.activate(Hit::Existing(2));
@@ -158,17 +166,21 @@ fn first_selected_profile_opens_as_soon_as_it_is_durable_while_others_continue()
             retry_at_millis: None,
         },
     ]);
+    assert_eq!(view.take_action(), None);
     assert_eq!(
-        view.take_action(),
-        Some(Action::RestoreLocalProfile { profile_id: id(12) })
+        view.synced_workspace_candidates(),
+        Some(&[id(12), id(13)][..])
     );
     let mut projection = state(1);
     projection.enrollments = view.account_state.enrollments.clone();
     view.show_account_state(&projection);
     assert!(
         view.take_action().is_none(),
-        "do not launch a second restore"
+        "background progress does not launch an empty-profile restore"
     );
+    view.account_cancelled();
+    assert_eq!(view.synced_workspace_candidates(), None);
+    assert!(!view.selection.locked());
 }
 
 #[test]
@@ -559,7 +571,8 @@ fn same_account_success_or_cancel_before_ack_only_settles_its_exact_submission()
             owner_scope: 1,
             generation: 11,
         });
-        assert!(!a.selection.locked());
+        assert!(!a.selection.waiting && !a.selection.uncertain);
+        assert_eq!(a.selection.syncing_workspaces, !cancel);
         b.account_command_admitted(crate::account_ui::CommandAdmission {
             submission: sb,
             owner_scope: 1,
@@ -570,7 +583,8 @@ fn same_account_success_or_cancel_before_ack_only_settles_its_exact_submission()
             "another form's pre-ACK result cannot finish B"
         );
         b.selection_result(1, 12, &result);
-        assert!(!b.selection.locked());
+        assert!(!b.selection.waiting && !b.selection.uncertain);
+        assert_eq!(b.selection.syncing_workspaces, !cancel);
     }
 }
 

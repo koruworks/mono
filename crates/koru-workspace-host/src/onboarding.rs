@@ -1194,56 +1194,29 @@ impl OnboardingView {
             return;
         }
         // This targeted acknowledgement means the requested Profile manifests
-        // are durably local. Peer enrollment and document arrival continue in
-        // the background; unsolicited progress is not this acknowledgement.
-        for (row, source) in self
-            .account_profiles
-            .iter()
-            .zip(&mut self.account_profile_sources)
-        {
-            if self
-                .selection
-                .submitted
-                .as_ref()
-                .is_some_and(|ids| ids.contains(&row.profile_id))
-                && profiles
-                    .iter()
-                    .any(|profile| profile.profile_id == row.profile_id)
-            {
-                *source = ProfileSource::Local;
-            }
-        }
+        // are durably local, while peer enrollment and workspace arrival still
+        // run in the background. Keep onboarding open until at least one
+        // selected Profile has a live workspace synced locally.
+        let acknowledged = self.selection.submitted.as_ref().is_some_and(|ids| {
+            ids.iter()
+                .any(|id| profiles.iter().any(|profile| &profile.profile_id == id))
+        });
         self.account_state.enrollments = profiles;
         self.profile_selected();
-        self.open_first_connected_selection();
+        if acknowledged {
+            self.selection.syncing_workspaces = true;
+        }
     }
 
-    fn open_first_connected_selection(&mut self) {
-        if self.screen != Screen::ExistingProfiles
-            || self.pending.is_some()
-            || self.enrollment_cancelling
-        {
-            return;
-        }
-        let Some(selected) = self.selection.submitted.as_ref() else {
-            return;
-        };
-        let first = self
-            .account_profiles
-            .iter()
-            .enumerate()
-            .find(|(_, row)| selected.contains(&row.profile_id));
-        let Some((index, first)) = first else {
-            return;
-        };
-        if self.account_profile_sources.get(index) != Some(&ProfileSource::Local) {
-            return;
-        }
-        self.pending = Some(Action::RestoreLocalProfile {
-            profile_id: first.profile_id.clone(),
-        });
-        self.selected_existing = Some(index);
-        self.screen = Screen::RestoringProfile;
+    /// Selected Profiles whose first synced workspace onboarding is waiting
+    /// for before transitioning out of the chooser into the main window.
+    pub fn synced_workspace_candidates(&self) -> Option<&[String]> {
+        (self.screen == Screen::ExistingProfiles
+            && self.selection.syncing_workspaces
+            && !self.enrollment_cancelling)
+            .then(|| self.selection.submitted.as_deref())
+            .flatten()
+            .filter(|ids| !ids.is_empty())
     }
 
     pub fn selected_account_profile_id(&self) -> Option<&str> {
@@ -1285,7 +1258,6 @@ impl OnboardingView {
             }
             _ => {}
         }
-        self.open_first_connected_selection();
         if self.screen == Screen::RestoringProfile {
             return;
         }
@@ -2475,8 +2447,14 @@ impl OnboardingView {
                 | Hit::CancelSelection
                 | Hit::Primary),
             ) => self.activate_selection(hit),
-            (Screen::ExistingProfiles, Hit::CreateNew) => self.show_connected_profile(),
-            (Screen::ExistingProfiles, Hit::ContinueOffline) => self.show_setup(),
+            (Screen::ExistingProfiles, Hit::CreateNew) => {
+                self.selection.syncing_workspaces = false;
+                self.show_connected_profile();
+            }
+            (Screen::ExistingProfiles, Hit::ContinueOffline) => {
+                self.selection.syncing_workspaces = false;
+                self.show_setup();
+            }
             (Screen::ExistingProfiles, Hit::SwitchAccount) => {
                 self.account_profiles.clear();
                 self.account_profile_sources.clear();
@@ -2486,6 +2464,7 @@ impl OnboardingView {
                 self.welcome_cloud_access = false;
                 self.welcome_signin_mode = false;
                 self.selection.checked.clear();
+                self.selection.submitted = None;
                 self.selection.settled();
                 self.modal_account_flow = false;
                 self.show_entry();

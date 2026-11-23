@@ -9,29 +9,25 @@ use std::sync::RwLock;
 static CURRENT: RwLock<TextRenderingPreferences> = RwLock::new(TextRenderingPreferences::DEFAULT);
 
 pub fn current() -> TextRendering {
-    let mut shown = saved();
-    if let Some(aa) = preview::previewed(PreviewSlot::TextAntialiasing(crate::theme::is_dark()))
-        .and_then(|value| {
-            koru_settings::TextAntialiasing::ALL
-                .get(value as usize)
-                .copied()
-        })
-    {
+    current_for(crate::theme::is_dark())
+}
+
+/// Live raster settings for either the light (`false`) or dark (`true`) theme,
+/// including any active Settings hover preview for that theme.
+pub fn current_for(dark: bool) -> TextRendering {
+    let base = preferences().for_theme(dark);
+    let mut shown = base;
+    if let Some(aa) = preview::previewed(PreviewSlot::TextAntialiasing(dark)).and_then(|value| {
+        koru_settings::TextAntialiasing::ALL
+            .get(value as usize)
+            .copied()
+    }) {
         shown.antialiasing = aa;
     }
     for (slot, value) in [
-        (
-            PreviewSlot::TextOffset(crate::theme::is_dark()),
-            &mut shown.offset,
-        ),
-        (
-            PreviewSlot::TextGamma(crate::theme::is_dark()),
-            &mut shown.gamma,
-        ),
-        (
-            PreviewSlot::TextCutoff(crate::theme::is_dark()),
-            &mut shown.cutoff,
-        ),
+        (PreviewSlot::TextOffset(dark), &mut shown.offset),
+        (PreviewSlot::TextGamma(dark), &mut shown.gamma),
+        (PreviewSlot::TextCutoff(dark), &mut shown.cutoff),
     ] {
         if let Some(bits) = preview::previewed(slot) {
             *value = f32::from_bits(bits);
@@ -40,7 +36,7 @@ pub fn current() -> TextRendering {
     if shown.patch().validate().is_ok() {
         shown
     } else {
-        saved()
+        base
     }
 }
 

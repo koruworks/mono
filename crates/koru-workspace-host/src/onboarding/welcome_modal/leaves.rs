@@ -21,11 +21,9 @@ use super::tokens::{
     BROWSER_BUTTON_ICON_GAP, BROWSER_STATUS_GAP, BROWSER_STATUS_H, BROWSER_STATUS_PAD_X,
     BROWSER_STATUS_RADIUS, BROWSER_STATUS_SPINNER, CHECKOUT_ICON_SIZE, WELCOME_DIVIDER_H,
     WELCOME_DIVIDER_STROKE, WELCOME_LINK_ARROW_GAP, WELCOME_LINK_ARROW_SIZE, WELCOME_LINK_H,
-    WELCOME_LINK_PAD_X,
-    WELCOME_LOGO_SIZE, WELCOME_PILL_H, WELCOME_PILL_PAD_X, WELCOME_PILL_RADIUS,
-    WELCOME_PROVIDER_H, WELCOME_PROVIDER_MARK, WELCOME_PROVIDER_MARK_GAP, WELCOME_PROVIDER_RADIUS,
-    WELCOME_RING_GAP, WELCOME_RING_W, WELCOME_SEGMENT_BADGE_GAP, WELCOME_SEGMENT_H,
-    WELCOME_SEGMENT_PAD_X, WELCOME_SEGMENT_RADIUS,
+    WELCOME_LINK_PAD_X, WELCOME_LOGO_SIZE, WELCOME_PROVIDER_H, WELCOME_PROVIDER_MARK,
+    WELCOME_PROVIDER_MARK_GAP, WELCOME_PROVIDER_RADIUS, WELCOME_RING_GAP, WELCOME_RING_W,
+    WELCOME_SEGMENT_BADGE_GAP, WELCOME_SEGMENT_H, WELCOME_SEGMENT_UNDERLINE_H,
 };
 use super::super::setup::tokens::{
     SETUP_CHIP, SETUP_RING_GAP, SETUP_RING_RADIUS, SETUP_RING_W, SETUP_TILE_HOVER_ICON,
@@ -52,10 +50,6 @@ impl Leaf for LogoLeaf {
     ) {
         brand::draw_logo(scene, root, at);
     }
-}
-
-fn badge_style() -> theme::TextStyle {
-    theme::TextStyle::new(theme::role::hint().metrics, theme::FontWeight::SemiBold)
 }
 
 /// Which third-party sign-in brand a provider button displays.
@@ -262,8 +256,8 @@ impl Leaf for LinkLeaf {
     }
 }
 
-/// One segment of the Monthly / Yearly pill toggle, with an optional inline
-/// teal badge (e.g. *Save 16%*).
+/// One inline underline-tab option of the Monthly / Yearly billing selector,
+/// with an optional inline teal accent label (e.g. *Save 16%*).
 pub(crate) struct BillingSegmentLeaf {
     pub(crate) label: String,
     pub(crate) badge: Option<String>,
@@ -271,6 +265,7 @@ pub(crate) struct BillingSegmentLeaf {
     pub(crate) selected: bool,
     pub(crate) hovered: bool,
     pub(crate) focused: bool,
+    pub(crate) disabled: bool,
 }
 
 impl BillingSegmentLeaf {
@@ -281,21 +276,22 @@ impl BillingSegmentLeaf {
         selected: bool,
         hovered: bool,
         focused: bool,
+        disabled: bool,
     ) -> Self {
         let style = segment_style(selected);
         let text_w = engine.simple_layout(label, style).width();
         let badge_w = badge.map_or(0.0, |b| {
             WELCOME_SEGMENT_BADGE_GAP.value
-                + engine.simple_layout(b, badge_style()).width()
-                + WELCOME_PILL_PAD_X.value * 2.0
+                + engine.simple_layout(b, segment_badge_style()).width()
         });
         Self {
             label: label.to_owned(),
             badge: badge.map(str::to_owned),
-            width: text_w + badge_w + WELCOME_SEGMENT_PAD_X.value * 2.0,
+            width: text_w + badge_w,
             selected,
             hovered,
             focused,
+            disabled,
         }
     }
 }
@@ -304,12 +300,18 @@ fn segment_style(selected: bool) -> theme::TextStyle {
     theme::TextStyle::new(
         theme::role::meta().metrics,
         if selected {
-            theme::FontWeight::SemiBold
-        } else {
             theme::FontWeight::Medium
+        } else {
+            theme::FontWeight::Regular
         },
     )
 }
+
+fn segment_badge_style() -> theme::TextStyle {
+    theme::TextStyle::new(theme::role::meta().metrics, theme::FontWeight::Medium)
+}
+
+const BILLING_DISABLED_ALPHA: f32 = 0.45;
 
 impl Leaf for BillingSegmentLeaf {
     fn measure(&self, _width: Option<f32>) -> (f32, f32) {
@@ -326,48 +328,58 @@ impl Leaf for BillingSegmentLeaf {
         _state: ElState,
     ) {
         let p = cx.palette();
-        let shape = scene::rrect(at.x, at.y, at.w, at.h, WELCOME_SEGMENT_RADIUS.value);
-        if self.selected {
-            scene::fill(scene, root, p.panel_bg, &shape);
-            scene::stroke(scene, root, p.panel_border, 1.0, &shape);
-        } else if self.hovered {
-            scene::fill(scene, root, p.hover_tint, &shape);
-        }
-        if self.focused {
+        let hovered = self.hovered && !self.disabled;
+        let focused = self.focused && !self.disabled;
+        let alpha = if self.disabled {
+            BILLING_DISABLED_ALPHA
+        } else {
+            1.0
+        };
+        if focused {
+            let pad_x = 4.0;
+            let pad_y = 1.0;
             scene::stroke(
                 scene,
                 root,
                 p.focus_ring,
                 f64::from(WELCOME_RING_W.value),
-                &shape,
+                &scene::rrect(
+                    at.x - pad_x,
+                    at.y - pad_y,
+                    at.w + pad_x * 2.0,
+                    at.h + pad_y * 2.0,
+                    4.0,
+                ),
             );
         }
         let layout = engine.simple_layout(&self.label, segment_style(self.selected));
         let h = scene::first_line_height(&layout);
-        let text_x = at.x + WELCOME_SEGMENT_PAD_X.value;
-        let text_y = at.y + (at.h - h) * 0.5;
-        let ink = if self.selected { p.text } else { p.text_dim };
+        let underline_h = WELCOME_SEGMENT_UNDERLINE_H.value;
+        let text_area_h = (at.h - underline_h - 2.0).max(h);
+        let text_x = at.x;
+        let text_y = at.y + (text_area_h - h) * 0.5;
+        let ink = if self.selected || hovered {
+            p.text
+        } else {
+            p.text_dim
+        }
+        .multiply_alpha(alpha);
         scene::draw_layout(scene, root, &layout, text_x, text_y, Some(ink));
         if let Some(badge) = &self.badge {
-            let b_layout = engine.simple_layout(badge, badge_style());
-            let b_w = b_layout.width() + WELCOME_PILL_PAD_X.value * 2.0;
-            let b_h = WELCOME_PILL_H.value;
+            let b_layout = engine.simple_layout(badge, segment_badge_style());
             let b_x = text_x + layout.width() + WELCOME_SEGMENT_BADGE_GAP.value;
-            let b_y = at.y + (at.h - b_h) * 0.5;
-            scene::fill(
+            let b_ink = p.accents[4].ink.multiply_alpha(alpha);
+            scene::draw_layout(scene, root, &b_layout, b_x, text_y, Some(b_ink));
+        }
+        if self.selected {
+            let line_y = f64::from(at.y + at.h - underline_h * 0.5);
+            let line_color = p.text.multiply_alpha(if self.disabled { 0.35 } else { 1.0 });
+            scene::stroke(
                 scene,
                 root,
-                p.accents[4].fill,
-                &scene::rrect(b_x, b_y, b_w, b_h, WELCOME_PILL_RADIUS.value),
-            );
-            let bh = scene::first_line_height(&b_layout);
-            scene::draw_layout(
-                scene,
-                root,
-                &b_layout,
-                b_x + (b_w - b_layout.width()) * 0.5,
-                b_y + (b_h - bh) * 0.5,
-                Some(p.accents[4].ink),
+                line_color,
+                f64::from(underline_h),
+                &Line::new((f64::from(at.x), line_y), (f64::from(at.x + at.w), line_y)),
             );
         }
     }

@@ -42,11 +42,8 @@ pub(crate) const WELCOME_OPTION_RADIUS: Metric = Metric::new("WELCOME_OPTION_RAD
 pub(crate) const WELCOME_OPTION_PAD_X: Tagged<Space> = Tagged::new("WELCOME_OPTION_PAD_X", Space::S4);
 pub(crate) const WELCOME_OPTION_PAD_Y: Tagged<Space> =
     Tagged::new("WELCOME_OPTION_PAD_Y", Space::S2);
-/// Vertical padding inside the Koru Cloud card: 12 when expanded, 10 when
-/// collapsed to the single header line so the banner stays 38 px tall.
+/// Vertical padding inside the Koru Cloud card.
 pub(crate) const WELCOME_CLOUD_PAD_Y: Tagged<Space> = Tagged::new("WELCOME_CLOUD_PAD_Y", Space::S3);
-pub(crate) const WELCOME_CLOUD_COLLAPSED_PAD_Y: Tagged<Space> =
-    Tagged::new("WELCOME_CLOUD_COLLAPSED_PAD_Y", Space::S2_5);
 
 /// Gap between title and subtitle inside an option card.
 pub(crate) const WELCOME_OPTION_TEXT_GAP: Tagged<Space> =
@@ -54,11 +51,6 @@ pub(crate) const WELCOME_OPTION_TEXT_GAP: Tagged<Space> =
 
 /// Horizontal gap inside option and plan rows.
 pub(crate) const WELCOME_ROW_GAP: Tagged<Space> = Tagged::new("WELCOME_ROW_GAP", Space::S2_5);
-
-/// Pill badge dimensions for inline savings badges (e.g. "Save 16%").
-pub(crate) const WELCOME_PILL_H: Metric = Metric::new("WELCOME_PILL_H", 20.0);
-pub(crate) const WELCOME_PILL_RADIUS: Metric = Metric::new("WELCOME_PILL_RADIUS", 10.0);
-pub(crate) const WELCOME_PILL_PAD_X: Metric = Metric::new("WELCOME_PILL_PAD_X", 8.0);
 
 /// Height and spacing of the Google / Apple provider buttons and Continue CTA.
 pub(crate) const WELCOME_PROVIDER_H: Metric = Metric::new("WELCOME_PROVIDER_H", 38.0);
@@ -78,14 +70,14 @@ pub(crate) const WELCOME_LINK_ARROW_GAP: Metric = Metric::new("WELCOME_LINK_ARRO
 pub(crate) const WELCOME_RING_W: Metric = Metric::new("WELCOME_RING_W", 2.0);
 pub(crate) const WELCOME_RING_GAP: Metric = Metric::new("WELCOME_RING_GAP", 2.0);
 
-/// Segmented Monthly / Yearly billing toggle metrics.
-pub(crate) const WELCOME_SEGMENT_H: Metric = Metric::new("WELCOME_SEGMENT_H", 28.0);
-pub(crate) const WELCOME_SEGMENT_PAD_X: Metric = Metric::new("WELCOME_SEGMENT_PAD_X", 12.0);
-pub(crate) const WELCOME_SEGMENT_RADIUS: Metric = Metric::new("WELCOME_SEGMENT_RADIUS", 8.0);
-pub(crate) const WELCOME_SEGMENT_TRACK_RADIUS: Metric =
-    Metric::new("WELCOME_SEGMENT_TRACK_RADIUS", 10.0);
+/// Underline-tab Monthly / Yearly billing selector metrics.
+pub(crate) const WELCOME_SEGMENT_H: Metric = Metric::new("WELCOME_SEGMENT_H", 26.0);
+pub(crate) const WELCOME_SEGMENT_GAP: Tagged<Space> =
+    Tagged::new("WELCOME_SEGMENT_GAP", Space::S4);
 pub(crate) const WELCOME_SEGMENT_BADGE_GAP: Metric =
     Metric::new("WELCOME_SEGMENT_BADGE_GAP", 6.0);
+pub(crate) const WELCOME_SEGMENT_UNDERLINE_H: Metric =
+    Metric::new("WELCOME_SEGMENT_UNDERLINE_H", 2.0);
 
 /// Checkout status modal top icon (spinner / card badge) size.
 pub(crate) const CHECKOUT_ICON_SIZE: Metric = Metric::new("CHECKOUT_ICON_SIZE", 36.0);

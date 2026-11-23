@@ -73,34 +73,52 @@ fn workspace_setup_keeps_input_in_the_card_and_submits_local_creation() {
     let expanded_cloud = rect(&expanded_f, super::super::welcome_modal::KEY_CLOUD_CARD);
     assert_eq!(rect(&expanded_f, super::super::welcome_modal::KEY_GOOGLE).h, 38.0);
     assert_eq!(rect(&expanded_f, super::super::welcome_modal::KEY_APPLE).h, 38.0);
-    assert!(
-        expanded_f
-            .node(super::super::welcome_modal::KEY_BILLING_TRACK)
-            .is_some()
+    assert_eq!(
+        koru_i18n::t(view.language, koru_i18n::Key::WelcomeCloudTitle),
+        "Add Koru Cloud"
     );
+    let track_r = rect(&expanded_f, super::super::welcome_modal::KEY_BILLING_TRACK);
+    let monthly_r = rect(
+        &expanded_f,
+        super::super::welcome_modal::KEY_BILLING_MONTHLY,
+    );
+    let yearly_r = rect(&expanded_f, super::super::welcome_modal::KEY_BILLING_YEARLY);
+    // Inline underline-tab selector: flush-left Monthly, spaced gap before Yearly.
+    assert!((track_r.x - monthly_r.x).abs() < 0.01);
+    assert!(yearly_r.x > monthly_r.x + monthly_r.w);
+    assert!((track_r.h - monthly_r.h).abs() < 0.01);
+    assert!((monthly_r.h - yearly_r.h).abs() < 0.01);
     view.activate(Hit::CloudToggle);
     assert!(!view.welcome_cloud_enabled);
-    // Turning Koru Cloud off collapses the card to the Koru Cloud header line
-    // and removes the billing controls from layout and keyboard navigation.
+    // Turning Koru Cloud off keeps the full card and billing selector visible,
+    // disabled from pointer hits and keyboard navigation.
     let (_, f) = view.welcome_modal_frame();
-    let collapsed_cloud = rect(&f, super::super::welcome_modal::KEY_CLOUD_CARD);
-    assert!(collapsed_cloud.h < expanded_cloud.h);
+    let disabled_cloud = rect(&f, super::super::welcome_modal::KEY_CLOUD_CARD);
     assert!(
-        (collapsed_cloud.h - 38.0).abs() < 0.5,
-        "collapsed cloud banner should be 38 px tall, got {}",
-        collapsed_cloud.h
+        (disabled_cloud.h - expanded_cloud.h).abs() < 0.5,
+        "cloud card height should stay steady when toggled off ({} vs {})",
+        disabled_cloud.h,
+        expanded_cloud.h
     );
     assert!(
         f.node(super::super::welcome_modal::KEY_BILLING_TRACK)
-            .is_none()
+            .is_some()
+    );
+    let disabled_monthly = rect(&f, super::super::welcome_modal::KEY_BILLING_MONTHLY);
+    let disabled_yearly = rect(&f, super::super::welcome_modal::KEY_BILLING_YEARLY);
+    assert!(
+        view.welcome_modal_hit(
+            disabled_monthly.x + disabled_monthly.w * 0.5,
+            disabled_monthly.y + disabled_monthly.h * 0.5,
+        )
+        .is_none()
     );
     assert!(
-        f.node(super::super::welcome_modal::KEY_BILLING_MONTHLY)
-            .is_none()
-    );
-    assert!(
-        f.node(super::super::welcome_modal::KEY_BILLING_YEARLY)
-            .is_none()
+        view.welcome_modal_hit(
+            disabled_yearly.x + disabled_yearly.w * 0.5,
+            disabled_yearly.y + disabled_yearly.h * 0.5,
+        )
+        .is_none()
     );
     assert!(!view.controls().contains(&Hit::BillingMonthly));
     assert!(!view.controls().contains(&Hit::BillingYearly));

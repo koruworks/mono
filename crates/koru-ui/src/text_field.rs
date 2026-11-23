@@ -504,6 +504,11 @@ impl TextField {
                     koru_draw::theme::ui_stack(),
                 )),
             ));
+        editor
+            .edit_styles()
+            .insert(parley::style::StyleProperty::LineHeight(
+                parley::style::LineHeight::Absolute(style.metrics.line_height),
+            ));
         // A prompt field is chrome, so its weight comes from the role's
         // `TextStyle` (the caller passes `role::ui()` or `role::body()`). It
         // uses `PlainEditor` rather than a `RangedBuilder`, so it sets the
@@ -1610,13 +1615,12 @@ pub enum CaretPaint {
 /// Width of a [`FieldCaret::Form`] caret, in logical pixels. Thick enough to
 /// find at a glance in a box with nothing else in it yet.
 pub const FORM_CARET_W: f32 = 3.0;
-/// How far a [`FieldCaret::Form`] caret reaches past the font's cap height and
-/// descent at each end, so it reads as a caret and not as a letter.
-pub const FORM_CARET_OVERHANG: f32 = 1.0;
 
 /// The `(top, bottom)` of a [`FieldCaret::Form`] caret in a box of height `h`
-/// at `y`: the font's cap height above the baseline and its full descent below,
-/// with the baseline where [`baseline_centred_y`] puts a field's text.
+/// at `y`: vertically aligned identically to the main document caret
+/// ([`theme::caret_rect`]) — centered on the cap-height band so it rises above
+/// capitals and drops symmetrically below the baseline — with the baseline
+/// where [`baseline_centred_y`] puts a field's text and placeholder.
 pub fn form_caret_span(
     engine: &mut TextEngine,
     style: koru_draw::theme::TextStyle,
@@ -1629,7 +1633,6 @@ pub fn form_caret_span(
         return (y + h * 0.25, y + h * 0.75);
     };
     let m = line.metrics();
-    let baseline = top + m.baseline;
     let (cap, descent) = line.runs().next().map_or((m.ascent, m.descent), |run| {
         let rm = run.metrics();
         (
@@ -1637,10 +1640,9 @@ pub fn form_caret_span(
             rm.descent,
         )
     });
-    (
-        (baseline - cap).round() - FORM_CARET_OVERHANG,
-        (baseline + descent).round() + FORM_CARET_OVERHANG,
-    )
+    let bb = parley::BoundingBox::new(0.0, m.block_min_coord as f64, 0.0, m.block_max_coord as f64);
+    let rect = theme::caret_rect(bb, m.baseline, cap, descent, 0.0, top);
+    (rect.y0 as f32, rect.y1 as f32)
 }
 
 /// Fill a [`FieldCaret::Form`] caret whose left edge is at `x`, centred on it
@@ -1761,7 +1763,11 @@ pub fn draw_field_with_caret(
         }
     }
     if let Some(ghost) = ghost {
-        draw_layout(scene, root, ghost, dx, ty, Some(theme::p().placeholder));
+        // Centre the placeholder from its own line metrics rather than the
+        // empty editor's layout, so its baseline matches both the form caret
+        // and the typed text that replaces it.
+        let gy = baseline_centred_y(ghost, fy, fh);
+        draw_layout(scene, root, ghost, dx, gy, Some(theme::p().placeholder));
     }
     if focused {
         if let (Some(bb), CaretPaint::Form(span)) = (cursor, caret) {
@@ -1793,24 +1799,55 @@ mod tests {
 
     use koru_keys::{NONE, PRIMARY};
 
-    /// A form caret runs from the top of a capital to the bottom of a
-    /// descender, inside the box, whatever the field holds.
+    /// A form caret aligns identically to the document caret: centered on the
+    /// cap-height band, rising above capitals and dropping symmetrically below
+    /// the baseline, matching the placeholder's baseline in the same box.
     #[test]
     fn a_form_caret_spans_cap_height_to_descent_inside_the_box() {
         let mut engine = TextEngine::new();
         let style = koru_draw::theme::role::row();
         let (top, bottom) = form_caret_span(&mut engine, style, 100.0, 40.0);
         let probe = engine.simple_layout("Ag", style);
-        let baseline = baseline_centred_y(&probe, 100.0, 40.0)
-            + probe.lines().next().unwrap().metrics().baseline;
+        let line = probe.lines().next().unwrap();
+        let baseline = baseline_centred_y(&probe, 100.0, 40.0) + line.metrics().baseline;
+        let cap = line
+            .runs()
+            .next()
+            .and_then(|r| r.metrics().cap_height.filter(|c| *c > 0.5))
+            .unwrap_or(line.metrics().ascent);
+        let cap_top = baseline - cap;
         assert!(top > 100.0 && bottom < 140.0, "{top}..{bottom}");
         assert!(
-            top < baseline && baseline < bottom,
-            "{top} {baseline} {bottom}"
+            top < cap_top - 1.0,
+            "caret rises visibly above the cap line: top={top}, cap_top={cap_top}"
         );
-        // Taller than the cap height alone: the descent is below the baseline.
-        assert!(bottom - baseline >= 2.0, "{baseline}..{bottom}");
-        assert!(bottom - top > style.metrics.size * 0.8, "{top}..{bottom}");
+        assert!(
+            bottom > baseline + 1.0,
+            "caret drops visibly below the baseline: baseline={baseline}, bottom={bottom}"
+        );
+        let above_cap = cap_top - top;
+        let below_base = bottom - baseline;
+        assert!(
+            (above_cap - below_base).abs() <= 1.0,
+            "caret is vertically symmetric around cap height: above={above_cap}, below={below_base}"
+        );
+        // Empty field placeholder shares the exact same baseline as the caret
+        // and as typed text in the same style.
+        let ghost = engine.simple_layout("Your name", style);
+        let ghost_baseline = baseline_centred_y(&ghost, 100.0, 40.0)
+            + ghost.lines().next().unwrap().metrics().baseline;
+        assert!(
+            (ghost_baseline - baseline).abs() < 0.01,
+            "placeholder baseline {ghost_baseline} matches caret baseline {baseline}"
+        );
+        let typed = TextField::with_text(&mut engine, style, "Your name");
+        let typed_layout = typed.editor.try_layout().unwrap();
+        let typed_baseline = baseline_centred_y(typed_layout, 100.0, 40.0)
+            + typed_layout.lines().next().unwrap().metrics().baseline;
+        assert!(
+            (typed_baseline - baseline).abs() < 0.01,
+            "typed baseline {typed_baseline} matches caret baseline {baseline}"
+        );
     }
 
     fn press(f: &mut TextField, e: &mut TextEngine, k: NamedKey, mods: ModifiersState) {

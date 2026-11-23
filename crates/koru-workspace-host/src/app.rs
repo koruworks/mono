@@ -3054,6 +3054,10 @@ struct OnboardingApp<H: Host> {
     last_caption_click: Option<(Instant, f32, f32)>,
     creation_tx: mpsc::Sender<OnboardingCreation>,
     creation_rx: mpsc::Receiver<OnboardingCreation>,
+    sync_probe_tx: mpsc::Sender<Option<koru_workspace::fromstore::OpenedFromStore>>,
+    sync_probe_rx: mpsc::Receiver<Option<koru_workspace::fromstore::OpenedFromStore>>,
+    sync_probe_in_flight: bool,
+    sync_poll_at: Option<Instant>,
     /// The owner, Profile and workspace names the Welcome tab greets with. The
     /// first-run window always has an owner; `None` would greet plainly.
     first_minutes: Option<(Option<String>, String, String)>,
@@ -3801,6 +3805,29 @@ fn restore_deleted_onboarding_profile(
     }
 }
 
+fn probe_synced_onboarding_profile(
+    root: Option<&Path>,
+    profile_ids: &[String],
+) -> Option<koru_workspace::fromstore::OpenedFromStore> {
+    for raw in profile_ids {
+        let Some(profile) = koru_core::ProfileId::parse(raw) else {
+            continue;
+        };
+        if let Ok(koru_workspace::fromstore::StoreLaunch::Open(opened)) =
+            koru_workspace::fromstore::open_from_store_profile_preferring_empty(
+                koru_workspace::fromstore::segment(),
+                root,
+                profile,
+                None,
+            )
+            && opened.has_workspace
+        {
+            return Some(opened);
+        }
+    }
+    None
+}
+
 fn restore_onboarding_profile(root: Option<&Path>, raw_profile: &str) -> OnboardingCreation {
     let Some(profile) = koru_core::ProfileId::parse(raw_profile) else {
         return OnboardingCreation::RestoreFailed {
@@ -4529,6 +4556,9 @@ impl<H: Host> OnboardingApp<H> {
             }
         }
         if self.host.take_account_dirty() {
+            if self.view.synced_workspace_candidates().is_some() {
+                self.sync_poll_at = None;
+            }
             let state = self.host.account_state().clone();
             if self.view.select_account_context(&state) {
                 self.signed_in_profiles_requested = false;
@@ -5175,6 +5205,47 @@ impl<H: Host> OnboardingApp<H> {
 }
 
 impl<H: Host> OnboardingApp<H> {
+    /// Checks whether any selected account Profile has finished syncing both
+    /// its Profile and at least one live workspace into the local Store so
+    /// onboarding never transitions into an empty profile-wait state.
+    fn poll_sync_probe(&mut self) {
+        while let Ok(found) = self.sync_probe_rx.try_recv() {
+            self.sync_probe_in_flight = false;
+            if let Some(opened) = found
+                && self.view.synced_workspace_candidates().is_some()
+            {
+                self.sync_poll_at = None;
+                let _ = self.creation_tx.send(OnboardingCreation::Opened(opened));
+                let _ = self.proxy.send_event(Wake::Onboarding);
+                return;
+            }
+        }
+        let Some(candidates) = self.view.synced_workspace_candidates() else {
+            self.sync_poll_at = None;
+            return;
+        };
+        if self.sync_probe_in_flight {
+            return;
+        }
+        let now = Instant::now();
+        if self.sync_poll_at.is_some_and(|due| due > now) {
+            return;
+        }
+        self.sync_probe_in_flight = true;
+        self.sync_poll_at = Some(now + Duration::from_millis(500));
+        let profile_ids = candidates.to_vec();
+        let root = self.gateway_root.clone();
+        let tx = self.sync_probe_tx.clone();
+        let proxy = self.proxy.clone();
+        let _ = std::thread::Builder::new()
+            .name("koru-onboarding-sync-probe".into())
+            .spawn(move || {
+                let opened = probe_synced_onboarding_profile(root.as_deref(), &profile_ids);
+                let _ = tx.send(opened);
+                let _ = proxy.send_event(Wake::Onboarding);
+            });
+    }
+
     /// The marker writer answered: ask the Agent to bind, or report that the
     /// intent could not be recorded — the failure the synchronous write used
     /// to raise, one tick later.
@@ -5250,12 +5321,19 @@ impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
         if self.view.maintain_tooltip(now) {
             self.request_redraw();
         }
+        self.poll_sync_probe();
         let blink = self.view.caret_blink_deadline(now);
         let tip = self.view.tooltip_deadline(now);
-        let deadline = [account_deadline, blink, tip, checkout_deadline]
-            .into_iter()
-            .flatten()
-            .min();
+        let deadline = [
+            account_deadline,
+            blink,
+            tip,
+            checkout_deadline,
+            self.sync_poll_at,
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         event_loop.set_control_flow(deadline.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -5266,6 +5344,7 @@ impl<H: Host> ApplicationHandler<Wake> for OnboardingApp<H> {
         self.service_binding_markers();
         self.poll_account();
         self.settle_actions();
+        self.poll_sync_probe();
         // An asynchronous change — an account answer landing, a binding
         // written — is what the inspector's refresh follows, the same
         // `host_changed` the workspace window's inspector gets on any wake
@@ -5891,6 +5970,7 @@ impl<H: Host> App<H> {
                     // not the later Profile acknowledgement.
                     ProfileRuntime::start_events(gateway_root.clone(), proxy.clone());
                     let (creation_tx, creation_rx) = mpsc::channel();
+                    let (sync_probe_tx, sync_probe_rx) = mpsc::channel();
                     // What this empty catalog can still recover (root-catalog
                     // §6.3): the restorable Trash and the unassigned
                     // workspaces, read off the loop and offered from the form
@@ -5935,6 +6015,10 @@ impl<H: Host> App<H> {
                         last_caption_click: None,
                         creation_tx,
                         creation_rx,
+                        sync_probe_tx,
+                        sync_probe_rx,
+                        sync_probe_in_flight: false,
+                        sync_poll_at: None,
                         first_minutes: None,
                         connect_created_profile: false,
                         open_manage_after_creation: false,

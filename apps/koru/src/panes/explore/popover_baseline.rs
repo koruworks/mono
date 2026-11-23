@@ -635,11 +635,16 @@ fn record(case: &Case) -> String {
 fn page_record(page: Page) -> String {
     let _theme = crate::tests::lock_theme();
     let was = theme::is_dark();
+    let was_font = theme::font_setting(theme::FontSlot::Ui);
+    // The P0 baseline is recorded in bundled Inter so layout checks remain
+    // machine-independent on platforms whose default UI face is a system font.
+    theme::set_ui_font(theme::FontChoice::Inter);
     let mut out = String::new();
     for case in cases(page) {
         out.push_str(&record(&case));
         out.push('\n');
     }
+    theme::set_font_setting(theme::FontSlot::Ui, was_font);
     theme::set_dark(was);
     out
 }

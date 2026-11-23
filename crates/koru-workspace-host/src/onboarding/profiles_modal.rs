@@ -164,7 +164,7 @@ impl OnboardingView {
 
     fn profiles_modal_primary_label(&self) -> String {
         let lang = self.language;
-        if self.selection.waiting {
+        if self.selection.waiting || self.selection.syncing_workspaces {
             return t(lang, T::ProfileChooserPending).to_owned();
         }
         let count = self.selection_ids().len();
