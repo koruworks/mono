@@ -40,17 +40,19 @@ pub enum Toolset {
     Tasks,
     /// Koru AI chats, read-only.
     Chat,
+    MiniApps,
 }
 
 impl Toolset {
     /// Every toolset, in the order they are listed and named.
-    pub const ALL: [Toolset; 6] = [
+    pub const ALL: [Toolset; 7] = [
         Toolset::Core,
         Toolset::Docs,
         Toolset::Files,
         Toolset::Versions,
         Toolset::Tasks,
         Toolset::Chat,
+        Toolset::MiniApps,
     ];
 
     /// The name `--toolsets` takes.
@@ -62,6 +64,7 @@ impl Toolset {
             Toolset::Versions => "versions",
             Toolset::Tasks => "tasks",
             Toolset::Chat => "chat",
+            Toolset::MiniApps => "mini-apps",
         }
     }
 
@@ -99,6 +102,7 @@ impl Toolset {
             ],
             Toolset::Tasks => &["list_tasks", "update_task"],
             Toolset::Chat => CHAT_TOOL_NAMES,
+            Toolset::MiniApps => crate::mini_apps::NAMES,
         }
     }
 
@@ -251,13 +255,16 @@ impl fmt::Display for Toolsets {
 /// (see MCP.md). Growth past one is a decision to record in MCP.md's table,
 /// not a number to bump.
 #[cfg(test)]
-pub(crate) const BUDGETS: [(Toolset, usize); 6] = [
+pub(crate) const BUDGETS: [(Toolset, usize); 7] = [
     (Toolset::Core, 770),
     (Toolset::Docs, 15_010),
     (Toolset::Files, 2_500),
     (Toolset::Versions, 2_250),
     (Toolset::Tasks, 3_410),
     (Toolset::Chat, 1_510),
+    // 11,738 bytes measured 2026-11-20, after the document mini apps; preserve
+    // normative oneOf branches. The raise is recorded in MCP.md's Toolsets table.
+    (Toolset::MiniApps, 12_900),
 ];
 
 /// What a `tools/list` reply line spends outside its tools: the JSON-RPC

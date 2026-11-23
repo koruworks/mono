@@ -171,7 +171,7 @@ impl MainView {
         self.profile_wait.waiting.is_some()
             && !matches!(
                 self.tabs().active_tab().view,
-                TabView::Manage(_) | TabView::Settings(_) | TabView::Feedback(_)
+                TabView::Welcome(_) | TabView::Settings(_) | TabView::Feedback(_)
             )
     }
 

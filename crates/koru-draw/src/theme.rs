@@ -1005,9 +1005,19 @@ impl CaretColor {
 }
 
 static CARET_COLOR: AtomicU8 = AtomicU8::new(0);
+static CARET_COLOR_DARK: AtomicU8 = AtomicU8::new(0);
 
 pub fn caret_color() -> CaretColor {
-    match CARET_COLOR.load(Ordering::Relaxed) {
+    caret_color_for(is_dark())
+}
+
+pub fn caret_color_for(dark: bool) -> CaretColor {
+    let color = if dark {
+        &CARET_COLOR_DARK
+    } else {
+        &CARET_COLOR
+    };
+    match color.load(Ordering::Relaxed) {
         1 => CaretColor::Blue,
         2 => CaretColor::Amber,
         3 => CaretColor::Violet,
@@ -1016,13 +1026,22 @@ pub fn caret_color() -> CaretColor {
 }
 
 pub fn set_caret_color(c: CaretColor) {
+    set_caret_color_for(is_dark(), c);
+}
+
+pub fn set_caret_color_for(dark: bool, c: CaretColor) {
     let v = match c {
         CaretColor::Default => 0u8,
         CaretColor::Blue => 1,
         CaretColor::Amber => 2,
         CaretColor::Violet => 3,
     };
-    CARET_COLOR.store(v, Ordering::Relaxed);
+    let color = if dark {
+        &CARET_COLOR_DARK
+    } else {
+        &CARET_COLOR
+    };
+    color.store(v, Ordering::Relaxed);
 }
 
 /// Live text-selection fill — tracks [`caret_color`], not a fixed palette blue.
@@ -1234,14 +1253,10 @@ pub fn set_theme_preference(pref: ThemePreference) {
 /// The app font, held exactly the way the theme is and for the same reason: it
 /// is read by a dozen leaf drawing calls that have no setting to be handed.
 ///
-/// Stored as the variant's index into [`FontChoice::ALL`]. The initial value
-/// is [`default_ui_font`] spelled as an index — `System` (SF Pro) on macOS,
-/// `Inter` elsewhere — because a static cannot call `position()`.
-static UI_FONT: AtomicU16 = AtomicU16::new(if cfg!(target_os = "macos") {
-    SYSTEM
-} else {
-    INTER
-});
+/// Starts at [`ROLE_DEFAULT`] so untouched roles resolve live through
+/// [`default_ui_font`] — `System` (SF Pro) on macOS, installed `Segoe UI` on
+/// Windows (falling back to `Inter`), and `Inter` elsewhere.
+static UI_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
 
 /// The typeface the **chrome** is set in. Not what a document row is set in —
 /// that is `Paragraph::font`. A [preview](set_font_preview) stands in for the
@@ -1295,22 +1310,18 @@ fn font_of_value(value: u16) -> Option<FontChoice> {
 }
 
 fn previewed(slot: FontSlot) -> Option<FontChoice> {
-    preview::previewed(preview::PreviewSlot::Font(slot)).and_then(font_of_value)
+    preview::previewed(preview::PreviewSlot::Font(slot))
+        .and_then(|value| u16::try_from(value).ok())
+        .and_then(font_of_value)
 }
 
 /// What `slot` is set to, without any preview: what Settings saves and
 /// what its lists tick.
 pub fn chosen_font(slot: FontSlot) -> FontChoice {
-    let (global, fallback) = match slot {
-        FontSlot::Ui => (&UI_FONT, FontChoice::default()),
-        FontSlot::Body => (&BODY_FONT, FontChoice::default()),
-        FontSlot::Headings => (&HEADINGS_FONT, FontChoice::default()),
-        FontSlot::Code => (&CODE_FONT, FontChoice::JetBrainsMono),
-        FontSlot::Chat => (&CHAT_FONT, FontChoice::default()),
-    };
-    match global.load(Ordering::Relaxed) {
+    match role_global(slot).load(Ordering::Relaxed) {
         FOLLOWS_APP => chosen_font(FontSlot::Ui),
-        value => font_of_value(value).unwrap_or(fallback),
+        ROLE_DEFAULT => role_default(slot),
+        value => font_of_value(value).unwrap_or_else(|| role_default(slot)),
     }
 }
 
@@ -1425,6 +1436,8 @@ pub fn set_font_setting(slot: FontSlot, setting: koru_settings::FontSetting) {
         };
     let value = if follows_app {
         FOLLOWS_APP
+    } else if setting == koru_settings::FontSetting::FollowDefault {
+        ROLE_DEFAULT
     } else {
         font_preview_value(face)
     };
@@ -1460,37 +1473,62 @@ pub fn missing_font(slot: FontSlot) -> Option<String> {
 // the welcome tab or the page menu) must reflow every window. Persisted by the
 // shell from `Settings` on save; loaded here at startup.
 
-/// Index of `Inter` in `FontChoice::ALL`.
-const INTER: u16 = 0;
-/// Index of `Manrope` in `FontChoice::ALL` — the headings role's default.
-const MANROPE: u16 = 5;
-/// Index of `JetBrainsMono` in `FontChoice::ALL` — the code role's default.
-const JETBRAINS_MONO: u16 = 9;
-/// Index of `System` in `FontChoice::ALL` — the app role's default on macOS.
-const SYSTEM: u16 = 12;
+/// Sentinel for an un-overridden role global that resolves through
+/// [`role_default`], allowing runtime-resolved defaults such as installed
+/// `Segoe UI` on Windows without duplicating index tables.
+const ROLE_DEFAULT: u16 = u16::MAX - 1;
 
-static BODY_FONT: AtomicU16 = AtomicU16::new(INTER);
-static HEADINGS_FONT: AtomicU16 = AtomicU16::new(MANROPE);
-static CODE_FONT: AtomicU16 = AtomicU16::new(JETBRAINS_MONO);
+static BODY_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
+static HEADINGS_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
+static CODE_FONT: AtomicU16 = AtomicU16::new(ROLE_DEFAULT);
 
-/// The shipped default per role, as a value — what the index consts above
-/// spell for the atomics. `Settings::default` reads these so the two homes of
-/// the defaults cannot drift; `defaults_and_indices_agree` holds all four
-/// pairs together.
+/// Windows' default proportional face: installed `Segoe UI`, falling back to
+/// bundled `Inter` if the family is absent. Cached once per process.
+#[cfg(target_os = "windows")]
+fn windows_default_font() -> FontChoice {
+    static SEGOE_UI: std::sync::OnceLock<FontChoice> = std::sync::OnceLock::new();
+    *SEGOE_UI.get_or_init(|| {
+        crate::installed_fonts::resolve("Segoe UI")
+            .map(FontChoice::Installed)
+            .unwrap_or(FontChoice::Inter)
+    })
+}
+
+/// The shipped default per role, as a value. Untouched role globals start at
+/// [`ROLE_DEFAULT`] and read these directly so defaults cannot drift.
 pub fn default_ui_font() -> FontChoice {
-    // The platform's own face for the platform's own chrome; elsewhere Inter,
-    // which macOS keeps as a choice rather than a default.
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         FontChoice::System
-    } else {
+    }
+    #[cfg(target_os = "windows")]
+    {
+        windows_default_font()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
         FontChoice::Inter
     }
 }
 pub fn default_body_font() -> FontChoice {
-    FontChoice::Inter
+    #[cfg(target_os = "windows")]
+    {
+        windows_default_font()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        FontChoice::Inter
+    }
 }
 pub fn default_headings_font() -> FontChoice {
-    FontChoice::Manrope
+    #[cfg(target_os = "windows")]
+    {
+        windows_default_font()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        FontChoice::Manrope
+    }
 }
 pub fn default_code_font() -> FontChoice {
     FontChoice::JetBrainsMono
@@ -1716,14 +1754,17 @@ pub fn set_density(d: Density) {
 
 static WHEEL_SPEED: AtomicU8 = AtomicU8::new(2);
 
-/// The wheel speed, 1 to 4.
+/// The wheel speed: 1, 2, 3, 4, 8 or 16.
 pub fn wheel_speed() -> u8 {
-    WHEEL_SPEED.load(Ordering::Relaxed).clamp(1, 4)
+    WHEEL_SPEED.load(Ordering::Relaxed)
 }
 
-/// Out-of-range values are held to 1..=4.
+/// Normalize to an offered speed, using the settings authority's choices.
 pub fn set_wheel_speed(speed: u8) {
-    WHEEL_SPEED.store(speed.clamp(1, 4), Ordering::Relaxed);
+    WHEEL_SPEED.store(
+        koru_settings::ScrollSpeedChoice::from_factor(speed).factor(),
+        Ordering::Relaxed,
+    );
 }
 
 // ------------------------------------------------------ workspace tabs
@@ -1966,7 +2007,7 @@ pub const BUNDLED_FAMILIES: &[BundledFamily] = &[
 ];
 
 /// Icon size in the document toolbar, where an icon *is* the control.
-/// The caption row uses the smaller [`CAPTION_ICON`].
+/// The caption row has its own [`CAPTION_ICON`] size.
 #[allow(dead_code)]
 pub const ICON_SIZE: f32 = 17.0;
 
@@ -2228,21 +2269,12 @@ impl FontChoice {
     /// The weight a block is drawn at: heavier for a heading, and the family's
     /// own default for body text.
     ///
-    /// **Mono families get 700 at every heading level** rather than the ramp,
-    /// and that is the same trap [`weight`](Self::weight) documents, seen from
-    /// the other side. `Mono` resolves to *system* faces that ship 400 and 700
-    /// and nothing between; the bundled variable monos could take the ramp, but
-    /// asking for a weight that is really there is the only way to stay honest
-    /// about `Mono`. The sans/serif/rounded families are variable and take the
-    /// ramp verbatim.
+    /// Headings use the person's weight preference at every level. A static
+    /// family without that weight uses the font system's nearest available face.
     pub fn weight_for(self, heading: Option<u8>) -> f32 {
         match (self, heading) {
             (_, None) => self.weight(),
-            (Self::Mono, Some(_)) => 700.0,
-            // `System` takes the ramp: SF Pro is variable, and DirectWrite's
-            // Segoe UI family carries real Semibold/Bold members for the
-            // 600–700 the ramp asks for.
-            (_, Some(level)) => HEADING_WEIGHTS[(level.clamp(1, 6) - 1) as usize],
+            (_, Some(_)) => heading_weight() as f32,
         }
     }
 }
@@ -2340,9 +2372,26 @@ const HEADINGS: [TypeStep; 6] = [
     },
 ];
 
-/// The `wght` axis position for each heading level, on a family that has the
-/// axis. Body text's weight is the family's own — see [`FontChoice::weight`].
-const HEADING_WEIGHTS: [f32; 6] = [700.0, 700.0, 650.0, 600.0, 600.0, 600.0];
+static HEADING_WEIGHT: AtomicU16 =
+    AtomicU16::new(koru_settings::text_rendering::DEFAULT_HEADING_WEIGHT);
+
+/// Requested weight of document headings and titles; body and UI are independent.
+pub fn heading_weight() -> u16 {
+    preview::previewed(preview::PreviewSlot::HeadingWeight)
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or_else(chosen_heading_weight)
+}
+
+pub fn chosen_heading_weight() -> u16 {
+    HEADING_WEIGHT.load(Ordering::Relaxed)
+}
+
+pub fn set_heading_weight(weight: u16) {
+    if matches!(weight, 500 | 600) {
+        HEADING_WEIGHT.store(weight, Ordering::Relaxed);
+        preview::clear(preview::PreviewSlot::HeadingWeight);
+    }
+}
 
 /// The step a document's title row is drawn at.
 ///
@@ -2425,7 +2474,7 @@ pub fn doc_text_size() -> f32 {
     preview::previewed(preview::PreviewSlot::DocTextSize)
         .and_then(|px| u8::try_from(px).ok())
         .or_else(chosen_doc_text_size)
-        .map_or(FONT_SIZE, f32::from)
+        .map_or(koru_settings::DocTextSize::DEFAULT.px() as f32, f32::from)
 }
 
 /// [`doc_text_size`] as a factor of the base ramp.
@@ -3100,13 +3149,15 @@ pub const ROW_H: f32 = text_metrics::SM.line_height + ROW_PAD_V; // 18 + 8 = 26
 // view, and a collapsible context column on the right. Per-site constants rather
 // than a scale, the same as the toolbar above.
 
-/// The caption row: tabs and the window buttons share it, so it is taller than
-/// a toolbar and about the height of a native title bar.
+/// The caption row: tabs and the window buttons share its 42 px height.
 ///
 /// A literal, **not** derived from a text tier: it is sized by the window
 /// buttons, the drag area, and the tab shape, not by the label inside it. Do
 /// not rewrite it as label-metrics + pad — the exemption is on purpose.
-pub const CAPTION_H: f32 = 36.0;
+pub const CAPTION_H: f32 = 42.0;
+/// Width of a caption icon control. Independent of the lane height so a
+/// taller tab lane keeps Search and the other controls visible in the sidebar.
+pub const CAPTION_CONTROL_W: f32 = 42.0;
 /// A window button (minimise, maximise, close). Square, and full caption height
 /// so the pointer can slam into the top-right corner and still hit close.
 pub const CAPTION_BTN: f32 = 44.0;
@@ -3132,9 +3183,8 @@ pub const SIDEBAR_MAX_W: f32 = 600.0;
 /// The rail at the sidebar's left edge — the apps, and at its foot Settings,
 /// Help and the profile (the review's artboard 11). The pane and its widths
 /// above are what sits after it; the sidebar as a whole is the two together.
-/// 48, not 56: four pixels off each side (the review's note); a 36 px square
-/// keeps six pixels of air either side.
-pub const RAIL_W: f32 = 48.0;
+/// A 36 px square keeps three pixels of air either side.
+pub const RAIL_W: f32 = 42.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.
@@ -3151,10 +3201,8 @@ pub const PANEL_SLIDE_MS: f32 = 140.0;
 /// Icons in the caption row — the tab close box, the `+`, the two panel
 /// toggles and the window buttons.
 ///
-/// Smaller than [`ICON_SIZE`]: the caption is a title bar, where an icon is a
-/// small affordance beside a label, rather than a command surface where it is
-/// the whole control.
-pub const CAPTION_ICON: f32 = 15.0;
+/// Matches the 18 px icons in the app rail.
+pub const CAPTION_ICON: f32 = 18.0;
 
 /// The optical inset either side of a caption's contents.
 ///
@@ -3199,10 +3247,15 @@ pub const TAB_SCROLLBAR_H: f32 = SCROLLBAR_W;
 /// two apart is what makes the label's padding even — centring it in the row
 /// while drawing the pill lower is what made the text look like it was sitting
 /// on the floor of its tab.
-pub const TAB_INSET_TOP: f32 = 4.0;
-/// Deeper than the top by the caption's hairline plus a visible gap, so a tab
-/// never sits *on* the line that separates the caption from the content.
-pub const TAB_INSET_BOTTOM: f32 = 5.0;
+/// The original 33 px pill left 15 px around its 18 px content. Halving
+/// that internal padding gives a 25.5 px pill within the unchanged 42 px lane.
+pub const TAB_INSET_TOP: f32 = 7.75;
+/// One extra pixel below keeps the pill clear of the caption hairline.
+pub const TAB_INSET_BOTTOM: f32 = 8.75;
+
+/// The caption's icon controls and identity chips keep their existing padding.
+pub const CAPTION_INSET_TOP: f32 = 4.0;
+pub const CAPTION_INSET_BOTTOM: f32 = 5.0;
 
 /// How long a tab takes to slide into a new slot after a reorder.
 ///
@@ -3313,32 +3366,59 @@ pub const WEEKDAYS: [&str; 7] = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 mod tests {
     use super::*;
 
-    /// The defaults live twice — index consts for the atomics, value functions
-    /// for `Settings::default` — and a variant inserted mid-list would move
-    /// every index. Both hazards, one test.
+    /// Each role's shipped default resolves cleanly on this platform and stays
+    /// distinct from the sentinel values stored in the role atomics.
     #[test]
     fn defaults_and_indices_agree() {
-        assert_eq!(FontChoice::ALL[INTER as usize], FontChoice::Inter);
-        assert_eq!(FontChoice::ALL[MANROPE as usize], FontChoice::Manrope);
-        assert_eq!(
-            FontChoice::ALL[JETBRAINS_MONO as usize],
-            FontChoice::JetBrainsMono
+        assert!(
+            (FontChoice::ALL.len() as u16) < ROLE_DEFAULT && ROLE_DEFAULT < FOLLOWS_APP,
+            "sentinel values sit past bundled indices"
         );
-        assert_eq!(FontChoice::ALL[SYSTEM as usize], FontChoice::System);
-        // The UI atomic's literal initial value is default_ui_font's index.
-        let ui_index = FontChoice::ALL
-            .iter()
-            .position(|c| *c == default_ui_font())
-            .unwrap();
+        assert_eq!(default_code_font(), FontChoice::JetBrainsMono);
+        #[cfg(target_os = "windows")]
+        {
+            let expected = crate::installed_fonts::resolve("Segoe UI")
+                .map(FontChoice::Installed)
+                .unwrap_or(FontChoice::Inter);
+            assert_eq!(default_ui_font(), expected);
+            assert_eq!(default_body_font(), expected);
+            assert_eq!(default_headings_font(), expected);
+            if crate::installed_fonts::resolve("Segoe UI").is_some() {
+                assert_eq!(default_ui_font().label(), "Segoe UI");
+                assert_eq!(default_body_font().label(), "Segoe UI");
+                assert_eq!(default_headings_font().label(), "Segoe UI");
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(default_ui_font(), FontChoice::System);
+            assert_eq!(default_body_font(), FontChoice::Inter);
+            assert_eq!(default_headings_font(), FontChoice::Manrope);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            assert_eq!(default_ui_font(), FontChoice::Inter);
+            assert_eq!(default_body_font(), FontChoice::Inter);
+            assert_eq!(default_headings_font(), FontChoice::Manrope);
+        }
         assert_eq!(
-            ui_index as u8,
-            if cfg!(target_os = "macos") { 12 } else { 0 }
+            resolve_font(FontSlot::Ui, &koru_settings::FontSetting::FollowDefault),
+            default_ui_font()
         );
-        assert_eq!(default_body_font(), FontChoice::ALL[INTER as usize]);
-        assert_eq!(default_headings_font(), FontChoice::ALL[MANROPE as usize]);
         assert_eq!(
-            default_code_font(),
-            FontChoice::ALL[JETBRAINS_MONO as usize]
+            resolve_font(FontSlot::Body, &koru_settings::FontSetting::FollowDefault),
+            default_body_font()
+        );
+        assert_eq!(
+            resolve_font(
+                FontSlot::Headings,
+                &koru_settings::FontSetting::FollowDefault
+            ),
+            default_headings_font()
+        );
+        assert_eq!(
+            resolve_font(FontSlot::Code, &koru_settings::FontSetting::FollowDefault),
+            default_code_font()
         );
     }
 

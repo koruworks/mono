@@ -11,6 +11,9 @@ pub(super) struct SelectionDraft {
     pub submission: Option<crate::account_ui::CommandSubmissionId>,
     pub waiting: bool,
     pub uncertain: bool,
+    /// True after `ProfilesSelected` while onboarding waits for at least one
+    /// selected Profile and one live workspace to finish syncing locally.
+    pub syncing_workspaces: bool,
     pub generation: Option<u64>,
     pub floor: u64,
     pub notice: Option<koru_i18n::Key>,
@@ -34,7 +37,7 @@ impl SelectionDraft {
     }
 
     pub fn locked(&self) -> bool {
-        self.waiting || self.uncertain
+        self.waiting || self.uncertain || self.syncing_workspaces
     }
 
     pub fn choice(
@@ -59,6 +62,7 @@ impl SelectionDraft {
         self.generation = None;
         self.early_results.clear();
         self.waiting = true;
+        self.syncing_workspaces = false;
         self.notice = None;
         true
     }
@@ -80,6 +84,7 @@ impl SelectionDraft {
         self.generation = None;
         self.waiting = false;
         self.uncertain = false;
+        self.syncing_workspaces = false;
         self.notice = None;
     }
 }
@@ -161,6 +166,7 @@ impl OnboardingView {
         match command {
             C::StartGoogle { .. }
             | C::StartApple { .. }
+            | C::StartEmailBrowser { .. }
             | C::ContinueWithEmail { .. }
             | C::Cancel { .. } => self.browser_submission(command),
             C::SelectProfiles { .. } | C::CancelEnrollment => self.selection.submission,
@@ -269,8 +275,7 @@ impl OnboardingView {
         koru_i18n::t(self.language, key)
     }
     pub(super) fn keep_local_selection_form(&self) -> bool {
-        matches!(self.screen, Screen::Profile | Screen::Workspace)
-            || self.created_profile_retry.is_some()
+        self.screen == Screen::Setup || self.created_profile_retry.is_some()
     }
     fn selection_body(&self) -> String {
         self.selection
@@ -306,11 +311,11 @@ impl OnboardingView {
             .map(|row| row.profile_id.clone())
             .collect()
     }
-    fn selection_ids(&self) -> Vec<String> {
+    pub(super) fn selection_ids(&self) -> Vec<String> {
         self.selection
             .choice(&self.authorized_selection_ids(), &BTreeSet::new())
     }
-    fn enrollment_selection_ids(&self) -> Vec<String> {
+    pub(super) fn enrollment_selection_ids(&self) -> Vec<String> {
         self.selection.choice(
             &self.authorized_selection_ids(),
             &self.completed_selection_ids(),
@@ -324,8 +329,9 @@ impl OnboardingView {
                 .iter()
                 .any(|row| row.state != koru_agent_wire::EnrollmentState::Complete)
     }
-    fn member_retry(&self, index: usize) -> bool {
-        !self.selection.locked()
+    pub(super) fn member_retry(&self, index: usize) -> bool {
+        !self.selection.waiting
+            && !self.selection.uncertain
             && self.account_profiles.get(index).is_some_and(|profile| {
                 self.account_state.enrollments.iter().any(|row| {
                     row.profile_id == profile.profile_id
@@ -341,6 +347,9 @@ impl OnboardingView {
     }
     pub(super) fn selection_controls(&self) -> Vec<Hit> {
         let mut controls = Vec::new();
+        if self.workspace_modal {
+            controls.push(Hit::SwitchAccount);
+        }
         let authorized = self.authorized_selection_ids();
         for (index, profile) in self.account_profiles.iter().enumerate() {
             if !self.selection.locked() && authorized.contains(&profile.profile_id) {
@@ -383,8 +392,11 @@ impl OnboardingView {
                 let selected = self.selection_ids();
                 let ids = self.enrollment_selection_ids();
                 if ids.is_empty() {
-                    self.selection.submitted = Some(selected);
-                    self.open_first_connected_selection();
+                    if !selected.is_empty() {
+                        self.selection.submitted = Some(selected);
+                        self.selection.syncing_workspaces = true;
+                        self.error = None;
+                    }
                     return;
                 }
                 self.selection.floor = self.selection.floor.max(self.account_state.generation);
@@ -616,6 +628,9 @@ impl OnboardingView {
     }
 
     pub(super) fn selection_hit(&mut self, x: f32, y: f32) -> Option<Hit> {
+        if self.workspace_modal {
+            return self.profiles_modal_hit(x, y);
+        }
         let layout = self.selection_layout();
         let controls = self.selection_controls();
         for (hit, rect, _, enabled) in layout.footer {

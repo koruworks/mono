@@ -12,6 +12,20 @@ use super::*;
 use koru_store_core::ids::RemovalAttemptId;
 use koru_store_core::profile_removal::RemovalKind;
 
+/// Select only a remaining catalog entry. `None` means return to required
+/// workspace setup; remembered identities must never resurrect the last one.
+fn profile_after_removal(
+    removed: koru_core::ProfileId,
+    recent: &[koru_core::ProfileId],
+    catalog: impl Iterator<Item = koru_core::ProfileId> + Clone,
+) -> Option<koru_core::ProfileId> {
+    recent
+        .iter()
+        .copied()
+        .find(|candidate| *candidate != removed && catalog.clone().any(|id| id == *candidate))
+        .or_else(|| catalog.filter(|id| *id != removed).next())
+}
+
 pub(super) struct ProfileRemovalCleanup {
     pub(super) profile: koru_core::ProfileId,
     pub(super) result: Result<(), String>,
@@ -872,27 +886,11 @@ impl<H: Host> App<H> {
                 let _ = pane.view.local_profile_removed(completion.profile);
             }
             let removed_current = self.runtime.profile_id() == completion.profile;
-            let next = self
-                .runtime
-                .settings
-                .profile_mru
-                .iter()
-                .copied()
-                .find(|candidate| {
-                    *candidate != completion.profile
-                        && self
-                            .runtime
-                            .profile_catalog
-                            .iter()
-                            .any(|row| row.id == *candidate)
-                })
-                .or_else(|| {
-                    self.runtime
-                        .profile_catalog
-                        .iter()
-                        .find(|row| row.id != completion.profile)
-                        .map(|row| row.id)
-                });
+            let next = profile_after_removal(
+                completion.profile,
+                &self.runtime.settings.profile_mru,
+                self.runtime.profile_catalog.iter().map(|row| row.id),
+            );
             self.runtime.request_catalog_refresh();
             self.invalidate_everywhere();
             let mut navigation_settled = true;
@@ -904,6 +902,8 @@ impl<H: Host> App<H> {
                         self.begin_profile_switch_after_removal(source, next, completion.profile);
                     }
                 } else {
+                    // The same empty-catalog launch as first run: workspace
+                    // chrome with the setup modal, never the removed content.
                     startup::launch(&self.runtime.profile_dir, None);
                     self.primary = None;
                     event_loop.exit();

@@ -140,7 +140,7 @@ fn the_caret_globals_round_trip_through_capture() {
 #[test]
 fn restore_applies_the_stored_caret_to_the_live_globals() {
     let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
-    let was = theme::caret_color();
+    let was = (theme::caret_color_for(false), theme::caret_color_for(true));
     let mut view = settings_view();
     let workspace = koru_workspace::Workspace::new(
         koru_core::schema::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "t")
@@ -151,11 +151,14 @@ fn restore_applies_the_stored_caret_to_the_live_globals() {
         &workspace,
         &Settings {
             caret_color: theme::CaretColor::Violet,
+            caret_color_dark: theme::CaretColor::Amber,
             ..Settings::default()
         },
     );
-    assert_eq!(theme::caret_color(), theme::CaretColor::Violet);
-    theme::set_caret_color(was);
+    assert_eq!(theme::caret_color_for(false), theme::CaretColor::Violet);
+    assert_eq!(theme::caret_color_for(true), theme::CaretColor::Amber);
+    theme::set_caret_color_for(false, was.0);
+    theme::set_caret_color_for(true, was.1);
 }
 
 // ------------------------------------------------------- the host's readings

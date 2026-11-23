@@ -79,6 +79,8 @@ pub enum Outcome {
     OpenHelp,
     Help(explore::help::Action),
     OpenRailOverflow,
+    OpenMiniAppPin(koru_settings::pins::PinId),
+    OpenMiniAppPins,
 
     // ---------------------------------------------------------------- panels
     /// A row in the explore tree, or a recent on the welcome screen.
@@ -327,6 +329,7 @@ pub enum Outcome {
     /// A Profile row on the who/where popover's Profiles page: switch this
     /// window to that Profile, landing on the workspace it last had open.
     SwitchProfile(ProfileId),
+    OpenProfileInNewWindow(ProfileId),
     /// The "New workspace" row. What it is called is asked afterwards, by the
     /// container — the same contract [`Outcome::NewTab`] has.
     NewWorkspace,

@@ -99,13 +99,14 @@ impl FontRole {
 
 /// One control, named by what it sets.
 pub(crate) enum Action {
+    ShowPage(crate::PageId),
     // ------------------------------------------------------------- Global
     Theme(ThemeChoice),
     CaretColor(CaretColorChoice),
     CaretWidth(CaretWidthChoice),
     CaretHeight(CaretHeightChoice),
     ViewMode(ViewModeChoice),
-    CanvasBackground,
+    CanvasBackground(Option<[u8; 4]>),
     ApplyLayoutToAll,
     Density(DensityChoice),
     ScrollSpeed(ScrollSpeedChoice),
@@ -128,6 +129,14 @@ pub(crate) enum Action {
     FontSetting(FontRole, koru_settings::FontSetting),
     /// *More fonts…*: the picker over every installed family, for a role.
     MoreFonts(FontRole),
+    TextRendering(koru_settings::TextRendering),
+    TextAntialiasing(koru_settings::TextAntialiasing),
+    TextOffset(f32),
+    TextGamma(f32),
+    TextCutoff(f32),
+    HeadingWeight(u16),
+    ZoomIn,
+    ZoomOut,
     VoiceLanguage(DictationLanguage),
     VoiceInput(DictationInput),
     VoiceTier(DictationTier),
@@ -172,12 +181,11 @@ pub(crate) enum Action {
     TerminalCursorWidth(TerminalCursorWidth),
     TerminalCursorHeight(TerminalCursorHeight),
     TerminalCursorBlink(TerminalCursorBlink),
-    TerminalComposerDefault(bool),
     /// *Match the editor caret*: `true` sets width and height to
     /// `Application`; `false` gives them the editor caret's current values.
     TerminalMatchCaret(bool),
 
-    // ---------------------------------------------------- Agent providers
+    // ---------------------------------------------------- Agent runtimes
     /// An agent's switch: its key, and the value the switch moves to.
     AgentEnabled(String, bool),
     /// *Restore defaults*: every agent on.
@@ -206,6 +214,9 @@ pub(crate) enum Action {
 /// and performs them in its own vocabulary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Request {
+    /// Change the whole-window display scale through the host's zoom path.
+    ZoomIn,
+    ZoomOut,
     /// *More fonts…* on a font list: the container opens the installed-font
     /// picker for this role (it owns the window the picker stands over).
     MoreFonts(FontRole),
@@ -214,9 +225,9 @@ pub enum Request {
     /// Apply the chosen title visibility to every open pin, even if this
     /// option was already selected. The host owns the tab strips.
     SetPinnedShowTitle(bool),
-    /// The canvas swatch was pressed; the host cycles it and hands the new
+    /// The canvas swatch was pressed; the host saves this color and hands the new
     /// value back with [`set_canvas_background`](crate::SettingsSurface::set_canvas_background).
-    CycleCanvasBackground,
+    SetCanvasBackground(Option<[u8; 4]>),
     /// A close-behavior choice for the host to record. The shell holds the
     /// live copy it consults when the moment comes, so a view may not write it.
     SetCloseBehavior(CloseBehaviorChoice),
@@ -248,7 +259,7 @@ pub enum Request {
     /// it while the Koru AI card is off the System page; Welcome's *Set up
     /// your AI* still does, through the same host path.
     OpenAiSetup,
-    /// Show the sample document — a short read-only page in the person's
+    /// Show the sample document — an editable, temporary page in the person's
     /// document fonts — beside this Settings tab, or bring it forward if it
     /// is already open. Only a host with tabs and panes can; see
     /// [`offer_sample_document`](crate::SettingsSurface::offer_sample_document).

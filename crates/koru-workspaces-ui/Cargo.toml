@@ -31,6 +31,9 @@ koru-i18n = { path = "../koru-i18n" }
 # The drawing that once made this crate depend on `koru-draw`, `vello` and
 # `winit` left with the Workspaces tab (ADR-449-onemanagetab).
 koru-ui = { path = "../koru-ui" }
+# The link worker's log: which request it is on, how long it took, and a
+# press queued behind one that has not returned.
+tracing.workspace = true
 
 [features]
 # **What a host's suite feeds this controller**, as the gateway would have

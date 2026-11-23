@@ -260,6 +260,9 @@ pub mod metrics {
     pub const RAIL_RULE_W: Metric = Metric::new("RAIL_RULE_W", 20.0);
     /// A Profile's tile in its two-line row.
     pub const PROFILE_TILE: Metric = Metric::new("PROFILE_TILE", 24.0);
+    /// Circular identity in the account menu and the rail.
+    pub const PROFILE_AVATAR: Metric = Metric::new("PROFILE_AVATAR", 30.0);
+    pub const PROFILE_MENU_W: Metric = Metric::new("PROFILE_MENU_W", 300.0);
     /// The trailing lane every popover row reserves for its tick or gear.
     pub const TRAILING_LANE_W: Metric = Metric::new("TRAILING_LANE_W", 20.0);
     /// The gear's painted plate: 22 high, and the lane plus 2 a side wide.
@@ -269,7 +272,7 @@ pub mod metrics {
     pub const WORKSPACE_GEAR_RADIUS: Metric = Metric::new("WORKSPACE_GEAR_RADIUS", 5.0);
 
     /// Every metric, for the registry test and the inspector's legend.
-    pub const ALL: [Metric; 16] = [
+    pub const ALL: [Metric; 18] = [
         NAV_ROW_MIN,
         ROW_MIN,
         BUTTON_MIN,
@@ -282,6 +285,8 @@ pub mod metrics {
         RAIL_GLYPH,
         RAIL_RULE_W,
         PROFILE_TILE,
+        PROFILE_AVATAR,
+        PROFILE_MENU_W,
         TRAILING_LANE_W,
         WORKSPACE_GEAR_PLATE,
         WORKSPACE_GEAR_PLATE_W,

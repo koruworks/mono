@@ -4,8 +4,8 @@
 
 use super::popover_elements::{self, TileLeaf, WORKSPACE_ROW_STATES};
 use super::{ExploreView, Outcome};
-use koru_draw::el::{Action, El, Key, Role, col, divider, icon, leaf, row, text};
-use koru_draw::theme::{IconSize, Ink, Line, Radius, Space, alias, metrics, roles};
+use koru_draw::el::{Action, El, Key, Role, col, icon, leaf, row, text};
+use koru_draw::theme::{IconSize, Ink, Radius, Space, alias, metrics, roles};
 use koru_i18n::{Key as Words, t};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -138,9 +138,7 @@ impl SyncChannels {
 }
 
 pub(crate) fn rule() -> El {
-    col("Menu divider")
-        .pad_y(Space::S1)
-        .child(divider(Line::Divider))
+    koru_ui::menu::MenuDivider::element()
 }
 
 impl ExploreView {
@@ -186,13 +184,6 @@ impl ExploreView {
         )
     }
 
-    pub(crate) fn sync_channel_icons(&self) -> El {
-        row("Sync channels").child(
-            icon(koru_draw::icons::CLOUD, IconSize::L)
-                .decorative()
-                .ink(Ink::Secondary),
-        )
-    }
     pub(crate) fn workspace_import_anchor(
         &self,
         area: koru_draw::geometry::Rect,

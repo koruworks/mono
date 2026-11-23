@@ -77,6 +77,7 @@ pub use shared_surface::{
     documentation_resource_templates, documentation_resources, read_documentation_resource,
     server_instructions,
 };
+mod mini_apps;
 pub mod tasks;
 mod tool_pages;
 mod toolsets;
@@ -921,7 +922,7 @@ fn tool_policy(name: &str) -> Option<ToolPolicy> {
             workspace: WorkspaceTarget::None,
             domain: ToolDomain::Workspace,
         },
-        "list_chats" | "search_chats" | "read_chat" => ToolPolicy {
+        "mini_app_tool" | "list_chats" | "search_chats" | "read_chat" => ToolPolicy {
             scope: None,
             workspace: WorkspaceTarget::None,
             domain: ToolDomain::Chat,
@@ -3358,6 +3359,16 @@ impl Backend for LocalBackend {
     ) -> Result<Value, ToolError> {
         let call = Call::new(context);
         match tool {
+            "mini_app_tool" => {
+                let request: koru_ai_wire::MiniAppToolRequest = from(arguments)?;
+                let result = self.ai(|client| client.ai().mini_app_tool(&request))?;
+                if result.is_error {
+                    return Err(ToolError::invalid(
+                        "The mini-app arguments were refused. Use the bounded tool schema and current workspace references.",
+                    ));
+                }
+                Ok(result.content)
+            }
             "list_chats" => {
                 let request: ListChatsToolRequest = from(arguments)?;
                 serde_json::to_value(self.ai(|client| client.ai().tool_list_chats(&request))?)
@@ -6734,6 +6745,23 @@ pub struct KoruMcp {
     toolsets: Toolsets,
 }
 impl KoruMcp {
+    fn mini_app_call(&self, name: &str, arguments: Value) -> CallToolResult {
+        if let Some(refusal) = self.toolsets.refusal(name) {
+            return refusal;
+        }
+        match mini_apps::request(name, arguments) {
+            Ok(request) => self.call("mini_app_tool", request),
+            Err(error) => {
+                CallToolResult::structured_error(json!({"code":error.code,"message":error.message}))
+            }
+        }
+    }
+    /// In-memory bridge seam: identical parser/authorization/backend dispatch
+    /// as tools/call, without starting a transport or opening a Store.
+    #[cfg(feature = "test-support")]
+    pub fn mini_app_call_for_test(&self, name: &str, arguments: Value) -> CallToolResult {
+        self.mini_app_call(name, arguments)
+    }
     pub fn new(backend: Arc<dyn Backend>, context: RequestContext) -> Self {
         let mut tool_router = Self::tool_router();
         published_schema::compact_router(&mut tool_router);
@@ -6757,6 +6785,9 @@ impl KoruMcp {
     pub fn with_toolsets(mut self, toolsets: Toolsets) -> Self {
         for set in Toolset::ALL {
             for tool in set.tools() {
+                if mini_apps::NAMES.contains(tool) {
+                    continue;
+                }
                 if toolsets.contains(set) {
                     self.tool_router.enable_route(tool);
                 } else {
@@ -7162,6 +7193,13 @@ impl ServerHandler for KoruMcp {
             );
             return Ok(rmcp::model::CallToolResponse::Complete(refusal));
         }
+        if mini_apps::NAMES.contains(&request.name.as_ref()) {
+            let result = self.mini_app_call(
+                &request.name,
+                Value::Object(request.arguments.unwrap_or_default()),
+            );
+            return Ok(rmcp::model::CallToolResponse::Complete(result));
+        }
         // A view tool is in no router: it runs as the tool it presents
         // (`apps`), and is served with that tool's toolset.
         if let (Some(runs_as), Some(listed_with)) = (
@@ -7220,6 +7258,11 @@ impl ServerHandler for KoruMcp {
     ) -> Result<rmcp::model::ListToolsResult, ErrorData> {
         let cursor = request.and_then(|request| request.cursor);
         let mut tools = self.tool_router.list_all();
+        tools.extend(
+            mini_apps::tools()
+                .into_iter()
+                .filter(|tool| self.toolsets.refusal(&tool.name).is_none()),
+        );
         // The view tools, each listed while the tool it is listed with is.
         // Kept in the router's order, by name, so the pages stay the same
         // pages.
@@ -7814,8 +7857,8 @@ mod tests {
             .expect("tools/list over stdio");
         server_task.abort();
 
-        // The router's 25 and the three view tools (`apps`).
-        assert_eq!(listed.tools.len(), 28);
+        // The router's 25, three view tools and three live mini-app tools.
+        assert_eq!(listed.tools.len(), 31);
         assert!(listed.next_cursor.is_none(), "one page when paging is off");
         let line = serde_json::to_string(&json!({"jsonrpc": "2.0", "id": 2, "result": &listed}))
             .expect("reply JSON");
@@ -7830,7 +7873,14 @@ mod tests {
             let schema = Value::Object(tool.input_schema.as_ref().clone());
             let mut found = Vec::new();
             keywords(&schema, false, &mut found);
+            // The native mini-app catalog keeps its local `$defs`: inlined,
+            // `create_task_document_app` alone outgrows one page of the
+            // paged list (MCP.md, What `tools/list` publishes).
+            let mini_app = crate::mini_apps::NAMES.contains(&tool.name.as_ref());
             for banned in ["$ref", "$defs", "$schema", "title"] {
+                if mini_app && matches!(banned, "$ref" | "$defs") {
+                    continue;
+                }
                 assert!(
                     !found.iter().any(|k| k == banned),
                     "{} publishes {banned}",
@@ -7933,10 +7983,11 @@ mod tests {
             .list_all()
             .into_iter()
             .chain(apps::app_tools())
+            .chain(mini_apps::tools())
             .map(|tool| tool.name.to_string())
             .collect();
         expected.sort();
-        assert_eq!(expected.len(), 28);
+        assert_eq!(expected.len(), 31);
         assert_eq!(seen, expected, "each tool once, in the router's order");
     }
 
@@ -12677,7 +12728,7 @@ mod tests {
             .await
             .expect("tools/list over stdio");
 
-        assert_eq!(tools.len(), 28);
+        assert_eq!(tools.len(), 31);
         assert!(
             tools
                 .iter()

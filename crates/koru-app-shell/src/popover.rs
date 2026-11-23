@@ -119,7 +119,7 @@ const SHELL_GAP: f32 = 6.0;
 /// Two corrections to the raw slot, in one place because they are one decision:
 ///
 /// - the chip a person sees is [`banner::chip_band`], not the 36 px slot behind
-///   it, and a panel that cleared the *slot* sat a whole `TAB_INSET_BOTTOM`
+///   it, and a panel that cleared the *slot* sat a whole `CAPTION_INSET_BOTTOM`
 ///   lower than the reference's — which is the "hangs visibly lower" the owner
 ///   reported;
 /// - `PopoverShell::anchored` then adds [`SHELL_GAP`] of its own, so the band is
@@ -154,7 +154,7 @@ fn anchored_on(slot: Rect) -> Rect {
 /// which is the rule the content rect was standing in for, stated about the
 /// thing it is actually about.
 ///
-/// What that costs is one pixel. A chip in a band sits `TAB_INSET_BOTTOM` above
+/// What that costs is one pixel. A chip in a band sits `CAPTION_INSET_BOTTOM` above
 /// the band's floor, so the relaxed bound lands on the band's closing hairline
 /// rather than below it, and a panel that has to flip or clamp can reach the
 /// same line. Koru's own switcher covers that hairline too
@@ -363,7 +363,7 @@ mod tests {
     /// can see.**
     ///
     /// Not from the slot behind it: a chip is drawn inside `banner::chip_band`,
-    /// so clearing the slot left the panel a whole `TAB_INSET_BOTTOM` lower than
+    /// so clearing the slot left the panel a whole `CAPTION_INSET_BOTTOM` lower than
     /// the reference's — 7 px against Koru's 4, which is what the owner saw
     /// side by side. The assertion is the *measured* distance rather than the
     /// arithmetic, so it also fails if `PopoverShell`'s own gap ever moves under

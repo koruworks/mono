@@ -13,9 +13,9 @@ pub(super) struct Submission {
 }
 
 impl OnboardingView {
-    /// `apple` picks Apple's page over Google's; everything after the browser
-    /// is the same journey.
-    pub(super) fn begin_browser_signin(&mut self, apple: bool) {
+    /// `provider` picks Google's, Apple's, or Koru's email login page;
+    /// everything after the browser returns is the same journey.
+    pub(super) fn begin_browser_signin(&mut self, provider: BrowserProvider) {
         self.browser_signin = Some(Submission {
             start: CommandSubmissionId::next(),
             generation: None,
@@ -23,6 +23,8 @@ impl OnboardingView {
             cancel: None,
         });
         self.screen = Screen::Browser;
+        self.keyboard_focus = false;
+        self.browser_link_copied_at = None;
         self.focus = 0;
         // The retry supersedes the last failure, exactly as `show_profile`
         // clears it when the other welcome action is taken. Without this the
@@ -30,16 +32,46 @@ impl OnboardingView {
         // route came back here without failing again.
         self.error = None;
         self.error_field = None;
-        self.last_attempt = Some(if apple {
-            welcome::Action::Apple
-        } else {
-            welcome::Action::Google
+        self.last_attempt = Some(match provider {
+            BrowserProvider::Google => welcome::Action::Google,
+            BrowserProvider::Apple => welcome::Action::Apple,
+            BrowserProvider::Email => welcome::Action::ContinueWithEmail,
         });
-        self.browser_apple = apple;
-        self.pending = Some(if apple {
-            Action::StartApple
-        } else {
-            Action::StartGoogle
+        self.browser_provider = provider;
+        self.pending = Some(match provider {
+            BrowserProvider::Google => Action::StartGoogle,
+            BrowserProvider::Apple => Action::StartApple,
+            BrowserProvider::Email => Action::StartEmailBrowser,
+        });
+    }
+
+    /// Re-arm the browser wait state for a sign-in command dispatched right
+    /// after clearing a prior bound scope during onboarding.
+    pub(crate) fn arm_browser_signin(&mut self, command: &koru_agent_wire::AccountCommand) {
+        let provider = match command {
+            koru_agent_wire::AccountCommand::StartGoogle { .. } => BrowserProvider::Google,
+            koru_agent_wire::AccountCommand::StartApple { .. } => BrowserProvider::Apple,
+            koru_agent_wire::AccountCommand::StartEmailBrowser { .. } => BrowserProvider::Email,
+            _ => return,
+        };
+        self.browser_signin = Some(Submission {
+            start: CommandSubmissionId::next(),
+            generation: None,
+            cancel_requested: false,
+            cancel: None,
+        });
+        self.modal_account_flow = true;
+        self.screen = Screen::Browser;
+        self.keyboard_focus = false;
+        self.browser_link_copied_at = None;
+        self.focus = 0;
+        self.error = None;
+        self.error_field = None;
+        self.browser_provider = provider;
+        self.last_attempt = Some(match provider {
+            BrowserProvider::Google => welcome::Action::Google,
+            BrowserProvider::Apple => welcome::Action::Apple,
+            BrowserProvider::Email => welcome::Action::ContinueWithEmail,
         });
     }
 
@@ -67,7 +99,12 @@ impl OnboardingView {
     pub(super) fn cancel_browser_signin(&mut self) {
         if matches!(
             self.pending,
-            Some(Action::StartGoogle | Action::StartApple | Action::ContinueWithEmail { .. })
+            Some(
+                Action::StartGoogle
+                    | Action::StartApple
+                    | Action::StartEmailBrowser
+                    | Action::ContinueWithEmail { .. }
+            )
         ) {
             // The action has not left this form, so no hosted operation exists.
             self.pending = None;
@@ -96,6 +133,7 @@ impl OnboardingView {
         match command {
             AccountCommand::StartGoogle { .. }
             | AccountCommand::StartApple { .. }
+            | AccountCommand::StartEmailBrowser { .. }
             | AccountCommand::ContinueWithEmail { .. } => Some(signin.start),
             AccountCommand::Cancel { .. } => signin.cancel,
             _ => None,

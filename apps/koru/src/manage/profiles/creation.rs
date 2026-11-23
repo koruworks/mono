@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The embedded create form: the same onboarding form the first-run window
-//! shows, reused inside an already-open Profile manager, and what its actions
-//! become here.
+//! The embedded create form: the same setup card the first-run window shows,
+//! reused inside an already-open Profile manager, and what its actions become
+//! here.
 use super::*;
+use koru_workspace_host::onboarding::SetupOwnerLabel;
 
 impl ProfilesController {
     pub(super) fn begin_connected_profile_creation(&mut self) {
@@ -11,6 +12,10 @@ impl ProfilesController {
         creation.select_account_context(&self.account);
         // The page frames the form: no first-run pane, lined up with its head.
         creation.set_embedded(true);
+        // The card's first field names the new Profile only: labelled
+        // *Profile*, empty, and sent with no owner name, so creating a Profile
+        // here never renames the account (welcome D8, Q-A, Q-G).
+        creation.set_owner_label(SetupOwnerLabel::Profile);
         self.hints.size_creation_form = true;
         creation.begin_connected_profile_creation();
         self.profile_creation = Some(std::cell::RefCell::new(creation));
@@ -42,6 +47,7 @@ impl ProfilesController {
         creation.select_account_context(&self.account);
         // The page frames the form: no first-run pane, lined up with its head.
         creation.set_embedded(true);
+        creation.set_owner_label(SetupOwnerLabel::Profile);
         self.hints.size_creation_form = true;
         self.profile_creation = Some(std::cell::RefCell::new(creation));
         self.hints.reset_focus = true;
@@ -80,13 +86,24 @@ impl ProfilesController {
             Some(Action::StartGoogle) => {
                 self.pending = Some(AccountCommand::StartGoogle {
                     locale: "en".into(),
+                    ab: None,
                 });
             }
             Some(Action::StartApple) => {
                 self.pending = Some(AccountCommand::StartApple {
                     locale: "en".into(),
+                    ab: None,
                 });
             }
+            Some(Action::StartEmailBrowser) => {
+                self.pending = Some(AccountCommand::StartEmailBrowser {
+                    locale: "en".into(),
+                    ab: None,
+                });
+            }
+            Some(Action::OpenPricing)
+            | Some(Action::StartCheckout { .. })
+            | Some(Action::CancelCheckout) => {}
             // The same four steps the first-run window raises, from the same
             // screens: this surface embeds the identical form.
             Some(Action::ContinueWithEmail { address, password }) => {
@@ -169,7 +186,6 @@ impl ProfilesController {
                 owner_display_name,
                 name,
                 workspace_name,
-                template,
                 workspace_icon,
                 workspace_color,
                 profile_icon,
@@ -181,7 +197,6 @@ impl ProfilesController {
                     owner_display_name,
                     profile_name: name,
                     workspace_name,
-                    template,
                     workspace_icon,
                     workspace_color,
                     profile_icon,
@@ -189,7 +204,10 @@ impl ProfilesController {
                     connect_account,
                 });
             }
-            None => {}
+            Some(Action::SwitchAccount) => {
+                self.pending = Some(AccountCommand::Logout);
+            }
+            Some(Action::ReopenBrowserSignin | Action::CopyBrowserSigninLink) | None => {}
         }
     }
 

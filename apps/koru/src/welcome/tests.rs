@@ -34,6 +34,34 @@ fn page() -> WelcomeView {
     view
 }
 
+#[test]
+fn terminal_customization_and_cloud_subscription_have_their_own_links() {
+    let mut view = page();
+    for (target, want) in [
+        (Target::TerminalSettings, WelcomeWant::TerminalSettings),
+        (Target::SubscribeCloud, WelcomeWant::SubscribeCloud),
+    ] {
+        let rect = rect_of(&mut view, target);
+        assert!(press(&mut view, rect));
+        assert_eq!(view.take_wants(), [want]);
+    }
+    let mcp = laid(&mut view)
+        .sections
+        .iter()
+        .flat_map(|s| &s.rows)
+        .find(|row| row.id == RowId::Mcp)
+        .unwrap();
+    assert_eq!(mcp.title, "Access your Koru workspace via MCP");
+    let text = mcp
+        .sentence
+        .iter()
+        .map(|r| r.text.as_str())
+        .collect::<String>();
+    assert!(text.contains(CLOUD_MCP_URL));
+    assert!(text.contains("100 GB"));
+    assert_eq!(cloud_pricing_url(), "https://koru.do/pricing");
+}
+
 fn laid(view: &mut WelcomeView) -> &Layout {
     view.ensure_laid()
 }

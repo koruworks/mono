@@ -143,10 +143,9 @@ impl Slots {
     };
 }
 
-/// Square, like the panel toggles, and for the same reason: it holds one
-/// avatar-sized glyph.
-fn slot_w(caption: Rect) -> f32 {
-    caption.h.min(theme::CAPTION_H)
+/// The same stable width as the panel toggles: it holds one avatar-sized glyph.
+fn slot_w(_caption: Rect) -> f32 {
+    theme::CAPTION_CONTROL_W
 }
 
 /// **The two identity chips, laid out from `x` rightwards inside `band`.**
@@ -322,9 +321,9 @@ pub fn pane_hit(band: Rect, slots: Slots, x: f32, y: f32) -> Option<Hit> {
 pub fn chip_band(slot: Rect) -> Rect {
     Rect::new(
         slot.x,
-        slot.y + theme::TAB_INSET_TOP,
+        slot.y + theme::CAPTION_INSET_TOP,
         slot.w,
-        (slot.h - theme::TAB_INSET_TOP - theme::TAB_INSET_BOTTOM).max(0.0),
+        (slot.h - theme::CAPTION_INSET_TOP - theme::CAPTION_INSET_BOTTOM).max(0.0),
     )
 }
 

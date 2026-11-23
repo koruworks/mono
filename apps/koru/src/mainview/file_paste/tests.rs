@@ -50,17 +50,13 @@ fn copied_files_create_a_draft_document_only_after_attach_is_chosen() {
     assert!(view.tabs().active_tab().draft.is_some());
     view.offer_copied_files(vec![PathBuf::from("picture.png")]);
     view.answer_file_paste(ChoiceOutcome::Chosen(0));
-    assert!(matches!(
-        View::take_pane_request(&mut view),
-        Some(PaneRequest::CreateDocument(_))
-    ));
     assert!(view.pending_file_paste_draft.is_some());
-    let document = koru_core::DocumentId::new();
-    let root = crate::mainview::harness::a_document(&mut workspace.ws, "");
-    view.active_document = Some(document);
-    view.pending_draft_text = Some((root, String::new(), vec![String::new()], None));
-    view.flush_promoted_draft(&mut workspace.ws);
+    // The shell answers the draft's CreateDocument request; adoption is
+    // synchronous, and the pasted files follow the document it adopted.
+    crate::mainview::harness::shell_answers_the_draft(&mut view, &mut workspace.ws);
     assert!(view.tabs().active_tab().draft.is_none());
+    assert!(view.pending_file_paste_draft.is_none());
+    let document = workspace.ws.stamped_document_id().unwrap();
     assert!(matches!(View::take_pane_request(&mut view),
         Some(PaneRequest::ImportFileAttachments { document: target, .. }) if target == document));
 }

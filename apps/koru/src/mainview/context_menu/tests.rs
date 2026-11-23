@@ -353,7 +353,7 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     assert_eq!(submenu(MenuAction::NewAgent), Some(flyout));
     assert_eq!(
         submenu(MenuAction::Documents),
-        Some(vec![MenuAction::NewDocument])
+        Some(vec![MenuAction::NewDocument, MenuAction::MiniApp])
     );
     assert_eq!(
         submenu(MenuAction::Chats),
@@ -424,6 +424,7 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
         document_plus_items(),
         vec![
             MenuAction::NewDocument,
+            MenuAction::MiniApp,
             MenuAction::Divider,
             MenuAction::OpenRecentDocument(doc),
             // Moved here from the Welcome page, and only offered when there
@@ -477,12 +478,15 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
     let eleventh = many[PLUS_RECENT_MAX].0;
     set_plus_snapshots(many, vec![], vec![], vec![]);
     let docs = document_plus_items();
-    assert_eq!(docs.len(), 1 + 1 + PLUS_RECENT_MAX + 2);
+    assert_eq!(docs.len(), 2 + 1 + PLUS_RECENT_MAX + 2);
     assert_eq!(docs.last(), Some(&MenuAction::ClearRecents));
     assert!(!docs.contains(&MenuAction::OpenRecentDocument(eleventh)));
 
     set_plus_snapshots(vec![], vec![], vec![], vec![]);
-    assert_eq!(document_plus_items(), vec![MenuAction::NewDocument]);
+    assert_eq!(
+        document_plus_items(),
+        vec![MenuAction::NewDocument, MenuAction::MiniApp]
+    );
     assert_eq!(chat_plus_items(), vec![MenuAction::NewAiChat]);
     assert_eq!(shell_plus_items(), shell_profile_items());
 }
@@ -1177,16 +1181,27 @@ fn every_window_row_names_the_chord_that_does_the_same_thing() {
 }
 
 #[test]
-fn the_overflow_keeps_the_pin_glyph_and_uses_text_for_destinations() {
+fn the_overflow_uses_icons_for_its_labeled_controls() {
     assert_eq!(
         MenuAction::WindowAlwaysOnTop.icon(),
         Some(koru_draw::icons::PUSH_PIN)
     );
-    assert_eq!(MenuAction::HeaderSettings.icon(), None);
+    assert_eq!(
+        MenuAction::HeaderSettings.icon(),
+        Some(koru_draw::icons::FADERS)
+    );
+    assert_eq!(
+        MenuAction::HeaderTheme.icon(),
+        Some(koru_draw::icons::CIRCLE_HALF)
+    );
+    assert_eq!(
+        MenuAction::HeaderZoom.icon(),
+        Some(koru_draw::icons::SEARCH)
+    );
     assert_eq!(MenuAction::HeaderUpdates.icon(), None);
     assert_eq!(
-        MenuAction::HeaderFeedback.icon(),
-        Some(koru_draw::icons::USER_SOUND)
+        MenuAction::HelpSendFeedback.icon(),
+        Some(koru_draw::icons::CHAT_CIRCLE)
     );
 }
 
@@ -1201,11 +1216,20 @@ fn support_sits_where_help_was_with_the_headset_glyph() {
         .expect("zoom row");
     assert_eq!(items[zoom + 1], MenuAction::Divider);
     if OVERFLOW_HIDDEN_ROWS_SHOWN {
-        assert_eq!(items[zoom + 2], MenuAction::HeaderSupport);
-        assert_eq!(items[zoom + 3], MenuAction::HeaderFeedback);
+        assert_eq!(items[zoom + 2], MenuAction::HeaderSettings);
+        assert_eq!(items[zoom + 3], MenuAction::HeaderSupport);
     } else {
-        // Hidden for now: Feedback is the only destination after zoom.
-        assert_eq!(&items[zoom + 2..], &[MenuAction::HeaderFeedback]);
+        assert_eq!(items[zoom + 2], MenuAction::HeaderSettings);
+        let footer = &items[zoom + 3..];
+        if let Some(branch) = crate::build_stamp::caption_branch()
+            .filter(|_| koru_channel::ReleaseChannel::this_build_is_internal())
+        {
+            assert_eq!(footer, &[MenuAction::HeaderBranch]);
+            assert_eq!(MenuAction::HeaderBranch.label(), branch);
+            assert!(!MenuAction::HeaderBranch.selectable());
+        } else {
+            assert!(footer.is_empty());
+        }
     }
     assert_eq!(
         MenuAction::HeaderSupport.icon(),
@@ -1216,17 +1240,25 @@ fn support_sits_where_help_was_with_the_headset_glyph() {
 }
 
 #[test]
-fn always_on_top_flips_its_label_when_the_window_is_pinned() {
+fn always_on_top_keeps_its_label_and_flips_the_switch() {
     assert!(
         window_labels(false, false)
             .iter()
-            .any(|s| s == "Always on Top")
+            .any(|s| s == "Always on top")
     );
     assert!(
         window_labels(true, false)
             .iter()
-            .any(|s| s == "Turn Off Always on Top")
+            .any(|s| s == "Always on top")
     );
+    assert!(matches!(
+        row_controls(MenuAction::WindowAlwaysOnTop)[0].0,
+        Control::Toggle { on: false }
+    ));
+    assert!(matches!(
+        row_controls(MenuAction::WindowUnpinTop)[0].0,
+        Control::Toggle { on: true }
+    ));
 }
 
 /// Nothing in this menu is destructive; it contains state and destinations.
@@ -1246,7 +1278,13 @@ fn the_window_menu_has_no_destructive_rows() {
                     (true, true) => MenuAction::HeaderStopRecording,
                     (true, false) => MenuAction::HeaderStartRecording,
                     (false, _) if OVERFLOW_HIDDEN_ROWS_SHOWN => MenuAction::HeaderUpdates,
-                    (false, _) => MenuAction::HeaderFeedback,
+                    (false, _)
+                        if koru_channel::ReleaseChannel::this_build_is_internal()
+                            && crate::build_stamp::caption_branch().is_some() =>
+                    {
+                        MenuAction::HeaderBranch
+                    }
+                    (false, _) => MenuAction::HeaderSettings,
                 };
                 assert_eq!(items.last().copied(), Some(want_last));
             }
@@ -1341,7 +1379,7 @@ fn the_arrange_rows_name_their_chords() {
 /// caption's pin button has become a menu.
 #[test]
 fn only_the_pinned_state_draws_a_filled_glyph() {
-    assert!(MenuAction::WindowUnpinTop.filled_icon());
+    assert!(!MenuAction::WindowUnpinTop.filled_icon());
     assert!(!MenuAction::WindowAlwaysOnTop.filled_icon());
     // And nothing else in any menu has opinions about weight.
     for action in window_items(false, false, false)
@@ -1357,7 +1395,6 @@ fn only_the_pinned_state_draws_a_filled_glyph() {
 fn overflow_destinations_are_distinct_from_standalone_window_controls() {
     let items = window_items(false, false, false);
     assert!(items.contains(&MenuAction::HeaderSettings));
-    assert!(items.contains(&MenuAction::HeaderFeedback));
     assert_eq!(
         items.contains(&MenuAction::HeaderUpdates),
         OVERFLOW_HIDDEN_ROWS_SHOWN
@@ -1415,10 +1452,10 @@ fn each_zoom_control_names_the_action_it_takes() {
     assert_eq!(
         actions,
         vec![
+            Some(MenuAction::ZoomActualSize),
             Some(MenuAction::ZoomOut),
             None,
             Some(MenuAction::ZoomIn),
-            Some(MenuAction::ZoomActualSize),
         ],
         "the readout in the middle takes no action"
     );
@@ -1442,12 +1479,12 @@ fn each_zoom_control_names_the_action_it_takes() {
 #[test]
 fn the_readout_reads_the_zoom_it_was_given() {
     for factor in [0.5f32, 0.9, 1.0, 1.25, 2.0] {
-        let Control::Readout(value) = &zoom_controls(factor)[1].0 else {
+        let Control::Readout(value) = &zoom_controls(factor)[2].0 else {
             panic!("the middle cell is the readout");
         };
         assert_eq!(*value, koru_draw::theme::zoom_percent(factor));
     }
-    let Control::Readout(hundred) = &zoom_controls(1.0)[1].0 else {
+    let Control::Readout(hundred) = &zoom_controls(1.0)[2].0 else {
         panic!("readout");
     };
     assert_eq!(hundred, "100%");
@@ -1463,17 +1500,18 @@ fn the_controls_dim_at_the_ends_of_the_range_and_at_actual_size() {
             .into_iter()
             .filter_map(|(control, _)| match control {
                 Control::Button { enabled, .. } => Some(enabled),
-                Control::Readout(_) => None,
+                Control::Link { visible, .. } => Some(visible),
+                _ => None,
             })
             .collect()
     };
     use koru_draw::theme::{ZOOM_MAX, ZOOM_MIN};
     // − , + , ↺
-    assert_eq!(enabled(ZOOM_MIN), vec![false, true, true], "at the floor");
-    assert_eq!(enabled(ZOOM_MAX), vec![true, false, true], "at the ceiling");
+    assert_eq!(enabled(ZOOM_MIN), vec![true, false, true], "at the floor");
+    assert_eq!(enabled(ZOOM_MAX), vec![true, true, false], "at the ceiling");
     assert_eq!(
         enabled(1.0),
-        vec![true, true, false],
+        vec![false, true, true],
         "nothing to come back from at 100%"
     );
     assert_eq!(enabled(1.2), vec![true, true, true], "in the middle");
@@ -1502,10 +1540,13 @@ fn every_zoom_control_uses_an_icon_font_glyph() {
 #[test]
 fn each_zoom_control_names_itself_and_the_chord_that_does_the_same_thing() {
     use koru_keys::ShortcutId;
+    let _theme = crate::tests::lock_theme();
+    let before = theme::zoom();
+    theme::set_zoom(1.25);
     for (control, id) in [
-        (0, ShortcutId::ZoomOut),
-        (2, ShortcutId::ZoomIn),
-        (3, ShortcutId::ZoomReset),
+        (1, ShortcutId::ZoomOut),
+        (3, ShortcutId::ZoomIn),
+        (0, ShortcutId::ZoomReset),
     ] {
         let (label, chord) = control_tooltip(MenuAction::HeaderZoom, control)
             .unwrap_or_else(|| panic!("control {control} earns a tooltip"));
@@ -1520,13 +1561,14 @@ fn each_zoom_control_names_itself_and_the_chord_that_does_the_same_thing() {
             "control {control} teaches the chord that actually dispatches"
         );
     }
+    theme::set_zoom(before);
 }
 
 /// The readout is not a control, so it explains nothing — and neither does a
 /// row that has no controls at all.
 #[test]
 fn the_readout_and_a_plain_row_earn_no_control_tooltip() {
-    assert_eq!(control_tooltip(MenuAction::HeaderZoom, 1), None, "readout");
+    assert_eq!(control_tooltip(MenuAction::HeaderZoom, 2), None, "readout");
     assert_eq!(control_tooltip(MenuAction::HeaderZoom, 4), None, "no fifth");
     assert_eq!(control_tooltip(MenuAction::HeaderSettings, 0), None);
 }
@@ -1601,6 +1643,7 @@ fn the_canvases_flyout_offers_new_canvas_then_recent_canvases() {
         document_plus_items(),
         vec![
             MenuAction::NewDocument,
+            MenuAction::MiniApp,
             MenuAction::Divider,
             MenuAction::OpenRecentDocument(page),
             MenuAction::Divider,

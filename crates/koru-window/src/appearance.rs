@@ -36,6 +36,7 @@ mod tests;
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct CaretAppearance {
     pub color: CaretColor,
+    pub color_dark: CaretColor,
     pub width: CaretWidth,
     pub height: CaretHeight,
 }
@@ -44,13 +45,15 @@ impl CaretAppearance {
     pub fn from_section(section: &GlobalSettings) -> Self {
         Self {
             color: CaretColor::parse(section.caret_color.token()),
+            color_dark: CaretColor::parse(section.caret_color_dark.token()),
             width: CaretWidth::parse(section.caret_width.token()),
             height: CaretHeight::parse(section.caret_height.token()),
         }
     }
 
     pub fn apply(self) {
-        theme::set_caret_color(self.color);
+        theme::set_caret_color_for(false, self.color);
+        theme::set_caret_color_for(true, self.color_dark);
         theme::set_caret_width(self.width);
         theme::set_caret_height(self.height);
     }
@@ -59,6 +62,8 @@ impl CaretAppearance {
 /// Everything an independent window needs to look like Koru.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Appearance {
+    pub text_rendering: koru_settings::TextRenderingPreferences,
+    pub heading_weight: u16,
     pub theme: ThemePreference,
     /// The chosen icon pack, or `None` to follow the build's default.
     pub icon_pack: Option<koru_draw::icons::IconPack>,
@@ -72,7 +77,7 @@ pub struct Appearance {
     /// following an App font change.
     pub chat_font: Option<FontChoice>,
     pub density: Density,
-    /// How many steps a wheel notch moves, 1 to 4.
+    /// How many steps a wheel notch moves: 1, 2, 3, 4, 8 or 16.
     pub scroll_speed: u8,
     /// The accent chosen per theme, light then dark; `None` follows it.
     pub accent: [Option<u32>; 2],
@@ -92,6 +97,8 @@ impl Default for Appearance {
 impl Appearance {
     pub fn from_section(section: &GlobalSettings) -> Self {
         Self {
+            text_rendering: koru_settings::TextRenderingPreferences::from_section(section),
+            heading_weight: section.heading_weight,
             theme: ThemePreference::parse(section.theme.token()),
             icon_pack: section
                 .icon_pack
@@ -123,6 +130,8 @@ impl Appearance {
 
     /// Push all of it into the process globals every layout reads.
     pub fn apply(self) {
+        koru_draw::text_rendering::set_preferences(self.text_rendering);
+        theme::set_heading_weight(self.heading_weight);
         theme::set_theme_preference(self.theme);
         koru_draw::icons::set_icon_pack_setting(self.icon_pack);
         theme::set_dark(self.effective_dark());

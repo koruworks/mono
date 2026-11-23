@@ -266,6 +266,10 @@ pub struct ModelSelection {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ModelCapabilities {
+    /// Registered native tool transport, not a guarantee of request success.
+    /// Live validation only; never written to AI settings or chat history.
+    #[serde(default)]
+    pub native_tools: bool,
     pub streaming: bool,
     pub structured_output: bool,
     pub vision: bool,

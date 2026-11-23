@@ -26,6 +26,9 @@ use std::num::NonZeroUsize;
 
 use vello::{AaSupport, Renderer, RendererOptions};
 
+mod text_raster;
+pub use text_raster::{prepare_window_text, window_antialiasing};
+
 /// Which GPU backend this machine draws with. `Auto` is whatever the binary's
 /// own default is — DX12 for the shell on Windows, vello's default elsewhere —
 /// and the only value most machines ever hold.
@@ -317,7 +320,7 @@ fn try_build(
         device,
         RendererOptions {
             use_cpu: false,
-            antialiasing_support: AaSupport::area_only(),
+            antialiasing_support: AaSupport::all(),
             num_init_threads,
             // **Not available here.** `wgpu::Features::PIPELINE_CACHE` is
             // documented as Vulkan-only and explicitly unimplemented on DX12,

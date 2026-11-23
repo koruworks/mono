@@ -64,6 +64,11 @@ use koru_workspace_host::routing::{Blockers, EditableTarget, FieldId, ModalKind,
 
 pub struct BuiltInDocument {
     pub editor: Editor,
+    /// A new editor occurrence gets a new native-input lifetime, even when it
+    /// reopens the same NodeId. Region geometry never changes this identity.
+    native_ime_owner: u64,
+    /// Stamped Store identity, never the legacy root-node fallback.
+    document_id: Option<koru_core::DocumentId>,
     /// Whether this document *is* the window, and so draws its own title bar.
     ///
     /// False inside a container tab, where the caption above belongs to the
@@ -389,7 +394,16 @@ impl Editing for BuiltInDocument {
     }
 }
 
+fn next_native_ime_owner() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 impl BuiltInDocument {
+    fn owns_document(&self, ws: &WorkspaceDoc) -> bool {
+        self.document_id
+            .is_none_or(|id| ws.stamped_document_id() == Some(id))
+    }
     /// Reopen on the first document in `ws`'s library, or on nothing.
     ///
     /// What a **workspace switch** leaves this view able to do. The node it was
@@ -460,6 +474,8 @@ impl BuiltInDocument {
                     picture_texts_reask: false,
                     wants_global_settings: false,
                     dictation: None,
+                    native_ime_owner: next_native_ime_owner(),
+                    document_id: ws.stamped_document_id(),
                     spelling: spelling::SpellCheck::new(),
                     context_spelling: None,
                     diagrams: diagrams::Diagrams::new(),
@@ -546,6 +562,8 @@ impl BuiltInDocument {
             picture_texts_reask: false,
             wants_global_settings: false,
             dictation: None,
+            native_ime_owner: next_native_ime_owner(),
+            document_id: ws.stamped_document_id(),
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
             diagrams: diagrams::Diagrams::new(),
@@ -601,6 +619,8 @@ impl BuiltInDocument {
             picture_texts_reask: false,
             wants_global_settings: false,
             dictation: None,
+            native_ime_owner: next_native_ime_owner(),
+            document_id: ws.stamped_document_id(),
             spelling: spelling::SpellCheck::new(),
             context_spelling: None,
             diagrams: diagrams::Diagrams::new(),
@@ -1184,6 +1204,9 @@ impl BuiltInDocument {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
+        if !self.owns_document(ws) {
+            return false;
+        }
         if self.editor.view.read_only && !reading_key(key, text, mods) {
             koru_ui::keys::debug::write(format_args!(
                 "[Koru][input] document key refused=read-only"
@@ -1379,6 +1402,83 @@ impl BuiltInDocument {
             }
         }
         true
+    }
+
+    /// Unique native-input lifetime for this editor occurrence. A replacement
+    /// editor never inherits it, even if it displays the same document.
+    pub fn native_ime_owner(&self) -> u64 {
+        self.native_ime_owner
+    }
+
+    /// The supported native control, independent of whether preedit currently
+    /// hides its caret. The enclosing host qualifies this discriminator by
+    /// occurrence lifetime and cancels before changing it. Geometry never
+    /// participates in identity, so resizing and swapping regions preserve IME.
+    pub fn native_ime_target(&self) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        if self.editor.view.read_only || self.confirm.is_some() || self.blockers().is_blocking() {
+            return None;
+        }
+        match self.search.focused_field() {
+            Some(FieldId::Find) => return Some(1),
+            Some(FieldId::Replace) => return Some(2),
+            _ => {}
+        }
+        if !self.editor.view.active || self.editor.view.overlay.is_open() {
+            return None;
+        }
+        let row = self.editor.body.focused()?;
+        if row.image.is_some()
+            || row.kind == koru_core::Kind::Divider
+            || (row.table.is_some() && !row.table_source_visible)
+            || row.diagram_shows_picture()
+        {
+            return None;
+        }
+        let mut identity = std::collections::hash_map::DefaultHasher::new();
+        row.id.hash(&mut identity);
+        Some(identity.finish() | (1 << 63))
+    }
+
+    /// Dispatch only to the currently supported target. Native events are
+    /// target-qualified by the host, rather than borrowed from voice routing.
+    pub fn native_ime(&mut self, ws: &mut WorkspaceDoc, event: &winit::event::Ime) -> bool {
+        if !self.owns_document(ws) {
+            return false;
+        }
+        if matches!(event, winit::event::Ime::Disabled) {
+            return self.native_ime_cancel(ws);
+        }
+        if self.native_ime_target().is_none() {
+            return false;
+        }
+        if self.search.focused_field().is_some() {
+            return self.search.ime(&mut self.editor, event);
+        }
+        let handled = self.editor.ime(ws, event);
+        if handled && matches!(event, winit::event::Ime::Commit(_)) {
+            self.refresh_title(ws);
+        }
+        handled
+    }
+
+    /// Native candidate position in this document view's local logical pixels.
+    pub fn native_ime_rect(&self) -> Option<Rect> {
+        self.native_ime_target()?;
+        if self.search.focused_field().is_some() {
+            self.search.ime_cursor_area(&self.editor)
+        } else {
+            self.editor.ime_cursor_area()
+        }
+    }
+
+    /// Cancels every native surface, including one that just lost focus.
+    pub fn native_ime_cancel(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        if !self.owns_document(ws) {
+            return false;
+        }
+        let body = self.editor.ime_cancel(ws);
+        self.search.ime_cancel(&mut self.editor) || body
     }
 
     /// Where a typed character would land in this document.
@@ -3417,6 +3517,9 @@ impl BuiltInDocument {
     }
 
     pub fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        if !self.owns_document(ws) {
+            return false;
+        }
         let before = ws.version();
         let handled = self.mouse_down_inner(ws, x, y, ctrl);
         self.drain_remove_from_tasks_request(ws);

@@ -205,7 +205,7 @@ fn a_local_profile_signs_in_with_google_while_signed_out() {
         view.c.take_request(),
         Some(AccountCommand::StartGoogle {
             locale: "en".into()
-        })
+        , ab: None})
     );
 }
 
@@ -338,6 +338,8 @@ fn sync_modes_profile_and_workspace_choices_show_saved_state_and_ceiling() {
             .sync_mode_enabled(Some(workspace), TransportMode::P2p)
     );
     view.c.set_cloud_status(profiles::CloudStatus::Manage);
+    view.c
+        .set_cloud_subscription_kind(Some(koru_agent_wire::CloudSubscriptionKind::Trialing));
     view.delegate(|_| ());
     assert!(
         !view

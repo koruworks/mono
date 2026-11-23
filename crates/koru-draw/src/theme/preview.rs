@@ -29,26 +29,37 @@ pub enum PreviewSlot {
     DocTextSize,
     /// The icon pack, as an index into its `ALL`.
     IconPack,
+    HeadingWeight,
+    TextAntialiasing(bool),
+    TextOffset(bool),
+    TextGamma(bool),
+    TextCutoff(bool),
 }
 
 impl PreviewSlot {
-    const COUNT: usize = 6;
+    const COUNT: usize = 16;
 
     fn index(self) -> usize {
         match self {
             Self::Font(slot) => slot as usize,
-            Self::DocTextSize => 4,
-            Self::IconPack => 5,
+            Self::DocTextSize => 5,
+            Self::IconPack => 6,
+            Self::HeadingWeight => 7,
+            Self::TextAntialiasing(dark) => 8 + usize::from(dark) * 4,
+            Self::TextOffset(dark) => 9 + usize::from(dark) * 4,
+            Self::TextGamma(dark) => 10 + usize::from(dark) * 4,
+            Self::TextCutoff(dark) => 11 + usize::from(dark) * 4,
         }
     }
 }
 
-/// `0` is "no preview"; otherwise `generation << 17 | 1 << 16 | value`.
+/// `0` is "no preview"; otherwise `generation << 33 | 1 << 32 | value`.
+/// The value holds either a discrete choice or exact f32 bits.
 static SLOTS: [AtomicU64; PreviewSlot::COUNT] = [const { AtomicU64::new(0) }; PreviewSlot::COUNT];
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
-const PRESENT: u64 = 1 << 16;
-const VALUE: u64 = 0xffff;
+const PRESENT: u64 = 1 << 32;
+const VALUE: u64 = 0xffff_ffff;
 
 /// One menu's preview of one slot. Dropping it ends the preview, unless a
 /// newer one has taken the slot since.
@@ -60,15 +71,15 @@ pub struct Preview {
 
 impl Preview {
     /// Begin previewing `value` in `slot`, replacing whatever previewed it.
-    pub fn new(slot: PreviewSlot, value: u16) -> Self {
-        let token = (NEXT.fetch_add(1, Ordering::Relaxed) << 17) | PRESENT | u64::from(value);
+    pub fn new(slot: PreviewSlot, value: u32) -> Self {
+        let token = (NEXT.fetch_add(1, Ordering::Relaxed) << 33) | PRESENT | u64::from(value);
         SLOTS[slot.index()].store(token, Ordering::Relaxed);
         Self { slot, token }
     }
 
     /// Move this preview to `value`. Does nothing once a newer preview owns
     /// the slot.
-    pub fn set(&mut self, value: u16) {
+    pub fn set(&mut self, value: u32) {
         let next = (self.token & !VALUE) | u64::from(value);
         if SLOTS[self.slot.index()]
             .compare_exchange(self.token, next, Ordering::Relaxed, Ordering::Relaxed)
@@ -95,9 +106,9 @@ impl Drop for Preview {
 }
 
 /// The value previewed in `slot`, if anything previews it.
-pub fn previewed(slot: PreviewSlot) -> Option<u16> {
+pub fn previewed(slot: PreviewSlot) -> Option<u32> {
     let token = SLOTS[slot.index()].load(Ordering::Relaxed);
-    (token & PRESENT != 0).then_some((token & VALUE) as u16)
+    (token & PRESENT != 0).then_some((token & VALUE) as u32)
 }
 
 /// End any preview of `slot`: a choice replaces what was being shown.
@@ -113,6 +124,48 @@ pub(crate) static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slots_are_distinct_and_float_previews_keep_every_bit() {
+        let _serial = SERIAL.lock().unwrap_or_else(|held| held.into_inner());
+        let slots = [
+            PreviewSlot::Font(FontSlot::Ui),
+            PreviewSlot::Font(FontSlot::Body),
+            PreviewSlot::Font(FontSlot::Headings),
+            PreviewSlot::Font(FontSlot::Code),
+            PreviewSlot::Font(FontSlot::Chat),
+            PreviewSlot::DocTextSize,
+            PreviewSlot::IconPack,
+            PreviewSlot::HeadingWeight,
+            PreviewSlot::TextAntialiasing(false),
+            PreviewSlot::TextOffset(false),
+            PreviewSlot::TextGamma(false),
+            PreviewSlot::TextCutoff(false),
+            PreviewSlot::TextAntialiasing(true),
+            PreviewSlot::TextOffset(true),
+            PreviewSlot::TextGamma(true),
+            PreviewSlot::TextCutoff(true),
+        ];
+        let mut indices = slots.map(PreviewSlot::index).to_vec();
+        indices.sort_unstable();
+        indices.dedup();
+        assert_eq!(
+            indices.len(),
+            PreviewSlot::COUNT,
+            "chat font and document size must not alias"
+        );
+        let bits = 1.234567_f32.to_bits();
+        let old = Preview::new(PreviewSlot::TextGamma(false), bits);
+        assert_eq!(previewed(PreviewSlot::TextGamma(false)), Some(bits));
+        let new = Preview::new(PreviewSlot::TextGamma(false), 1.75_f32.to_bits());
+        drop(old);
+        assert_eq!(
+            previewed(PreviewSlot::TextGamma(false)),
+            Some(1.75_f32.to_bits())
+        );
+        drop(new);
+        assert_eq!(previewed(PreviewSlot::TextGamma(false)), None);
+    }
 
     /// The document size slot is used here because no other test in this
     /// crate previews it.

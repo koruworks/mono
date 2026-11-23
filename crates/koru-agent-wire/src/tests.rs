@@ -666,8 +666,10 @@ fn the_two_version_numbers_are_not_the_same_declaration() {
     // deliberate edit here as well as there -- which is what caught the
     // `OpenLink` bump that took the protocol to 8 and left the frame alone,
     // and then caught root-catalog Plan 2.2 taking the protocol to 46 for
-    // `Push::RootSync` while the frame stayed at 1.
-    assert_eq!(PROTOCOL_VERSION, 50);
+    // `Push::RootSync` while the frame stayed at 1, and welcome taking it to
+    // 51 for optional `owner_display_name` on `CreateProfile`, browser email
+    // sign-in and desktop checkout handoff.
+    assert_eq!(PROTOCOL_VERSION, 52);
     assert_eq!(FRAME_VERSION, 1);
 }
 
@@ -871,7 +873,7 @@ fn a_first_party_grant_carries_a_token_an_expiry_and_no_permissions() {
 fn account_conversation_is_typed_pre_hello_and_debug_redacts_private_fields() {
     let command = AccountCommand::CreateProfile {
         profile_id: "00000000-0000-4000-8000-000000000001".into(),
-        owner_display_name: "Seeded Owner Name".into(),
+        owner_display_name: Some("Seeded Owner Name".into()),
         name: "Seeded Private Name".into(),
         locale: Some("seeded-locale".into()),
     };
@@ -904,6 +906,40 @@ fn account_conversation_is_typed_pre_hello_and_debug_redacts_private_fields() {
         browser
     );
     assert!(!format!("{browser:?}").contains("seeded-secret"));
+}
+
+/// **A Profile created from Manage names no owner** (protocol 47): the field
+/// is left out of the body rather than sent empty, so it decodes back to
+/// `None`, and a body from a window that still sends the name decodes to
+/// `Some` — a newer agent reads an older window's command unchanged.
+#[test]
+fn create_profile_without_an_owner_name_round_trips() {
+    let command = AccountCommand::CreateProfile {
+        profile_id: "00000000-0000-4000-8000-000000000002".into(),
+        owner_display_name: None,
+        name: "Work".into(),
+        locale: Some("en".into()),
+    };
+    let body = json(&command);
+    assert!(
+        !body.contains("owner_display_name"),
+        "an absent owner name is left out of the body: {body}"
+    );
+    assert_eq!(
+        serde_json::from_str::<AccountCommand>(&body).unwrap(),
+        command
+    );
+
+    let older = r#"{"kind":"create_profile","profile_id":"00000000-0000-4000-8000-000000000002","owner_display_name":"Ada","name":"Work","locale":"en"}"#;
+    assert_eq!(
+        serde_json::from_str::<AccountCommand>(older).unwrap(),
+        AccountCommand::CreateProfile {
+            profile_id: "00000000-0000-4000-8000-000000000002".into(),
+            owner_display_name: Some("Ada".into()),
+            name: "Work".into(),
+            locale: Some("en".into()),
+        }
+    );
 }
 
 #[test]

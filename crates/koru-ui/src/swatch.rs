@@ -19,7 +19,8 @@ pub struct Swatch;
 impl Swatch {
     pub const SIZE: f32 = 22.0;
     pub const GAP: f32 = 10.0;
-    const RADIUS: f32 = 6.0;
+    /// The square's corner; the rings follow it outwards.
+    pub(crate) const RADIUS: f32 = 6.0;
     /// The ring's gap from the square, and its width.
     const RING_GAP: f32 = 2.0;
     const RING_W: f64 = 2.0;
@@ -100,13 +101,44 @@ impl Swatch {
                 &shape,
             ),
         }
+        Self::draw_rings(
+            canvas,
+            root,
+            rect,
+            Self::RADIUS,
+            selected,
+            hovered,
+            focused,
+            alpha,
+        );
+    }
+
+    /// **The rings round a chosen, hovered or focused square**, in the one
+    /// place they are drawn: the selection ring (or the hover ring) a ring's
+    /// gap outside `rect`, and the focus ring outside that, each following
+    /// the corner `radius` outwards. The furthest reaches
+    /// [`RING_REACH`](Self::RING_REACH). Every square that is chosen this way
+    /// calls it — a swatch, and an emoji row's cell — so the two can never
+    /// disagree about what chosen and focused look like.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn draw_rings(
+        canvas: &mut Scene,
+        root: Affine,
+        rect: Rect,
+        radius: f32,
+        selected: bool,
+        hovered: bool,
+        focused: bool,
+        alpha: f32,
+    ) {
+        let p = theme::p();
         let out = Self::RING_GAP + Self::RING_W as f32 * 0.5;
         let ring = scene::rrect(
             rect.x - out,
             rect.y - out,
             rect.w + out * 2.0,
             rect.h + out * 2.0,
-            Self::RADIUS + out,
+            radius + out,
         );
         if selected {
             scene::stroke(
@@ -137,7 +169,7 @@ impl Swatch {
                     rect.y - out,
                     rect.w + out * 2.0,
                     rect.h + out * 2.0,
-                    Self::RADIUS + out,
+                    radius + out,
                 ),
             );
         }

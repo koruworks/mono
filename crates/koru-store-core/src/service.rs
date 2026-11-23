@@ -1535,7 +1535,13 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         if self.catalog.profile(owner)?.is_none() {
             return Err(Error::bare(Code::ProfileNotFound));
         }
-        self.ensure_profile_manifest(owner)?;
+        // Creating a Workspace writes its own manifest and root Workspace unit
+        // — never the Profile's IdentityManifest — so a provisioned Profile
+        // whose identity bytes have not arrived yet (for example, one with no
+        // other device online and no Cloud Workspaces yet) can still receive a
+        // new Workspace without synthesizing a competing Profile identity
+        // lineage. Once that Workspace syncs to Cloud, Cloud's ProfileUnits
+        // admission can pull any existing Profile identity/private bytes too.
         let prepared = self.prepare_workspace(owner, name, None, None, at)?;
         // The root Workspace unit is published with the row (Plan 1.3); a
         // replica a peer provisions publishes or receives its unit too

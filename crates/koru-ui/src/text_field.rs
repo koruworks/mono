@@ -51,7 +51,7 @@ use koru_draw::theme::Brush;
 /// Here rather than beside the drawing, because hit-testing needs the same
 /// number: a click lands on the character it looks like it lands on only while
 /// both agree about where the text starts.
-pub const PAD: f32 = 7.0;
+pub const PAD: f32 = 12.0;
 
 /// How tall a field is when a floating panel wears one above its rows.
 pub const SEARCH_H: f32 = 30.0;
@@ -330,6 +330,9 @@ struct Composition {
     /// The last provisional transcript. Kept so an ordinary local event can
     /// settle the composition without the caller having to supply it again.
     text: String,
+    /// Native and voice events never settle each other's composition.
+    native: bool,
+    cursor: Option<(usize, usize)>,
 }
 
 impl Composition {
@@ -348,6 +351,10 @@ impl Composition {
 }
 
 // ------------------------------------------------------------------ field
+
+#[cfg(test)]
+#[path = "text_field/ime_tests.rs"]
+mod ime_tests;
 
 /// One line of editable plain text, with its own undo and its own view onto
 /// itself.
@@ -368,6 +375,114 @@ pub struct TextField {
 }
 
 impl TextField {
+    /// Handle OS input without publishing provisional text through authored
+    /// getters or history. The host owns focus and fences stale native events.
+    pub fn ime(&mut self, engine: &mut TextEngine, event: &winit::event::Ime) -> bool {
+        use winit::event::Ime;
+        if matches!(event, Ime::Disabled) {
+            return self.ime_cancel(engine);
+        }
+        if self.composition.as_ref().is_some_and(|c| !c.native) {
+            return false;
+        }
+        if matches!(event, Ime::Enabled) {
+            return true;
+        }
+        if self.composition.is_none() {
+            self.begin_composition(engine);
+            self.composition.as_mut().unwrap().native = true;
+        }
+        match event {
+            Ime::Preedit(text, cursor) => {
+                let cursor = cursor.filter(|(a, f)| {
+                    *a <= text.len()
+                        && *f <= text.len()
+                        && text.is_char_boundary(*a)
+                        && text.is_char_boundary(*f)
+                });
+                let c = self.composition.as_mut().unwrap();
+                if c.text == *text && c.cursor == cursor {
+                    return true;
+                }
+                let changed = c.text != *text;
+                c.text.clone_from(text);
+                c.cursor = cursor;
+                if text.is_empty() {
+                    // The original selection remains the Commit anchor even
+                    // after the platform clears the visible preedit.
+                    restore(&c.before, &mut self.editor, engine);
+                } else {
+                    if changed {
+                        self.editor.set_text(&c.line_with(text));
+                    }
+                    let (a, f) = cursor.unwrap_or((text.len(), text.len()));
+                    self.editor
+                        .driver(&mut engine.font_cx, &mut engine.layout_cx)
+                        .select_byte_range(c.start + a, c.start + f);
+                }
+                true
+            }
+            Ime::Commit(text) => {
+                if text.is_empty() {
+                    self.ime_cancel(engine);
+                } else {
+                    let c = self.composition.take().unwrap();
+                    let line = c.line_with(text);
+                    self.set_line(engine, &line, c.start + text.len());
+                    self.history.record(c.before);
+                    self.history.drop_if_unchanged(true, &self.editor);
+                }
+                true
+            }
+            Ime::Enabled | Ime::Disabled => unreachable!(),
+        }
+    }
+
+    /// Discard only native input and restore its original directed selection.
+    pub fn ime_cancel(&mut self, engine: &mut TextEngine) -> bool {
+        if !self.composition.as_ref().is_some_and(|c| c.native) {
+            return false;
+        }
+        let c = self.composition.take().unwrap();
+        restore(&c.before, &mut self.editor, engine);
+        true
+    }
+
+    fn ime_caret_hidden(&self) -> bool {
+        self.composition
+            .as_ref()
+            .is_some_and(|c| c.native && c.cursor.is_none())
+    }
+
+    /// Candidate anchor in the caller's logical coordinate space. `rect` is
+    /// the exact box passed to draw_field, including its padding; the same
+    /// baseline centering and horizontal scroll conversion are applied here.
+    /// Call after preparing/drawing the field for its current rectangle.
+    pub fn ime_cursor_area(
+        &self,
+        rect: koru_draw::geometry::Rect,
+    ) -> Option<koru_draw::geometry::Rect> {
+        if self.ime_caret_hidden() {
+            return None;
+        }
+        let layout = self.editor.try_layout()?;
+        let bb = self
+            .editor
+            .raw_selection()
+            .focus()
+            .geometry(layout, theme::caret_w());
+        let dx = rect.x + PAD - self.scroll;
+        let dy = baseline_centred_y(layout, rect.y, rect.h);
+        let (baseline, ascent, descent) = TextEngine::line_ink(layout, bb);
+        let bb = theme::caret_rect(bb, baseline, ascent, descent, dx, dy);
+        Some(koru_draw::geometry::Rect::new(
+            bb.x0 as f32,
+            bb.y0 as f32,
+            (bb.x1 - bb.x0) as f32,
+            (bb.y1 - bb.y0) as f32,
+        ))
+    }
+
     pub fn new(engine: &mut TextEngine, style: koru_draw::theme::TextStyle) -> Self {
         let size = style.metrics.size;
         let mut editor = PlainEditor::<Brush>::new(size);
@@ -388,6 +503,11 @@ impl TextField {
                 parley::style::FontFamily::Source(std::borrow::Cow::Borrowed(
                     koru_draw::theme::ui_stack(),
                 )),
+            ));
+        editor
+            .edit_styles()
+            .insert(parley::style::StyleProperty::LineHeight(
+                parley::style::LineHeight::Absolute(style.metrics.line_height),
             ));
         // A prompt field is chrome, so its weight comes from the role's
         // `TextStyle` (the caller passes `role::ui()` or `role::body()`). It
@@ -639,7 +759,22 @@ impl TextField {
 
         if focused {
             let text_w = self.editor.try_layout().map(|l| l.width()).unwrap_or(0.0);
-            if let Some(bb) = self.editor.cursor_geometry(koru_draw::theme::caret_w()) {
+            let cursor = self
+                .editor
+                .cursor_geometry(koru_draw::theme::caret_w())
+                .or_else(|| {
+                    self.composition
+                        .as_ref()
+                        .filter(|c| c.native && c.cursor.is_some())?;
+                    let layout = self.editor.try_layout()?;
+                    Some(
+                        self.editor
+                            .raw_selection()
+                            .focus()
+                            .geometry(layout, theme::caret_w()),
+                    )
+                });
+            if let Some(bb) = cursor {
                 // Left of the window, come back to the caret; right of it, put
                 // the caret at the far edge.
                 let cx = bb.x0 as f32;
@@ -918,6 +1053,8 @@ impl TextField {
             start,
             end,
             text: String::new(),
+            native: false,
+            cursor: None,
         });
         true
     }
@@ -932,6 +1069,9 @@ impl TextField {
             let Some(c) = self.composition.as_mut() else {
                 return;
             };
+            if c.native {
+                return;
+            }
             // A recogniser repeats itself; relaying the same line would cost a
             // parley layout for no visible change.
             if c.text == text {
@@ -955,6 +1095,9 @@ impl TextField {
     /// changes no text reads to a user as undo being broken, which is the rule
     /// `drop_if_unchanged` already applies to a backspace at offset zero.
     pub fn commit_composition(&mut self, engine: &mut TextEngine, text: &str) {
+        if self.composition.as_ref().is_some_and(|c| c.native) {
+            return;
+        }
         let Some(c) = self.composition.take() else {
             return;
         };
@@ -971,6 +1114,9 @@ impl TextField {
     /// sleeping. Half a sentence landing in something you were not looking at
     /// is worse than losing it.
     pub fn cancel_composition(&mut self, engine: &mut TextEngine) {
+        if self.composition.as_ref().is_some_and(|c| c.native) {
+            return;
+        }
         let Some(c) = self.composition.take() else {
             return;
         };
@@ -1045,6 +1191,9 @@ impl TextField {
     }
 
     fn settle(&mut self, engine: &mut TextEngine) {
+        if self.ime_cancel(engine) {
+            return;
+        }
         if let Some(text) = self.composition.as_ref().map(|c| c.text.clone()) {
             self.commit_composition(engine, &text);
         }
@@ -1466,13 +1615,12 @@ pub enum CaretPaint {
 /// Width of a [`FieldCaret::Form`] caret, in logical pixels. Thick enough to
 /// find at a glance in a box with nothing else in it yet.
 pub const FORM_CARET_W: f32 = 3.0;
-/// How far a [`FieldCaret::Form`] caret reaches past the font's cap height and
-/// descent at each end, so it reads as a caret and not as a letter.
-pub const FORM_CARET_OVERHANG: f32 = 1.0;
 
 /// The `(top, bottom)` of a [`FieldCaret::Form`] caret in a box of height `h`
-/// at `y`: the font's cap height above the baseline and its full descent below,
-/// with the baseline where [`baseline_centred_y`] puts a field's text.
+/// at `y`: vertically aligned identically to the main document caret
+/// ([`theme::caret_rect`]) — centered on the cap-height band so it rises above
+/// capitals and drops symmetrically below the baseline — with the baseline
+/// where [`baseline_centred_y`] puts a field's text and placeholder.
 pub fn form_caret_span(
     engine: &mut TextEngine,
     style: koru_draw::theme::TextStyle,
@@ -1485,7 +1633,6 @@ pub fn form_caret_span(
         return (y + h * 0.25, y + h * 0.75);
     };
     let m = line.metrics();
-    let baseline = top + m.baseline;
     let (cap, descent) = line.runs().next().map_or((m.ascent, m.descent), |run| {
         let rm = run.metrics();
         (
@@ -1493,16 +1640,16 @@ pub fn form_caret_span(
             rm.descent,
         )
     });
-    (
-        (baseline - cap).round() - FORM_CARET_OVERHANG,
-        (baseline + descent).round() + FORM_CARET_OVERHANG,
-    )
+    let bb = parley::BoundingBox::new(0.0, m.block_min_coord as f64, 0.0, m.block_max_coord as f64);
+    let rect = theme::caret_rect(bb, m.baseline, cap, descent, 0.0, top);
+    (rect.y0 as f32, rect.y1 as f32)
 }
 
 /// Fill a [`FieldCaret::Form`] caret whose left edge is at `x`, centred on it
 /// so the thicker bar sits between two letters rather than on the next one.
+#[track_caller]
 pub fn fill_form_caret(scene: &mut Scene, root: Affine, x: f32, (top, bottom): (f32, f32)) {
-    koru_draw::scene::fill(
+    koru_draw::scene::fill_cursor(
         scene,
         root,
         theme::caret_color().color(),
@@ -1563,6 +1710,11 @@ pub fn draw_field_with_caret(
     caret: CaretPaint,
 ) {
     let composition = field.composition_span();
+    let caret = if field.ime_caret_hidden() {
+        CaretPaint::Hidden
+    } else {
+        caret
+    };
     let window = (fw - PAD * 2.0).max(1.0);
     let (input, scroll) = field.prepare(engine, window, focused);
     // **Centred on the baseline, not on the line box.** Centring the box was
@@ -1611,7 +1763,11 @@ pub fn draw_field_with_caret(
         }
     }
     if let Some(ghost) = ghost {
-        draw_layout(scene, root, ghost, dx, ty, Some(theme::p().placeholder));
+        // Centre the placeholder from its own line metrics rather than the
+        // empty editor's layout, so its baseline matches both the form caret
+        // and the typed text that replaces it.
+        let gy = baseline_centred_y(ghost, fy, fh);
+        draw_layout(scene, root, ghost, dx, gy, Some(theme::p().placeholder));
     }
     if focused {
         if let (Some(bb), CaretPaint::Form(span)) = (cursor, caret) {
@@ -1643,24 +1799,55 @@ mod tests {
 
     use koru_keys::{NONE, PRIMARY};
 
-    /// A form caret runs from the top of a capital to the bottom of a
-    /// descender, inside the box, whatever the field holds.
+    /// A form caret aligns identically to the document caret: centered on the
+    /// cap-height band, rising above capitals and dropping symmetrically below
+    /// the baseline, matching the placeholder's baseline in the same box.
     #[test]
     fn a_form_caret_spans_cap_height_to_descent_inside_the_box() {
         let mut engine = TextEngine::new();
         let style = koru_draw::theme::role::row();
         let (top, bottom) = form_caret_span(&mut engine, style, 100.0, 40.0);
         let probe = engine.simple_layout("Ag", style);
-        let baseline = baseline_centred_y(&probe, 100.0, 40.0)
-            + probe.lines().next().unwrap().metrics().baseline;
+        let line = probe.lines().next().unwrap();
+        let baseline = baseline_centred_y(&probe, 100.0, 40.0) + line.metrics().baseline;
+        let cap = line
+            .runs()
+            .next()
+            .and_then(|r| r.metrics().cap_height.filter(|c| *c > 0.5))
+            .unwrap_or(line.metrics().ascent);
+        let cap_top = baseline - cap;
         assert!(top > 100.0 && bottom < 140.0, "{top}..{bottom}");
         assert!(
-            top < baseline && baseline < bottom,
-            "{top} {baseline} {bottom}"
+            top < cap_top - 1.0,
+            "caret rises visibly above the cap line: top={top}, cap_top={cap_top}"
         );
-        // Taller than the cap height alone: the descent is below the baseline.
-        assert!(bottom - baseline >= 2.0, "{baseline}..{bottom}");
-        assert!(bottom - top > style.metrics.size * 0.8, "{top}..{bottom}");
+        assert!(
+            bottom > baseline + 1.0,
+            "caret drops visibly below the baseline: baseline={baseline}, bottom={bottom}"
+        );
+        let above_cap = cap_top - top;
+        let below_base = bottom - baseline;
+        assert!(
+            (above_cap - below_base).abs() <= 1.0,
+            "caret is vertically symmetric around cap height: above={above_cap}, below={below_base}"
+        );
+        // Empty field placeholder shares the exact same baseline as the caret
+        // and as typed text in the same style.
+        let ghost = engine.simple_layout("Your name", style);
+        let ghost_baseline = baseline_centred_y(&ghost, 100.0, 40.0)
+            + ghost.lines().next().unwrap().metrics().baseline;
+        assert!(
+            (ghost_baseline - baseline).abs() < 0.01,
+            "placeholder baseline {ghost_baseline} matches caret baseline {baseline}"
+        );
+        let typed = TextField::with_text(&mut engine, style, "Your name");
+        let typed_layout = typed.editor.try_layout().unwrap();
+        let typed_baseline = baseline_centred_y(typed_layout, 100.0, 40.0)
+            + typed_layout.lines().next().unwrap().metrics().baseline;
+        assert!(
+            (typed_baseline - baseline).abs() < 0.01,
+            "typed baseline {typed_baseline} matches caret baseline {baseline}"
+        );
     }
 
     fn press(f: &mut TextField, e: &mut TextEngine, k: NamedKey, mods: ModifiersState) {

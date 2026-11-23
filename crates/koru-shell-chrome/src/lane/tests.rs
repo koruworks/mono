@@ -27,9 +27,8 @@ fn every_lane_rect_hit_tests_back_to_itself() {
     assert_eq!(hit(l, all(), x, y), Some(Hit::New));
     let (x, y) = r.search.centre();
     assert_eq!(hit(l, all(), x, y), Some(Hit::Search));
-    let (x, y) = r.leading.centre();
-    assert_eq!(hit(l, all(), x, y), None, "the mark is not a verb");
-    let gap_x = (r.leading.x + r.leading.w + r.search.x) * 0.5;
+    assert_eq!(r.leading.w, 0.0, "the toggle replaces the mark");
+    let gap_x = (r.toggle.x + r.toggle.w + r.search.x) * 0.5;
     assert_eq!(hit(l, all(), gap_x, y), None, "the gap drags the window");
 }
 
@@ -40,15 +39,14 @@ fn the_squares_pack_against_the_right_edge_in_order() {
     let l = lane();
     let r = solve(l, all());
     let s = square(l);
-    assert_eq!(r.toggle.x + r.toggle.w, l.x + l.w);
+    assert_eq!(r.toggle.x, l.x);
     assert_eq!(r.toggle.w, s);
-    assert_eq!(r.new.x + r.new.w, r.toggle.x);
+    assert_eq!(r.new.x + r.new.w, l.x + l.w);
     assert_eq!(r.search.x + r.search.w, r.new.x);
     assert_eq!(r.leading.x, l.x);
     assert_eq!(
-        r.leading.w,
-        theme::RAIL_W.max(s),
-        "the mark's slot is the rail's width, so the mark centres over it"
+        r.leading.w, 0.0,
+        "the logo no longer reserves a separate slot"
     );
 }
 
@@ -63,13 +61,13 @@ fn an_unoffered_slot_is_zero_width_and_its_neighbours_close_up() {
     };
     let r = solve(l, no_new);
     assert_eq!(r.new.w, 0.0);
-    assert_eq!(r.new.x, r.toggle.x);
-    assert_eq!(r.search.x + r.search.w, r.toggle.x);
+    assert_eq!(r.new.x, l.x + l.w);
+    assert_eq!(r.search.x + r.search.w, l.x + l.w);
     let (x, y) = r.new.centre();
     assert_eq!(
         hit(l, no_new, x, y),
-        Some(Hit::Toggle),
-        "the edge belongs to the toggle"
+        Some(Hit::Search),
+        "the edge belongs to Search"
     );
 
     let none = solve(l, Leading::NONE);
@@ -103,13 +101,13 @@ fn a_narrow_lane_gives_way_from_the_left_and_keeps_the_toggle() {
     let s = square(lane());
     // The mark's slot is the rail's width. Room for it, the toggle and one
     // whole square: new stays, search declines.
-    let mark = theme::RAIL_W.max(s);
+    let mark = 0.0;
     let narrow = Rect::new(0.0, 0.0, mark + s * 2.0, theme::CAPTION_H);
     let r = solve(narrow, all());
     assert_eq!(r.toggle.w, s);
     assert_eq!(r.new.w, s);
     assert_eq!(r.search.w, 0.0, "search gave way first");
-    assert_eq!(r.new.x, r.leading.x + r.leading.w);
+    assert_eq!(r.new.x, r.toggle.x + r.toggle.w);
     // Half a square short of that: a square is whole or absent, never clipped.
     let narrower = Rect::new(0.0, 0.0, mark + s * 1.5, theme::CAPTION_H);
     let r = solve(narrower, all());
@@ -120,8 +118,9 @@ fn a_narrow_lane_gives_way_from_the_left_and_keeps_the_toggle() {
     let tiny = Rect::new(0.0, 0.0, s * 0.5, theme::CAPTION_H);
     let r = solve(tiny, all());
     assert_eq!(
-        r.toggle.w, 0.0,
-        "nothing fits past the mark, nothing is negative"
+        r.toggle.w,
+        s * 0.5,
+        "the toggle remains reachable in a tiny lane"
     );
     assert_eq!(r.new.w, 0.0);
     assert_eq!(r.search.w, 0.0);

@@ -101,6 +101,7 @@ pub(crate) fn plain_block(
         links: Vec::new(),
         table: None,
         image: None,
+        diagram: None,
     }
 }
 

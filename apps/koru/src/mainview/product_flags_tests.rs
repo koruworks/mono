@@ -204,7 +204,9 @@ fn the_cloud_page_is_unreachable() {
     off(|| {
         let (mut v, _workspace) = on_document();
         assert!(v.open_manage(crate::manage::Page::Cloud));
-        let TabView::Manage(view) = &v.tabs().active_tab().view else {
+        let TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) =
+            &v.tabs().active_tab().view
+        else {
             panic!("the Manage tab is in front");
         };
         assert_ne!(view.page(), Some(crate::manage::Page::Cloud));
@@ -247,10 +249,10 @@ fn socials_does_not_open() {
     });
 }
 
-/// The control: with every surface on, the launcher offers all six, and
+/// The control: with every surface on, the launcher offers all seven, and
 /// Socials still opens.
 #[test]
-fn with_every_surface_on_the_launcher_offers_all_six() {
+fn with_every_surface_on_the_launcher_offers_all_seven() {
     use crate::mainview::launcher::NewKind;
     let (mut v, _workspace) = on_document();
     assert!(v.open_launcher());
@@ -262,7 +264,8 @@ fn with_every_surface_on_the_launcher_offers_all_six() {
             NewKind::Chat,
             NewKind::Agent,
             NewKind::Shell,
-            NewKind::Import
+            NewKind::Import,
+            NewKind::MiniApp
         ]
     );
     v.launcher = None;

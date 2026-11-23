@@ -100,3 +100,14 @@ pub(crate) fn line(
 
 #[cfg(test)]
 mod tests;
+
+/// Stable optical baseline for short controls in the interface font. Using
+/// one representative ascent and descent avoids moving the baseline when
+/// a value changes from "Automatic" to "Detect automatically".
+pub fn control_label_y(
+    engine: &mut koru_draw::text::TextEngine,
+    rect: koru_draw::geometry::Rect,
+) -> f32 {
+    let reference = engine.simple_layout("Hgj", koru_draw::theme::role::row());
+    koru_draw::scene::centre_y_in(&reference, rect)
+}

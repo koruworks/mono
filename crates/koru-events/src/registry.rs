@@ -173,6 +173,21 @@ const fn token_attr(
     }
 }
 
+const fn optional_token_attr(
+    key: &'static str,
+    vocabulary: &'static [&'static str],
+    doc: &'static str,
+) -> AttrSpec {
+    AttrSpec {
+        key,
+        kind: AttrKind::Token,
+        class: FieldClass::ExactCategorical,
+        required: false,
+        vocabulary,
+        doc,
+    }
+}
+
 const fn to_build_attr() -> AttrSpec {
     count_attr(
         "to_build",
@@ -2084,6 +2099,14 @@ pub const REGISTRY: &[EventSpec] = &[
     // the attr carries the same token so a handler that wants all three can
     // read it uniformly.
     EventSpec {
+        name: "settings.mini_app_pins_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The device-local mini-app pin authority committed an ordered-reference mutation. No content or identity is carried; visible clients invalidate and refetch their authorized current scope.",
+    },
+    EventSpec {
         name: "settings.global_changed",
         version: 1,
         class: EventClass::Domain,
@@ -2131,28 +2154,57 @@ pub const REGISTRY: &[EventSpec] = &[
               the disk. Carries no value.",
     },
     EventSpec {
+        name: "app.onboarding.shown",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::AnonymousUsage,
+        attrs: &[
+            optional_token_attr(
+                "code",
+                &["sync", "backup", "founding"],
+                "Koru Cloud value-proposition copy variant shown on the Welcome modal.",
+            ),
+            optional_token_attr(
+                "header",
+                &["speed", "ownership", "purpose"],
+                "Welcome header and lead copy variant shown on the Welcome modal.",
+            ),
+            optional_token_attr(
+                "billing",
+                &["monthly", "yearly"],
+                "Preselected billing interval shown on the Welcome modal.",
+            ),
+        ],
+        doc: "The first-run Welcome modal was shown with its assigned A/B experiment variants. Provides the impression denominator for `app.onboarding.entry_selected`.",
+    },
+    EventSpec {
         name: "app.onboarding.entry_selected",
         version: 1,
         class: EventClass::Instrumentation,
         telemetry: TelemetryPolicy::AnonymousUsage,
-        attrs: &[token_attr(
-            "choice",
-            &["offline", "google", "apple"],
-            "Whether the person chose local-only setup, Google sign-in or Sign in with Apple.",
-        )],
-        doc: "The person chose the first-run path on the desktop Welcome screen. Emitted once per explicit choice, before Profile creation; carries only the closed path category.",
-    },
-    EventSpec {
-        name: "app.onboarding.profile_purpose_selected",
-        version: 1,
-        class: EventClass::Instrumentation,
-        telemetry: TelemetryPolicy::AnonymousUsage,
-        attrs: &[token_attr(
-            "purpose",
-            &["work", "school", "personal"],
-            "The selected Profile purpose card.",
-        )],
-        doc: "The person selected a Profile purpose during first-run onboarding. Emitted for each explicit card selection so changed choices remain observable; carries no name, Profile id, or content.",
+        attrs: &[
+            token_attr(
+                "choice",
+                &["offline", "google", "apple", "email"],
+                "Whether the person chose local-only setup, Google, Apple, or email sign-in.",
+            ),
+            optional_token_attr(
+                "code",
+                &["sync", "backup", "founding"],
+                "Koru Cloud value-proposition copy variant active when the choice was made.",
+            ),
+            optional_token_attr(
+                "header",
+                &["speed", "ownership", "purpose"],
+                "Welcome header and lead copy variant active when the choice was made.",
+            ),
+            optional_token_attr(
+                "billing",
+                &["monthly", "yearly"],
+                "Preselected billing interval active when the choice was made.",
+            ),
+        ],
+        doc: "The person chose the first-run path on the desktop Welcome screen. Emitted once per explicit choice, before Profile creation; carries only closed category tokens.",
     },
     EventSpec {
         name: "app.installed",

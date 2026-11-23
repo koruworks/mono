@@ -187,8 +187,8 @@ Google, or Apple. From top to bottom:
   and Cloud sync are off.* instead. The account row reads *Not set up in this
   build*, each Profile's row *Koru Cloud isn't set up in this build*, the nav
   says *Off*, and there is no **Try again**, no **Accounts…** and no sign-in:
-  this is not an outage, and nothing is retried. The first-run welcome offers
-  only **Continue without an account**, and a Profile's *Sign-in and sync*
+  this is not an outage, and nothing is retried. First run opens the local
+  setup modal directly, and a Profile's *Sign-in and sync*
   says the same. [CONTRIBUTING.md](../../CONTRIBUTING.md) explains how to give a
   build a Koru Cloud.
 
@@ -607,7 +607,7 @@ available. Retry cannot shorten that server wait; there is no need to sign out
 or restart. Android's empty Workspaces screen shows the same explanation while
 that Profile is waiting for the limit to clear.
 
-On desktop, the existing-Profile page in first-run onboarding and **Manage
+On desktop, the existing-Profile chooser in **Manage
 Profiles → Create Profile** offers **One**, **Selected**, and **All current**.
 Choose One and a row for a single Profile, or Selected and check the rows you
 want. Choosing All current captures the Profiles currently authorized for this
@@ -1263,7 +1263,7 @@ Profile has not arrived yet* and moves into place by itself when it does.
 **A Profile deleted on another device.** When another of your devices deletes
 a Profile you have open here, this window settles the same way a deletion
 made here does: its workspaces are in the Trash, you are moved to another
-Profile — or, if it was your last one, to the first-run window — and a notice
+Profile — or, if it was your last one, to the workspace setup modal — and a notice
 says the Profile was deleted on another device. The deletion is listed under
 **Deleted profiles** here as well, so **Restore** works from whichever device
 you are at. Nothing is created in its place.
@@ -1309,8 +1309,8 @@ ordinary typing and saving say nothing at all. This asks about *this computer's*
 storage; it says nothing about whether another device has your change yet.
 
 **Setting Koru up.** The first window a new person sees is described as well —
-*Welcome to Koru*, the Profile step and the Workspace step, with every field,
-every choice and every error. Tab walks it, Enter presses, and the whole
+*Welcome to Koru* and the setup card, with every field, every swatch (by its
+color's name), every emoji and every error. Tab walks it, Enter presses, and the whole
 account-free route can be completed without a pointer. An account is never
 required.
 
@@ -1554,10 +1554,10 @@ model has been chosen the model chip reads **Choose a model**, the send button
 is off, and `Enter` opens the model picker instead of sending; what you typed
 waits in the composer. The model picker shows your local agents down its
 left side, one icon each — Claude, OpenCode, Kimi, Grok, Codex,
-Antigravity and Devin, in the order set on Agent providers and less any you have
+Antigravity and Devin, in the order set on Agent runtimes and less any you have
 turned off — on the same colour as the window's own left rail, and a **+** at
 the foot of that
-column, which opens **Settings → Coding → Agent providers**; the selected
+column, which opens **Settings → Coding → Agent runtimes**; the selected
 agent's models sit beside them under
 their own names, one line each, and a **Search models…** box above the
 list. Typing searches the models of every agent in the left column, not only
@@ -1636,7 +1636,7 @@ Favorites** entry heads the picker's left column: it lists your favorites
 from every agent, each beside its agent's icon, and choosing one switches the
 chat to that agent and model. With favorites, the picker opens on this
 list; with none, it opens on your chat's agent. Favorites follow you to your other computers,
-like your theme. An agent you turn off on Agent providers keeps its
+like your theme. An agent you turn off on Agent runtimes keeps its
 favorites, hidden until you turn it back on.
 
 Picking a model only sets it: the chip
@@ -1718,6 +1718,11 @@ even if the document or Explore last held focus;
 `Alt+Down` walks forward again, and one step past the newest question returns
 the caret to the composer.
 
+Messages above the chat composer have a **Dismiss message** (×) button.
+Click it, or press Shift+Tab from the composer and then Enter or Space.
+Dismissal leaves your draft and any running request unchanged. A new request
+can show the same notice again; different notices still appear normally.
+
 The composer shows the open document and attachments as removable context
 chips inside the message box. Use **+ → Recent** to insert a recent document
 or **+ → Koru context** to open the same document picker as `@`. The band wraps
@@ -1742,7 +1747,7 @@ approval mode: its color and icon identify the mode, and its chevron appears
 on hover or keyboard focus. The chevron opens a list above the composer with
 each mode's name, explanation and a check on the current one. The menu footer
 says the choice applies to this chat; **Change default** opens **Settings →
-Coding → Agent providers**. The chevron remains available when Send is
+Coding → Agent runtimes**. The chevron remains available when Send is
 disabled. While Stop shows, the chevron is hidden. Claude Code offers **Ask
 first** (its default: it asks before every change), **Accept edits** (it edits
 files without asking, and still asks before commands), **Plan** (it reads and
@@ -1755,7 +1760,7 @@ more) and **Full access** (no sandbox at all); OpenCode offers **Build** and
 composer steps to the next mode, which the send button then shows; it never steps
 to Full access, which you choose only from the list. The mode is the chat's: a
 change inside a chat applies to that chat only, and a new chat starts from the
-**default permission** you set on **Settings → Coding → Agent providers** —
+**default permission** you set on **Settings → Coding → Agent runtimes** —
 Manual (the agent's asking mode) until you choose otherwise. A mode chosen while a reply is running
 applies to your next message, and the note beside the send button says so. When the
 agent leaves a mode by itself — Claude after you approve its plan — the send button
@@ -2045,7 +2050,7 @@ away, and nothing you do in it can touch your own writing.
 **If no Koru window was open when the update installed**, the notice waits. You
 will get the tab the next time you open Koru, however long that is.
 
-**Feedback in the overflow menu opens a Send feedback tab.** Pick general
+**Send feedback in the profile menu's Help submenu opens a feedback tab.** Pick general
 feedback (chosen when the tab opens), an idea, or something that isn't working, write a few words (Enter starts a new line),
 optionally paste or add screenshots — hover a thumbnail and press × to take
 it off — and optionally attach recent application logs as a zip. Send goes
@@ -2056,35 +2061,16 @@ form in its own window.
 **Workspaces → Open Workspace opens one even when nothing is running.** It used
 to bring an existing window forward and do nothing at all when there was none —
 which was exactly when you needed it. It now starts Koru, on the profile and
-workspace you were last in. With no Profile yet it opens first-run
-onboarding and creates nothing until you submit a name and Workspace. **Continue
-offline** works without Agent or network access; **Sign in with Google** and
-**Sign in with Apple** use the browser, then ask before selecting an existing
-hosted Profile. Every local Profile remains visible offline. With Apple you may
-choose **Hide My Email**; Koru then only ever sees Apple's relay address, and
-Apple shares your name with Koru only the first time you sign in.
+workspace you were last in. With no Profile yet, it shows the full workspace
+interface behind a centered **Set up your profile and workspace** modal.
+The card is solid and the workspace behind it is dimmed and inactive. There
+is no separate welcome window, marketing sidebar, or initial sign-in screen.
+Nothing is created until you submit the names. Closing the window leaves
+setup unfinished and shows the same modal next time.
 
-The first page has a dark Koru introduction pane beside the sign-in choices —
-*Your private workspace for thinking, planning, and AI.*, the same promise as
-the website's — and on a window narrower than 760 px that decorative pane steps out so the actions remain usable.
-Under *Welcome to Koru* the page says an account is only needed for cloud sync
-between devices. The email form (address, password, **Continue**) comes first,
-then **Google** and **Apple** side by side, then — set apart below them —
-**Continue without an account**. The Google action carries
-Google's colored mark. A failure is said where it happened: under the email or
-password field, with the field outlined in red, or in a red banner under the
-button that was pressed — outlined too — with **Try again** when that attempt
-can be repeated. **Terms of Service** opens
-`https://www.koru.do/terms` and **Privacy Policy** opens
-`https://www.koru.do/privacy`. There is no Help button and no language control
-on this page.
-
-There is no Accounts button on first-run onboarding. Use **Accounts…** on
-Manage's **Koru Cloud** page after opening a Profile to switch held accounts. During Google sign-in,
-**Cancel** or `Esc` cancels that sign-in and returns to the entry choice once
-cancellation is confirmed. If the Agent refuses to start sign-in, the entry
-choice shows the failure under the button you pressed and still offers offline
-setup.
+Setup is local and needs no Cloud account. Sign in afterward through
+**Manage → Koru Cloud**; use **Accounts…** there to switch held accounts.
+Every local Profile remains available offline.
 
 If the verified Google identity has no Koru account, native sign-in creates it
 automatically. If the account has Profiles, select the checkboxes for those you
@@ -2097,52 +2083,53 @@ device without leaving for the onboarding chooser. Peer enrollment and content c
 Connected Profiles keep their account attribution even while
 identity details are unavailable.
 
-The first-run chooser also lets already-connected rows be
-checked: when all selected Profiles are connected, **Open local content** opens
-the first selected Profile. A mixed selection connects only the unfinished ones.
+Setting up takes **one card**: *Set up your profile and workspace*. Under
+**You**, type your name; the round chip beside it shows its first letter as you
+type. That one name is both yours and your first Profile's — your first Profile
+is simply called *Steven*, and you can rename it later in **Manage**.
+Under **First workspace**, the workspace is already called
+*Personal*, with 🌱 on green: click into the name (or Tab to it) and it is
+selected whole, so what you type replaces it. Click a swatch in the row of ten
+colors to change the workspace's color, and an emoji in the row of ten under
+it (🌱 📓 💼 🎓 🏠 🚀 🧠 🎨 📚 🎯) to change its emoji; both rows wrap onto more
+lines in a narrow window rather than being cut off. Press the workspace tile
+left of the name for the full picker — every emoji, and "no color" — the same
+one available later from **Icon and color...**; the tile and the rows always
+agree. Choosing the unset color uses the current theme's default tile surface
+(white with a border in the light theme), and no swatch is ringed; an emoji
+from the picker that is not one of the ten rings no emoji in the row while the
+tile shows it.
 
-The owner-name and Workspace-name boxes behave like the document Find box:
-click to place the caret, drag to select, and use the ordinary word-delete,
-clipboard, and undo shortcuts. The first name belongs to the owner of the Koru
-Identity. After Google sign-in it is prefilled from Google's verified profile
-name when available. The purpose cards come before and fill a separate
-Profile-name box with a distinct suggestion such as `Steven (Work)`. Choosing
-💼 Work, 🎓 School, or 🏡 Personal updates that suggestion, so you normally only
-need to review it. You can replace it; after the
-first edit, changing the purpose does not overwrite it. A purpose card is only
-a shortcut to that suggestion: **Continue** is available as soon as owner name
-and Profile name are present, whether or not a card was chosen. On the
-Workspace step, choose one of the
-six template cards before naming it, or just type a name; no card is selected
-initially, and a workspace named without choosing one starts Empty. Choosing a
-card fills the name box with that template's name, and another card changes the
-suggestion. Once you type, your name becomes authoritative: the cards stop
-changing or replacing it, while the selected template remains visible. Deleting
-the name back to empty hands the choice back to the cards, so you can pick a
-template again. Enter in the Profile-name box continues once owner name
-and Profile name are present; Enter in the Workspace-name box
-creates the workspace once the name is present. Press
-the workspace tile left of the name to choose its color and
-emoji with the same picker available later from **Icon and color...**. **Create
-workspace** saves that appearance with the first Workspace. The Profile tile
-left of the Profile name opens the same Profile color-and-emoji picker used in
-the application. **Back** beside Continue returns to Welcome;
-Back beside Create workspace returns to the Profile form without clearing it.
-Choosing the unset color uses the current theme's default tile surface (white
-with a border in the light theme). A session saved by an older version with a
+Both name boxes behave like the document Find box: click to place the caret,
+drag to select, and use the ordinary word-delete, clipboard, and undo
+shortcuts. **Start using Koru** is available once both names hold more than
+spaces; press it, or press Enter in either name box. The card then reads
+*Finishing…* until your Profile and workspace are ready, and the app opens on
+the Welcome tab. Your workspace holds one untitled document. If creating them is refused, the card comes back with the reason
+under the swatches and everything you typed, and trying again cannot make a
+second Profile. With the keyboard, Tab visits the name, the tile, the
+workspace name, the swatch row and the emoji row (one stop each — the arrow
+keys move between a row's swatches or emoji and Enter or Space chooses one),
+then **Start using Koru**. Escape and clicking the backdrop do not dismiss
+required setup. A session saved by an older version with a
 separate profiles tab opens on Welcome instead; the Manage tab itself comes
 back after a restart.
 
 In the **Manage** tab, **New profile** sits under the Profiles in the nav, and
 the account you are signed in with is on the **Koru Cloud** page. A local-only
 Profile's page says **No online identity attached** instead of reporting a
-connection failure. **New profile** opens the same native first-run screens: connect it
-to the signed-in Google identity, or choose **Continue offline** and create only
-the local Profile and first Workspace. If you sign in with another Google
+connection failure. **New profile** opens the same setup card as the first run,
+right under the page's own *New profile* heading — so the card has no title or
+lead of its own, and in a narrow pane its color and emoji rows wrap to fit —
+with its first label reading **Profile**: the box starts empty (placeholder
+*Profile name*) and names only the new Profile, so creating a Profile there never
+changes your Koru account's name.
+Connect it to the signed-in Google identity, or choose **Continue offline** and
+create only the local Profile and first Workspace. If you sign in with another Google
 Account, existing local Profiles
 stay visible and say **Connected to another account** when that exact Profile
 is not authorized for the current Google identity. You can create a new Profile
-for the signed-in email through the same native Profile and Workspace screens,
+for the signed-in email through the same setup card,
 choose another Google Account, or continue offline. Signing in never rebinds an
 existing Profile. If the account chooser names a Profile already visible on
 this device, **Open local content** leaves creation and selects that Profile; a
@@ -2182,7 +2169,8 @@ brings the Profile back together with the workspaces that deletion moved to
 Trash — a workspace you had put in Trash earlier stays there, one you have
 since moved to another Profile stays where you put it, and one whose 30 days
 have passed is reported as no longer available rather than recreated. If you
-delete your last Profile, Koru reopens on the first-run window; **Restore a
+delete your last Profile, Koru returns to the workspace with the setup modal;
+the deleted content is no longer displayed. **Restore a
 deleted profile or find unassigned workspaces…** there offers the same
 restore, and lists any unassigned workspaces, which you can move once a
 Profile exists.
@@ -3647,7 +3635,7 @@ seconds while you are typing without one. Closing the window writes it too.
 
 ## Appearance
 
-Light and dark are a **welcome page** preference under Preferences:
+Choose the theme under **Settings → Appearance**:
 
 | | |
 | --- | --- |
@@ -3656,7 +3644,7 @@ Light and dark are a **welcome page** preference under Preferences:
 
 The status bar does not show the theme. There is no keyboard shortcut for it.
 
-**Caret colour** is four swatches on the same Preferences section (default
+**Caret color** is four swatches below Text rendering on the same page (default
 neutral, blue, amber, violet). Each is tuned for light and dark, and the text
 **selection** tint follows that colour. **Caret width** is the row under them:
 Thin, Med, Thick, 4×, 8×. **Caret height** is the next row: Short, Med, Tall
@@ -3672,20 +3660,33 @@ the letters. All of these are yours only — documents never store them.
 
 ## The title bar menu
 
+The top-left sidebar button expands or collapses the explorer. Collapsing
+keeps the app rail visible. Hover an app to preview its explorer in a floating
+panel without resizing the document; move outside to fade it away, or press
+Escape to dismiss it. Clicking an app or pressing Alt+number selects its view
+without expanding the pane; use the sidebar toggle to dock it. The docked
+explorer sits as a pane below the header with a curved top-left corner and top
+border.
+An Alt+number preview waits two seconds for you to enter it with the mouse or
+use its keyboard navigation. Keyboard activity restarts that timeout while
+the mouse is outside. Enter opens the selected item and hides the floating
+pane; an expanded pane stays open.
+
 The top-right keeps direct **minimize**, **maximize/restore**, and **close**
 controls. The leftmost control is an overflow `…` menu. Move the pointer onto it
 or click it to open application destinations:
 
 | | |
 | --- | --- |
-| 📌 Always on Top | `Ctrl+Alt+A` |
-| Settings | `Ctrl+,` |
-| Zoom | placeholder |
-| Feedback | Send feedback tab (general, idea, or bug) |
-| Help / Keyboard shortcuts / Mobile | placeholders |
-| Updates | opens update management |
+| Always on top | Switch, or `Ctrl+Alt+A` |
+| Theme | System, Light or Dark |
+| Zoom | Minus, current percentage and plus; Reset appears away from 100% |
+| All settings | `Ctrl+,` |
 
-Pinned, the 📌 draws solid rather than outlined, so "on" is visible at a glance.
+The switch shows whether this window is pinned. Theme, zoom and the switch
+update immediately while the menu stays open. Internal builds show the branch
+and a `dev` label in a separate footer. Feedback is in the profile menu's
+**Help and feedback** submenu.
 Opening the menu never changes the overflow glyph into a close button; clicking
 it again dismisses the menu. Walk straight down into the panel to reach a row,
 or press `Esc` to close it.
@@ -3707,8 +3708,8 @@ Nothing is lost by closing a window: your work is written continuously, and the
 window comes back with its tabs.
 
 **The Settings tab** (`Ctrl+,`) is a list of pages down its left —
-**Appearance**, **Editor**, **Reminders**, **Terminal** and **System**, then
-**Agent providers** under a **Coding** heading, the
+**Account** (Cloud, Devices, Profiles and Workspaces), **Preferences** (Appearance, Editor,
+Reminders, Terminal, System and Shortcuts), then **Agent runtimes** under **Coding**, the
 current one marked by an accent rule — with a search box above them that
 narrows the list by what a page holds (type *microphone* and only Editor is
 left; Enter opens it). In a narrow window or split pane the list becomes a row
@@ -3717,6 +3718,23 @@ of rows: the setting's name on the left, one control on the right. A choice
 among a few short words is a segmented control; a longer list — fonts,
 languages, microphones, tones, the renderer — is a dropdown showing the value
 in force, opened with a click or Enter and stepped with the arrow keys.
+
+Welcome’s **turn on text recognition** and **Customize your terminal** links
+open the relevant Settings section. Back returns to Welcome at its previous
+scroll position; Forward returns to Settings. This also works when the
+Settings tab was already open.
+
+**Settings → Shortcuts** lists the shortcut registry by context: Window,
+Tabs and columns, Document, Editing, Terminal and AI chat. Chords use this
+platform’s modifier labels; internal-only bindings are marked. Search a
+command or chord to narrow the list. The Zoom row in App fonts also teaches
+zoom in, zoom out, reset, and holding the primary modifier while scrolling.
+
+Welcome’s **Access your Koru workspace via MCP** section retains each local
+client’s registration command. Below it, the Cloud option explains that a
+subscription includes Cloud MCP and 100 GB of cloud storage, shows the remote
+endpoint `https://mcp.koru.do/mcp`, and links **Subscribe** to
+[Koru pricing](https://koru.do/pricing).
 
 **Icon style** is under **Settings → Appearance → Interface**. Choose
 **Phosphor**, **Tabler**, **Lucide**, or **Remix** to change the app's icons immediately.
@@ -3727,25 +3745,72 @@ uses its default style, Tabler, and follows it if a later version changes it.
 Emoji, provider logos, and packaged Windows file/taskbar artwork keep their
 own artwork.
 
-**Scroll speed** is on the same page, under *Interface*: how far one notch
-of the mouse wheel moves a page, **1×** to **4×**. It starts at **2×**, twice
+**Scroll speed** is on the same page, under *Interface*, after the font sections: how far one notch
+of the mouse wheel moves a page: **1×, 2×, 3×, 4×, 8× or 16×**. It starts at **2×**, twice
 the step Koru used before the setting existed. A trackpad that scrolls by
 pixels follows your fingers and is not changed by it.
+
+The Settings search filters the navigation and keeps only matching preference
+sections on the right. Searching for **Scroll** finds **Appearance → Interface →
+Scroll speed**, also using its translated label in other languages.
+Matches in labels, explanations and choice values are
+highlighted in yellow. **Escape** clears the query and restores the page even
+after focus has left the search field. An open dropdown closes first.
+
+In **Editor → Documents**, **Page background** shows all available color
+swatches together, including the default. Choose a swatch directly. It is
+available for Page width; Narrow and Full do not have a page background.
+Agent permission choices mark **Yolo (not recommended)** in red; selecting it
+retains the same full-access behavior as before.
+
+**Text rendering** is on **Settings → Appearance**, below the theme's base and
+accent colors. These rows say **Base color** and **Accent color**; they show
+the active theme's choices. Light and dark keep separate choices; **System** uses the set for
+your operating system's current theme. The window's **…** menu also offers
+**System / Light / Dark**. **Caret** comes directly after Text rendering, with
+an independent color for each theme and a shared shape. Its selection tint
+follows that theme's caret color. **App fonts** follows Caret,
+with App font, Zoom, Chat font and Density. Its **Editor → See editor settings**
+link opens **Settings → Editor**, where **Document fonts** comes first.
+Document links use your chosen accent color.
+**Heading weight** offers **500** or **600 (default)** for document titles and
+all heading levels. A font without the requested weight uses its nearest face.
+Changing this weight refreshes layout; body text and app labels keep their weights.
+
+Windows defaults are **font hinting on**, **MSAA16**, **0 physical pixels of
+offset on both axes**, **gamma 1.75**, and **5% faint-edge cutoff** in light mode.
+Dark mode defaults to **hinting on, MSAA16, offset 0, gamma 0.75 and cutoff 15%**.
+Hovering a dropdown option previews it immediately; clicking saves it and
+dismissing the dropdown restores your saved choice. **Restore defaults** resets
+only the current theme. Existing explicit rendering choices remain light-theme
+overrides. Larger gamma values reduce faint edge coverage; cutoff removes it
+below the chosen threshold, so excessive values can make small text jagged.
+The offset changes where glyphs meet the screen's pixels without changing font
+size, wrapping or line spacing. Antialiasing affects the whole window's sampling.
+The other controls affect glyphs, preserving images and UI backgrounds.
+Other desktop platforms offer the same controls but begin with hinting on,
+Area antialiasing, zero offset, gamma 1 and zero cutoff. Judge changes at normal
+zoom, including accented letters and both light and dark themes.
 
 **Fonts and density** are on the **Appearance** page: a density control
 (Compact / Normal) and five font dropdowns — the **app** font
 (tabs, sidebar, pills, panels), the **chat** font, and three document roles,
 **body**, **headings** and **code**. Each dropdown lists every family set in that
-family's own face, so you see what you are choosing. While a font list is
+family's own face, so you see what you are choosing. On Windows, **Segoe UI**
+appears directly in these lists when installed; it does not require opening
+**More fonts…**. It remains an installed font, so another device without it
+uses the existing missing-font fallback. While a font list is
 open, the family under the pointer, or reached with the arrow keys, is shown
 across the whole app at once: point down the list to compare. Only a click
 or Enter keeps it; Escape, a click elsewhere or scrolling away puts your
 chosen font back. **Preview in sample document**, at the right of the
-*Document fonts* title, opens a short read-only sample page — headings, a
-paragraph with bold, italic, code and a link, three kinds of list, a quote
-and a code block — beside Settings, so you choose fonts on the left and see
+*Document fonts* title, opens an editable sample page — headings, a
+paragraph with bold, italic, code and a link, three kinds of list, a quote,
+code block, callout, table and bundled Koru logo — beside Settings, so you
+choose fonts on the left and see
 them on the right as you go; the sample also follows the size and the theme.
-It is not saved anywhere and is not in your library, and pressing the link
+Try typing and formatting in the sample. Its callout explains that edits reset
+when you close it: it is not saved and is not in your library. Pressing the link
 again brings the open sample forward. The theme is chosen from
 three preview tiles at the top of the same page. A document's page menu
 also has a **Typography** group whose Body / Headings / Code rows cycle a
@@ -3754,8 +3819,9 @@ heading carries a **Global settings** link that opens this tab on its
 **Editor** page, where the defaults for new documents live. Twelve families span sans, serif,
 rounded and mono; code defaults to JetBrains Mono.
 
-**Base color** is two rows of swatches on the same **Appearance** page, one
-for the light theme and one for the dark. It tints the window's frame — the
+**Base color** and **Accent color** sit directly below Theme on the
+**Appearance** page. Only the active theme's swatches are shown; switching
+themes reveals its saved choices. Base color tints the window's frame — the
 title bar, the rails and the margins around your pages. The first swatch is
 the theme's own color; the others are a few tints chosen for that theme. Each
 theme keeps its own choice, so switching between light and dark shows the
@@ -3773,6 +3839,8 @@ no size of its own; the chat follows the app's text size.
 **Any font installed on your computer** can be chosen for the app, chat, body,
 headings or code: every font list ends with **More fonts…**, which opens a
 searchable list of your installed fonts, each name shown in its own face.
+The list scrolls by wheel or its draggable scrollbar. Search and the
+**Show all fonts** footer remain separate from the scrolling rows.
 Type to filter; the arrow keys preview the lit font across the app, and
 Enter or a click keeps it. For **code** the list starts with monospaced
 fonts — press Tab, or tick *Show all fonts*, to see every font. The first
@@ -3783,8 +3851,9 @@ and the list shows *Name (not installed)*; your choice is kept for the
 computers that have it. The terminal's own **More fonts…**, on a terminal
 tab's font menu, uses the same list.
 
-**Document text size** is the **Size** row at the end of *Document fonts*:
-14 to 22 px, 16 by default. Every document follows it — headings, code
+**Document text size** is the **Size** row in *Document fonts*:
+14 to 22 px, 14 by default to match app text. Explicitly chosen sizes stay as
+chosen. Every document follows it — headings, code
 blocks, checkboxes and the space between blocks grow with the text, so a
 page reads the same at any size — while the app's own text, the chat box and
 the terminal keep theirs. Point down the list to preview a size in this
@@ -4048,7 +4117,7 @@ you can switch to; below it are the same new-profile rows as before
 (System, PowerShell, Bash; Claude, OpenCode, Codex, Grok, Kimi). The session
 opens as its own tab and starts running. **Agents** lists only the agents
 that are turned on and installed on this computer, then **Manage…**, which
-opens **Settings → Coding → Agent providers** to turn the others on or
+opens **Settings → Coding → Agent runtimes** to turn the others on or
 install them; with none installed it is **Manage…** alone. A shell that is
 not installed is shown greyed out with *Not installed*.
 
@@ -4668,7 +4737,7 @@ for you.
   output node, and connect them in that order. An agent node asks for its
   instruction when you add it, and starts with the agent you last delegated
   to; its header opens a menu of the agents ready on this computer, in the
-  order set on **Settings → Coding → Agent providers** and without any you
+  order set on **Settings → Coding → Agent runtimes** and without any you
   have turned off there (a node already set to one still runs it). An output
   node asks for the title of the page it will write. Press **Run** on the start
   node to run the chain; each node shows where it is, and **Stop** stops it.
@@ -4687,6 +4756,16 @@ for you.
   canvas does not make a card yet.
 
 ## Documents
+
+Choose **Document** in the **+** launcher to begin a new page. The first text
+you type or paste is kept in its draft while Koru creates the saved document.
+Native composition finishes before that handoff; you do not need to type an
+extra character to save the completed input. If creation fails, the draft stays
+open. Closing it, hiding the window, or switching workspace/profile waits for
+that writing to be transferred. A message explains the refusal; retry the
+action after creation succeeds. An untouched draft can be closed immediately.
+The content present at that first handoff becomes the document's opening
+baseline; later edits use ordinary undo.
 
 Type `@` and start writing a document title. The text beside the caret filters
 the shared search index while the popover lists every matching document as a
@@ -4910,6 +4989,12 @@ it is never stored, so it follows the theme and never bloats a sync.
 
 ### Diagrams
 
+AI chat replies also draw fenced `mermaid` blocks inline, in both chat tabs
+and the side pane. While a reply is streaming, the code stays visible until
+the fence closes. A diagram that is loading or cannot be drawn keeps its
+readable source. **Copy as Markdown** and **Save as document** preserve the
+original Mermaid text.
+
 A code block whose language is **Mermaid** is a diagram: Koru draws it in
 place of the text. Write a flowchart or a sequence diagram in
 [Mermaid](https://mermaid.js.org) notation inside a fence that opens with
@@ -4966,6 +5051,10 @@ allows. The view's copy control puts a picture on the
 clipboard and its save control saves one; `Esc`, the `×`, or a click
 anywhere on the dimmed window closes it. A screen reader hears the
 drawing's title (or *Diagram*), the zoom, and each control's name.
+
+A rendered Mermaid diagram in an AI chat opens the same viewer with a single
+click, in either a chat tab or the AI pane. Zoom, pan, copy, save and dismissal
+work as above. A diagram that has not rendered keeps its readable source.
 
 **Copying and saving.** Copy on a selected drawing copies the whole block;
 it arrives as a diagram wherever it is pasted in Koru, and as a fenced
@@ -6026,27 +6115,38 @@ as *Manage workspace* and names the pin action or its refusal reason.
 
 In a workspace window, click the **Profile tile** at the bottom of the rail,
 or press **`Ctrl+Alt+P`**, to open the Profile menu. The shortcut works with
-Explore folded and leaves it open or closed as you set it. The tile's hover
-hint shows only the shortcut. Each Profile is
-one line; hover its name to see its email, or *On this computer*. Screen
-readers receive the same description. Selecting a different Profile closes
-the menu and opens its usable workspace, or its waiting/recovery screen.
+the pane open or folded and leaves it as you set it. The rail shows a circular
+profile avatar without a status badge. Its background matches the profile's
+chosen color, or the default background shown in Settings. Each menu row shows its name, email
+or *No sign-in*, and workspace count when known. The current profile has a
+checkmark and a tinted background.
 
-Each profile's **Manage** control works as a workspace's does: point at the
-row to show it, or press `→` on the lit profile to move onto it and `←` to
-come back; `Enter` or `Space` opens the **Manage** tab on that Profile. A
-screen reader announces it as *Manage profile*. The config icon at the right
-of the Profiles heading opens Manage on the current Profile. The matching
-icon in the Workspaces heading opens Manage workspaces.
+Choose another profile's name to switch this window to its usable workspace,
+or its waiting/recovery screen. Choose its **Open profile in a new window**
+icon to open a separate window while keeping this one unchanged. On the
+keyboard, `→` selects that icon and `←` returns to the name; `Enter` or
+`Space` activates it. The current profile's checkmark is not an action.
 
-The fixed row below the Profiles is **Sync**, with one cloud icon. The icon
-and label form one selectable row that opens **Linked devices** in Manage.
-Hovering it shows no tooltip; its status remains available to screen readers.
-It is one keyboard stop and closes the menu when activated. Profile creation
-remains available in Manage. The heading's config button highlights only when
-the pointer reaches the button itself or the keyboard selects it.
+Below the scrolling profile list are **New profile**, **Koru Cloud** with
+the current sync state and linked-device count, **Settings**, and **Help and
+feedback**. These actions stay visible while the identities scroll. Settings
+shows its registered shortcut. Help and Settings are reached here rather than
+through separate buttons at the bottom of the rail.
 
-The rail's **Help (`?`)** opens directly onto the release timeline. The
+Sync and Profile management live in **Settings**. Its navigation starts with
+**Account**: Cloud where available, Devices, Profiles and Workspaces, followed by
+**Preferences** and **Coding**. The Profiles page has profile buttons and a
+**+** button at the top. Choose a profile to see its sync and workspace details
+below; **+** opens the new-profile form. Selecting a profile button inspects it without switching
+your open workspace.
+**Workspaces**, directly below Profiles, opens the workspace catalog for the
+profile being inspected. The Workspaces menu's settings button and
+`Ctrl+Shift+O` open it for your current profile. It includes New workspace,
+Import, the workspace menus, archived workspaces and trash.
+Hover **Help and feedback** to open its submenu beside the Profile menu. You
+can also click it or press `→` when it is selected. `Esc` or `←` returns to
+the Profile menu; moving to another profile-menu row closes the submenu.
+Help opens directly onto the release timeline. The
 nightly row shows the date of its latest completed release-file upload, in
 your date format, followed by the stable releases and their publication dates.
 Release subtitles truncate to fit the menu. If a date is unavailable, it is omitted.
@@ -6385,7 +6485,10 @@ If Koru opens empty when it should not, check that the Koru Store is running and
 that you are in the profile and workspace you expect (the explore pane's
 switchers). Content lives in the store, not in a profile folder you once picked.
 
-Everything saves continuously; there is no save command.
+Document edits and task changes save continuously. A
+[task/document mini app](TASK-DOCUMENT.md) has a separate **Save mini app**
+action for its arrangement and linked choices; source content keeps saving
+normally whether or not that arrangement is saved or pinned.
 
 ## Usage data
 

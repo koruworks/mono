@@ -21,6 +21,8 @@ pub(crate) fn key(hit: Hit) -> Key {
         Hit::WaitingWorkspace => Key::surface(SURFACE, "waiting-workspace"),
         Hit::WorkspaceMenu => Key::surface(SURFACE, "workspace-menu"),
         Hit::App(mode) => Key::surface(SURFACE, mode.token()),
+        Hit::Pin(id) => Key::model(id.0, "rail-pin"),
+        Hit::PinOverflow => Key::surface(SURFACE, "pin-overflow"),
         Hit::Overflow => Key::surface(SURFACE, "overflow"),
         Hit::Help => Key::surface(SURFACE, "help"),
         Hit::Settings => Key::surface(SURFACE, "settings"),
@@ -45,13 +47,17 @@ pub(crate) static RAIL_SQUARE_STATES: StateRecipe = StateRecipe {
 
 #[derive(Clone)]
 pub(crate) enum Contents {
+    Profile {
+        name: String,
+        icon: Option<String>,
+        color: Option<String>,
+    },
     Tile {
         name: String,
         icon: Option<String>,
         color: Option<String>,
     },
     Glyph(char),
-    NotifiedGlyph(char),
 }
 
 #[derive(Clone)]
@@ -86,6 +92,29 @@ impl Leaf for SquareContents {
         state: ElState,
     ) {
         match &self.contents {
+            Contents::Profile { name, icon, color } => {
+                let side = metrics::PROFILE_AVATAR.value;
+                let avatar = Rect::new(
+                    at.x + (at.w - side) * 0.5,
+                    at.y + (at.h - side) * 0.5,
+                    side,
+                    side,
+                );
+                koru_ui::profile_picker::draw_identity(
+                    scene,
+                    root,
+                    engine,
+                    avatar,
+                    koru_ui::profile_picker::ProfileIdentity {
+                        avatar: None,
+                        name,
+                        icon: icon.as_deref(),
+                        color: color.as_deref(),
+                    },
+                    koru_draw::theme::role::row(),
+                    cx.palette(),
+                );
+            }
             Contents::Tile { name, icon, color } => {
                 let side = metrics::WORKSPACE_TILE.value;
                 let tile = Rect::new(
@@ -111,7 +140,7 @@ impl Leaf for SquareContents {
                     );
                 }
             }
-            Contents::Glyph(glyph) | Contents::NotifiedGlyph(glyph) => {
+            Contents::Glyph(glyph) => {
                 let shaped = if state.selected {
                     engine.icon_layout_filled(*glyph, metrics::RAIL_GLYPH.value)
                 } else {
@@ -132,19 +161,6 @@ impl Leaf for SquareContents {
                     at.y + (at.h - shaped.height()) * 0.5,
                     Some(ink.of(cx.palette())),
                 );
-                if matches!(self.contents, Contents::NotifiedGlyph(_)) {
-                    let inset = Space::S2.px(koru_draw::theme::Profile::Desktop);
-                    let radius = Space::S1.px(koru_draw::theme::Profile::Desktop) * 0.5;
-                    koru_draw::scene::fill(
-                        scene,
-                        root,
-                        Ink::Accent.of(cx.palette()),
-                        &vello::kurbo::Circle::new(
-                            ((at.x + at.w - inset) as f64, (at.y + inset) as f64),
-                            radius as f64,
-                        ),
-                    );
-                }
             }
         }
     }
@@ -181,6 +197,7 @@ fn square(item: &Item) -> El {
 pub(crate) struct Rail {
     pub workspaces: Vec<Item>,
     pub views: Vec<Item>,
+    pub pins: Vec<Item>,
     pub foot: Vec<Item>,
 }
 
@@ -227,16 +244,25 @@ impl Rail {
                         .child(divider(Line::Divider)),
                 );
         }
-        tree.child(
+        tree = tree.child(
             col("Views")
                 .id(Key::surface(SURFACE, "views"))
                 .semantics(Role::Group)
                 .name(koru_i18n::Key::A11yNavigatorViews)
                 .gap(Space::S1)
                 .children(self.views.iter().map(square)),
-        )
-        .child(spacer())
-        .child(
+        );
+        if !self.pins.is_empty() {
+            tree = tree.child(
+                col("Mini app pins")
+                    .id(Key::surface(SURFACE, "pins"))
+                    .semantics(Role::Group)
+                    .name(koru_i18n::Key::MiniAppPins)
+                    .gap(Space::S1)
+                    .children(self.pins.iter().map(square)),
+            );
+        }
+        tree.child(spacer()).child(
             col("Rail foot")
                 .gap(Space::S1)
                 .children(self.foot.iter().map(square)),
@@ -281,13 +307,19 @@ impl Rail {
     }
 
     fn items(&self) -> impl Iterator<Item = &Item> {
-        self.workspaces.iter().chain(&self.views).chain(&self.foot)
+        self.workspaces
+            .iter()
+            .chain(&self.views)
+            .chain(&self.pins)
+            .chain(&self.foot)
     }
 
     pub fn rectangles(&self, frame: &Frame, band: Rect) -> Rects {
         let mut rects = Rects {
             band,
             apps: Vec::new(),
+            pins: Vec::new(),
+            pin_overflow: Rect::new(band.x, band.y, 0.0, 0.0),
             overflow: Rect::new(band.x, band.y, 0.0, 0.0),
             workspaces: Vec::new(),
             workspace_menu: Rect::new(band.x, band.y, 0.0, 0.0),
@@ -309,6 +341,8 @@ impl Rail {
                 Hit::WaitingWorkspace => rects.workspaces.push((None, r)),
                 Hit::WorkspaceMenu => rects.workspace_menu = r,
                 Hit::App(mode) => rects.apps.push((mode, r)),
+                Hit::Pin(id) => rects.pins.push((id, r)),
+                Hit::PinOverflow => rects.pin_overflow = r,
                 Hit::Overflow => rects.overflow = r,
                 Hit::Help => rects.help = r,
                 Hit::Settings => rects.settings = r,

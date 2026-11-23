@@ -33,6 +33,7 @@ pub fn ollama_model(model: &str, capabilities: &[String]) -> ModelDescriptor {
         },
         resolved_model: Some(model.to_owned()),
         capabilities: ModelCapabilities {
+            native_tools: capabilities.iter().any(|value| value == "tools"),
             streaming: true,
             structured_output: false,
             vision: false,
@@ -54,5 +55,23 @@ fn levels(
         values: values.to_vec(),
         default: Some(default),
         supports_off,
+    }
+}
+
+#[cfg(test)]
+mod mini_app_tests {
+    use super::*;
+    #[test]
+    fn mini_app_native_tools_follow_live_model_capabilities() {
+        assert!(
+            !ollama_model("plain", &["thinking".into()])
+                .capabilities
+                .native_tools
+        );
+        assert!(
+            ollama_model("tools", &["tools".into()])
+                .capabilities
+                .native_tools
+        );
     }
 }

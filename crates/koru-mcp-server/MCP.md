@@ -176,7 +176,128 @@ section: [Creating a complete document](#creating-a-complete-document),
 [Searching](#searching), and
 [Preconditions, history, and durability](#preconditions-history-and-durability).
 
+## Native mini apps
+
+`create_task_document_app`, `find_task_app_lists`, and
+`update_task_document_app` use two provisional bounded catalogs:
+`koru:task-document:0.1-proposal1` and `koru:composition:0.1-proposal1`.
+The creation tool's historical name covers both catalogs. These are native Koru host tools, distinct
+from the browser-based MCP Apps document view described under Views.
+They use the existing desktop stdio bridge in registered managed Koru chats:
+Codex, Claude, OpenCode, Kimi, Grok, Antigravity and Devin. The service's managed
+provider registry determines eligibility; an arbitrary `agent-` id does not.
+The installed bridge and a supported managed runtime are required. Antigravity
+uses `agy_acp_server`, not a raw `agy` terminal session.
+For Codex launches Koru disables the inherited `koru` server entry and supplies
+the same bridge under the reserved, explicitly enabled `koru_desktop` alias.
+This avoids merging an inherited HTTP `koru.url` with stdio command fields.
+The overrides apply only to the launched process; the person's configuration
+file and unrelated MCP entries are unchanged. Other providers keep `koru`.
+The reserved alias must not itself be configured as an HTTP server: Codex's
+deep merge would still make that configuration conflict with stdio.
+The `mini-apps` toolset is on by default; an explicit `--toolsets` selection
+must include it to publish these three tools.
+
+Each call requires `capability`, the expiring permission supplied with the
+current Koru message. An external MCP connection without that permission
+cannot create a native tab. The worker binds it to one exact live attempt,
+chat, stored profile, workspace grants and host lifetime. It expires on
+completion, cancellation or loss of the live stream. An old permission does
+not acquire a newer attempt's authority, even when the agent session is reused.
+Never invent or repeat a permission in ordinary prose. The permission is
+outside the 4096-byte A2UI envelope; no renderer, tab, profile or revision
+authority comes from model arguments.
+
+Creation takes `version: "1.0"` and one `createSurface`, with `surfaceId`,
+`catalogId`, `sendDataModel: false` and `components`. Choose one catalog:
+
+- `koru:task-document:0.1-proposal1` has exactly five fixed components:
+  `TaskDocument`, `TaskListSelector`, `TaskCollection`, `DocumentSearch`, and
+  `DocumentHost`. The schema fixes their IDs and graph. The root's `arrangement`
+  is `tasks-first` or `document-first`.
+- `koru:composition:0.1-proposal1` supports `Row`, `Column`, `Box`, `Text`,
+  `Spacer`, `Divider`, `Button` and exactly one `DocumentHost`. The tree starts
+  at `root`, has at most 32 components and depth 8, and fits in 4096 UTF-8 bytes.
+  Use this catalog for document buttons above a shared editor. Rows/columns
+  use `children` arrays of component IDs; a Box has one child. Literal labels
+  belong in `text` on Text/Button. Buttons use the typed action below; there
+  is no `Tabs`, `onClick`, `selected`, `style`, `styles` or `data` property.
+
+Composition placement belongs in `layout`: `width`/`height` are `Hug` or `Fill`,
+`gap`/`padding` use named spacing tokens (`S0`, `S0_5`, `S1`, `S1_5`, `S2`,
+`S2_5`, `S3`, `S3_5`, `S4`, `S5`, `S6`, `S7`, `S8`, `S10`, `S12`), and
+`align` is `Start`, `Center`, `End` or `Stretch`. Box decoration belongs in
+`decoration`, using the published surface/radius tokens. Text has `role` and
+`ink` tokens; a Spacer has `space`. The tool schema defines which optional
+properties apply to each component. Omit unused fields.
+
+Resolve the actual document IDs using `list_documents` in the current
+workspace. Each reference is `{"workspace":"current","documentId":"UUID"}`,
+including references inside button actions. Clicking a button selects its
+document locally; the host highlights the current document's button. Document
+bodies, task rows, raw CSS/pixels, arbitrary callbacks and `sendDataModel: true`
+are refused.
+
+Four-document composition example (replace all illustrative document UUIDs
+with the discovered IDs, and add the current message's `capability` beside
+`version` and `createSurface` when calling the MCP tool; do not add an argument
+wrapper):
+
+```json
+{
+  "version": "1.0",
+  "createSurface": {
+    "surfaceId": "four-documents",
+    "catalogId": "koru:composition:0.1-proposal1",
+    "sendDataModel": false,
+    "components": [
+      {"id":"root","component":"Column","children":["buttons","document"],"layout":{"width":"Fill","height":"Fill","gap":"S4","padding":"S4"}},
+      {"id":"buttons","component":"Row","children":["travel","next","restaurants","notes"],"layout":{"width":"Fill","gap":"S2"}},
+      {"id":"travel","component":"Button","text":"Travel","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"11111111-1111-4111-8111-111111111111"}}},
+      {"id":"next","component":"Button","text":"What to do Next","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"22222222-2222-4222-8222-222222222222"}}},
+      {"id":"restaurants","component":"Button","text":"Best Restaurants","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"33333333-3333-4333-8333-333333333333"}}},
+      {"id":"notes","component":"Button","text":"Trip Notes","action":{"type":"SelectDocument","target":"document","document":{"workspace":"current","documentId":"44444444-4444-4444-8444-444444444444"}}},
+      {"id":"document","component":"DocumentHost","document":{"workspace":"current","documentId":"11111111-1111-4111-8111-111111111111"},"layout":{"width":"Fill","height":"Fill"}}
+    ]
+  }
+}
+```
+
+`find_task_app_lists` resolves named and empty lists explicitly. It takes
+`query` (at most 128 characters), `offset` (0 through 1,000,000), and `limit`
+(1 through 20, default 20). It returns a bounded `lists` page of `listId` and
+`name`, plus `next_offset`. Existing `list_documents` resolves document IDs
+using the exact workspace identity supplied for the current message.
+
+Refinement takes one `updateComponents`. For the task/document catalog, replace
+only the root's named arrangement. For composition, provide the complete tree
+from the current declaration, preserving component IDs, kinds (Row/Column may
+interchange), document references and actions; change supported layout, labels
+and tokens only. Its `surfaceId` must match the current message's explicit target.
+The host retains the original controls/editor and rejects a changed tab,
+scope, lifetime or revision. Do not put a speculative `baseRevision` field
+inside the upstream A2UI envelope.
+
+Successful creation/refinement returns `status: "offered"` and
+`application_acknowledged: false`. The full validated declaration travels
+only through the existing typed live AI stream. This receipt is not evidence
+that a tab opened or changed. History never replays a native command. If no
+app opened after interruption, use Retry when available or send a fresh
+request. Ordinary task, search and editor interactions stay local.
+
+Koru does not persist these permissions in its chat request/history formats
+or ordinary logs. It redacts echoed permission spellings before managed
+events leave the adapter, including split text deltas, and suppresses raw
+mini-app tool activity bodies. The agent's own transcript and bounded
+in-memory session replay may retain an expired permission; expiry still
+prevents reuse. Install `koru-mcp` beside the Agent: an absent bridge leaves
+ordinary chat available and reports mini-app tools unavailable.
+
 ## Keeping this contract current
+
+The provisional native mini-app tools are described under
+[Native mini apps](#native-mini-apps). Their catalog names remain a feature
+proposal pending maintainer acceptance.
 
 This file is part of Koru's public MCP interface, not an implementation note.
 Every change to an MCP tool, request or result schema, error/retry rule, or
@@ -199,6 +320,9 @@ The current tool surface is:
   `compare_document_versions`, and `restore_document_version` for history; and
 - `list_chats`, `search_chats`, and `read_chat` for bounded, read-only access to
   Koru AI chats; and
+- `create_task_document_app`, `find_task_app_lists`, and
+  `update_task_document_app` for a live native Koru chat host, under its
+  expiring per-message permission; and
 - `show_document`, which shows a person a document in an interactive view,
   for hosts that render MCP Apps, with `read_image` and `watch_document`,
   which that view draws a document's images from and hears of a change
@@ -225,7 +349,7 @@ This file is the long form; the reply points here.
 - **No `outputSchema`.** Every result is still a JSON object in
   `structuredContent` beside a text copy; its shape is the table under
   [Results](#results) below. A field marked `?` may be `null` or absent.
-- **Prose lives in the description, not in the schema.** The input schema is
+- **Prose lives in the description, not in the schema.** A workspace tool's input schema is
   generated from the Rust request types and then compacted by
   `crates/koru-mcp-server/src/published_schema.rs`: every `description`,
   `title` and `$schema` is dropped, a local `$ref` is replaced by its
@@ -241,6 +365,16 @@ This file is the long form; the reply points here.
   `insert(parent_id, kind, text, node_id?, after_node_id?)`. Which fields a
   given op takes is enforced by the server, which rejects an unknown or
   misplaced field with an error rather than ignoring it.
+- **The native mini-app catalog keeps its normative branches.** Its hand-authored
+  input schemas retain every per-component `oneOf`, exact `id`/`component` pair,
+  required field and task bucket/list exclusion. Only top-level `$schema` and
+  `title` annotations are removed. Generic tagged-union flattening loses these
+  relationships and is not used for that catalog. **They are the one place a
+  local `$ref` is published**, with its `$defs`: inlined, the create schema
+  grows by about 3 KB and `create_task_document_app` no longer fits one page
+  of the [paged list](#pages-off-by-default) (7,970 bytes against 7,000, measured
+  2026-11-20). The compactness test exempts these three tools from the
+  `$ref` rule and no other.
 - **One type per branch.** Unions such as string-or-null are published as
   `anyOf: [{"type":"string"}, {"type":"null"}]` rather than a `type` array.
   This improves portability to clients that only accept a single type name.
@@ -279,21 +413,32 @@ group (maintainers, 2026-11-02).
 
 | Toolset | Tools | Bytes | ~Tokens | Budget |
 | --- | --- | ---: | ---: | ---: |
-| `core` — always on | `get_documentation`, `list_workspaces` | 697 | 175 | 770 |
-| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `create_image_upload`, `add_image`, `replace_image`, `extract_to_document` | 13,641 | 3,411 | 15,010 |
-| `files` | `list_files`, `search_files`, `get_file`, `read_file`, `ensure_file_note` | 2,266 | 567 | 2,500 |
-| `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,036 | 509 | 2,250 |
-| `tasks` | `list_tasks`, `update_task` | 3,099 | 775 | 3,410 |
-| `chat` | `list_chats`, `search_chats`, `read_chat` | 1,369 | 343 | 1,510 |
+| `core` — always on | `get_documentation`, `list_workspaces` | 735 | 184 | 770 |
+| `docs` | `list_documents`, `search_documents`, `read_document`, `create_document`, `edit_document`, `create_image_upload`, `add_image`, `replace_image`, `extract_to_document` | 14,440 | 3,610 | 15,010 |
+| `files` | `list_files`, `search_files`, `get_file`, `read_file`, `ensure_file_note` | 2,323 | 581 | 2,500 |
+| `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,074 | 519 | 2,250 |
+| `tasks` | `list_tasks`, `update_task` | 3,350 | 838 | 3,410 |
+| `chat` | `list_chats`, `search_chats`, `read_chat` | 1,483 | 371 | 1,510 |
+| `mini-apps` | `create_task_document_app`, `find_task_app_lists`, `update_task_document_app` | 11,738 | 2,935 | 12,900 |
 | the view tools — listed with `docs`, in no toolset | `show_document`, `read_image`, `watch_document` | 1,511 | 378 | 1,650 |
-| every toolset on | the whole reply, envelope included | 25,961 | 6,491 | 27,200 |
+| every toolset on | the whole reply, envelope included | 37,699 | 9,425 | 40,100 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
-2026-11-02; each budget is that size plus about 10%, held by
+2026-11-13; the new mini-apps budget is its measured size plus about 10%; existing group budgets are retained, held by
 `each_toolset_is_within_its_budget`, and the total by
 `the_published_tool_list_is_compact_and_within_its_budget`. Raising one is a
 decision recorded here.
+
+**The mini-apps budget was raised on 2026-11-20**, from 5,550 to 12,900
+bytes, and the total with it from 32,750 to 40,100. The toolset had grown to
+11,738 bytes when document mini apps joined task ones (`078001b6b`,
+`3f4f45e79`): the creation and update schemas carry the composed document's
+components as hand-written `oneOf` branches, which must stay whole. Raised
+to its measured size plus about 10% when the branch was merged into main,
+rather than cut down without the A2UI work's review. Since the toolset is on
+by default, every session pays about 2,900 tokens for it; turning it off by
+default, or shortening those schemas, is the way back down.
 
 **The view tools have a budget line of their own** (2026-11-11), and the
 total grew by it, from 25,550 to 27,200. They are in no router, so in no

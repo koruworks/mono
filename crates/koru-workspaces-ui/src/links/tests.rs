@@ -308,3 +308,29 @@ fn a_controller_on_a_held_link_starts_unknown_and_loading() {
     assert_eq!(controller.authorization(), Authorization::Unknown);
     assert_eq!(controller.availability(), crate::Availability::Loading);
 }
+
+/// What the log names: the request the worker is on, for how long, and how
+/// many presses wait behind it. A Keyed press is named by what it asks.
+#[test]
+fn the_worker_says_which_request_it_is_on_and_what_waits() {
+    let busy = Busy::default();
+    assert!(busy.running().is_none());
+    busy.queued.fetch_add(2, Ordering::Relaxed);
+    busy.start(Command::Catalog.kind());
+    assert_eq!(busy.queued.load(Ordering::Relaxed), 1);
+    assert_eq!(busy.running().map(|(kind, _)| kind), Some("catalog"));
+    assert!(busy.finish().is_some());
+    assert!(
+        busy.running().is_none(),
+        "a finished request is not running"
+    );
+    assert!(busy.finish().is_none());
+
+    let workspace = WorkspaceId::new();
+    let profile = ProfileId::new();
+    let keyed = Command::Keyed(
+        crate::CommandId(1),
+        Box::new(Command::RestoreWorkspaceTo(workspace, profile)),
+    );
+    assert_eq!(keyed.kind(), "restore_workspace_to");
+}

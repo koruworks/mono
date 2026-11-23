@@ -103,7 +103,30 @@ pub fn fill(scene: &mut Scene, root: Affine, color: Color, shape: &impl vello::k
     scene.fill(Fill::NonZero, root, color, None, shape);
 }
 
+/// Fill a text cursor (upright bar or italic parallelogram) and record it in
+/// the inspector as a `Cursor` part rather than an anonymous `fill` primitive.
+#[track_caller]
+pub fn fill_cursor(
+    scene: &mut Scene,
+    root: Affine,
+    color: Color,
+    shape: &impl vello::kurbo::Shape,
+) {
+    if color.components[3] > 0.0 {
+        let _cursor =
+            crate::inspect::scope("Cursor", "part", root, shape.bounding_box(), |record| {
+                record.property(
+                    "color",
+                    crate::inspect::color(color),
+                    "resolved caret paint",
+                );
+            });
+        scene.fill(Fill::NonZero, root, color, None, shape);
+    }
+}
+
 /// Fill a caret parallelogram (upright or italic-slanted).
+#[track_caller]
 pub fn fill_caret_quad(scene: &mut Scene, root: Affine, color: Color, quad: [(f64, f64); 4]) {
     let mut path = BezPath::new();
     path.move_to(quad[0]);
@@ -111,7 +134,7 @@ pub fn fill_caret_quad(scene: &mut Scene, root: Affine, color: Color, quad: [(f6
     path.line_to(quad[2]);
     path.line_to(quad[3]);
     path.close_path();
-    fill(scene, root, color, &path);
+    fill_cursor(scene, root, color, &path);
 }
 
 #[track_caller]
@@ -372,9 +395,13 @@ pub fn centre_in(layout: &Layout<Brush>, r: crate::geometry::Rect) -> (f32, f32)
 /// than a font load. A tile is a handful of glyphs; do not reach for this to
 /// centre a paragraph.
 fn ink_centre(layout: &Layout<Brush>) -> Option<(f32, f32)> {
+    ink_centre_lines(layout, usize::MAX)
+}
+
+fn ink_centre_lines(layout: &Layout<Brush>, count: usize) -> Option<(f32, f32)> {
     use skrifa::MetadataProvider;
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for line in layout.lines() {
+    for line in layout.lines().take(count) {
         for item in line.items() {
             if let PositionedLayoutItem::InlineBox(b) = &item {
                 if crate::icons::unpack_box_id(b.id)
@@ -418,6 +445,18 @@ fn ink_centre(layout: &Layout<Brush>) -> Option<(f32, f32)> {
 /// a column rather than by centring.
 pub fn centre_y_in(layout: &Layout<Brush>, r: crate::geometry::Rect) -> f32 {
     centre_in(layout, r).1
+}
+
+/// Center only the visible first line, even when an elided label has wrapped.
+pub fn centre_first_line_y_in(layout: &Layout<Brush>, r: crate::geometry::Rect) -> f32 {
+    if let Some((_, cy)) = ink_centre_lines(layout, 1) {
+        r.y + r.h * 0.5 - cy
+    } else if let Some(line) = layout.lines().next() {
+        let m = line.metrics();
+        r.y + (r.h + m.ascent - m.descent) * 0.5 - m.baseline
+    } else {
+        r.y
+    }
 }
 
 /// Draw only a layout's first line.
@@ -771,6 +810,8 @@ pub struct Panel {
     pub border: Option<Color>,
     pub radius: f32,
     pub elevation: Elevation,
+    /// Multiplies only the shadow's opacity, independently of the body and border.
+    pub shadow_alpha: f32,
     /// Multiplies all three colours, shadow included.
     ///
     /// Only the zoom indicator sets anything but 1.0. It matters that the
@@ -788,6 +829,7 @@ impl Panel {
             border: Some(p.panel_border),
             radius,
             elevation: Elevation::Raised,
+            shadow_alpha: 1.0,
             alpha: 1.0,
         }
     }
@@ -799,6 +841,7 @@ impl Panel {
             border: None,
             radius,
             elevation: Elevation::Flat,
+            shadow_alpha: 1.0,
             alpha: 1.0,
         }
     }
@@ -820,6 +863,12 @@ impl Panel {
 
     pub fn faded(mut self, a: f32) -> Self {
         self.alpha = a;
+        self
+    }
+
+    /// Adjust the shadow without fading the body or border.
+    pub fn shadow_alpha(mut self, a: f32) -> Self {
+        self.shadow_alpha = a;
         self
     }
 }
@@ -875,6 +924,13 @@ pub fn floating_panel_scope(
                 "scene::Panel::elevation",
             );
             record.property("radius", panel.radius, "scene::Panel::radius");
+            // Only when softened: a panel at the full theme shadow records
+            // exactly what it recorded before the control existed, so the
+            // popover baselines and every other inspector reading hold.
+            let shadow_alpha = panel.shadow_alpha.clamp(0.0, 1.0);
+            if shadow_alpha < 1.0 {
+                record.property("shadow_alpha", shadow_alpha, "scene::Panel::shadow_alpha");
+            }
         });
     let a = panel.alpha.clamp(0.0, 1.0);
     let dim = |c: Color| c.multiply_alpha(a);
@@ -882,7 +938,7 @@ pub fn floating_panel_scope(
         panel_shadow(
             scene,
             root,
-            dim(theme::p().panel_shadow),
+            dim(theme::p().panel_shadow).multiply_alpha(panel.shadow_alpha.clamp(0.0, 1.0)),
             x,
             y,
             w,
@@ -1127,6 +1183,24 @@ mod centring_tests {
     /// Asserted against the *ink*: whatever `centre_in` returns, the drawn
     /// pixels must straddle the box's middle. Half a pixel of slack, because
     /// the answer lands on a pixel grid anyway.
+    #[test]
+    fn a_wrapped_label_centers_only_the_line_that_is_drawn() {
+        let mut engine = TextEngine::new();
+        let rect = Rect::new(0.0, 10.0, 80.0, 30.0);
+        for family in ["Inter", "Segoe UI", "Myanmar Text"] {
+            let layout = engine.simple_layout_wrapped_in(
+                "Untitled document with more words",
+                crate::theme::role::row(),
+                family,
+                70.0,
+            );
+            assert!(layout.lines().count() > 1);
+            let (_, cy) = super::ink_centre_lines(&layout, 1).unwrap();
+            let y = super::centre_first_line_y_in(&layout, rect);
+            assert!((y + cy - (rect.y + rect.h * 0.5)).abs() < 0.01);
+        }
+    }
+
     #[test]
     fn a_glyph_is_centred_on_its_ink_not_on_its_line_box() {
         let mut e = TextEngine::new();

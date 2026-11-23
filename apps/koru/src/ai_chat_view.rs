@@ -26,6 +26,7 @@ pub struct AiChatView {
     /// stacked enough copies to overflow the window thread's 1 MB stack
     /// (2026-11-02). One pointer here keeps every tab small.
     surface: Box<ChatSurface>,
+    diagrams: crate::chat_diagrams::ChatDiagrams,
     /// What the tab strip last read off the chat (D22), kept so the
     /// container's pass is a comparison and nothing more until it changes.
     face: ChatFace,
@@ -50,6 +51,7 @@ struct ChatFace {
 
 impl AiChatView {
     fn over(mut surface: Box<ChatSurface>) -> Self {
+        surface.offer_mini_apps(true);
         surface.set_hidden_agents(hidden_agents());
         surface.set_agent_defaults(agent_defaults());
         surface.set_agent_order(agent_order());
@@ -66,6 +68,7 @@ impl AiChatView {
         surface.offer_microphone_choice(koru_dictation::available());
         Self {
             surface,
+            diagrams: Default::default(),
             face: ChatFace::default(),
             status: koru_chats_ui::ChatStatus::Idle,
             still: false,
@@ -317,6 +320,18 @@ impl AiChatView {
     pub fn take_wants_chat_step(&mut self) -> Option<koru_chats_ui::ChatStep> {
         self.surface.take_wants_chat_step()
     }
+    pub fn take_mini_app_creation(&mut self) -> Option<koru_ai_ui::MiniAppCreation> {
+        self.surface.take_mini_app_creation()
+    }
+    pub fn mini_app_renderer_id(&self) -> uuid::Uuid {
+        self.surface.mini_app_renderer_id()
+    }
+    pub fn offer_mini_apps(&mut self, visible: bool) {
+        self.surface.offer_mini_apps(visible);
+    }
+    pub fn mini_app_opened(&mut self, request: uuid::Uuid, opened: bool) {
+        self.surface.mini_app_opened(request, opened);
+    }
 
     /// The chats this tab's surface last listed.
     pub fn listed_chats(&self) -> &[koru_chats_ui::Chat] {
@@ -548,6 +563,24 @@ impl AiChatView {
 }
 
 impl View for AiChatView {
+    fn take_wants_copy_diagram(&mut self) -> Option<koru_workspace_host::CopyDiagram> {
+        self.surface
+            .take_diagram_copy()
+            .map(|prepared| koru_workspace_host::CopyDiagram { prepared })
+    }
+
+    fn take_wants_save_diagram_as(
+        &mut self,
+        _ws: &WorkspaceDoc,
+    ) -> Option<koru_workspace_host::SaveDiagram> {
+        self.surface
+            .take_diagram_save()
+            .map(|prepared| koru_workspace_host::SaveDiagram {
+                title: prepared.scene().acc_title.clone().unwrap_or_default(),
+                prepared,
+            })
+    }
+
     fn set_mods(&mut self, mods: ModifiersState) {
         self.surface.set_mods(mods);
     }
@@ -604,7 +637,7 @@ impl View for AiChatView {
         workspace: &Workspace,
         _images: &koru_draw::ImageCache,
         root: Affine,
-        _caret_on: bool,
+        caret_on: bool,
         _pointer: (f32, f32),
     ) {
         let workspace_id = workspace
@@ -614,7 +647,7 @@ impl View for AiChatView {
         self.surface.set_context_document(None);
         self.surface
             .submit_embedded_when_durable(workspace.owed() == 0);
-        self.surface.draw(scene, root);
+        self.surface.draw_with_caret_phase(scene, root, caret_on);
     }
 
     fn animating(&self) -> bool {
@@ -626,6 +659,7 @@ impl View for AiChatView {
     }
 
     fn maintain(&mut self, _ws: &mut WorkspaceDoc, now: std::time::Instant) -> bool {
-        self.surface.maintain(now)
+        let changed = self.surface.maintain(now);
+        self.diagrams.maintain(&mut self.surface) || changed
     }
 }

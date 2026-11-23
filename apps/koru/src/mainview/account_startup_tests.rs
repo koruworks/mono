@@ -27,17 +27,17 @@ fn account_state_reaches_manage_in_an_inactive_split() {
         .iter_groups()
         .flat_map(|(_, group)| group.tabs().iter())
         .find_map(|tab| match &tab.view {
-            TabView::Manage(manager) => Some(manager),
+            TabView::Settings(crate::settings_view::SettingsView {
+                manage: manager, ..
+            }) => Some(manager),
             _ => None,
         })
         .unwrap();
     assert_eq!(manager.controller().account_scope(), 41);
-    assert!(
-        !view
-            .tabs()
-            .iter()
-            .any(|tab| matches!(tab.view, TabView::Manage(_)))
-    );
+    assert!(!view.tabs().iter().any(|tab| matches!(
+        tab.view,
+        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+    )));
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn window_wrapper_connects_missing_profile_and_stays_in_manager_after_local_ack(
                 unreachable!()
             };
             inner.tabs().iter().any(|tab| match &tab.view {
-                TabView::Manage(manage) => {
+                TabView::Settings(crate::settings_view::SettingsView { manage, .. }) => {
                     format!("{:?}", manage.page_focus()).contains("ProfileBring")
                 }
                 _ => false,
@@ -201,12 +201,10 @@ fn window_wrapper_connects_missing_profile_and_stays_in_manager_after_local_ack(
         let crate::manager_view::ManagerView::Container(inner) = &view else {
             unreachable!()
         };
-        assert!(
-            inner
-                .tabs()
-                .iter()
-                .any(|tab| matches!(tab.view, TabView::Manage(_)))
-        );
+        assert!(inner.tabs().iter().any(|tab| matches!(
+            tab.view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        )));
     }
 }
 
@@ -248,7 +246,9 @@ fn window_wrapper_delivers_cached_sign_in_and_identity_results_to_later_opened_m
         .tabs()
         .iter()
         .find_map(|tab| match &tab.view {
-            TabView::Manage(view) => Some(view),
+            TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                Some(view)
+            }
             _ => None,
         })
         .unwrap();

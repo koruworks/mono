@@ -289,6 +289,54 @@ fn embedded_welcome_links_leave_manage_profiles_as_typed_uri_requests() {
     assert_eq!(c.take_uri_request(), Some(koru_ui::welcome::TERMS_URL));
 }
 
+/// **Manage → New profile names only the new Profile** (welcome Q-A, Q-G):
+/// the account's display name arriving with its Profile choices does not fill
+/// the card's *Profile* field, and the draft a typed *Work* leaves with sends
+/// no owner name, so the account is never renamed.
+#[test]
+fn account_choices_do_not_prefill_the_manage_profile_field() {
+    use koru_workspace_host::accessibility::{ControlPart, Slots};
+    let mut c = ProfilesController::new();
+    c.begin_profile_creation();
+    c.complete(AccountOperationResult::ProfileChoices {
+        display_name: "Steven".into(),
+        choices: Vec::new(),
+    });
+    let creation = form(&mut c);
+    let mut slots = Slots::default();
+    let (window, view) = (slots.window(), slots.view());
+    fn owner_value(nodes: &[koru_workspace_host::accessibility::SemanticNode]) -> Option<String> {
+        nodes.iter().find_map(|node| {
+            if node.occurrence.part == ControlPart::new("owner-name") {
+                node.value.clone()
+            } else {
+                owner_value(&node.children)
+            }
+        })
+    }
+    let tree = creation.accessibility_semantics(window, view);
+    assert_eq!(
+        owner_value(&tree).as_deref(),
+        Some(""),
+        "the card's field is not filled from the account"
+    );
+    for character in "Work".chars() {
+        let text = character.to_string();
+        creation.key(
+            &Key::Character(text.clone().into()),
+            Some(&text),
+            ModifiersState::empty(),
+        );
+    }
+    assert!(creation.key(&Key::Named(NamedKey::Enter), None, ModifiersState::empty()));
+    c.drain_profile_creation_action();
+    let draft = c
+        .take_profile_creation_request()
+        .expect("the card leaves with a draft");
+    assert_eq!(draft.owner_display_name, None);
+    assert_eq!(draft.profile_name, "Work");
+}
+
 #[test]
 fn signed_in_profile_creation_requests_content_availability_choices() {
     let mut c = ProfilesController::new();
@@ -675,10 +723,9 @@ fn a_creation_draft_leaves_with_its_owner_scope() {
     c.take_request();
     c.profile_creation_request = Some(ConnectedProfileDraft {
         id: koru_core::ProfileId::new(),
-        owner_display_name: "Steven".into(),
+        owner_display_name: Some("Steven".into()),
         profile_name: "Work".into(),
         workspace_name: "Notes".into(),
-        template: Default::default(),
         workspace_icon: None,
         workspace_color: None,
         profile_icon: None,
@@ -829,6 +876,63 @@ fn a_hosted_delete_that_needs_a_fresh_sign_in_asks_for_one_and_resumes() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn hosted_delete_reauth_uses_signed_in_provider_and_recovers_on_cancel_or_failure() {
+    for (provider, expect_apple, expect_email) in [
+        ("apple", true, false),
+        ("email", false, true),
+        ("google", false, false),
+    ] {
+        let mut c = ProfilesController::new();
+        c.take_request();
+        c.account.generation = 7;
+        c.signed_in_identity = Some((provider.into(), "me@example.com".into()));
+        let profile = ProfileId::new();
+        c.pending_hosted_delete = Some(PendingHostedDelete {
+            profile,
+            profile_name: "Apple".into(),
+            stage: HostedDeleteStage::Deleting,
+        });
+        c.complete(AccountOperationResult::Failed {
+            code: "fresh_authentication_required".into(),
+        });
+        assert_eq!(
+            c.pending_hosted_delete.as_ref().map(|p| p.stage),
+            Some(HostedDeleteStage::Reauthenticating),
+        );
+        let cmd = c.take_request();
+        if expect_apple {
+            assert!(matches!(cmd, Some(AccountCommand::StartApple { .. })));
+        } else if expect_email {
+            assert!(matches!(
+                cmd,
+                Some(AccountCommand::StartEmailBrowser { .. })
+            ));
+        } else {
+            assert!(matches!(cmd, Some(AccountCommand::StartGoogle { .. })));
+        }
+
+        // A sign-in failure during reauth does not leave the delete stuck.
+        c.complete(AccountOperationResult::Failed {
+            code: "browser_timeout".into(),
+        });
+        assert_eq!(
+            c.pending_hosted_delete.as_ref().map(|p| p.stage),
+            Some(HostedDeleteStage::Failed),
+        );
+
+        // Cancelling directly while reauthenticating cancels the browser flow
+        // and clears the pending hosted delete.
+        c.pending_hosted_delete.as_mut().unwrap().stage = HostedDeleteStage::Reauthenticating;
+        c.perform(Intent::CancelHostedDeleteFailure);
+        assert!(c.pending_hosted_delete.is_none());
+        assert_eq!(
+            c.take_request(),
+            Some(AccountCommand::Cancel { generation: 7 })
+        );
     }
 }
 

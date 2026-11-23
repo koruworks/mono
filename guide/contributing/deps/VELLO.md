@@ -53,6 +53,37 @@ without a real oblique ([PARLEY.md](PARLEY.md#synthesis-faux-bold-and-faux-itali
 
 ## Glyphs
 
+Windows native windows default to **MSAA16**, hinted glyphs, **zero physical
+pixel offset on both axes**, **coverage gamma 1.75** and **cutoff 5%** in
+light mode. Dark defaults are hinting on, MSAA16, offset 0, gamma 0.75 and
+cutoff 15%. Each resolved theme owns its overrides; System follows the OS.
+Appearance's **Text rendering** card lets the user override each parameter and
+restore defaults; overrides use the existing settings authority and preferences
+file, with no database migration. These settings were selected by
+comparing Segoe UI against Quiet.md in Parley's v0.11.1 Vello editor. They are
+an accepted visual tuning choice, not a claim of matching DirectWrite or
+ClearType. Other desktop platforms expose the same controls but default to
+hinting on, Area, offset 0, gamma 1 and cutoff 0. Offscreen exports retain their
+separate sampling policy and neutral coverage unless their scene opts in.
+
+`koru_window::renderer::prepare_window_text` runs once on the freshly composed
+physical-pixel scene immediately before rendering. It adjusts only glyph-run
+transforms after DPI and document zoom, sets hinting and glyph coverage from one
+live preference snapshot. Never apply it to
+cached logical scene fragments or twice to one frame: the shift would accumulate.
+Shapes, images, layout sizes, line wrapping and hit targets do not move. The
+shared renderer enables Area, MSAA8 and MSAA16 up front, so changing the preference
+does not rebuild pipelines. `window_antialiasing()` keeps workspace, utility and
+inspector windows consistent. Sampling affects the whole window; hinting, offset
+and coverage affect glyphs. MSAA16 can cost more GPU time than Area; responsiveness remains part
+of visual acceptance, especially on integrated GPUs and large windows.
+
+The [fetched Vello patches](../../../third-party/patches/vello.md) attach gamma
+and cutoff to solid glyph draws. Coverage is adjusted before brush opacity and
+compositing, preserving dark themes, background colors, images and shape edges.
+This is a glyph coverage transfer, not a whole-window brightness filter. Cached
+scenes stay neutral; changes repaint existing layouts without document reflow.
+
 parley produces positioned glyphs; vello draws them:
 
 ```rust

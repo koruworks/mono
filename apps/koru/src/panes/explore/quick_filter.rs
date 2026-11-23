@@ -110,6 +110,7 @@ pub(crate) fn keep_with_ancestors(rows: &[(u16, bool)]) -> (Vec<bool>, Vec<bool>
 
 impl ExploreView {
     /// What is typed in the filter, while it is showing.
+    #[cfg(test)]
     pub fn quick_filter(&self) -> Option<&str> {
         self.quick.as_deref()
     }
@@ -132,6 +133,7 @@ impl ExploreView {
 
     /// Arm or disarm type-to-filter. See the module comment for who calls
     /// this with what.
+    #[cfg(test)]
     pub fn arm_quick_filter(&mut self, armed: bool) {
         self.quick_armed = armed;
     }

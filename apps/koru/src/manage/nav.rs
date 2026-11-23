@@ -68,6 +68,8 @@ pub(super) const CLOUD: &str = "Koru Cloud";
 /// One row of the nav.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Entry {
+    Profiles,
+    Workspaces,
     /// A Profile on this device: its page.
     Profile(ProfileId),
     /// The quiet *{n} Profiles hidden* line.
@@ -81,6 +83,7 @@ impl Entry {
     /// The row that leads to `page`.
     pub(crate) fn of(page: Page) -> Self {
         match page {
+            Page::Workspaces(_) => Self::Workspaces,
             Page::Profile(profile) => Self::Profile(profile),
             Page::NewProfile => Self::NewProfile,
             Page::Devices => Self::Devices,
@@ -180,7 +183,7 @@ impl ManageView {
     }
 
     fn nav_layout_scrolled(&self, scroll: f32) -> Laid {
-        if self.compact() {
+        if self.compact() || self.embedded.is_some() {
             let none = Rect::new(0.0, 0.0, 0.0, 0.0);
             return Laid {
                 chips: true,
@@ -190,7 +193,19 @@ impl ManageView {
                 new_profile: none,
                 sync_caption: none,
                 sync: none,
-                rows: self.nav_chips.clone(),
+                rows: if self.embedded.is_some() {
+                    self.embedded_nav
+                        .iter()
+                        .copied()
+                        .chain(
+                            self.profile_tabs
+                                .iter()
+                                .map(|(entry, _, rect)| (*entry, *rect)),
+                        )
+                        .collect()
+                } else {
+                    self.nav_chips.clone()
+                },
                 height: 0.0,
             };
         }
@@ -234,6 +249,11 @@ impl ManageView {
     /// Lay the compact chips out, and so the band's height — before the
     /// page, which starts under the band. Wide, there are none.
     pub(super) fn relayout_nav(&mut self) {
+        if self.embedded.is_some() {
+            self.nav_chips.clear();
+            self.band_h = 0.0;
+            return;
+        }
         if !self.compact() {
             self.nav_chips.clear();
             self.band_h = 0.0;
@@ -268,6 +288,13 @@ impl ManageView {
 
     /// The rows the keyboard visits, top to bottom.
     pub(super) fn focus_order(&self) -> Vec<Entry> {
+        if self.embedded.is_some() {
+            return self
+                .profile_tabs
+                .iter()
+                .map(|(entry, _, _)| *entry)
+                .collect();
+        }
         self.nav_layout_unscrolled()
             .rows
             .into_iter()
@@ -278,6 +305,9 @@ impl ManageView {
     /// Scroll the nav's column so the focused row is in view. The chips do
     /// not scroll.
     pub(super) fn reveal_focus(&mut self) {
+        if self.embedded.is_some() {
+            return;
+        }
         let Some(focus) = self.focus else {
             return;
         };
@@ -404,7 +434,7 @@ impl ManageView {
     /// with a green dot while the account is subscribed, *Off* once it is
     /// known not to be, and nothing while that is still unknown — unknown is
     /// not *Off*.
-    fn cloud_word(&self) -> Option<(&'static str, bool)> {
+    pub(crate) fn cloud_word(&self) -> Option<(&'static str, bool)> {
         // A build with no Koru Cloud: known, and off — the page says why.
         if self.c.account().stage == AccountStage::NotConfigured {
             return Some(("Off", false));

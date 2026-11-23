@@ -64,10 +64,9 @@ fn everything_set() -> ProfilesController {
     c.profile_creation = Some(Default::default());
     c.profile_creation_request = Some(ConnectedProfileDraft {
         id: koru_core::ProfileId::new(),
-        owner_display_name: String::new(),
+        owner_display_name: None,
         profile_name: String::new(),
         workspace_name: String::new(),
-        template: String::new(),
         workspace_icon: None,
         workspace_color: None,
         profile_icon: None,

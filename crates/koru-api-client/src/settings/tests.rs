@@ -36,20 +36,22 @@ fn ordinary_traffic_invalidates_nothing() {
 
 #[test]
 fn the_registry_agrees_about_which_rows_are_settings_rows() {
-    // The classifier and the registry cannot drift: a settings row added
-    // without a case here would be a section that silently stopped
-    // invalidating.
+    // Every settings fact has exactly one real consumer. Scalar Sections and
+    // the dedicated pin collection stay distinct; an unknown settings name
+    // must still fail instead of silently losing invalidation.
     for spec in koru_events::REGISTRY {
         let classified = section_changed(spec.name);
+        let pins = crate::mini_app_pins::changed(spec.name);
         if spec.name.starts_with("settings.") {
-            assert!(
-                classified.is_some(),
-                "`{}` is a settings row that no window would notice",
+            assert_eq!(
+                usize::from(classified.is_some()) + usize::from(pins),
+                1,
+                "`{}` must have exactly one settings consumer",
                 spec.name
             );
         } else {
             assert!(
-                classified.is_none(),
+                classified.is_none() && !pins,
                 "`{}` is not a settings row",
                 spec.name
             );
@@ -58,11 +60,29 @@ fn the_registry_agrees_about_which_rows_are_settings_rows() {
     assert_eq!(
         koru_events::REGISTRY
             .iter()
-            .filter(|spec| spec.name.starts_with("settings."))
+            .filter(|spec| section_changed(spec.name).is_some())
             .count(),
         3,
         "one fact per section"
     );
+    assert_eq!(
+        koru_events::REGISTRY
+            .iter()
+            .filter(|spec| crate::mini_app_pins::changed(spec.name))
+            .count(),
+        1,
+        "one fact for the dedicated pin collection"
+    );
+    assert!(crate::mini_app_pins::changed(
+        crate::mini_app_pins::CHANGED_EVENT
+    ));
+    assert_eq!(section_changed(crate::mini_app_pins::CHANGED_EVENT), None);
+    assert!(!crate::mini_app_pins::changed(
+        "settings.future_collection_changed"
+    ));
+    assert!(!crate::mini_app_pins::changed(
+        "settings.mini_app_pins_changed.future"
+    ));
 }
 
 #[test]

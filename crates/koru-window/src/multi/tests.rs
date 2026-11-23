@@ -138,3 +138,49 @@ fn the_defaulted_adapters_route_per_window_exactly_as_the_single_window_ones_do(
         "a release is visible only to an app that overrides `rich_key`"
     );
 }
+
+/// The three opt-in hooks are off for an app that does not mention them: no
+/// accessibility provider is asked for, no composition area is named, and the
+/// untranslated event has nowhere to go. That is what keeps the app shell,
+/// which implements none of them, on exactly the path it had.
+#[test]
+fn an_app_that_names_no_opt_in_hook_asks_for_nothing() {
+    let app = Minimal::default();
+    let key = WindowKey(1);
+    assert!(app.accessibility_wake(key).is_none());
+    assert_eq!(app.ime_cursor_area(key), None);
+    assert!(!app.wants_ime(key));
+    assert!(app.seen.is_empty());
+}
+
+/// Where the hooks sit in the runner cannot be driven without a real window,
+/// so their order is pinned by reading the source: the untranslated event
+/// comes before the discipline, the composition area after it and before the
+/// settle that may drop the window, and the provider is installed before
+/// anything that can show the window.
+#[test]
+fn the_hooks_are_called_in_the_order_their_contracts_state() {
+    let runner = include_str!("../multi.rs");
+    let start = runner
+        .find("    fn window_event(&mut self, events: &ActiveEventLoop")
+        .expect("the runner still has `window_event`");
+    let body = &runner[start..];
+    let body = &body[..body.find("\n    }\n").expect("`window_event` closes")];
+    let at = |needle: &str| {
+        body.find(needle)
+            .unwrap_or_else(|| panic!("`window_event` no longer contains `{needle}`"))
+    };
+    assert!(at("self.app.raw_event(") < at("dispatch::dispatch("));
+    assert!(at("dispatch::dispatch(") < at("dispatch::sync_ime_area("));
+    assert!(at("dispatch::sync_ime_area(") < at("self.settle(events)"));
+    assert!(at("self.app.wants_ime(key)") < at("dispatch::sync_ime_area("));
+
+    let gpu = include_str!("../gpu.rs");
+    let start = gpu.find("    pub fn open<T: DispatchApp>(").unwrap();
+    let open = &gpu[start..];
+    let created = open.find("app.created(events, &window);").unwrap();
+    assert!(open.find("events.create_window(").unwrap() < created);
+    for shows in ["window.set_visible(true)", "reveal::when_painted("] {
+        assert!(created < open.find(shows).unwrap(), "{shows}");
+    }
+}

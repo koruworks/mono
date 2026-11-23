@@ -39,6 +39,7 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
         .icon_pack
         .map(|pack| koru_draw::icons::IconPack::parse(pack.token()));
     into.caret_color = CaretColor::parse(section.caret_color.token());
+    into.caret_color_dark = CaretColor::parse(section.caret_color_dark.token());
     into.caret_width = CaretWidth::parse(section.caret_width.token());
     into.caret_height = CaretHeight::parse(section.caret_height.token());
     into.font = section.ui_font.clone();
@@ -46,6 +47,8 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
     into.headings_font = section.headings_font.clone();
     into.code_font = section.code_font.clone();
     into.chat_font = section.chat_font.clone();
+    into.text_rendering = koru_settings::TextRenderingPreferences::from_section(section);
+    into.heading_weight = section.heading_weight;
     into.doc_text_size = section.document_text_size.chosen().map(|size| size.px());
     into.base_color_light = section.base_color_light.map(RgbColor::rgb);
     into.base_color_dark = section.base_color_dark.map(RgbColor::rgb);
@@ -78,6 +81,26 @@ pub fn adopt(section: &GlobalSettings, into: &mut Settings) -> bool {
 /// the whole of what the per-field shape buys.
 pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch {
     let mut patch = GlobalPatch::default();
+    if settings.heading_weight != authoritative.heading_weight {
+        patch.heading_weight = Some(settings.heading_weight);
+    }
+    macro_rules! raster_field {
+        ($theme:ident, $field:ident, $value:ident) => {
+            if settings.text_rendering.$theme.$value != authoritative.$field {
+                patch.$field = Some(settings.text_rendering.$theme.$value);
+            }
+        };
+    }
+    raster_field!(light, text_hinting, hinting);
+    raster_field!(light, text_antialiasing, antialiasing);
+    raster_field!(light, text_offset, offset);
+    raster_field!(light, text_gamma, gamma);
+    raster_field!(light, text_cutoff, cutoff);
+    raster_field!(dark, text_hinting_dark, hinting);
+    raster_field!(dark, text_antialiasing_dark, antialiasing);
+    raster_field!(dark, text_offset_dark, offset);
+    raster_field!(dark, text_gamma_dark, gamma);
+    raster_field!(dark, text_cutoff_dark, cutoff);
     // A choice is named when it differs from what is stored. Following the
     // default is never sent: it is the authority's state, and no control here
     // takes a choice back.
@@ -95,6 +118,10 @@ pub fn patch(authoritative: &GlobalSettings, settings: &Settings) -> GlobalPatch
     let caret_color = CaretColorChoice::parse(settings.caret_color.key());
     if caret_color != authoritative.caret_color {
         patch.caret_color = Some(caret_color);
+    }
+    let caret_color_dark = CaretColorChoice::parse(settings.caret_color_dark.key());
+    if caret_color_dark != authoritative.caret_color_dark {
+        patch.caret_color_dark = Some(caret_color_dark);
     }
     let caret_width = CaretWidthChoice::parse(settings.caret_width.key());
     if caret_width != authoritative.caret_width {
@@ -275,6 +302,7 @@ type Preferences = (
     (
         ThemePreference,
         CaretColor,
+        CaretColor,
         CaretWidth,
         CaretHeight,
         Option<koru_draw::icons::IconPack>,
@@ -303,6 +331,8 @@ type Preferences = (
     (bool, Option<koru_spell::SpellLang>, bool),
     (Option<u32>, Option<u32>, u8),
     (Option<u32>, Option<u32>),
+    koru_settings::TextRenderingPreferences,
+    u16,
 );
 
 fn snapshot(settings: &Settings) -> Preferences {
@@ -310,6 +340,7 @@ fn snapshot(settings: &Settings) -> Preferences {
         (
             settings.theme,
             settings.caret_color,
+            settings.caret_color_dark,
             settings.caret_width,
             settings.caret_height,
             settings.icon_pack,
@@ -351,6 +382,8 @@ fn snapshot(settings: &Settings) -> Preferences {
             settings.scroll_speed,
         ),
         (settings.accent_color_light, settings.accent_color_dark),
+        settings.text_rendering,
+        settings.heading_weight,
     )
 }
 

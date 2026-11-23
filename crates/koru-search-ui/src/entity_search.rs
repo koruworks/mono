@@ -54,7 +54,7 @@ pub struct EntityDocument {
     pub node: Option<String>,
     pub title: String,
     pub breadcrumb: String,
-    /// Manifest kind of the hit (`document` / `file`). Defaults to document
+    /// Manifest kind of the hit (`page`, `file`, `canvas`, etc.). Defaults to `document`
     /// when the store left it blank (older indexes).
     pub kind: String,
     pub mime: Option<String>,
@@ -139,6 +139,16 @@ impl EntitySearch {
         } else {
             SearchReader::start(root).ok()
         };
+        Self::with_reader(reader)
+    }
+
+    /// Identity-free chrome can retain the picker state without discovering
+    /// or listing any content. A content host uses `new_at` instead.
+    pub fn without_reader() -> Self {
+        Self::with_reader(None)
+    }
+
+    fn with_reader(reader: Option<SearchReader>) -> Self {
         if let Some(reader) = &reader {
             reader.request_catalog();
         }

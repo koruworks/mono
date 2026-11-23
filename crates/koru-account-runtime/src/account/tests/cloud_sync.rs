@@ -1042,6 +1042,7 @@ fn complimentary_access_starts_a_created_profile_without_a_subscription() {
             request_id: 21,
             current: Some(false),
             access: Some(true),
+            subscription_kind: Some(koru_agent_wire::CloudSubscriptionKind::Complimentary),
         }
     );
     let rows = fixture.inspect().unwrap();
@@ -1125,6 +1126,7 @@ fn a_full_koru_free_keeps_the_intention_without_asking_on_every_pass() {
             request_id: 21,
             current: Some(true),
             access: Some(true),
+            subscription_kind: Some(koru_agent_wire::CloudSubscriptionKind::Active),
         }
     );
     let rows = fixture.inspect().unwrap();

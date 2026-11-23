@@ -140,6 +140,15 @@ non-synthetic initial presses. The inspector's controls also ignore synthetic
 keyboard events, so held Enter/Space/Escape cannot activate on focus transfer.
 There is no time-based debounce; the next deliberate press remains immediate.
 
+`koru-window`'s runners translate a `KeyboardInput` before an application sees
+it, and the translated record has `repeat` but not `is_synthetic`. An
+application on the multi-window runner that opens or closes a window on a key
+therefore reads the flag from `MultiWindowApp::raw_event`, which is handed the
+untranslated event first. Read from the source rather than measured: the key
+quarantine would not cover this case, because it ends on any release of the
+key, and the window losing focus is sent a synthetic *release* before the
+synthetic press reaches the window gaining it.
+
 ### Queued keyboard modifiers are not the keys held now
 
 The M3 reminder run delivered Ctrl+A as a literal `a`: the native batch was
@@ -452,6 +461,15 @@ images, and `outer_position` / `inner_size` for remembering geometry.
 called, but it now only reaches the parts of the frame we do not draw ourselves.
 
 ## Where to look
+
+Koru patches winit 0.30.13's desktop IME lifetime boundaries without changing its
+public API. Permission changes retire queued native input before the host reuses
+the window for another editor or selection. An idle stream need not emit
+`Disabled`; hosts reset with disable/enable and await a fresh native `Enabled`
+without blocking ordinary key text. Windows emits `Enabled` on composition
+start, not as a setter acknowledgement. The backend rules, cancellation limits,
+test commands and native acceptance cases are in
+[the patch notes](../../../third-party/patches/winit.md).
 
 - `crates/koru-workspace-host/src/app.rs` — the entire winit surface of this project
 - `crates/koru-editor/src/input/keymap.rs` — `ctrl_letter`, and the key map those traps shaped

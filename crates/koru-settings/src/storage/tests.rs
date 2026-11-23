@@ -12,6 +12,28 @@ use super::*;
 use crate::sections::GlobalSettings;
 
 #[test]
+fn caret_colors_round_trip_independently_and_old_settings_still_read() {
+    let mut settings = GlobalSettings::default();
+    apply_preferences("caret_color=blue\n", &mut settings);
+    assert_eq!(settings.caret_color, CaretColorChoice::Blue);
+    assert_eq!(settings.caret_color_dark, CaretColorChoice::Default);
+    let patch = crate::GlobalPatch {
+        caret_color_dark: Some(CaretColorChoice::Violet),
+        ..Default::default()
+    };
+    assert!(patch.touches_roaming());
+    patch.apply(&mut settings);
+    let written = render_preferences(&settings, &PreferencesFile::default());
+    let mut loaded = GlobalSettings::default();
+    apply_preferences(&written, &mut loaded);
+    assert_eq!(loaded, settings);
+    let mut old = serde_json::to_value(settings).unwrap();
+    old.as_object_mut().unwrap().remove("caret_color_dark");
+    let old: GlobalSettings = serde_json::from_value(old).unwrap();
+    assert_eq!(old.caret_color_dark, CaretColorChoice::Default);
+}
+
+#[test]
 fn icon_pack_round_trips_without_changing_other_preferences() {
     for choice in crate::IconPackChoice::ALL {
         let mut settings = GlobalSettings::default();
@@ -226,7 +248,7 @@ fn a_written_file_is_v2_and_carries_no_legacy_dark_key() {
         "# Koru preferences. These follow you, not a folder and not a machine.\nversion=2\n"
     ));
     assert!(
-        !written.contains("dark="),
+        !written.lines().any(|line| line.starts_with("dark=")),
         "a pre-theme build's `dark=` was on every save, so it was never a \
          choice; it is dropped rather than migrated"
     );
@@ -243,6 +265,19 @@ fn a_written_file_carries_every_key_the_authority_owns() {
         headings_font: FontSetting::Chosen(FontFamily::Nunito),
         code_font: FontSetting::Chosen(FontFamily::Mono),
         chat_font: FontSetting::Chosen(FontFamily::SourceSerif4),
+        // Raster defaults are absent; these explicit non-default values
+        // exercise every owned override on Windows and on other platforms.
+        text_hinting_dark: false,
+        text_antialiasing_dark: crate::TextAntialiasing::Msaa8,
+        text_offset_dark: 0.25,
+        text_gamma_dark: 1.1,
+        text_cutoff_dark: 0.02,
+        text_hinting: false,
+        heading_weight: 500,
+        text_antialiasing: crate::TextAntialiasing::Msaa8,
+        text_offset: 0.25,
+        text_gamma: 1.1,
+        text_cutoff: 0.02,
         // A pack that follows the default is absent on purpose, like a font.
         icon_pack: Some(crate::IconPackChoice::Lucide),
         // So is a document size that follows the default.

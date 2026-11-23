@@ -147,7 +147,7 @@ impl Stepper {
             root,
             &layout,
             self.readout.x + (self.readout.w - layout.width()) * 0.5,
-            self.readout.y + (self.readout.h - scene::first_line_height(&layout)) * 0.5,
+            scene::centre_y_in(&layout, self.readout),
             theme::role::row(),
             "theme::role::row()",
             p.text.multiply_alpha(alpha),

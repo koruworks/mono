@@ -622,6 +622,7 @@ fn a_doubly_seeded_note_is_folded_back_to_one_root_on_open() {
         2,
         "the race duplicated the document root"
     );
+    let duplicate = a.children(Parent::Root).unwrap()[1];
 
     // Opening that state folds it back to the one root readers already show,
     // keeps both seeds' content, and reports the write so it is published.
@@ -634,8 +635,14 @@ fn a_doubly_seeded_note_is_folded_back_to_one_root_on_open() {
     );
     assert_eq!(
         a.children(Parent::Node(roots[0])).unwrap().len(),
-        2,
-        "both seed paragraphs survived the fold"
+        3,
+        "both seed paragraphs and the duplicate title identity survived the fold"
+    );
+    assert_eq!(a.read(duplicate).unwrap().kind, Kind::Paragraph);
+    assert!(
+        a.children(Parent::Node(roots[0]))
+            .unwrap()
+            .contains(&duplicate)
     );
     assert!(
         !w.seed_empty_document(note, &mut a),

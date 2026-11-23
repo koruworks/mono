@@ -13,6 +13,105 @@
 use super::*;
 
 #[test]
+fn collapsed_rail_previews_without_resizing_content_and_fades_on_exit() {
+    let _guard = crate::tests::lock_theme();
+    let (mut view, _) = super::harness::container();
+    view.sidebar.set_immediately(false);
+    view.relayout();
+    let content = view.content();
+    assert_eq!(view.rail_area().w, theme::RAIL_W);
+    let app = view.explore.apps_rail_rects(view.rail_area()).apps[0].1;
+    let (x, y) = app.centre();
+    assert!(view.preview_pointer(x, y));
+    assert!(view.explore_preview);
+    assert!(!view.sidebar.is_open());
+    assert_eq!(view.content(), content);
+    let panel = view.explore_preview_rect();
+    assert_eq!(view.hit_at(panel.x + 10.0, panel.y + 10.0), Hit::Sidebar);
+    view.preview_pointer(panel.x - 2.0, panel.y + 10.0);
+    assert!(
+        view.explore_preview_fade.is_none(),
+        "the gap is traversable"
+    );
+    view.preview_pointer(panel.x + panel.w + 30.0, panel.y + 10.0);
+    assert!(view.explore_preview_fade.is_some());
+    view.preview_pointer(panel.x + 10.0, panel.y + 10.0);
+    assert!(
+        view.explore_preview_fade.is_none(),
+        "returning cancels dismissal"
+    );
+    view.mouse_move(-1.0, -1.0);
+    assert!(
+        view.explore_preview_fade.is_some(),
+        "leaving the window dismisses the preview"
+    );
+    view.explore_preview_fade = Some(Instant::now() - std::time::Duration::from_millis(200));
+    assert_eq!(view.preview_alpha(), 0.0);
+    assert!(!view.explore_preview);
+    assert!(
+        view.explore_preview_fade.is_none(),
+        "idle does not keep repainting"
+    );
+    assert_eq!(view.content(), content);
+}
+
+#[test]
+fn keyboard_preview_waits_two_seconds_for_entry_without_following_the_pointer() {
+    for reduced_motion in [false, true] {
+        let (mut view, _) = super::harness::container();
+        view.reduced_motion = reduced_motion;
+        view.pointer = (900.0, 400.0);
+        view.show_rail_slot(2);
+        let due = view
+            .explore_preview_deadline
+            .expect("keyboard grace period");
+        view.preview_pointer(950.0, 410.0);
+        assert!(view.explore_preview_fade.is_none());
+        assert!(!view.maintain_explore_preview(due - Duration::from_millis(1)));
+        assert!(view.explore_preview);
+        assert!(view.maintain_explore_preview(due));
+        assert!(view.explore_preview_deadline.is_none());
+        if reduced_motion {
+            assert!(!view.explore_preview);
+        } else {
+            assert_eq!(view.explore_preview_fade, Some(due));
+        }
+    }
+}
+
+#[test]
+fn entering_a_keyboard_preview_returns_to_normal_hover_dismissal() {
+    let (mut view, _) = super::harness::container();
+    view.pointer = (900.0, 400.0);
+    view.show_rail_slot(2);
+    assert!(view.explore_preview_deadline.is_some());
+    let panel = view.explore_preview_rect();
+    view.mouse_move(panel.x + 20.0, panel.y + 20.0);
+    assert!(view.explore_preview_deadline.is_none());
+    view.mouse_move(900.0, 400.0);
+    assert!(view.explore_preview_fade.is_some());
+}
+
+#[test]
+fn keyboard_navigation_refreshes_the_preview_deadline() {
+    let (mut view, mut workspace) = super::harness::on_document();
+    view.pointer = (900.0, 400.0);
+    view.show_rail_slot(2);
+    let old = Instant::now() + Duration::from_millis(100);
+    view.explore_preview_deadline = Some(old);
+    assert!(view.key(
+        &mut workspace.ws,
+        &Key::Named(winit::keyboard::NamedKey::ArrowDown),
+        None,
+        ModifiersState::empty(),
+    ));
+    assert!(view.explore_preview_deadline.unwrap() > old + Duration::from_secs(1));
+    assert!(view.explore_preview_fade.is_none());
+    view.toggle_sidebar();
+    assert!(view.explore_preview_deadline.is_none());
+}
+
+#[test]
 fn ocr_text_opens_reuses_and_closes_as_a_tab_without_a_modal() {
     use koru_workspace_host::{View, reading_details};
     let (mut view, _) = super::harness::container();
@@ -118,7 +217,7 @@ fn socials_focuses_one_tab_and_keeps_it_out_of_document_reuse() {
     assert!(matches!(view.tabs().active_tab().view, TabView::Socials(_)));
     assert!(!view.tabs().active_tab().is_reusable());
     assert!(view.explore.showing_socials());
-    assert!(view.sidebar.is_open());
+    assert!(!view.sidebar.is_open());
     let shared = view.explore.socials().expect("navigator owns the surface");
     assert!(view.open_socials_tab());
     assert_eq!(view.tabs().len(), count);
@@ -165,7 +264,9 @@ fn manager_wrapper_focus_refreshes_only_the_visible_cloud_card() {
     let mut main = MainView::new();
     main.open_manage(crate::manage::Page::Cloud);
     while View::take_pane_request(&mut main).is_some() {}
-    let TabView::Manage(card) = &mut main.tabs_mut().active_mut().view else {
+    let TabView::Settings(crate::settings_view::SettingsView { manage: card, .. }) =
+        &mut main.tabs_mut().active_mut().view
+    else {
         panic!("manager");
     };
     card.delegate(|c| {
@@ -191,6 +292,7 @@ fn manager_wrapper_focus_refreshes_only_the_visible_cloud_card() {
                         request_id,
                         current: Some(true),
                         access: Some(true),
+                        subscription_kind: None,
                     },
                 )
             });
@@ -4500,7 +4602,7 @@ fn a_press_on_the_overhang_reaches_the_profile_row() {
     assert!(!v.explore.popover_open(), "switching closes the list");
     assert_eq!(
         v.explore.popover_rects(sb, vp).first().map(|(row, _)| *row),
-        Some(crate::panes::explore::PopoverRow::ProfilesHeading),
+        Some(crate::panes::explore::PopoverRow::Profile(0)),
         "still the Profiles page"
     );
 }
@@ -4527,11 +4629,7 @@ fn the_chip_and_the_square_open_their_own_pages_and_shut_them() {
     let (sx, sy) = v.explore.apps_rail_rects(rail).profile.centre();
     v.mouse_down(&mut w.ws, sx, sy, false);
     assert!(v.explore.popover_open(), "the square opens its page");
-    assert_eq!(
-        first(&v),
-        Some(PopoverRow::ProfilesHeading),
-        "the Profiles page"
-    );
+    assert_eq!(first(&v), Some(PopoverRow::Profile(0)), "the Profiles page");
 
     v.mouse_down(&mut w.ws, sx, sy, false);
     assert!(!v.explore.popover_open(), "the square shuts it");
@@ -4583,8 +4681,7 @@ fn the_chip_and_the_help_open_whichever_app_is_showing() {
         assert!(!v.explore.popover_open(), "the square shuts it on {mode:?}");
         v.explore
             .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
-        let (hx, hy) = rail.help.centre();
-        v.mouse_down(&mut w.ws, hx, hy, false);
+        press_help(&mut v, &mut w);
         assert!(
             v.explore
                 .popover_is(crate::panes::explore::PopoverKind::Help),
@@ -5676,6 +5773,566 @@ fn typing_while_the_document_is_being_created_keeps_the_letters_in_order() {
     );
 }
 
+/// A Store-shaped creation answer, without the old harness's extra Shift
+/// key. The real host stamps the new document and delivers its completion
+/// only to the source view; later ready drains use the same mutable callback.
+fn answer_draft_without_next_key(v: &mut MainView, ws: &mut WorkspaceDoc) -> NodeId {
+    let root = answer_draft_before_frame(v, ws);
+    v.size_visible_groups();
+    root
+}
+
+fn answer_draft_before_frame(v: &mut MainView, ws: &mut WorkspaceDoc) -> NodeId {
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    let scope = ws.id().unwrap();
+    let (profile, workspace) = v.draft_scope().unwrap();
+    let cutting = v
+        .draft_document_content(profile, Some(workspace))
+        .unwrap()
+        .unwrap();
+    *ws = WorkspaceDoc::create(scope, "fixture").unwrap();
+    let document = koru_core::DocumentId::new();
+    ws.stamp_document_id(document).unwrap();
+    let root = koru_workspace::initialize_document_from_cutting(ws, &cutting, "").unwrap();
+    assert!(v.created_document(ws, document));
+    root
+}
+
+#[test]
+fn draft_atomic_input_is_adopted_without_another_key() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let original = workspace.ws.version();
+    assert!(v.key(
+        &mut workspace.ws,
+        &ch("A2UI Alpha"),
+        Some("A2UI Alpha"),
+        NONE
+    ));
+    assert_eq!(
+        workspace.ws.version(),
+        original,
+        "typing belongs to the private draft"
+    );
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "A2UI Alpha");
+    let TabView::Leaf(leaf) = &v.tabs().active_tab().view else {
+        panic!("document")
+    };
+    assert_eq!(leaf.caret_spot(), Some((0, "A2UI Alpha".len())));
+    assert!(v.tabs().active_tab().draft.is_none());
+    assert!(v.take_pane_request().is_none(), "exactly one creation");
+}
+
+#[test]
+fn draft_adoption_defers_metadata_layout_and_first_input_restores_the_caret() {
+    for native in [false, true] {
+        let (mut v, mut workspace) = container();
+        v.new_tab();
+        v.key(&mut workspace.ws, &ch("First"), Some("First"), NONE);
+        // Changed presentation context used to trigger construction-time reflow.
+        v.entity_titles
+            .insert("fixture-entity".into(), "Fixture title".into());
+        let root = answer_draft_before_frame(&mut v, &mut workspace.ws);
+        let tab = v.tabs().active_tab();
+        assert!(tab.sized.is_none());
+        let TabView::Leaf(leaf) = &tab.view else {
+            panic!("document")
+        };
+        assert_eq!(
+            leaf.view().reflows,
+            0,
+            "adoption does not shape hidden rows"
+        );
+        // Deliberately no frame/size helper between adoption and this event.
+        if native {
+            let target = v.ime_target().unwrap().id;
+            assert!(v.ime(
+                &mut workspace.ws,
+                target,
+                &winit::event::Ime::Commit(" next".into())
+            ));
+        } else {
+            v.key(&mut workspace.ws, &ch(" next"), Some(" next"), NONE);
+        }
+        assert_eq!(koru_workspace::name_of(&workspace.ws, root), "First next");
+    }
+}
+
+#[test]
+fn draft_runtime_scope_is_checked_before_the_host_creates_anything() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+    let scope = v.draft_scope().unwrap();
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    assert!(
+        v.draft_document_content(scope.0, Some(scope.1))
+            .unwrap()
+            .is_ok()
+    );
+    assert!(
+        v.draft_document_content(ProfileId::new(), Some(scope.1))
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        v.draft_document_content(scope.0, Some(WorkspaceId::new()))
+            .unwrap()
+            .is_err()
+    );
+    assert!(v.draft_document_content(scope.0, None).unwrap().is_err());
+    v.create_document_failed();
+    v.pane_context.as_mut().unwrap().1 = ProfileId::new();
+    v.promote_draft();
+    assert_eq!(
+        v.queued_drafts.front().unwrap().scope,
+        Some(scope),
+        "a retry retains the original scope"
+    );
+    assert!(v.take_pane_request().is_none());
+    assert!(!v.prepare_document_creation_close());
+    assert_eq!(
+        v.tabs().active_tab().draft.as_ref().unwrap().origin_scope,
+        Some(scope)
+    );
+}
+
+#[test]
+fn draft_requires_a_real_workspace_before_accepting_editable_input() {
+    let (mut v, _) = container();
+    v.pane_context.as_mut().unwrap().3 = None;
+    let count = v.tabs().len();
+    v.new_tab();
+    assert_eq!(v.tabs().len(), count);
+    assert!(v.tabs().active_tab().draft.is_none());
+}
+
+#[test]
+fn draft_native_commit_stays_private_then_adopts_without_another_key() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let target = v.ime_target().unwrap().id;
+    let global = workspace.ws.version();
+    let private = v
+        .tabs()
+        .active_tab()
+        .draft
+        .as_ref()
+        .unwrap()
+        .workspace
+        .ws
+        .version();
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    assert_eq!(
+        v.tabs()
+            .active_tab()
+            .draft
+            .as_ref()
+            .unwrap()
+            .workspace
+            .ws
+            .version(),
+        private
+    );
+    assert!(
+        v.take_pane_request().is_none(),
+        "preedit does not create content"
+    );
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit(String::new(), None)
+    ));
+    assert!(v.ime(&mut workspace.ws, target, &Ime::Commit("題名".into())));
+    assert_eq!(
+        workspace.ws.version(),
+        global,
+        "the real document was not edited"
+    );
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "題名");
+    let TabView::Leaf(leaf) = &v.tabs().active_tab().view else {
+        panic!("document")
+    };
+    assert_eq!(leaf.caret_spot(), Some((0, "題名".len())));
+    assert_ne!(leaf.native_ime_owner(), target.owner);
+    assert!(v.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_creation_waits_for_preedit_and_preserves_latest_commit() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("A"), Some("A"), NONE);
+    let target = v.ime_target().unwrap().id;
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    let created = workspace.ws.version();
+    v.maintain(&mut workspace.ws, Instant::now());
+    assert!(v.take_pane_request().is_none());
+    assert_eq!(v.ime_target().unwrap().id, target);
+    assert_eq!(workspace.ws.version(), created);
+    // An empty preedit still owns the replacement anchor until Commit.
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit(String::new(), None)
+    ));
+    v.maintain(&mut workspace.ws, Instant::now());
+    assert!(v.take_pane_request().is_none());
+    assert_eq!(v.ime_target().unwrap().id, target);
+    assert!(v.ime(&mut workspace.ws, target, &Ime::Commit("確定".into())));
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "A確定");
+    assert!(v.tabs().active_tab().draft.is_none());
+}
+
+#[test]
+fn draft_native_cancel_after_tab_switch_uses_original_private_document() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let original_tab = v.tabs().active();
+    let target = v.ime_target().unwrap().id;
+    let global = workspace.ws.version();
+    assert!(v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    v.new_tab();
+    assert!(v.ime(&mut workspace.ws, target, &Ime::Disabled));
+    let TabView::Leaf(leaf) = &v.tabs().get(original_tab).unwrap().view else {
+        panic!("draft")
+    };
+    assert!(leaf.body().composition().is_none());
+    assert_eq!(leaf.body().rows[0].text, "");
+    assert_eq!(workspace.ws.version(), global);
+    assert!(v.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_adoption_after_tab_switch_keeps_the_original_tab() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let original_tab = v.tabs().active();
+    v.key(&mut workspace.ws, &ch("Original"), Some("Original"), NONE);
+    v.new_tab();
+    let focused = v.tabs().active_tab().id;
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Original");
+    assert_eq!(v.tabs().active_tab().id, focused);
+    assert!(v.tabs().active_tab().draft.is_some());
+    assert!(v.tabs().get(original_tab).unwrap().draft.is_none());
+}
+
+#[test]
+fn draft_two_windows_and_unrelated_completions_keep_their_origins() {
+    use winit::event::Ime;
+    let (mut a, mut global) = container();
+    let (mut b, _) = container();
+    b.pane_context = a.pane_context.clone();
+    a.new_tab();
+    b.new_tab();
+    a.key(&mut global.ws, &ch("A"), Some("A"), NONE);
+    b.key(&mut global.ws, &ch("B"), Some("B"), NONE);
+    let owner = a.ime_target().unwrap().id;
+    assert!(a.ime(
+        &mut global.ws,
+        owner,
+        &Ime::Preedit("仮".into(), Some((3, 3)))
+    ));
+    assert!(a.take_pane_request().is_none());
+    assert!(a.promoting.is_none());
+    let root_b = answer_draft_without_next_key(&mut b, &mut global.ws);
+    let id_b = global.ws.stamped_document_id().unwrap();
+    assert!(!a.show_active_document(&global.ws, Some(id_b)));
+    assert!(
+        !a.created_document(&mut global.ws, id_b),
+        "unrelated/Agent completion has no dispatched draft"
+    );
+    let global_before = global.ws.version();
+    assert!(a.ime(&mut global.ws, owner, &Ime::Commit("確定".into())));
+    assert_eq!(global.ws.version(), global_before);
+    assert_eq!(koru_workspace::name_of(&global.ws, root_b), "B");
+    assert_eq!(global.ws.version(), global_before);
+    let root_a = answer_draft_without_next_key(&mut a, &mut global.ws);
+    let id_a = global.ws.stamped_document_id().unwrap();
+    assert_ne!(id_a, id_b);
+    assert_eq!(koru_workspace::name_of(&global.ws, root_a), "A確定");
+    assert_eq!(a.tabs().active_tab().document, Some(id_a));
+    assert_eq!(b.tabs().active_tab().document, Some(id_b));
+    assert!(a.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_second_atomic_input_is_rearmed_after_first_creation() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let first = v.tabs().active();
+    v.key(&mut workspace.ws, &ch("First"), Some("First"), NONE);
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Second"), Some("Second"), NONE);
+    assert_eq!(v.queued_drafts.len(), 2);
+    let first_root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, first_root), "First");
+    assert!(v.tabs().get(first).unwrap().draft.is_none());
+    let second_root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(
+        koru_workspace::name_of(&workspace.ws, second_root),
+        "Second"
+    );
+    assert!(v.tabs().active_tab().draft.is_none());
+    assert!(v.take_pane_request().is_none());
+}
+
+#[test]
+fn draft_creation_refuses_changed_profile_or_workspace() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+    let original_scope = v.pane_context.clone();
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    let id = koru_core::DocumentId::new();
+    let mut other = WorkspaceDoc::create(WorkspaceId::new(), "other").unwrap();
+    let root = other
+        .insert(Parent::Root, Node::document("").unwrap())
+        .unwrap();
+    other.stamp_document_id(id).unwrap();
+    let before = other.version();
+    assert!(
+        v.created_document(&mut other, id),
+        "the dispatched result is consumed but refused"
+    );
+    assert_eq!(other.version(), before);
+    assert!(v.tabs().active_tab().draft.as_ref().unwrap().authored);
+    v.promote_draft();
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    v.pane_context.as_mut().unwrap().1 = ProfileId::new();
+    other
+        .stamp_workspace_id(workspace.ws.id().unwrap())
+        .unwrap();
+    let before = other.version();
+    assert!(v.created_document(&mut other, id));
+    assert_eq!(other.version(), before);
+    assert_eq!(koru_workspace::name_of(&other, root), "Untitled");
+    v.pane_context = original_scope;
+    v.promote_draft();
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Kept");
+}
+
+#[test]
+fn draft_plain_paste_uses_private_authority_and_promotes_without_a_key() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    let before = workspace.ws.version();
+    View::paste_text(&mut v, &mut workspace.ws, "Pasted title");
+    assert_eq!(workspace.ws.version(), before);
+    assert!(v.tabs().active_tab().draft.as_ref().unwrap().authored);
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Pasted title");
+}
+
+#[test]
+fn draft_rich_paste_preserves_marks_nesting_and_blank_rows() {
+    use koru_workspace_host::{RichBlock, RichTextBlock, RichTextRun};
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &enter(), None, NONE);
+    let before = workspace.ws.version();
+    let blocks = vec![
+        RichBlock::CalloutStart {
+            icon: None,
+            tint: Some("red".into()),
+        },
+        RichBlock::Text(RichTextBlock {
+            text: "Bold".into(),
+            runs: vec![RichTextRun {
+                start: 0,
+                end: 4,
+                marks: koru_core::MarkSet {
+                    bold: true,
+                    ..Default::default()
+                },
+            }],
+            ..Default::default()
+        }),
+        RichBlock::Text(RichTextBlock::from_text("")),
+        RichBlock::CalloutEnd,
+        RichBlock::Text(RichTextBlock::from_text("After")),
+    ];
+    View::paste_rich(&mut v, &mut workspace.ws, None, &blocks);
+    assert_eq!(workspace.ws.version(), before);
+    fn tree(
+        ws: &WorkspaceDoc,
+        id: NodeId,
+    ) -> Vec<(usize, koru_core::node::Node, Vec<koru_core::TextRun>)> {
+        fn walk(
+            ws: &WorkspaceDoc,
+            id: NodeId,
+            depth: usize,
+            out: &mut Vec<(usize, koru_core::node::Node, Vec<koru_core::TextRun>)>,
+        ) {
+            let node = ws.read(id).unwrap();
+            let runs = if node.content.as_text().is_some() {
+                ws.runs(id).unwrap()
+            } else {
+                Vec::new()
+            };
+            out.push((depth, node, runs));
+            for child in ws.children(Parent::Node(id)).unwrap() {
+                walk(ws, child, depth + 1, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(ws, id, 0, &mut out);
+        out
+    }
+    let tab = v.tabs().active_tab();
+    let TabView::Leaf(leaf) = &tab.view else {
+        panic!("draft")
+    };
+    let expected = tree(
+        &tab.draft.as_ref().unwrap().workspace.ws,
+        leaf.document_root().unwrap(),
+    );
+    assert!(
+        expected
+            .iter()
+            .any(|(_, _, runs)| runs.iter().any(|run| run.bold))
+    );
+    assert!(expected.iter().any(|(depth, _, _)| *depth > 1));
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    let actual = tree(&workspace.ws, root);
+    assert_eq!(actual.len(), expected.len());
+    for ((ad, a, ar), (ed, e, er)) in actual.iter().zip(&expected) {
+        assert_eq!(ad, ed);
+        assert_eq!(a.kind, e.kind);
+        assert_eq!(a.content, e.content);
+        assert_eq!(a.meta, e.meta);
+        assert_eq!(ar, er);
+        assert_ne!(a.id, e.id, "private identities are reminted");
+    }
+}
+
+#[test]
+fn draft_ordinary_creation_ahead_of_it_cannot_claim_the_private_source() {
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Private"), Some("Private"), NONE);
+    v.pane_requests
+        .push_back(PaneRequest::CreateDocument("Ordinary".into()));
+    assert!(
+        matches!(v.take_pane_request(), Some(PaneRequest::CreateDocument(name)) if name == "Ordinary")
+    );
+    assert!(v.promoting.is_none());
+    let id = koru_core::DocumentId::new();
+    assert!(!v.created_document(&mut workspace.ws, id));
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Private");
+}
+
+#[test]
+fn draft_failed_creation_retains_authored_work_and_teardown_retries_after_cancel() {
+    use winit::event::Ime;
+    let (mut v, mut workspace) = container();
+    v.new_tab();
+    v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+    assert!(matches!(
+        v.take_pane_request(),
+        Some(PaneRequest::CreateDocument(_))
+    ));
+    v.create_document_failed();
+    assert!(v.promoting.is_none());
+    assert!(v.queued_drafts.is_empty());
+    let target = v.ime_target().unwrap().id;
+    v.ime(
+        &mut workspace.ws,
+        target,
+        &Ime::Preedit("provisional".into(), Some((11, 11))),
+    );
+    let count = v.tabs().len();
+    assert!(!v.prepare_document_creation_close());
+    assert_eq!(v.tabs().len(), count);
+    assert!(!v.is_poppable(v.tabs().active()));
+    let TabView::Leaf(leaf) = &v.tabs().active_tab().view else {
+        panic!("draft")
+    };
+    assert!(leaf.body().composition().is_none());
+    assert_eq!(leaf.body().rows[0].text, "Kept");
+    assert_eq!(v.queued_drafts.len(), 1);
+    assert!(!v.prepare_document_creation_close());
+    assert_eq!(v.queued_drafts.len(), 1);
+    let root = answer_draft_without_next_key(&mut v, &mut workspace.ws);
+    assert_eq!(koru_workspace::name_of(&workspace.ws, root), "Kept");
+    assert!(v.prepare_document_creation_close());
+}
+
+#[test]
+fn draft_authored_work_survives_individual_and_bulk_tab_close_paths() {
+    for action in 0..6 {
+        let (mut v, mut workspace) = container();
+        v.new_tab();
+        let draft_index = v.tabs().active();
+        v.key(&mut workspace.ws, &ch("Kept"), Some("Kept"), NONE);
+        let draft_id = v.tabs().active_tab().id;
+        v.new_tab();
+        let right = v.tabs().active();
+        let count = v.tabs().len();
+        match action {
+            0 => {
+                v.close(draft_index);
+            }
+            1 => {
+                v.close_requested(draft_index);
+            }
+            2 => {
+                v.close_all();
+            }
+            3 => {
+                v.close_others(right);
+            }
+            4 => {
+                v.close_left(right);
+            }
+            _ => {
+                v.close_right(draft_index - 1);
+            }
+        }
+        assert_eq!(v.tabs().len(), count, "close route {action}");
+        let tab = v.tabs().iter().find(|tab| tab.id == draft_id).unwrap();
+        assert!(tab.draft.as_ref().unwrap().authored);
+        let TabView::Leaf(leaf) = &tab.view else {
+            panic!("draft")
+        };
+        assert_eq!(leaf.body().rows[0].text, "Kept");
+        assert_eq!(v.queued_drafts.len(), 1);
+    }
+}
+
 /// The same guarantee one row down: a caret in the *body* of a draft is a caret
 /// somewhere, and the swap has to put it back there too. It was lost outright
 /// before, because what crossed the swap was a `bool` meaning "in the title".
@@ -6202,7 +6859,7 @@ fn the_zoom_steppers_controls_zoom_and_leave_the_menu_open() {
         // pointer path is checked on the two that are live there. What all
         // three ask for is `each_zoom_control_names_the_action_it_takes`, and
         // the verb each one runs is the arm below.
-        for (control, expected) in [(0, ZoomIntent::Out), (2, ZoomIntent::In)] {
+        for (control, expected) in [(1, ZoomIntent::Out), (3, ZoomIntent::In)] {
             let (mut v, mut workspace) = container();
             let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
             v.mouse_down(&mut workspace.ws, x, y, false);
@@ -6248,6 +6905,96 @@ fn the_three_zoom_actions_each_ask_the_shell_for_their_own_move() {
     }
 }
 
+#[test]
+fn window_theme_segments_change_the_shared_preference_without_closing() {
+    crate::tests::with_menu(true, || {
+        let original = theme::theme_preference();
+        let (mut v, mut workspace) = container();
+        let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
+        v.mouse_down(&mut workspace.ws, x, y, false);
+        for (index, preference) in [
+            theme::ThemePreference::System,
+            theme::ThemePreference::Light,
+            theme::ThemePreference::Dark,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let menu = v.menu.as_ref().unwrap();
+            let row = menu
+                .items()
+                .iter()
+                .position(|item| *item == MenuAction::HeaderTheme)
+                .unwrap();
+            let (x, y) = menu.control_rect(v.viewport, row, index).unwrap().centre();
+            v.mouse_down(&mut workspace.ws, x, y, false);
+            assert_eq!(theme::theme_preference(), preference);
+            assert!(v.window_menu_open());
+        }
+        theme::set_theme_preference(original);
+    });
+}
+
+#[test]
+fn window_pin_switch_tracks_the_host_without_closing_the_menu() {
+    crate::tests::with_menu(true, || {
+        let (mut v, mut workspace) = container();
+        let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
+        v.mouse_down(&mut workspace.ws, x, y, false);
+        for pinned in [false, true] {
+            v.set_pinned(pinned);
+            let menu = v.menu.as_ref().unwrap();
+            let index = menu
+                .items()
+                .iter()
+                .position(|action| {
+                    matches!(
+                        action,
+                        MenuAction::WindowAlwaysOnTop | MenuAction::WindowUnpinTop
+                    )
+                })
+                .unwrap();
+            let action = menu.items()[index];
+            assert!(
+                matches!(koru_ui::MenuItem::controls(&action)[0], koru_ui::Control::Toggle { on } if on == pinned)
+            );
+            let (x, y) = menu.control_rect(v.viewport, index, 0).unwrap().centre();
+            v.mouse_down(&mut workspace.ws, x, y, false);
+            assert_eq!(v.take_window_request(), Some(WindowRequest::TogglePin));
+            assert!(v.window_menu_open());
+        }
+    });
+}
+
+#[test]
+fn window_menu_labeled_controls_fit_in_each_language() {
+    crate::tests::with_menu(true, || {
+        for lang in koru_i18n::Lang::ALL {
+            koru_i18n::with_current(lang, || {
+                let (mut v, mut workspace) = container();
+                let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
+                v.mouse_down(&mut workspace.ws, x, y, false);
+                let menu = v.menu.as_ref().unwrap();
+                for (index, action) in menu.items().iter().enumerate() {
+                    let row = menu.item_rect(v.viewport, index);
+                    let controls = koru_ui::MenuItem::controls(action);
+                    let mut end = row.x + 60.0;
+                    for control in 0..controls.len() {
+                        let rect = menu.control_rect(v.viewport, index, control).unwrap();
+                        assert!(
+                            rect.x >= end,
+                            "{lang:?} {action:?} reserves its label and separates controls"
+                        );
+                        assert!(rect.x + rect.w <= row.x + row.w);
+                        assert!(rect.y >= row.y && rect.y + rect.h <= row.y + row.h);
+                        end = rect.x + rect.w;
+                    }
+                }
+            });
+        }
+    });
+}
+
 /// The readout is not a button, and neither is a control at the end of its
 /// range: pressing either must neither zoom nor dismiss. The press is still
 /// swallowed — falling through would read as a click on the panel and take the
@@ -6256,7 +7003,7 @@ fn the_three_zoom_actions_each_ask_the_shell_for_their_own_move() {
 fn a_readout_or_a_dimmed_zoom_control_does_nothing_and_keeps_the_menu() {
     crate::tests::with_menu(true, || {
         // The readout, and `↺` — dim because a fresh window is at 100%.
-        for control in [1, 3] {
+        for control in [2, 0] {
             let (mut v, mut workspace) = container();
             let (x, y) = button_rect(&v, CaptionAction::WindowMenu).centre();
             v.mouse_down(&mut workspace.ws, x, y, false);
@@ -6287,10 +7034,12 @@ fn a_readout_or_a_dimmed_zoom_control_does_nothing_and_keeps_the_menu() {
 fn hovering_a_zoom_control_teaches_what_it_does_and_its_chord() {
     crate::tests::with_menu(true, || {
         use koru_keys::ShortcutId;
+        let before = theme::zoom();
+        theme::set_zoom(1.25);
         for (control, id) in [
-            (0, ShortcutId::ZoomOut),
-            (2, ShortcutId::ZoomIn),
-            (3, ShortcutId::ZoomReset),
+            (1, ShortcutId::ZoomOut),
+            (3, ShortcutId::ZoomIn),
+            (0, ShortcutId::ZoomReset),
         ] {
             let (mut v, mut workspace) = container();
             let (bx, by) = button_rect(&v, CaptionAction::WindowMenu).centre();
@@ -6319,6 +7068,7 @@ fn hovering_a_zoom_control_teaches_what_it_does_and_its_chord() {
                 "control {control}"
             );
         }
+        theme::set_zoom(before);
     });
 }
 
@@ -6337,7 +7087,7 @@ fn moving_off_a_zoom_control_takes_its_chip_down() {
             .position(|item| *item == MenuAction::HeaderZoom)
             .expect("the zoom row");
         let (cx, cy) = menu
-            .control_rect(v.viewport, row, 0)
+            .control_rect(v.viewport, row, 1)
             .expect("the − control")
             .centre();
         v.mouse_move(cx, cy);
@@ -6345,7 +7095,7 @@ fn moving_off_a_zoom_control_takes_its_chip_down() {
 
         // The readout, which is not a control — one row, one step sideways.
         let (rx, ry) = menu
-            .control_rect(v.viewport, row, 1)
+            .control_rect(v.viewport, row, 2)
             .expect("the readout")
             .centre();
         v.mouse_move(rx, ry);
@@ -6735,26 +7485,32 @@ fn a_right_click_on_a_workspace_row_opens_its_menu_over_the_page() {
 /// **The rail's App settings tooltip carries its chord**, the way the
 /// lane's controls carry theirs; the `?` has no chord to carry.
 #[test]
-fn the_rails_settings_tooltip_carries_its_chord() {
+fn settings_menu_uses_the_registered_shortcut() {
     let (mut v, _w) = container();
-    v.toggle_sidebar();
-    let rects = v.explore.apps_rail_rects(v.rail_area());
-    let (x, y) = rects.settings.centre();
-    v.mouse_move(x, y);
-    assert_eq!(
-        v.tooltip.label(),
-        Some(koru_i18n::t(
-            crate::format::lang(),
-            koru_i18n::Key::ProfileAppSettings
-        ))
+    v.explore
+        .open_popover(crate::panes::explore::PopoverKind::Profiles);
+    let mut engine = koru_draw::text::TextEngine::new();
+    let panel = v
+        .explore
+        .popover_panel(v.explore_popover_area(), v.viewport)
+        .unwrap();
+    let (tree, frame) = v
+        .explore
+        .page_at(
+            &mut engine,
+            crate::panes::explore::PopoverKind::Profiles,
+            panel,
+            0.0,
+            None,
+            None,
+        )
+        .unwrap();
+    let key = crate::panes::explore::popover_elements::profiles::MenuAction::Settings.key();
+    assert!(frame.node(key).is_some());
+    let _ = tree;
+    assert!(
+        koru_keys::show_hint(koru_keys::ShortcutId::Settings, koru_keys::Section::Menu).is_some()
     );
-    assert_eq!(
-        v.tooltip.shortcut(),
-        Some(koru_keys::label_of(koru_keys::ShortcutId::Settings).as_str())
-    );
-    let (hx, hy) = rects.help.centre();
-    v.mouse_move(hx, hy);
-    assert_eq!(v.tooltip.shortcut(), None, "the ? has no chord");
 }
 
 /// **The profile tile and the chip's tile share a baseline** (the review's
@@ -6777,7 +7533,7 @@ fn the_workspace_and_profile_squares_keep_their_rail_positions() {
 fn the_lane_has_no_plus() {
     let (mut v, _w) = container();
     v.toggle_sidebar();
-    let lane = v.lane_controls();
+    let lane = v.settled_lane_controls();
     assert_eq!(lane.new.w, 0.0, "no New square");
     assert!(lane.search.w > 0.0 && lane.toggle.w > 0.0);
 }
@@ -6800,7 +7556,10 @@ fn rename_from_a_right_click_has_a_row_to_draw_on() {
         "over the page's row, with nothing else showing the workspace"
     );
     assert!(
-        !matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        !matches!(
+            v.tabs().active_tab().view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        ),
         "no Manage tab was needed"
     );
 
@@ -6815,7 +7574,10 @@ fn rename_from_a_right_click_has_a_row_to_draw_on() {
         .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
     v.run_menu_action_for_test(MenuSubject::Workspace(id), MenuAction::Rename);
     assert!(
-        matches!(v.tabs().active_tab().view, TabView::Manage(_)),
+        matches!(
+            v.tabs().active_tab().view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        ),
         "the Manage tab opens on the workspace's Profile"
     );
     assert!(v.workspace_rename.is_some(), "and the field is open");
@@ -6890,7 +7652,9 @@ fn the_sync_settings_tab_opens_once_and_the_rail_opens_settings() {
     let tabs = v.tabs().len();
     assert!(v.open_sync_settings_tab());
     assert_eq!(v.tabs().len(), tabs + 1, "one tab opened");
-    let TabView::Manage(manage) = &v.tabs().active_tab().view else {
+    let TabView::Settings(crate::settings_view::SettingsView { manage, .. }) =
+        &v.tabs().active_tab().view
+    else {
         panic!("Global sync opens Manage");
     };
     assert_eq!(manage.page(), Some(crate::manage::Page::Devices));
@@ -6959,7 +7723,10 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         v.sidebar_drag.is_none(),
         "the underlying grip did not start"
     );
-    assert!(!matches!(v.tabs().active_tab().view, TabView::Manage(_)));
+    assert!(!matches!(
+        v.tabs().active_tab().view,
+        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+    ));
     let _ = workspace_id;
 }
 
@@ -7578,9 +8345,8 @@ fn opening_something_new_after_a_back_truncates_the_forward_branch() {
 /// somewhere arbitrary.
 #[test]
 fn back_from_the_first_place_does_nothing() {
-    let (mut v, mut w) = container();
-    let a = a_document(&mut w.ws, "A");
-    v.open_node(&w.ws, a);
+    let (mut v, w) = on_document();
+    let a = v.document_root().expect("first document");
 
     assert!(!v.navigate_history(&w.ws, -1));
     assert!(!v.navigate_history(&w.ws, 1));
@@ -9081,8 +9847,8 @@ fn dragging_a_list_on_the_rail_writes_the_move() {
     );
 }
 
-/// **`Alt+1..3` show the views in the rail's first three slots**, opening
-/// the column when it is closed, and each icon's tooltip names its view and
+/// **`Alt+1..3` show the views in the rail's first three slots**, preserving
+/// the collapsed column, and each icon's tooltip names its view and
 /// teaches its slot's chord from the registry.
 #[test]
 fn alt_digits_show_the_views_and_the_icons_teach_them() {
@@ -9092,7 +9858,14 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     // The view modifier: Alt, or ⌃⌘ on a Mac (M42).
     let alt = koru_keys::VIEW;
     assert!(v.key(&mut w.ws, &Key::Character("3".into()), Some("3"), alt));
-    assert!(v.sidebar.is_open(), "a view asked for by name is opened");
+    assert!(
+        !v.sidebar.is_open(),
+        "app selection does not dock the explorer"
+    );
+    assert!(
+        v.explore_preview,
+        "the requested view is available in the preview"
+    );
     assert!(v.explore.showing_tasks());
     assert!(v.key(&mut w.ws, &Key::Character("2".into()), Some("2"), alt));
     assert_eq!(v.explore.navigator_mode(), NavigatorMode::Files);
@@ -9134,6 +9907,36 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     let (x, y) = mode_icon(&v, NavigatorMode::Tasks).centre();
     View::mouse_move(&mut v, x, y);
     assert_eq!(v.tooltip.label(), Some("Tasks"));
+}
+
+#[test]
+fn app_clicks_and_slot_shortcuts_preserve_the_explorer_docking_state() {
+    use crate::panes::explore::NavigatorMode;
+    for expanded in [false, true] {
+        let (mut view, mut workspace) = on_document();
+        view.sidebar.set_immediately(expanded);
+        view.relayout();
+        let content = view.content();
+        for mode in [
+            NavigatorMode::Files,
+            NavigatorMode::Tasks,
+            NavigatorMode::Chats,
+        ] {
+            let (x, y) = mode_icon(&view, mode).centre();
+            assert!(view.mouse_down(&mut workspace.ws, x, y, false));
+            view.mouse_up(&mut workspace.ws);
+            assert_eq!(view.explore.navigator_mode(), mode);
+            assert_eq!(view.sidebar.is_open(), expanded);
+            assert_eq!(view.content(), content);
+            assert_eq!(view.explore_preview, !expanded);
+        }
+        for slot in 0..3 {
+            assert!(view.show_rail_slot(slot));
+            assert_eq!(view.sidebar.is_open(), expanded);
+            assert_eq!(view.content(), content);
+            assert_eq!(view.explore_preview, !expanded);
+        }
+    }
 }
 
 /// **No tooltip while a rail view is carried** (the user's screenshot,
@@ -9816,90 +10619,6 @@ fn recent_document_choices_skip_the_open_document() {
     assert_eq!(choices[0].target.document, elsewhere);
 }
 
-/// **The branch pill takes its room from the tabs, the way the offline chip
-/// does.** Same hazard, same fix: it is drawn over the caption, so the only
-/// thing keeping a tab from being clickable underneath it is the strip being
-/// narrower while it is up.
-///
-/// Driven through `branch_pill_for` rather than `branch_pill`, because the real
-/// one reads a stamp fixed when this binary compiled — on `dev` there is no
-/// pill, and a test that only ran on somebody's feature branch would be a test
-/// that never ran.
-#[test]
-fn the_branch_pill_narrows_the_tab_strip_rather_than_covering_it() {
-    let (v, _workspace) = container();
-    let full = v.branch_pill_for(None, 0.0);
-    assert!(full.is_none(), "no pill on dev, main, or a released build");
-
-    let pill = v
-        .branch_pill_for(Some("import-google-docs"), 120.0)
-        .expect("a pill on a branch worth naming");
-    assert_eq!(pill.w, 120.0);
-    // The strip itself is measured against the *real* stamp, so this asserts
-    // the arithmetic rather than the current branch: the pill is placed inside
-    // the same band `caption_strip` subtracts from.
-    let band = v.caption_strip();
-    assert!(
-        band.x + band.w <= pill.x + pill.w + 0.5,
-        "the pill escaped the caption band"
-    );
-    let bell = v.reminder_bell_rect();
-    assert!(
-        pill.x + pill.w <= bell.x,
-        "the branch pill overlapped the reminder bell"
-    );
-}
-
-/// **An unmeasured pill is not reserved.** `branch_pill_w` is `0.0` until the
-/// tab widths are first measured, and a pill of no width parked at the right of
-/// the strip would take the tabs' room without drawing anything.
-#[test]
-fn a_pill_that_has_not_been_measured_yet_takes_no_room() {
-    let (v, _workspace) = container();
-    assert!(v.branch_pill_for(Some("kimi"), 0.0).is_none());
-    assert!(v.branch_pill_for(Some("kimi"), -1.0).is_none());
-    assert!(v.branch_pill_for(Some("kimi"), 90.0).is_some());
-}
-
-/// **The pill sits left of the offline chip, and the tabs stop before both.**
-///
-/// The chip is the one that says something is wrong, so it keeps the end of the
-/// band; a pill that changed position depending on whether the store happened
-/// to be reachable would be worse than either order.
-#[test]
-fn the_offline_chip_keeps_the_end_of_the_band_and_the_pill_sits_inside_it() {
-    let (mut v, _workspace) = container();
-    let alone = v
-        .branch_pill_for(Some("kimi"), 90.0)
-        .expect("a pill with the store up");
-
-    assert!(View::set_store_trouble(
-        &mut v,
-        Some(koru_workspace::StoreTrouble {
-            message: "the store went away".to_owned(),
-            owed: 1,
-            since: Some(std::time::Instant::now()),
-            fatal: false,
-            unconfirmed: koru_workspace::Unconfirmed::default(),
-        })
-    ));
-    let chip = v.offline_chip().expect("a chip while offline");
-    let beside = v
-        .branch_pill_for(Some("kimi"), 90.0)
-        .expect("a pill while offline too");
-
-    assert!(
-        beside.x + beside.w <= chip.x,
-        "the pill runs under the offline chip"
-    );
-    assert!(
-        beside.x < alone.x,
-        "the pill did not move aside for the chip: {} -> {}",
-        alone.x,
-        beside.x
-    );
-}
-
 // ------------------------------------------------------------ task activity
 
 /// **A checkbox click reaches the desktop wrapper, through the whole
@@ -9939,7 +10658,7 @@ fn finishing_onboarding_selects_welcome_over_manage() {
     assert!(view.open_manage(crate::manage::Page::NewProfile));
     assert!(matches!(
         view.tabs().get(view.tabs().active()).expect("active").view,
-        TabView::Manage(_)
+        TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
     ));
 
     assert!(view.show_first_minutes("Ana", "Personal", "Research"));
@@ -9947,9 +10666,10 @@ fn finishing_onboarding_selects_welcome_over_manage() {
     assert!(matches!(active.view, TabView::Welcome(_)));
     assert_eq!(active.label, "Welcome");
     assert!(
-        view.tabs()
-            .iter()
-            .all(|tab| !matches!(tab.view, TabView::Manage(_))),
+        view.tabs().iter().all(|tab| !matches!(
+            tab.view,
+            TabView::Settings(crate::settings_view::SettingsView { manage: _, .. })
+        )),
         "the creation-only utility tab remained open"
     );
 }
@@ -10013,7 +10733,7 @@ fn a_deleted_local_profile_opens_the_blocking_lifecycle_decision() {
     ));
     // The Manage tab, on that Profile's page, where the choice is.
     match &view.tabs().active_tab().view {
-        TabView::Manage(manage) => {
+        TabView::Settings(crate::settings_view::SettingsView { manage, .. }) => {
             assert_eq!(manage.page(), Some(crate::manage::Page::Profile(profile)));
             assert_eq!(
                 manage.controller().discovered_deletion().map(|(id, _)| id),
@@ -12927,7 +13647,7 @@ fn a_settings_tab_opened_later_starts_from_what_is_stored() {
 }
 
 /// **Preview in sample document** puts the sample beside Settings: a split,
-/// the sample on the right, read-only and over a workspace of its own, titled
+/// the sample on the right, editable and over a workspace of its own, titled
 /// in the person's language. Asking again brings that one forward rather than
 /// opening a second, and a session never saves it.
 #[test]
@@ -12949,7 +13669,7 @@ fn the_sample_document_opens_beside_settings_once() {
         koru_i18n::t(crate::format::lang(), koru_i18n::Key::SampleDocumentTitle)
     );
     assert_eq!(sample.document, None, "not a document in the workspace");
-    assert!(matches!(&sample.view, TabView::Leaf(l) if l.view().read_only));
+    assert!(matches!(&sample.view, TabView::Leaf(l) if !l.view().read_only));
     let settings_still_there = view
         .panes
         .group(&settings_pane.child(0))
@@ -13001,7 +13721,60 @@ fn the_sample_document_has_one_of_each_thing_in_every_language() {
         );
         assert!(has(&|n| n.kind == Kind::Quote), "{tag}: quote");
         assert!(has(&|n| n.kind == Kind::Code), "{tag}: code block");
+        assert!(has(&|n| n.kind == Kind::Callout), "{tag}: callout");
+        assert!(has(&|n| n.kind == Kind::Table), "{tag}: table");
+        assert!(has(&|n| n.kind == Kind::Image), "{tag}: logo image");
+        let logo = nodes.iter().find(|node| node.kind == Kind::Image).unwrap();
+        let koru_core::Content::Blob { hash, .. } = &logo.content else {
+            panic!("the logo is an image blob")
+        };
+        assert!(
+            Tab::sample_images().contains(&hash.0),
+            "{tag}: bundled logo pixels"
+        );
     }
+}
+
+#[test]
+fn typing_in_the_sample_changes_only_its_temporary_document() {
+    let (mut view, mut workspace) = on_document();
+    let before = workspace.ws.export_snapshot().unwrap();
+    view.open_sample_document();
+    let tab = view.tabs_mut().active_mut();
+    let (tab_view, doc) = tab.doc(&mut workspace.ws);
+    let paragraph = doc
+        .walk_all()
+        .unwrap()
+        .into_iter()
+        .find_map(|(id, _)| {
+            doc.read(id)
+                .is_ok_and(|node| node.kind == koru_core::Kind::Paragraph)
+                .then_some(id)
+        })
+        .expect("sample paragraph");
+    let TabView::Leaf(leaf) = tab_view else {
+        panic!("sample leaf")
+    };
+    leaf.reveal(paragraph);
+    assert!(view.key(&mut workspace.ws, &ch("Testing"), Some("Testing"), NONE));
+    let sample = &view
+        .tabs()
+        .active_tab()
+        .whats_new
+        .as_ref()
+        .unwrap()
+        .workspace
+        .ws;
+    assert!(
+        sample
+            .read(paragraph)
+            .unwrap()
+            .content
+            .as_text()
+            .unwrap()
+            .contains("Testing")
+    );
+    assert_eq!(workspace.ws.export_snapshot().unwrap(), before);
 }
 
 /// `Ctrl+,` is a keyboard's way into Settings, so it lands the keyboard in
@@ -14491,10 +15264,21 @@ fn press_help(
     w: &mut Workspace,
 ) -> (koru_draw::geometry::Rect, koru_draw::geometry::Rect) {
     let rail = v.rail_area();
-    let help = v.explore.apps_rail_rects(rail).help;
+    let profile = v.explore.apps_rail_rects(rail).profile;
+    v.explore
+        .open_popover(crate::panes::explore::PopoverKind::Profiles);
+    let help = v
+        .explore
+        .with_page(v.explore_popover_area(), v.viewport, |frame| {
+            frame
+                .node(crate::panes::explore::popover_elements::profiles::MenuAction::Help.key())
+                .unwrap()
+                .rect
+        })
+        .unwrap();
     let (x, y) = help.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    (rail, help)
+    (rail, profile)
 }
 
 /// The element Help menu keeps its current release, fixed links and geometry
@@ -14523,7 +15307,7 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                 report.stage = koru_agent_wire::UpdateStage::Idle;
                 report.version.clear();
                 v.updates = crate::agent::UpdateFeed::for_test(report).0;
-                let (rail, help) = press_help(&mut v, &mut workspace);
+                let (rail, _) = press_help(&mut v, &mut workspace);
                 v.explore
                     .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
                 assert!(v.explore.popover_is(PopoverKind::Help));
@@ -14584,7 +15368,9 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                 assert!(panel.x >= rail.x + rail.w - 0.5, "{panel:?} / {rail:?}");
                 assert!(panel.x >= 0.0 && panel.y >= 0.0);
                 assert!(panel.x + panel.w <= width && panel.y + panel.h <= height);
-                assert!((panel.y + panel.h - (help.y + help.h)).abs() < 0.5);
+                let parent = v.explore.help_parent_panel(area, v.viewport).unwrap();
+                assert!(panel.x >= parent.x + parent.w);
+                assert!((panel.y + panel.h - parent.y - parent.h).abs() < 0.01);
                 assert!(
                     rows.iter()
                         .all(|(_, rect)| rect.y >= panel.y && rect.y + rect.h <= panel.y + panel.h)
@@ -14604,11 +15390,10 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                     "the divider precedes Send feedback"
                 );
                 assert!(!v.window_menu_open());
-                let content = v.content();
-                v.mouse_move(content.x + content.w * 0.5, content.y + content.h * 0.5);
+                v.mouse_move(width - 1.0, height * 0.5);
                 assert!(
-                    v.explore.popover_is(PopoverKind::Help),
-                    "pointer movement keeps Help open"
+                    v.explore.popover_is(PopoverKind::Profiles),
+                    "leaving both menus restores the Profile menu"
                 );
 
                 v.explore.close_popover();
@@ -14643,7 +15428,6 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
 /// Help navigation uses the shell URI port and retains the Feedback tab.
 #[test]
 fn the_help_rows_open_their_destinations() {
-    use crate::mainview::context_menu::{GITHUB_URL, Social};
     use crate::panes::explore::help::Action;
     use koru_workspace_host::{PaneRequest, View};
     let (mut v, _w) = container();
@@ -14670,8 +15454,6 @@ fn the_help_rows_open_their_destinations() {
         crate::whatsnew::RELEASES_URL,
         "https://github.com/koruworks/mono/releases"
     );
-    assert_eq!(GITHUB_URL, "https://github.com/koruworks/mono");
-    assert_eq!(Social::X.url(), "https://x.com/korudotdo");
     assert!(v.help_action(Action::Feedback));
     assert!(matches!(v.tabs().active_tab().view, TabView::Feedback(_)));
     let tabs = v.tabs().len();
@@ -14789,8 +15571,7 @@ fn a_press_on_the_rail_shuts_the_popover_and_still_acts() {
     let (sx, sy) = rects.profile.centre();
     v.mouse_down(&mut w.ws, sx, sy, false);
     assert!(v.explore.popover_open(), "the square opens its list");
-    let (hx, hy) = rects.help.centre();
-    v.mouse_down(&mut w.ws, hx, hy, false);
+    press_help(&mut v, &mut w);
     assert!(
         v.explore.popover_is(PopoverKind::Help),
         "Help replaces the Profiles list"

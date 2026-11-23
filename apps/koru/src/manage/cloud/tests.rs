@@ -132,6 +132,7 @@ fn storage_refresh_keeps_focus_control_and_exposes_the_drawn_status() {
                     request_id,
                     current: Some(true),
                     access: Some(true),
+                    subscription_kind: None,
                 }
             }
             AccountCommand::InspectCloudSync { request_id } => AccountOperationResult::CloudSync {

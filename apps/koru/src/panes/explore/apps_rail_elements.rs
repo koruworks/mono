@@ -59,13 +59,6 @@ impl ExploreView {
             selected: self.current.is_some(),
             dimmed: self.current.is_none(),
         };
-        let glyph = |hit, name: &str, glyph| Item {
-            hit,
-            name: name.to_owned(),
-            contents: Contents::Glyph(glyph),
-            selected: false,
-            dimmed: false,
-        };
         let views = self
             .rail_modes()
             .into_iter()
@@ -119,44 +112,30 @@ impl ExploreView {
         Rail {
             workspaces,
             views,
-            foot: vec![
-                Item {
-                    contents: if self.help.projection().dot {
-                        Contents::NotifiedGlyph(icons::QUESTION)
-                    } else {
-                        Contents::Glyph(icons::QUESTION)
-                    },
-                    selected: self.popover_is(PopoverKind::Help),
-                    name: if self.help.projection().dot {
-                        format!("{} · {}", t(lang, Key::Help), t(lang, Key::WhatsNew))
-                    } else {
-                        t(lang, Key::Help).to_owned()
-                    },
-                    ..glyph(apps_rail::Hit::Help, t(lang, Key::Help), icons::QUESTION)
-                },
-                // App settings are the app's, not a Profile's: they sat at
-                // the foot of the Profile menu, behind a press on a square
-                // that says nothing about settings. Here they are one press
-                // away, between Help and the profile square.
-                glyph(
-                    apps_rail::Hit::Settings,
-                    t(lang, Key::ProfileAppSettings),
-                    icons::FADERS,
-                ),
-                Item {
-                    hit: apps_rail::Hit::Profile,
-                    name: profile
-                        .map_or(t(lang, Key::FloorChipAction), |p| p.name.as_str())
-                        .to_owned(),
-                    contents: Contents::Tile {
-                        name: profile.map_or("", |p| p.name.as_str()).to_owned(),
-                        icon: profile.and_then(|p| p.icon.clone()),
-                        color: profile.and_then(|p| p.color.clone()),
-                    },
-                    selected: self.live().is_some_and(|p| p.kind == PopoverKind::Profiles),
+            pins: self
+                .mini_app_pins
+                .iter()
+                .map(|pin| Item {
+                    hit: apps_rail::Hit::Pin(pin.id),
+                    name: pin.title.clone(),
+                    contents: Contents::Glyph(icons::SPARKLE),
+                    selected: false,
                     dimmed: false,
+                })
+                .collect(),
+            foot: vec![Item {
+                hit: apps_rail::Hit::Profile,
+                name: profile
+                    .map_or(t(lang, Key::FloorChipAction), |p| p.name.as_str())
+                    .to_owned(),
+                contents: Contents::Profile {
+                    name: profile.map_or("", |p| p.name.as_str()).to_owned(),
+                    icon: profile.and_then(|p| p.icon.clone()),
+                    color: profile.and_then(|p| p.color.clone()),
                 },
-            ],
+                selected: self.live().is_some_and(|p| p.kind == PopoverKind::Profiles),
+                dimmed: false,
+            }],
         }
     }
 
@@ -200,6 +179,8 @@ impl ExploreView {
                     .position(|m| *m == mode)
                     .unwrap_or(0),
             ),
+            apps_rail::Hit::Pin(id) => ExploreChromeFocus::Pin(id),
+            apps_rail::Hit::PinOverflow => ExploreChromeFocus::PinOverflow,
             apps_rail::Hit::Overflow => ExploreChromeFocus::RailOverflow,
             apps_rail::Hit::Help => ExploreChromeFocus::RailHelp,
             apps_rail::Hit::Settings => ExploreChromeFocus::RailSettings,
@@ -222,6 +203,8 @@ impl ExploreView {
             Some(ExploreChromeFocus::App(i)) => {
                 self.rail_modes().get(i).copied().map(apps_rail::Hit::App)
             }
+            Some(ExploreChromeFocus::Pin(id)) => Some(apps_rail::Hit::Pin(id)),
+            Some(ExploreChromeFocus::PinOverflow) => Some(apps_rail::Hit::PinOverflow),
             Some(ExploreChromeFocus::RailOverflow) => Some(apps_rail::Hit::Overflow),
             Some(ExploreChromeFocus::WorkspaceMenu) => Some(apps_rail::Hit::WorkspaceMenu),
             Some(ExploreChromeFocus::RailHelp) => Some(apps_rail::Hit::Help),
@@ -237,19 +220,28 @@ impl ExploreView {
         let layout = rail.layout(engine, &mut self.rail_layout.borrow_mut(), at, interaction);
         let rects = rail.rectangles(&layout.frame, at);
         let carried = self
-            .rail_carried(&rects)
+            .pin_carried(&rects)
             .map(|(index, rect)| {
                 (
-                    rail_elements::key(apps_rail::Hit::App(rects.apps[index].0)),
+                    rail_elements::key(apps_rail::Hit::Pin(rects.pins[index].0)),
                     rect,
                 )
             })
             .or_else(|| {
-                self.workspace_carried(&rects).and_then(|(index, rect)| {
-                    rects.workspaces[index]
-                        .0
-                        .map(|id| (rail_elements::key(apps_rail::Hit::Workspace(id)), rect))
-                })
+                self.rail_carried(&rects)
+                    .map(|(index, rect)| {
+                        (
+                            rail_elements::key(apps_rail::Hit::App(rects.apps[index].0)),
+                            rect,
+                        )
+                    })
+                    .or_else(|| {
+                        self.workspace_carried(&rects).and_then(|(index, rect)| {
+                            rects.workspaces[index]
+                                .0
+                                .map(|id| (rail_elements::key(apps_rail::Hit::Workspace(id)), rect))
+                        })
+                    })
             });
         let mut offsets: Vec<_> = rects
             .apps
@@ -276,6 +268,12 @@ impl ExploreView {
                     })
                 }),
         );
+        offsets.extend(rects.pins.iter().enumerate().map(|(i, (id, _))| {
+            (
+                rail_elements::key(apps_rail::Hit::Pin(*id)),
+                self.pin_slides.offset(i),
+            )
+        }));
         layout.paint(&rail, scene, root, engine, &offsets, carried);
     }
 }

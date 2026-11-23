@@ -17,6 +17,7 @@ pub fn koru_model() -> ModelDescriptor {
         },
         resolved_model: Some(KORU_MODEL.to_owned()),
         capabilities: ModelCapabilities {
+            native_tools: true,
             streaming: true,
             structured_output: false,
             vision: false,

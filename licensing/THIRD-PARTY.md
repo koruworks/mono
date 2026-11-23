@@ -7,6 +7,28 @@ license files at the exact revisions we build, and the shipped binaries of the
 the people whose work it contains. Open items are marked **⚑** and collected
 at the end, and settled ones are marked ✅.
 
+## Starter document photography (2026-11-22)
+
+`assets/templates/empty/koru-fern.jpg` (1440×573 JPEG, 131 KB, packaged into
+desktop releases at `docs/templates/roadmap/empty/koru-fern.jpg`) is derived
+from Vecteezy photo `#68996338` (*Curled green fern frond unfurling in spring
+nature macro*, `https://www.vecteezy.com/photo/68996338`), licensed to Koru
+Works, Inc. under the **Vecteezy Commercial License** (`license_type:
+commercial`). It is **not** licensed under MPL-2.0; forks or independent
+redistributions outside Koru Works' license should replace or remove this file
+or obtain their own Vecteezy license. Its bundled notice is
+`crates/koru-release/licences/bundled/starter-koru-fern.txt` ✅.
+
+## A2UI schema references (2026-11-13)
+
+Three A2UI 1.0 JSON schema references are fetched from `a2ui-project/a2ui`
+at revision `84474c34f151f19eaebd1f416065b027722adc15`, under Apache-2.0.
+Their SHA-256 pins are in `third-party/fetch.manifest`; fetched files remain
+ignored. They are development references and are not embedded or distributed
+in a Koru binary. The bounded runtime parser/schema are original first-party
+code; no A2UI runtime/framework dependency or upstream source is vendored.
+See [the reference record](../third-party/a2ui/README.md).
+
 ## Compiled icon artwork (2026-10-30)
 
 Desktop icon paths are generated from the pinned Phosphor 2.1.2 fonts (MIT),
@@ -50,7 +72,7 @@ and 496 in the iOS app, through normal
 dependencies (2026-10-14). Proc-macros are excluded because they run in the
 compiler and none of their code is in a binary. No crate comes from git; all
 come from crates.io, `onenote_parser`, `sherpa-onnx`, `sherpa-onnx-sys` and
-`merman-render` with Koru's patches applied
+`merman-render` and `winit` with Koru's patches applied
 ([third-party/](../third-party/README.md)).
 
 | License (as declared) | What a binary distribution owes | Handled by |
@@ -188,6 +210,7 @@ and to no customers, which is worth noting rather than acting on.
 | `third-party/patches/onenote_parser.patch` | MPL-2.0, © Markus Siemens | Patches `onenote_parser` 2.0.0, fetched from crates.io. Its package carries no license file, so its notice is a record holding the repository's `LICENSE` (2026-10-14); Koru's changes in `onenote_parser.md` ✅ |
 | `crates/koru-blocks/assets/TypeScript.sublime-syntax` | **Apache-2.0, © Microsoft** (TypeScript-Sublime-Plugin, machine-converted by `bat`) | Its README said "MIT, Sublime HQ". That was wrong, and bat's history shows the source. Corrected; it is in every package's notices, and the file itself is now fetched from bat v0.24.0 rather than committed ✅ |
 | `apps/android/gradlew*`, `gradle/wrapper/gradle-wrapper.jar` | Apache-2.0, Gradle authors | Build tooling, not shipped; fetched (Gradle 9.8.1), not committed ✅ |
+| `assets/templates/empty/koru-fern.jpg` | Vecteezy Commercial License (photo #68996338, not MPL-2.0) | Resized from the licensed commercial photo for the first-workspace starter document; bundled notice in `licences/bundled/starter-koru-fern.txt` ✅ |
 | `contracts/gen/` | Ours, generated from our `.proto` | ✅ |
 
 ## Fonts (fetched at build time, shipped in every package)

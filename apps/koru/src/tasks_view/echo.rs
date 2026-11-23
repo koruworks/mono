@@ -76,6 +76,79 @@ pub(super) enum Patch {
     },
 }
 
+impl Echo {
+    pub fn matches_command(&self, command: &TaskCommand) -> bool {
+        use TaskCommand::*;
+        let same =
+            |document: &DocumentId, node: &NodeId| self.document == *document && self.node == *node;
+        match (command, &self.patch) {
+            (
+                Complete {
+                    document,
+                    node,
+                    completed,
+                },
+                Patch::Completed(value),
+            ) => same(document, node) && completed == value,
+            (Remove { document, node }, Patch::Removed)
+            | (CreateHome { document, node }, Patch::Homed { .. }) => same(document, node),
+            (
+                SetDue {
+                    document,
+                    node,
+                    due,
+                },
+                Patch::Due(value),
+            ) => same(document, node) && due.as_ref().map(due_of) == *value,
+            (
+                SetPriority {
+                    document,
+                    node,
+                    priority,
+                },
+                Patch::Priority(value),
+            ) => same(document, node) && priority.map(|p| p.as_str().to_owned()) == *value,
+            (
+                SetColor {
+                    document,
+                    node,
+                    color,
+                },
+                Patch::Color(value),
+            ) => same(document, node) && color == value,
+            (
+                SetRank {
+                    document,
+                    node,
+                    rank,
+                },
+                Patch::Rank(value),
+            ) => same(document, node) && rank == value,
+            (
+                SetList {
+                    document,
+                    node,
+                    list,
+                },
+                Patch::List(value),
+            ) => same(document, node) && list == value,
+            (
+                Retitle {
+                    document,
+                    node,
+                    title,
+                },
+                Patch::Title(value),
+            ) => {
+                same(document, node)
+                    && koru_shell_chrome::split_leading_emoji(title).1.trim_start() == value
+            }
+            (Create { .. }, Patch::Created(_)) => true,
+            _ => false,
+        }
+    }
+}
+
 /// A stored due, in the two shapes a row compares — the same fold the wire's
 /// row takes on the way in.
 pub(super) fn due_of(temporal: &Temporal) -> Due {

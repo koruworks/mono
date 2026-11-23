@@ -259,6 +259,7 @@ fn a_chat_is_renamed_in_its_chats_row() {
     let chat = koru_ai_ui::ChatId::from_uuid(uuid::Uuid::from_u128(0xc4a7));
     let now = koru_ai_core::Timestamp::from_millis(1);
     v.show_navigator(NavigatorMode::Chats);
+    v.toggle_sidebar();
     assert!(v.sidebar.is_open());
     v.explore
         .chats_mut()

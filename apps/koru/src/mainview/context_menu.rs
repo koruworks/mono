@@ -193,21 +193,12 @@ impl Social {
         }
     }
 
-    pub fn url(self) -> &'static str {
-        match self {
-            Social::X => "https://x.com/korudotdo",
-        }
-    }
-
     pub fn glyph(self) -> char {
         match self {
             Social::X => koru_draw::icons::X_LOGO,
         }
     }
 }
-
-/// Where the help popover's *Star us on GitHub* goes: Koru's repository.
-pub const GITHUB_URL: &str = "https://github.com/koruworks/mono";
 
 /// What a menu item does. Resolved by the container, not here.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -227,6 +218,7 @@ pub enum MenuAction {
     /// Parent of the Documents flyout on the `+` menu.
     Documents,
     NewDocument,
+    MiniApp,
     /// A recent document under Documents. Title comes from the snapshot
     /// [`set_plus_snapshots`] captures when the menu opens.
     ///
@@ -630,6 +622,10 @@ pub enum MenuAction {
     /// The zoom row: a label and the three controls [`zoom_controls`] builds.
     /// Never chosen as a whole — see [`MenuAction::selectable`].
     HeaderZoom,
+    HeaderTheme,
+    /// Read-only development branch, at the bottom of the window menu.
+    HeaderBranch,
+    WindowTheme(theme::ThemePreference),
     /// What that row's `−`, `+` and `↺` do. **Not rows**: they are only ever
     /// reached by pressing a control, which is why nothing puts them in an
     /// item list. They are `MenuAction`s all the same, so a press still ends
@@ -640,7 +636,6 @@ pub enum MenuAction {
     /// Support: the Intercom chat in a window of its own, where *Help* used
     /// to sit (ADR-276).
     HeaderSupport,
-    HeaderFeedback,
     HeaderShortcuts,
     HeaderMobile,
     // ------------------------------------------------------------ help
@@ -1215,6 +1210,9 @@ impl MenuAction {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
             MenuAction::NewDocument => "New",
+            MenuAction::MiniApp => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle)
+            }
             MenuAction::Canvases => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::CanvasesTitle)
             }
@@ -1502,15 +1500,24 @@ impl MenuAction {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::PageDetach)
             }
             MenuAction::TaskRemove => "Remove from Tasks",
-            MenuAction::WindowAlwaysOnTop => "Always on Top",
-            MenuAction::WindowUnpinTop => "Turn Off Always on Top",
+            MenuAction::WindowAlwaysOnTop | MenuAction::WindowUnpinTop => koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::TerminalWindowAlwaysOnTop,
+            ),
             MenuAction::WindowArrange => "Arrange Window",
             MenuAction::WindowSnapLeft => "Snap Left",
             MenuAction::WindowSnapRight => "Snap Right",
             MenuAction::WindowResetPosition => "Reset Window Position",
-            MenuAction::HeaderSettings => "Settings",
+            MenuAction::HeaderSettings => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::WindowMenuAllSettings)
+            }
             MenuAction::HeaderUpdates => "Updates",
             MenuAction::HeaderZoom => "Zoom",
+            MenuAction::HeaderTheme => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::SettingsTheme)
+            }
+            MenuAction::HeaderBranch => crate::build_stamp::caption_branch().unwrap_or(""),
+            MenuAction::WindowTheme(preference) => theme_menu_label(preference),
             // Never drawn — the controls are glyphs — but the registry is
             // still where the words come from, so a row made of one of these
             // later would say what the View menu already says.
@@ -1522,7 +1529,6 @@ impl MenuAction {
             MenuAction::HeaderSupport => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::SupportWindowTitle)
             }
-            MenuAction::HeaderFeedback => "Feedback",
             MenuAction::HeaderShortcuts => "Keyboard shortcuts",
             MenuAction::HeaderMobile => "Get the mobile app",
             MenuAction::HelpSendFeedback => {
@@ -1698,7 +1704,10 @@ impl MenuAction {
             // A list row wears its colour square, never a glyph — the rail's
             // rule, so the square here and the square in the rail are one list.
             MenuAction::TaskListRow(..) => None,
-            MenuAction::HeaderFeedback => Some(koru_draw::icons::USER_SOUND),
+            MenuAction::HeaderSettings => Some(koru_draw::icons::FADERS),
+            MenuAction::HeaderTheme => Some(koru_draw::icons::CIRCLE_HALF),
+            MenuAction::HeaderZoom => Some(koru_draw::icons::SEARCH),
+            MenuAction::HeaderBranch => Some(koru_draw::icons::GIT_BRANCH),
             MenuAction::HeaderSupport => Some(koru_draw::icons::HEADSET),
             // Destinations shared with the help popover.
             MenuAction::HelpSendFeedback => Some(koru_draw::icons::CHAT_CIRCLE),
@@ -1751,11 +1760,9 @@ impl MenuAction {
     /// Whether the glyph draws in Phosphor's **Fill** weight rather than the
     /// regular one.
     ///
-    /// One row, and it is a state rather than a verb: *Turn Off Always on Top*
-    /// only appears while the window is on top, so its pin is solid — the same
-    /// signal the caption's pin gives, kept alive now that the button is a menu.
+    /// Pin state is shown by its switch; menu icons retain their regular weight.
     pub fn filled_icon(self) -> bool {
-        matches!(self, MenuAction::WindowUnpinTop)
+        false
     }
 
     /// The vector product mark a profile row wears when its product's logo is
@@ -1782,7 +1789,11 @@ impl MenuAction {
     pub fn selectable(self) -> bool {
         !matches!(
             self,
-            MenuAction::Divider | MenuAction::SelectionHeader(_) | MenuAction::HeaderZoom
+            MenuAction::Divider
+                | MenuAction::SelectionHeader(_)
+                | MenuAction::HeaderZoom
+                | MenuAction::HeaderTheme
+                | MenuAction::HeaderBranch
         )
     }
 
@@ -1820,8 +1831,31 @@ impl MenuAction {
 /// above — they are the semantics, and every older call site already names
 /// them; this impl only forwards.
 impl koru_ui::MenuItem for MenuAction {
+    fn padded_action(&self) -> bool {
+        matches!(
+            self,
+            Self::WindowAlwaysOnTop
+                | Self::WindowUnpinTop
+                | Self::HeaderTheme
+                | Self::HeaderZoom
+                | Self::HeaderSettings
+                | Self::HeaderBranch
+        )
+    }
     fn label(&self) -> Cow<'_, str> {
         (*self).label()
+    }
+
+    fn font_stack(&self) -> Option<&'static str> {
+        matches!(self, MenuAction::HeaderBranch).then_some(theme::SOURCE_CODE_FAMILY)
+    }
+
+    fn controls_plate(&self) -> bool {
+        matches!(self, MenuAction::HeaderZoom)
+    }
+
+    fn footer(&self) -> bool {
+        matches!(self, MenuAction::HeaderBranch)
     }
 
     fn icon(&self) -> Option<char> {
@@ -1859,6 +1893,9 @@ impl koru_ui::MenuItem for MenuAction {
     }
 
     fn shortcut(&self) -> Option<String> {
+        if matches!(self, MenuAction::HeaderBranch) {
+            return Some("dev".into());
+        }
         (*self).shortcut()
     }
 
@@ -1874,7 +1911,13 @@ impl koru_ui::MenuItem for MenuAction {
         match self {
             // A touch shorter than a real row so the caption sits as a heading.
             MenuAction::SelectionHeader(_) => theme::ROW_H - 4.0,
-            MenuAction::Divider => 8.0,
+            MenuAction::Divider => koru_ui::menu::MenuDivider::HEIGHT,
+            MenuAction::HeaderTheme
+            | MenuAction::HeaderZoom
+            | MenuAction::HeaderSettings
+            | MenuAction::WindowAlwaysOnTop
+            | MenuAction::WindowUnpinTop => koru_ui::menu::ActionRow::height(),
+            MenuAction::HeaderBranch => theme::ROW_H + 8.0,
             _ => theme::ROW_H,
         }
     }
@@ -2236,7 +2279,7 @@ pub fn agent_profile_items() -> Vec<MenuAction> {
 /// Documents flyout: New, then up to ten recents and *Clear recents* under
 /// them — offered only when there is something to clear.
 pub fn document_plus_items() -> Vec<MenuAction> {
-    let mut items = vec![MenuAction::NewDocument];
+    let mut items = vec![MenuAction::NewDocument, MenuAction::MiniApp];
     PLUS_RECENTS.with(|cell| {
         let recents = cell.borrow();
         if recents.is_empty() {
@@ -2756,15 +2799,20 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
         } else {
             MenuAction::WindowAlwaysOnTop
         },
-        MenuAction::HeaderSettings,
         MenuAction::Divider,
+        MenuAction::HeaderTheme,
         MenuAction::HeaderZoom,
         MenuAction::Divider,
+        MenuAction::HeaderSettings,
     ];
     if OVERFLOW_HIDDEN_ROWS_SHOWN {
         items.push(MenuAction::HeaderSupport);
     }
-    items.push(MenuAction::HeaderFeedback);
+    if koru_channel::ReleaseChannel::this_build_is_internal()
+        && crate::build_stamp::caption_branch().is_some()
+    {
+        items.push(MenuAction::HeaderBranch);
+    }
     if OVERFLOW_HIDDEN_ROWS_SHOWN {
         items.extend([
             MenuAction::HeaderShortcuts,
@@ -2788,7 +2836,7 @@ pub fn window_items(pinned: bool, _maximized: bool, recording: bool) -> Vec<Menu
     items
 }
 
-/// **Hidden for now: Feedback is the overflow's only destination.** Support,
+/// **Hidden legacy destinations.** Support,
 /// Keyboard shortcuts, Get the mobile app, Updates and the session recorder's
 /// row are left out of [`window_items`]. Each is still built and handled, so
 /// turning this on puts every row back where it was. The recorder's chord (F9)
@@ -2801,11 +2849,8 @@ pub(crate) const OVERFLOW_HIDDEN_ROWS_SHOWN: bool = false;
 /// The readout in the middle answers `None`, which is what makes it a readout
 /// rather than a fourth button.
 ///
-/// **The one place a menu reads live state.** Everything else in this module is
-/// fixed when the menu opens, for the reason the header gives — a row must not
-/// relabel itself between the press and the release. A stepper is the exception
-/// that proves it: the number *is* the feedback, and pressing `−` with nothing
-/// changing on screen would be worse than any relabel. The panel still cannot
+/// Controls read live state while their labels and bounds remain stable. The
+/// number reflects each zoom change immediately. The panel still cannot
 /// resize under the pointer, because [`koru_ui::Control`]'s widths are
 /// constants rather than measurements — `100%` and `90%` occupy the same cell.
 ///
@@ -2815,6 +2860,13 @@ pub(crate) const OVERFLOW_HIDDEN_ROWS_SHOWN: bool = false;
 /// line that reaches for `theme::zoom()`.
 pub fn zoom_controls(zoom: f32) -> Vec<(Control, Option<MenuAction>)> {
     vec![
+        (
+            Control::Link {
+                label: koru_i18n::t(crate::format::lang(), koru_i18n::Key::UiLabReset).to_owned(),
+                visible: theme::clamp_zoom(zoom) != 1.0,
+            },
+            Some(MenuAction::ZoomActualSize),
+        ),
         (
             Control::Button {
                 glyph: koru_draw::icons::MINUS,
@@ -2829,16 +2881,6 @@ pub fn zoom_controls(zoom: f32) -> Vec<(Control, Option<MenuAction>)> {
                 enabled: theme::can_zoom_in(zoom),
             },
             Some(MenuAction::ZoomIn),
-        ),
-        (
-            Control::Button {
-                glyph: koru_draw::icons::RESET,
-                // Dim at 100%: there is nothing to come back from, and a live
-                // control that does nothing teaches the wrong thing about the
-                // two beside it.
-                enabled: theme::clamp_zoom(zoom) != 1.0,
-            },
-            Some(MenuAction::ZoomActualSize),
         ),
     ]
 }
@@ -2865,6 +2907,12 @@ pub fn control_action(row: MenuAction, control: usize) -> Option<MenuAction> {
 ///
 /// `None` for a readout, and for any row with no controls.
 pub fn control_tooltip(row: MenuAction, control: usize) -> Option<(String, Option<String>)> {
+    if matches!(
+        row_controls(row).get(control)?.0,
+        Control::Link { visible: false, .. }
+    ) {
+        return None;
+    }
     let action = control_action(row, control)?;
     Some((
         action.label().into_owned(),
@@ -2879,9 +2927,40 @@ pub fn control_tooltip(row: MenuAction, control: usize) -> Option<(String, Optio
 /// new arm rather than a new mechanism.
 fn row_controls(row: MenuAction) -> Vec<(Control, Option<MenuAction>)> {
     match row {
+        MenuAction::WindowAlwaysOnTop | MenuAction::WindowUnpinTop => vec![(
+            Control::Toggle {
+                on: row == MenuAction::WindowUnpinTop,
+            },
+            Some(row),
+        )],
         MenuAction::HeaderZoom => zoom_controls(theme::zoom()),
+        MenuAction::HeaderTheme => [
+            theme::ThemePreference::System,
+            theme::ThemePreference::Light,
+            theme::ThemePreference::Dark,
+        ]
+        .into_iter()
+        .map(|preference| {
+            (
+                Control::Segment {
+                    label: theme_menu_label(preference).to_owned(),
+                    selected: theme::theme_preference() == preference,
+                },
+                Some(MenuAction::WindowTheme(preference)),
+            )
+        })
+        .collect(),
         _ => Vec::new(),
     }
+}
+
+fn theme_menu_label(preference: theme::ThemePreference) -> &'static str {
+    let key = match preference {
+        theme::ThemePreference::System => koru_i18n::Key::SettingsSystem,
+        theme::ThemePreference::Light => koru_i18n::Key::SettingsLight,
+        theme::ThemePreference::Dark => koru_i18n::Key::SettingsDark,
+    };
+    koru_i18n::t(crate::format::lang(), key)
 }
 
 /// How many controls `items` carry between them — the ids a menu reserves
@@ -3060,7 +3139,7 @@ pub struct ContextMenu {
 /// Monotonic and never reused: a number that could come round again is the bug
 /// this exists to prevent. The counter only moves forward, and a process would
 /// have to open menus for longer than the universe has existed to wrap it.
-fn mint_menu_instance(rows: usize) -> u64 {
+pub(super) fn mint_menu_instance(rows: usize) -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(rows as u64 + 1, Ordering::Relaxed)

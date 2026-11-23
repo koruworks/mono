@@ -30,8 +30,8 @@
 //! Proven: the first-run window answers a client at all; the account-free
 //! control is findable by `AutomationId` without reading anything out of the
 //! tree first; its `Name` is the localized *Continue offline*; `Invoke` on it
-//! reaches the form and moves it to the Profile step; the Profile step's own
-//! controls are then findable and the welcome screen's are **not**, which is
+//! reaches the form and moves it to the setup card; the card's own controls
+//! are then findable and the welcome screen's are **not**, which is
 //! screen retirement seen from outside; a field's contents arrive on
 //! `ValuePattern`; and a live region's setting arrives on
 //! `UIA_LiveSettingPropertyId`.
@@ -63,7 +63,7 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 #[derive(Debug)]
 enum Wake {
     Accessibility,
-    /// The client has read everything it needs from the Profile step and wants
+    /// The client has read everything it needs from the setup card and wants
     /// a failed creation to look at. Driven from the client rather than on a
     /// timer so the sequence is deterministic: the form is asked for the state
     /// it already knows how to show, through the same `creation_failed` the
@@ -83,7 +83,7 @@ struct Findings {
     continue_offline_bounds: Option<(f64, f64, f64, f64)>,
     invoked: bool,
     /// After the invoke: the welcome screen's control must be **gone**, and the
-    /// Profile step's must be there. Screen retirement, from outside.
+    /// card's must be there. Screen retirement, from outside.
     welcome_control_after_invoke: bool,
     found_owner_field: bool,
     owner_field_name: Option<String>,
@@ -334,9 +334,10 @@ fn a_uia_client_reaches_the_account_free_way_into_koru_and_presses_it() {
     );
     assert!(
         findings.found_owner_field,
-        "the Profile step's field was not findable after the transition"
+        "the card's name field was not findable after the transition"
     );
-    assert_eq!(findings.owner_field_name.as_deref(), Some("Display name"));
+    // The card's first field is named by its placeholder, *Your name*.
+    assert_eq!(findings.owner_field_name.as_deref(), Some("Your name"));
     assert_eq!(
         findings.owner_field_value.as_deref(),
         Some(""),
@@ -494,7 +495,7 @@ fn client_thread(
 
     // ------------------------------------------ the screen that went, gone
     //
-    // The Profile step's field arriving is what says the transition landed;
+    // The card's name field arriving is what says the transition landed;
     // the welcome screen's control still being findable would say a stale
     // request could be routed.
     let owner_locator = format!("koru:w{slot}/v{view}/onb:2#{}", parts::OWNER_NAME.name());
@@ -507,7 +508,7 @@ fn client_thread(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let owner = owner.expect("the Profile step never published its field");
+    let owner = owner.expect("the card never published its name field");
     {
         let mut found = findings.lock().expect("no test poisons this");
         found.found_owner_field = true;
@@ -527,10 +528,11 @@ fn client_thread(
     //
     // Ask the form for the failure it already knows how to show. The window's
     // loop calls the shipping `creation_failed`, so what is read back here is
-    // the projection that ships rather than a fixture. That lands on the
-    // Workspace step, which is the third screen this window has published.
+    // the projection that ships rather than a fixture. A failure on the card
+    // that was not finishing is no transition, so the status belongs to the
+    // card's own instance, the second screen this window has published.
     let _ = proxy.send_event(Wake::StageFailure);
-    let status_locator = format!("koru:w{slot}/v{view}/onb:3#{}", parts::STATUS.name());
+    let status_locator = format!("koru:w{slot}/v{view}/onb:2#{}", parts::STATUS.name());
     let deadline = Instant::now() + TIMEOUT;
     while Instant::now() < deadline {
         if let Some(status) = find_by_id(&status_locator) {

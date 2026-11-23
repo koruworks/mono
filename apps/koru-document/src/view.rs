@@ -174,6 +174,34 @@ fn apply_rich_links(ws: &mut WorkspaceDoc, id: NodeId, rich: &RichTextBlock) {
 }
 
 impl View for BuiltInDocument {
+    fn ime_target(&self) -> Option<koru_workspace_host::ImeTarget> {
+        Some(koru_workspace_host::ImeTarget {
+            id: koru_workspace_host::ImeTargetId {
+                owner: self.native_ime_owner(),
+                control: self.native_ime_target()?,
+            },
+            cursor_area: self.native_ime_rect(),
+        })
+    }
+
+    fn ime(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: koru_workspace_host::ImeTargetId,
+        event: &winit::event::Ime,
+    ) -> bool {
+        if target.owner != self.native_ime_owner() {
+            return false;
+        }
+        if matches!(event, winit::event::Ime::Disabled) {
+            return self.native_ime_cancel(ws);
+        }
+        if self.native_ime_target() != Some(target.control) {
+            return false;
+        }
+        self.native_ime(ws, event)
+    }
+
     /// A standalone document window routes a dictation the same way a tab
     /// does — see [`BuiltInDocument::dictate`]. Spelled once, as an inherent
     /// method, because `Leaf` reaches it directly and a second body would be a
@@ -372,13 +400,7 @@ impl View for BuiltInDocument {
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
-        // A lifted viewer has the window's size, which the container keeps
-        // current through `set_viewer_lift`; the pane's size is not its.
-        if self.viewer_lift.is_none()
-            && let Some(viewer) = &mut self.viewer
-        {
-            viewer.set_viewport(w, h);
-        }
+        self.prepare_media_viewport(w, h);
         Editing::set_viewport(self, w, h)
     }
 
@@ -433,6 +455,12 @@ impl View for BuiltInDocument {
     }
 
     fn maintain(&mut self, ws: &mut WorkspaceDoc, now: Instant) -> bool {
+        if self
+            .document_id
+            .is_some_and(|id| ws.stamped_document_id() != Some(id))
+        {
+            return false;
+        }
         let search = self.editor.maintain_search_flash(now);
         let table = self.editor.maintain_table_controls(now);
         let copy = self.editor.maintain_copy_affordance(now);
@@ -947,6 +975,9 @@ impl View for BuiltInDocument {
     /// The plain-text fallback for a rich paste that carried no pictures: hand
     /// the carried text to the same plain-text paste path Ctrl+V always used.
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
+        if !self.owns_document(ws) {
+            return;
+        }
         koru_editor::clipboard::paste_plain_text(&mut self.editor, ws, text);
     }
 
@@ -965,7 +996,7 @@ impl View for BuiltInDocument {
         target: Option<PasteTarget>,
         blocks: &[RichBlock],
     ) {
-        if blocks.is_empty() {
+        if !self.owns_document(ws) || blocks.is_empty() {
             return;
         }
         let document = self
@@ -1215,7 +1246,9 @@ impl View for BuiltInDocument {
         caret_on: bool,
         pointer: (f32, f32),
     ) {
-        let ws = &workspace.ws;
+        let Some(ws) = self.frame_document(&workspace.ws, |id| workspace.document(id)) else {
+            return;
+        };
         // A frame always follows a local edit, so this is where the spelling
         // controller sees the editing view's own changes (`adopt` only runs
         // for the panes that did not make the edit). Free when nothing
@@ -1299,6 +1332,33 @@ impl View for BuiltInDocument {
 }
 
 impl BuiltInDocument {
+    fn prepare_media_viewport(&mut self, w: f32, h: f32) {
+        // A lifted viewer keeps the window geometry supplied by its host.
+        if self.viewer_lift.is_none()
+            && let Some(viewer) = &mut self.viewer
+        {
+            viewer.set_viewport(w, h);
+        }
+    }
+
+    /// Retained document activation keeps native viewer geometry and performs
+    /// editor catch-up at the final size, with one editor reflow.
+    pub fn catch_up_at_viewport(&mut self, ws: &WorkspaceDoc, w: f32, h: f32) {
+        self.prepare_media_viewport(w, h);
+        Editing::catch_up_at_viewport(self, ws, w, h);
+    }
+
+    pub(crate) fn frame_document<'a>(
+        &self,
+        active: &'a WorkspaceDoc,
+        resident: impl FnOnce(koru_core::DocumentId) -> Option<&'a WorkspaceDoc>,
+    ) -> Option<&'a WorkspaceDoc> {
+        match self.document_id {
+            None => Some(active), // Legacy combined workspaces and private drafts.
+            Some(id) if active.stamped_document_id() == Some(id) => Some(active),
+            Some(id) => resident(id).filter(|doc| doc.stamped_document_id() == Some(id)),
+        }
+    }
     /// The viewport an open menu is placed and hit-tested in: the view's
     /// own, or for an embedded view the host's page as the editor's
     /// `Embedded::panels` describes it — so a menu opened on a note's last

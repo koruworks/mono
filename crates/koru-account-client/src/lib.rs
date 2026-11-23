@@ -25,7 +25,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 mod cloud_plan;
 mod diagnostics;
 mod subscription;
-pub use subscription::CloudSubscriptionStatus;
+pub use subscription::{CheckoutHandoffAb, CloudSubscriptionStatus, SubscriptionKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -126,12 +126,16 @@ fn is_loopback_host(url: &Url) -> bool {
     }
 }
 
+pub(crate) fn is_allowed_api_path(path_and_query: &str) -> bool {
+    (path_and_query.starts_with("/v1/account")
+        || path_and_query.starts_with("/v1/oauth")
+        || path_and_query.starts_with("/v1/billing/"))
+        && !path_and_query.contains('#')
+}
+
 impl Transport for ReqwestTransport {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
-        if !(request.path_and_query.starts_with("/v1/account")
-            || request.path_and_query.starts_with("/v1/oauth"))
-            || request.path_and_query.contains('#')
-            || request.body.len() > MAX_REQUEST_BODY_BYTES
+        if !is_allowed_api_path(&request.path_and_query) || request.body.len() > MAX_REQUEST_BODY_BYTES
         {
             return Err(TransportError::InvalidRequest);
         }
@@ -341,6 +345,15 @@ impl AccountClient {
         request: &GoogleNativeStartRequestV1,
     ) -> Result<AuthStartResponseV1, ClientError> {
         self.send_json(RouteId::AppleNativeStart, request, None, false)
+    }
+
+    /// Sign in with email through the system browser (`koru.do/login`): the
+    /// same PKCE + loopback start contract as Google and Apple.
+    pub fn email_browser_start(
+        &self,
+        request: &GoogleNativeStartRequestV1,
+    ) -> Result<AuthStartResponseV1, ClientError> {
+        self.send_json(RouteId::EmailBrowserStart, request, None, false)
     }
 
     /// Open a flow bound to this device. No URL comes back: V2 moved the

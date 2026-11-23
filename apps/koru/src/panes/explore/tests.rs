@@ -1039,40 +1039,57 @@ fn a_scrolled_row_never_rides_up_under_the_header() {
     }
 }
 
-/// Profile identities use the same one-line row height as their fixed actions.
+/// Profile identities have room for the name and account detail.
 #[test]
-fn a_profile_row_is_one_line_and_the_linked_count_is_set_from_outside() {
+fn a_profile_row_has_two_lines_and_the_linked_count_is_set_from_outside() {
     let (mut v, _, _) = with_context(0);
     v.toggle_profile_popover();
     let a = area();
     let rects = v.popover_rects(a, VIEW);
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
-    assert_eq!(
-        h(PopoverRow::Profile(0)),
-        Some(theme::metrics::ROW_MIN.value + 4.0)
-    );
-    assert_eq!(
-        h(PopoverRow::Profile(0)),
-        h(PopoverRow::ProfileAction(ProfileAction::Sync))
-    );
+    assert_eq!(h(PopoverRow::Profile(0)), Some(52.0));
+    assert_eq!(h(PopoverRow::Profile(0)), h(PopoverRow::Profile(1)));
     assert!(v.set_linked_count(2), "a new count is a change");
     assert!(!v.set_linked_count(2), "the same count is not");
 }
 
 /// Profile descriptions identify the account without mixing in sync or device state.
 #[test]
-fn the_profile_description_is_email_or_on_this_computer() {
+fn the_profile_description_contains_account_identity_and_known_workspace_count() {
     let (mut v, mut profiles, _) = with_context(0);
-    assert_eq!(v.profile_description(&profiles[1]), "dev-data@example.com");
+    assert_eq!(
+        v.profile_description(&profiles[1]),
+        "dev-data@example.com · 2 workspaces"
+    );
     profiles[1].email.clear();
-    assert_eq!(v.profile_description(&profiles[1]), "On this computer");
+    assert_eq!(
+        v.profile_description(&profiles[1]),
+        "No sign-in · 2 workspaces"
+    );
+    assert!(v.set_profile_workspace_counts(HashMap::from([(profiles[0].id, 1)])));
+    assert_eq!(
+        v.profile_description(&profiles[0]),
+        "koru@example.com · 1 workspace"
+    );
     assert!(v.set_linked_count(2));
-    assert_eq!(v.profile_description(&profiles[1]), "On this computer");
-    assert_eq!(v.profile_description(&profiles[0]), "koru@example.com");
+    assert_eq!(
+        v.profile_description(&profiles[1]),
+        "No sign-in · 2 workspaces"
+    );
+    assert_eq!(
+        v.profile_description(&profiles[0]),
+        "koru@example.com · 1 workspace"
+    );
     v.set_account_state(&syncing(&profiles[1]));
-    assert_eq!(v.profile_description(&profiles[1]), "On this computer");
+    assert_eq!(
+        v.profile_description(&profiles[1]),
+        "No sign-in · 2 workspaces"
+    );
     assert!(v.set_linked_count(0));
-    assert_eq!(v.profile_description(&profiles[1]), "On this computer");
+    assert_eq!(
+        v.profile_description(&profiles[1]),
+        "No sign-in · 2 workspaces"
+    );
 }
 
 /// An account state in which `profile` syncs to Koru Cloud.
@@ -1338,10 +1355,16 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
     // The rail's settings square: the destination, and a shut menu.
     let rail = v.rail_of(a);
     let squares = v.apps_rail_rects(rail);
-    assert!(squares.help.y < squares.settings.y && squares.settings.y < squares.profile.y);
-    v.toggle_popover(PopoverKind::Summary);
-    let (gx, gy) = squares.settings.centre();
-    assert_eq!(v.apps_rail_mouse_down(rail, gx, gy), Outcome::OpenSettings);
+    assert_eq!(squares.help.w, 0.0);
+    assert_eq!(squares.settings.w, 0.0);
+    v.toggle_popover(PopoverKind::Profiles);
+    assert_eq!(
+        v.press(
+            PopoverRow::ProfileAction(ProfileAction::Settings),
+            PopoverPart::Row
+        ),
+        Outcome::OpenSettings
+    );
     assert!(
         !v.popover_open(),
         "a press on App settings shuts an open menu"
@@ -1357,12 +1380,12 @@ fn the_floor_chip_opens_the_switcher_and_closes_it_again() {
         Some(PopoverKind::Profiles)
     );
     let rows = v.popover_rows();
-    assert_eq!(rows[0], PopoverRow::ProfilesHeading);
+    assert_eq!(rows[0], PopoverRow::Profile(0));
     assert!(rows[0].selectable(), "the heading offers Manage profiles");
     assert!(rows.contains(&PopoverRow::Profile(0)));
     assert_eq!(
         rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
+        Some(&PopoverRow::ProfileAction(ProfileAction::Help))
     );
     // The square shuts it.
     assert_eq!(v.apps_rail_mouse_down(rail, sx, sy), Outcome::Consumed);
@@ -1638,7 +1661,7 @@ fn a_rows_gear_opens_manage_on_it() {
     let (x, y) = super::trailing_lane(r).centre();
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::ManageProfile(profiles[2].id)
+        Outcome::OpenProfileInNewWindow(profiles[2].id)
     );
     assert!(!v.popover_open());
 }
@@ -1723,8 +1746,15 @@ fn the_popover_rows_run_top_to_bottom_inside_the_panel() {
                 || pair[1].0 == PopoverRow::ProfileAction(ProfileAction::Sync);
             let gap = if divider {
                 theme::Space::S1.px(theme::Profile::Desktop) * 2.0 + theme::BORDER_W as f32
-            } else if pair[0].0 == PopoverRow::ProfilesHeading {
-                theme::Space::S2.px(theme::Profile::Desktop)
+            } else if kind == PopoverKind::Profiles {
+                if matches!(
+                    (pair[0].0, pair[1].0),
+                    (PopoverRow::Profile(_), PopoverRow::Profile(_))
+                ) {
+                    2.0
+                } else {
+                    0.0
+                }
             } else {
                 theme::Space::S1.px(theme::Profile::Desktop)
             };
@@ -1840,26 +1870,7 @@ fn choosing_a_profile_switches_to_it_and_closes_the_list() {
 fn the_profiles_page_has_no_page_behind_it() {
     use winit::keyboard::{Key, NamedKey};
     let (mut v, _, _) = with_context(0);
-    let a = area();
     v.toggle_profile_popover();
-    let (_, r) = *v
-        .popover_rects(a, VIEW)
-        .iter()
-        .find(|(row, _)| *row == PopoverRow::ProfilesHeading)
-        .expect("the heading");
-    assert_eq!(
-        v.mouse_down(a, VIEW, r.x + 4.0, r.centre().1, false),
-        Outcome::Consumed
-    );
-    assert!(
-        v.popover_open(),
-        "the heading's words are furniture, not a way out"
-    );
-    assert_eq!(
-        v.popover.as_ref().map(|p| p.kind),
-        Some(PopoverKind::Profiles)
-    );
-    // Left has nowhere to go and falls through to the container.
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
     assert!(v.popover_open());
 }
@@ -1868,82 +1879,44 @@ fn the_profiles_page_has_no_page_behind_it() {
 #[test]
 fn the_arrows_walk_the_profiles_and_fixed_actions() {
     use winit::keyboard::{Key, NamedKey};
-    let (mut v, profiles, _) = with_context(0);
+    let (mut v, _, _) = with_context(0);
     v.toggle_profile_popover();
+    let rows = v.popover_rows();
+    for row in &rows {
+        v.popover_key(&Key::Named(NamedKey::ArrowDown));
+        assert_eq!(v.popover_hover().map(|i| rows[i]), Some(*row));
+    }
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    assert_eq!(
-        v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfilesHeading)
-    );
-    assert_eq!(
-        v.keyboard_part(PopoverRow::ProfilesHeading),
-        PopoverPart::Gear
-    );
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    assert_eq!(
-        v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::Profile(0)),
-        "the first identity follows Manage profiles"
-    );
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    assert_eq!(
-        v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::Profile(1))
-    );
+    assert_eq!(v.popover_hover(), Some(0));
     v.popover_key(&Key::Named(NamedKey::ArrowUp));
-    v.popover_key(&Key::Named(NamedKey::ArrowUp));
-    assert_eq!(
-        v.keyboard_part(PopoverRow::ProfilesHeading),
-        PopoverPart::Gear
-    );
-    v.popover_key(&Key::Named(NamedKey::ArrowUp));
-    assert_eq!(
-        v.popover_hover().map(|i| v.popover_rows()[i]),
-        Some(PopoverRow::ProfileAction(ProfileAction::Sync)),
-        "wraps from Manage profiles to Global sync"
-    );
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSyncSettings),
-        "Enter activates Global sync"
+        Some(Outcome::OpenHelp)
     );
-    assert!(!v.popover_open(), "the fixed action closes the menu");
-    v.advance_popover(Instant::now() + Duration::from_secs(1));
-    v.toggle_profile_popover();
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::SwitchProfile(profiles[0].id)),
-        "Enter on a Profile switches to it"
-    );
-    assert!(!v.popover_open(), "switching closes the list");
+    // The container opens Help beside this retained parent.
+    assert!(v.popover_is(PopoverKind::Profiles));
 }
 
-/// Fixed Profile menu actions retain their destination regardless of Cloud state.
+/// Sync is reached through Settings, never through a stale footer hit.
 #[test]
-fn the_profile_sync_action_keeps_its_destination() {
-    let a = area();
+fn the_cloud_action_is_available_in_both_account_states() {
     for cloud in [false, true] {
-        for (action, outcome) in [(ProfileAction::Sync, Outcome::OpenSyncSettings)] {
-            let (mut v, profiles, _) = with_context(0);
-            if cloud {
-                v.set_account_state(&syncing(&profiles[1]));
-            }
-            v.toggle_profile_popover();
-            let (_, rect) = v
-                .popover_rects(a, VIEW)
-                .into_iter()
-                .find(|(row, _)| *row == PopoverRow::ProfileAction(action))
-                .expect("the fixed action");
-            let (x, y) = rect.centre();
-            assert_eq!(
-                v.mouse_down(a, VIEW, x, y, false),
-                outcome,
-                "{action:?}, cloud={cloud}"
-            );
-            assert!(!v.popover_open());
+        let (mut v, profiles, _) = with_context(0);
+        if cloud {
+            v.set_account_state(&syncing(&profiles[1]));
         }
+        v.toggle_profile_popover();
+        assert!(
+            v.popover_rows()
+                .contains(&PopoverRow::ProfileAction(ProfileAction::Sync))
+        );
+        assert_eq!(
+            v.press(
+                PopoverRow::ProfileAction(ProfileAction::Sync),
+                PopoverPart::Row
+            ),
+            Outcome::ManageCloud
+        );
     }
 }
 
@@ -1965,7 +1938,7 @@ fn enter_on_a_profile_row_switches_and_closes() {
     let (mut v, profiles, _) = with_context(0);
     v.toggle_popover(PopoverKind::Profiles);
     // Manage profiles is the first stop, followed by all three identities.
-    for _ in 0..4 {
+    for _ in 0..3 {
         v.popover_key(&Key::Named(NamedKey::ArrowDown));
     }
     assert_eq!(
@@ -2045,7 +2018,6 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     v.toggle_profile_popover();
     let rows = v.popover_rows();
     v.popover_key(&Key::Named(NamedKey::ArrowDown));
-    v.popover_key(&Key::Named(NamedKey::ArrowDown));
     let lit = v.popover_hover().expect("Down lights a row");
     let PopoverRow::Profile(i) = rows[lit] else {
         panic!("a Profile row is lit, not {:?}", rows[lit]);
@@ -2064,27 +2036,7 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     let id = v.profiles[i].id;
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::ManageProfile(id))
-    );
-
-    v.toggle_profile_popover();
-    if !v.popover_open() {
-        v.toggle_profile_popover();
-    }
-    let action = v
-        .popover_rows()
-        .iter()
-        .position(|row| *row == PopoverRow::ProfileAction(ProfileAction::Sync))
-        .expect("Sync");
-    v.popover.as_mut().expect("open").hover = Some(action);
-    v.popover_part = None;
-    assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
-    assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowRight)), None);
-    assert!(v.popover_open(), "and neither dismissed it");
-    assert_eq!(
-        v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::OpenSyncSettings),
-        "Enter activates Sync"
+        Some(Outcome::OpenProfileInNewWindow(id))
     );
 }
 
@@ -2211,15 +2163,17 @@ fn choosing_a_workspace_reports_it_and_closes_the_popover() {
 
 /// Profile creation belongs to Manage; the compact menu offers Sync only.
 #[test]
-fn the_profile_menu_has_no_creation_row() {
-    let a = area();
+fn the_profile_menu_opens_profile_creation() {
     let (mut v, _, _) = with_context(0);
-    v.toggle_popover(PopoverKind::Profiles);
-    assert!(
-        v.popover_rects(a, VIEW)
-            .into_iter()
-            .all(|(row, _)| row != PopoverRow::ProfileAction(ProfileAction::New))
+    v.toggle_profile_popover();
+    assert_eq!(
+        v.press(
+            PopoverRow::ProfileAction(ProfileAction::New),
+            PopoverPart::Row
+        ),
+        Outcome::NewProfile
     );
+    assert!(!v.popover_open());
 }
 
 /// Each page's rows, in the order the artboard lists them.
@@ -2230,13 +2184,15 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
     assert_eq!(
         v.popover_rows(),
         vec![
-            PopoverRow::ProfilesHeading,
             PopoverRow::Profile(0),
             PopoverRow::Profile(1),
             PopoverRow::Profile(2),
+            PopoverRow::ProfileAction(ProfileAction::New),
             PopoverRow::ProfileAction(ProfileAction::Sync),
+            PopoverRow::ProfileAction(ProfileAction::Settings),
+            PopoverRow::ProfileAction(ProfileAction::Help),
         ],
-        "PROFILES, every Profile, Sync"
+        "PROFILES, every Profile"
     );
     // The `…`'s page: the heading, the workspaces, New and Import — no
     // sync control and no Trash.
@@ -2264,16 +2220,13 @@ fn the_head_outranks_a_scrolled_row_behind_it() {
     assert!(v.scroll_popover(a, VIEW, -400.0));
     let manage = v
         .with_page(a, VIEW, |frame| {
-            frame
-                .node(popover_elements::profiles::MANAGE_PROFILES)
-                .unwrap()
-                .rect
+            frame.node(ProfileAction::Settings.key()).unwrap().rect
         })
         .expect("Manage profiles");
     let (x, y) = manage.centre();
     assert_eq!(
         v.mouse_down(a, VIEW, x, y, false),
-        Outcome::ManageProfile(profiles[1].id),
+        Outcome::OpenSettings,
         "the head answers, not the row under it"
     );
 }
@@ -2428,20 +2381,24 @@ fn a_chip_colour_follows_the_email_and_not_the_name() {
 #[test]
 fn the_profiles_page_offers_no_folder_actions() {
     let (mut v, _, _) = with_context(4);
-    v.toggle_popover(PopoverKind::Profiles);
-    let rows = v.popover_rows();
-    assert_eq!(
-        rows.last(),
-        Some(&PopoverRow::ProfileAction(ProfileAction::Sync))
-    );
-    let actions: Vec<_> = rows
+    v.toggle_profile_popover();
+    let actions: Vec<_> = v
+        .popover_rows()
         .into_iter()
         .filter_map(|row| match row {
             PopoverRow::ProfileAction(action) => Some(action),
             _ => None,
         })
         .collect();
-    assert_eq!(actions, [ProfileAction::Sync]);
+    assert_eq!(
+        actions,
+        [
+            ProfileAction::New,
+            ProfileAction::Sync,
+            ProfileAction::Settings,
+            ProfileAction::Help
+        ]
+    );
 }
 
 // ------------------------------------------------------------------ the fade
@@ -4261,7 +4218,7 @@ fn every_navigator_mode_button_hit_tests_back_to_its_own_mode() {
             assert!(!view.actions_at(a, x, y), "{mode:?} is not the ... button");
         }
         let last = rects.last().unwrap().1;
-        let foot = view.apps_rail_rects(rail).help;
+        let foot = view.apps_rail_rects(rail).profile;
         assert!(last.y + last.h < foot.y, "nothing under the last app");
         assert!(view.actions_button(a).w > 0.0, "the `…` shows at {width}");
     }

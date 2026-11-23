@@ -253,6 +253,27 @@ impl ArtifactsClient<'_> {
             .map_err(|_| protocol_failure("The artifact content body could not be read."))
     }
 
+    /// Read a bounded format without trusting either metadata or an HTTP
+    /// length hint. The stream consumes at most `limit + 1` body bytes.
+    pub fn content_bounded(
+        &self,
+        version: ArtifactVersionId,
+        limit: usize,
+    ) -> ArtifactsResult<Vec<u8>> {
+        let response = checked(self.execute(
+            reqwest::Method::GET,
+            format!("/v1/artifacts/versions/{}/content", version.to_storage()),
+            None,
+        )?)?;
+        if response
+            .content_length()
+            .is_some_and(|size| size > limit as u64)
+        {
+            return Err(content_too_large());
+        }
+        read_bounded(response, limit)
+    }
+
     fn json<T: serde::de::DeserializeOwned>(
         &self,
         method: reqwest::Method,
@@ -314,6 +335,30 @@ impl ArtifactsClient<'_> {
     }
 }
 
+fn content_too_large() -> Failure {
+    Failure::new(
+        "payload_too_large",
+        "The artifact exceeds this format's byte limit.",
+        false,
+    )
+}
+
+fn read_bounded(reader: impl std::io::Read, limit: usize) -> ArtifactsResult<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    reader
+        .take((limit as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| protocol_failure("The artifact content body could not be read."))?;
+    if bytes.len() > limit {
+        return Err(content_too_large());
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod bounded_tests;
+
 fn json_body<T: serde::Serialize>(value: &T) -> ArtifactsResult<Bytes> {
     serde_json::to_vec(value)
         .map(Bytes::from)
@@ -325,9 +370,14 @@ fn checked(response: reqwest::blocking::Response) -> ArtifactsResult<reqwest::bl
         return Ok(response);
     }
     let status = response.status();
-    match response.json::<Failure>() {
-        Ok(failure) => Err(failure),
-        Err(_) => Err(Failure::new(
+    // An error is metadata too. A failed bounded content read must not
+    // allocate an unbounded error body before reaching its format limit.
+    match read_bounded(response, koru_artifact_wire::METADATA_BODY_LIMIT)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Failure>(&bytes).ok())
+    {
+        Some(failure) => Err(failure),
+        None => Err(Failure::new(
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 "unauthenticated"
             } else {

@@ -55,6 +55,19 @@ impl MainView {
         previous: Option<crate::panes::sidebar::apps_rail::Hit>,
     ) {
         use crate::panes::sidebar::apps_rail::Hit;
+        if self.mini_app_pins.menu.is_some() {
+            self.refresh_pin_menu();
+        }
+        if let Some(Hit::Pin(id)) = previous {
+            self.retain_pin_focus(id);
+            return;
+        }
+        if previous == Some(Hit::PinOverflow)
+            && let Some(id) = self.mini_app_pins.highlight
+        {
+            self.retain_pin_focus(id);
+            return;
+        }
         let controls = self.explore.rail_controls(self.rail_area());
         let overflow = controls.iter().position(|hit| *hit == Hit::Overflow);
         let menu_focus = self

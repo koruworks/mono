@@ -24,6 +24,8 @@ pub struct Rects {
     /// Nothing under the last: the *Manage apps* `+` is out until the
     /// manager lands (the review's note, E68).
     pub apps: Vec<(NavigatorMode, Rect)>,
+    pub pins: Vec<(koru_settings::pins::PinId, Rect)>,
+    pub pin_overflow: Rect,
     pub overflow: Rect,
     pub help: Rect,
     /// App settings, between Help and the profile square.
@@ -40,6 +42,8 @@ pub enum Hit {
     /// The `…` that opens the workspace menu.
     WorkspaceMenu,
     App(NavigatorMode),
+    Pin(koru_settings::pins::PinId),
+    PinOverflow,
     Overflow,
     Help,
     Settings,

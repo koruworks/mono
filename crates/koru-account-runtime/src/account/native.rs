@@ -11,6 +11,7 @@ use zeroize::Zeroize;
 
 pub(super) struct PendingNative {
     pub(super) locale: String,
+    pub(super) ab: Option<koru_agent_wire::OnboardingAb>,
     pub(super) request: GoogleNativeTokenCompleteRequestV1,
     prompt: NativeSignInRequest,
     submitted: bool,
@@ -44,6 +45,7 @@ impl ProductionAccountService {
         &mut self,
         generation: u64,
         locale: String,
+        ab: Option<koru_agent_wire::OnboardingAb>,
         cancel: &Cancel,
         progress: &mut dyn FnMut(ServiceProgress),
     ) -> Result<ServiceOutcome, ServiceError> {
@@ -70,12 +72,16 @@ impl ProductionAccountService {
                     pkce_challenge: base64::engine::general_purpose::URL_SAFE_NO_PAD
                         .encode(Sha256::digest(verifier.as_bytes())),
                     locale: locale.clone(),
+                    code: ab.as_ref().and_then(|v| v.code.clone()),
+                    header: ab.as_ref().and_then(|v| v.header.clone()),
+                    billing: ab.as_ref().and_then(|v| v.billing.clone()),
                 })
                 .map_err(map_client_error)?;
             let prompt = self.native_prompt(generation, &start, false)?;
             start.nonce.0.zeroize();
             self.pending_native = Some(PendingNative {
                 locale,
+                ab,
                 request: GoogleNativeTokenCompleteRequestV1 {
                     version: Version1,
                     flow_id: start.flow_id,
@@ -232,6 +238,7 @@ impl ProductionAccountService {
         self.pending_exchange = Some(Pending {
             command: AccountCommand::StartGoogle {
                 locale: pending.locale.clone(),
+                ab: pending.ab.clone(),
             },
             request: NativeExchangeRequestV1 {
                 version: Version1,
