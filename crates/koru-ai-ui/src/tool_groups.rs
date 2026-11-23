@@ -569,4 +569,4 @@ pub(crate) fn seconds(ms: i64) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

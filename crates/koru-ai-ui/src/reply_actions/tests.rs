@@ -117,6 +117,35 @@ fn native_actions_keep_capability_limits_and_observer_only_has_details() {
         surface.reply_actions(message).collect::<Vec<_>>(),
         [ReplyAction::Copy, ReplyAction::Details]
     );
+    // A published Bot reply in the engine's history saves as a document;
+    // its layout block ids are still no link target.
+    surface.managed.as_mut().unwrap().messages.insert(
+        9,
+        koru_ai_wire::bot_threads::Message {
+            id: reply.as_uuid(),
+            sequence: 9,
+            sender: "bot:synthetic".into(),
+            kind: "words".into(),
+            content: koru_ai_wire::bot_threads::Content {
+                body: "Done.".into(),
+                attachments: vec![],
+                references: vec![],
+                in_reply_to: None,
+                deadline_ms: None,
+                reply_to: "thread".into(),
+            },
+            created_at_ms: 1,
+        },
+    );
+    let message = surface
+        .message_layouts
+        .iter()
+        .find(|m| m.id == Some(reply))
+        .unwrap();
+    assert_eq!(
+        surface.reply_actions(message).collect::<Vec<_>>(),
+        [ReplyAction::Copy, ReplyAction::Store, ReplyAction::Details]
+    );
     let state = surface.managed.as_mut().unwrap();
     state.snapshot.joined = false;
     state.snapshot.origin = Some(koru_ai_wire::bot_threads::Origin {

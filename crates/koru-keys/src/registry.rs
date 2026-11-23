@@ -409,6 +409,15 @@ pub enum ShortcutId {
     /// in a message anyway (the user's call, 2026-11-03). A document beside
     /// the chat keeps it whenever the keyboard is there.
     AddSelectionToChat,
+    /// **The previous waiting Routine result** in a Bot's review card. Taken
+    /// only while the card is open and the composer is empty or the card
+    /// holds the keyboard, so the caret keeps the arrow everywhere else.
+    ReviewPrevious,
+    /// **The next waiting Routine result**, on the same terms.
+    ReviewNext,
+    /// **Skip the Routine result the review card shows**, wherever the
+    /// keyboard is in the Bot's chat, while the card is open.
+    ReviewSkip,
 }
 
 /// One row of the table.
@@ -1202,6 +1211,24 @@ pub const REGISTRY: &[Shortcut] = &[
             Chord::new(On::Letter('l'), PRIMARY),
         )
     },
+    s(
+        ShortcutId::ReviewPrevious,
+        Layer::Chat,
+        "Previous result",
+        Chord::new(named(NamedKey::ArrowLeft), NONE),
+    ),
+    s(
+        ShortcutId::ReviewNext,
+        Layer::Chat,
+        "Next result",
+        Chord::new(named(NamedKey::ArrowRight), NONE),
+    ),
+    s(
+        ShortcutId::ReviewSkip,
+        Layer::Chat,
+        "Skip result",
+        Chord::new(On::Letter('s'), ALT),
+    ),
 ];
 
 impl ShortcutId {
@@ -1226,7 +1253,10 @@ impl ShortcutId {
             | Self::JumpToLatest
             | Self::PreviousChat
             | Self::NextChat
-            | Self::AddSelectionToChat => koru_features::ai(),
+            | Self::AddSelectionToChat
+            | Self::ReviewPrevious
+            | Self::ReviewNext
+            | Self::ReviewSkip => koru_features::ai(),
             Self::CopyCloudDetails => koru_features::cloud_sync(),
             Self::Reminders => koru_features::reminders(),
             // The rail's slots (`ShowRailView1`…) are never hidden by a

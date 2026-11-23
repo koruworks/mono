@@ -103,6 +103,20 @@ pub enum Command {
         thread: ChatId,
         turn: Uuid,
     },
+    /// Save one published Bot reply as a document in the Bot's home
+    /// workspace. `id` is the save request and `document` the page it makes:
+    /// both are chosen once and resent unchanged after an uncertain answer,
+    /// so a retry finds the page instead of making another. `sequence` is
+    /// where the reply sits in its thread; the engine's copy is what is
+    /// saved, never text the window sends.
+    SaveReply {
+        id: Uuid,
+        thread: ChatId,
+        message: Uuid,
+        sequence: u64,
+        title: String,
+        document: Uuid,
+    },
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, JsonSchema)]
@@ -357,6 +371,12 @@ pub enum Response {
     Changed {
         request: Uuid,
         replayed: bool,
+    },
+    Saved {
+        request: Uuid,
+        document: Uuid,
+        workspace: Uuid,
+        title: String,
     },
 }
 

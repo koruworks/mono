@@ -842,3 +842,91 @@ fn cards_name_the_exact_occurrence_and_its_own_reply() {
         assert_eq!(serde_json::json!(found.reply), fact["reply"]);
     }
 }
+
+fn turn_state(f: &Fixture, turn: Uuid) -> String {
+    f.db.connection
+        .query_row(
+            "SELECT state FROM turns WHERE id=?1",
+            [turn.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+fn park_for_retry(f: &Fixture, turn: Uuid) {
+    // What a build before `fail_setup` left: the run parked for a Retry.
+    f.db.connection
+        .execute(
+            "UPDATE turns SET state='needs_you',details=CAST(json_set(CAST(details AS TEXT),'$.setup_failure','provider') AS BLOB) WHERE id=?1",
+            [turn.to_string()],
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_run_that_could_not_start_fails_and_the_next_firing_runs() {
+    let mut f = Fixture::new();
+    let a = f.create();
+    let a = f.enable(&a);
+    f.tick(60_000);
+    let parked = f.claim(&a, 60_001);
+    park_for_retry(&f, parked.turn.id);
+    f.tick(120_000);
+    let history = f.history(&a);
+    assert!(
+        history.iter().any(|r| r.occurrence_ms == 60_000
+            && r.state == "failed"
+            && r.reason.as_deref() == Some("setup")),
+        "the run that could not start is a failed run"
+    );
+    assert!(
+        history
+            .iter()
+            .any(|r| r.occurrence_ms == 120_000 && r.state == "queued"),
+        "the next firing is not skipped behind it"
+    );
+    assert_eq!(turn_state(&f, parked.turn.id), "stopped");
+    let next = f.claim(&a, 120_001);
+    f.publish(&next, 120_002);
+    assert!(
+        f.history(&a)
+            .iter()
+            .any(|r| r.occurrence_ms == 120_000 && r.state == "answered")
+    );
+}
+
+#[test]
+fn a_person_waiting_in_the_routine_thread_keeps_the_retry() {
+    let mut f = Fixture::new();
+    let a = f.create();
+    let a = f.enable(&a);
+    f.tick(60_000);
+    let parked = f.claim(&a, 60_001);
+    f.db.accept_message(
+        &f.who,
+        &messages::Envelope {
+            id: Uuid::new_v4(),
+            to: f.bot,
+            thread: Some(a.thread),
+            body: "Why did this fail?".into(),
+            in_reply_to: None,
+            attachments: vec![],
+            references: vec![],
+            deadline_ms: None,
+            reply_to: messages::ReplyTo::Thread,
+        },
+        60_002,
+    )
+    .unwrap();
+    park_for_retry(&f, parked.turn.id);
+    assert!(
+        !schedule::fail_setup(
+            &f.db.connection,
+            a.thread,
+            &parked.turn.id.to_string(),
+            60_003
+        )
+        .unwrap()
+    );
+    assert_eq!(turn_state(&f, parked.turn.id), "needs_you");
+}

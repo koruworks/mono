@@ -8,6 +8,7 @@ use koru_draw::el::{
     self, Action, El, ElState, Frame, FrameCx, Key as ElKey, Leaf, Length, Role, TextCache,
 };
 use koru_draw::theme::tokens::{Profile, Radius, Space};
+use koru_draw::theme::{Ink, roles};
 use koru_i18n::{Key as TextKey, Lang, t};
 use koru_ui::icon_button::{IconButton, State as ButtonState};
 use work_view::{WorkHit, WorkLayout};
@@ -57,6 +58,14 @@ pub(crate) struct Dialog {
     link_keys: Vec<(WorkHit, ElKey)>,
     names: HashMap<ToolInvocationId, String>,
     details: String,
+    /// The reply's work at a glance: totals and time, then calls by kind.
+    summary: Summary,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Summary {
+    pub totals: String,
+    pub kinds: String,
 }
 
 fn key(hit: WorkHit) -> ElKey {
@@ -229,6 +238,7 @@ impl ChatSurface {
             link_keys: Vec::new(),
             names: HashMap::new(),
             details: String::new(),
+            summary: Summary::default(),
         });
         self.composer.set_focused(false);
         self.reply_tooltip.clear();
@@ -287,6 +297,7 @@ impl ChatSurface {
                     .map(|row| (row.id, tool_groups::step_call_line(group, row, lang)))
             })
             .collect();
+        open.summary = summary(&rows, lang);
         open.details = rows
             .iter()
             .map(|row| {
@@ -480,7 +491,19 @@ impl ChatSurface {
                 .focus
                 .map_or_else(|| open.close_key(), |hit| open.key(hit)),
             controls,
-            details: open.details.clone(),
+            details: [
+                open.summary.totals.as_str(),
+                &open.summary.kinds,
+                &open.details,
+            ]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(
+                "
+
+",
+            ),
         })
     }
 
@@ -845,6 +868,80 @@ impl Leaf for Body {
     }
 }
 
+/// The reply's tool use at a glance, from the calls this surface saw: how
+/// many, how many failed and how long they took, then what they were, by
+/// kind, most frequent first. Plumbing (tool discovery) and permission
+/// requests are not calls.
+pub(crate) fn summary(rows: &[&ToolActivity], lang: Lang) -> Summary {
+    use koru_i18n::number::decimal;
+    use tool_groups::StepKind;
+    let calls: Vec<(StepKind, &ToolActivity)> = rows
+        .iter()
+        .filter_map(|row| {
+            tool_groups::step_kind(row)
+                .filter(|kind| *kind != StepKind::Permission)
+                .map(|kind| (kind, *row))
+        })
+        .collect();
+    if calls.is_empty() {
+        return Summary::default();
+    }
+    let failed = calls
+        .iter()
+        .filter(|(_, row)| row.status == ToolActivityStatus::Failed)
+        .count() as u64;
+    let total = calls.len() as u64;
+    let mut totals = vec![];
+    if total > 1 || failed > 0 {
+        totals.push(if failed == 0 {
+            koru_i18n::fill(t(lang, TextKey::RunStepTools), &[&decimal(lang, total)])
+        } else {
+            koru_i18n::fill(
+                t(lang, TextKey::RunStepToolsWithFailures),
+                &[&decimal(lang, total), &decimal(lang, failed)],
+            )
+        });
+    }
+    // Time is told only once every call has ended: a running total would
+    // be a guess.
+    if calls.iter().all(|(_, row)| row.status.is_terminal()) {
+        let start = calls
+            .iter()
+            .map(|(_, row)| row.started_at.unwrap_or(row.proposed_at).millis())
+            .min();
+        let end = calls
+            .iter()
+            .filter_map(|(_, row)| row.completed_at.map(|at| at.millis()))
+            .max();
+        if let (Some(start), Some(end)) = (start, end)
+            && end > start
+        {
+            totals.push(koru_i18n::time::elapsed(lang, (end - start) as u64));
+        }
+    }
+    let mut kinds: Vec<tool_groups::StepGroup<'_>> = vec![];
+    for (kind, row) in calls {
+        match kinds.iter_mut().find(|group| group.kind == kind) {
+            Some(group) => group.rows.push(row),
+            None => kinds.push(tool_groups::StepGroup {
+                kind,
+                rows: vec![row],
+                offset: None,
+                asked: Vec::new(),
+            }),
+        }
+    }
+    kinds.sort_by_key(|group| std::cmp::Reverse(group.rows.len()));
+    Summary {
+        totals: totals.join(" · "),
+        kinds: kinds
+            .iter()
+            .map(|group| tool_groups::group_line(group, lang))
+            .collect::<Vec<_>>()
+            .join(" · "),
+    }
+}
+
 fn dialog_tree(open: &Dialog, lang: Lang, images: &HashMap<String, ImageLoad>) -> El {
     let mut body = el::col("Retained work content").id(CONTENT);
     if let Some(work) = &open.layout {
@@ -899,6 +996,19 @@ fn dialog_tree(open: &Dialog, lang: Lang, images: &HashMap<String, ImageLoad>) -
                     .semantics(Role::Button)
                     .name(TextKey::ViewerClose),
                 ),
+        )
+        .children(
+            [&open.summary.totals, &open.summary.kinds]
+                .into_iter()
+                .zip([Ink::Secondary, Ink::Primary])
+                .filter(|(words, _)| !words.is_empty())
+                .map(|(words, ink)| {
+                    el::text(words.clone())
+                        .named("Work summary")
+                        .role(roles::META)
+                        .ink(ink)
+                        .wrap()
+                }),
         )
         .child(
             el::scroll_y("Work details viewport")

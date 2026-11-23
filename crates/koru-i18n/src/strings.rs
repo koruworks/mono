@@ -4300,6 +4300,21 @@ pub enum Key {
     BotsRoutinesMayStillBeOn,
     /// A restored Bot's sentence when some of its Routines need a look. Non-English columns machine-written, awaiting a native read.
     BotsRestoredCheckRoutines,
+    // ------------------------------------- the main composer's Routine review card
+    /// Where the open result sits in the Bot's waiting results: "2 of 8". Non-English columns machine-written, awaiting a native read.
+    BotsReviewPosition,
+    /// The line above a result: the Routine that made it and how long ago. Non-English columns machine-written, awaiting a native read.
+    BotsReviewFrom,
+    /// The card's heading for a result that is no longer waiting (reopened from a reply). Non-English columns machine-written, awaiting a native read.
+    BotsReviewResult,
+    /// The card header's previous arrow. Non-English columns machine-written, awaiting a native read.
+    BotsReviewPrevious,
+    /// The card header's next arrow. Non-English columns machine-written, awaiting a native read.
+    BotsReviewNext,
+    /// The composer's hint while a result card is attached; the value is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsReviewComposerPlaceholder,
+    /// After that hint, the card's keys: the two arrows, then Skip's chord. Non-English columns machine-written, awaiting a native read.
+    BotsReviewComposerKeys,
     // ------------------------------------- a Bot's quick setup (QUESTIONS O155)
     // Drawn over a Bot's empty main conversation: a greeting in the Bot's
     // voice and a two-step card. A presentation, never a stored message.
@@ -4639,7 +4654,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3095] = [
+    pub const ALL: [Key; 3102] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7555,6 +7570,13 @@ impl Key {
         Key::BotsRoutineChooseAccessAgain,
         Key::BotsRoutinesMayStillBeOn,
         Key::BotsRestoredCheckRoutines,
+        Key::BotsReviewPosition,
+        Key::BotsReviewFrom,
+        Key::BotsReviewResult,
+        Key::BotsReviewPrevious,
+        Key::BotsReviewNext,
+        Key::BotsReviewComposerPlaceholder,
+        Key::BotsReviewComposerKeys,
         Key::BotsSetupGreeting,
         Key::BotsSetupTitle,
         Key::BotsSetupSkipAll,
@@ -22575,6 +22597,14 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsRoutineChooseAccessAgain, en: "Choose access again", es: "Elige el acceso de nuevo", pt_br: "Escolha o acesso novamente", de: "Zugriff erneut wählen", fr: "Choisissez à nouveau l'accès", ar: "اختر الوصول مجددًا", zh_hans: "请重新选择访问权限", ja: "アクセスを選び直してください" },
     Row { key: Key::BotsRoutinesMayStillBeOn, en: "These Routines may still be on: {}", es: "Estas rutinas pueden seguir activadas: {}", pt_br: "Estas rotinas ainda podem estar ativadas: {}", de: "Diese Routinen sind möglicherweise noch eingeschaltet: {}", fr: "Ces routines sont peut-être encore activées : {}", ar: "قد تكون هذه المهام الدورية ما زالت تعمل: \u{2068}{}\u{2069}", zh_hans: "这些例行任务可能仍处于开启状态：{}", ja: "次のルーティンはまだオンの可能性があります：{}" },
     Row { key: Key::BotsRestoredCheckRoutines, en: "Restored and paused. Check its Routines before you resume it.", es: "Restaurado y en pausa. Revisa sus rutinas antes de reanudarlo.", pt_br: "Restaurado e pausado. Confira as rotinas antes de retomá-lo.", de: "Wiederhergestellt und pausiert. Prüfe seine Routinen, bevor du ihn fortsetzt.", fr: "Restauré et en pause. Vérifiez ses routines avant de le reprendre.", ar: "تمت الاستعادة وهو متوقف مؤقتًا. راجع مهامه الدورية قبل استئنافه.", zh_hans: "已恢复并暂停。恢复运行前请检查它的例行任务。", ja: "復元され、一時停止中です。再開する前にルーティンを確認してください。" },
+    // ------------------------------------- the main composer's Routine review card
+    Row { key: Key::BotsReviewPosition, en: "{} of {}", es: "{} de {}", pt_br: "{} de {}", de: "{} von {}", fr: "{} sur {}", ar: "\u{2068}{}\u{2069} من \u{2068}{}\u{2069}", zh_hans: "第 {} 个，共 {} 个", ja: "{} / {}" },
+    Row { key: Key::BotsReviewFrom, en: "from {} · {}", es: "de {} · {}", pt_br: "de {} · {}", de: "von {} · {}", fr: "de {} · {}", ar: "من \u{2068}{}\u{2069} · \u{2068}{}\u{2069}", zh_hans: "来自 {} · {}", ja: "{} から · {}" },
+    Row { key: Key::BotsReviewResult, en: "Routine result", es: "Resultado de la rutina", pt_br: "Resultado da rotina", de: "Routine-Ergebnis", fr: "Résultat de la routine", ar: "نتيجة المهمة الدورية", zh_hans: "例行任务结果", ja: "ルーティンの結果" },
+    Row { key: Key::BotsReviewPrevious, en: "Previous result", es: "Resultado anterior", pt_br: "Resultado anterior", de: "Vorheriges Ergebnis", fr: "Résultat précédent", ar: "النتيجة السابقة", zh_hans: "上一个结果", ja: "前の結果" },
+    Row { key: Key::BotsReviewNext, en: "Next result", es: "Siguiente resultado", pt_br: "Próximo resultado", de: "Nächstes Ergebnis", fr: "Résultat suivant", ar: "النتيجة التالية", zh_hans: "下一个结果", ja: "次の結果" },
+    Row { key: Key::BotsReviewComposerPlaceholder, en: "Ask {} about this, or tell it what to do instead", es: "Pregunta a {} sobre esto o dile qué hacer en su lugar", pt_br: "Pergunte a {} sobre isto ou diga o que fazer em vez disso", de: "Frag {} dazu oder sag, was stattdessen zu tun ist", fr: "Interrogez {} à ce sujet ou dites-lui quoi faire à la place", ar: "اسأل \u{2068}{}\u{2069} عن هذا، أو أخبره بما يجب فعله بدلًا من ذلك", zh_hans: "就此询问 {}，或告诉它改做什么", ja: "{} にこれについて質問するか、代わりに何をするか伝えてください" },
+    Row { key: Key::BotsReviewComposerKeys, en: "{} {} to move · {} to skip", es: "{} {} para moverte · {} para omitir", pt_br: "{} {} para navegar · {} para pular", de: "{} {} zum Wechseln · {} zum Überspringen", fr: "{} {} pour naviguer · {} pour passer", ar: "\u{2068}{}\u{2069} \u{2068}{}\u{2069} للتنقل · \u{2068}{}\u{2069} للتخطي", zh_hans: "{} {} 切换 · {} 跳过", ja: "{} {} で移動 · {} でスキップ" },
     // ------------------------------------- a Bot's quick setup (QUESTIONS O155)
     Row { key: Key::BotsSetupGreeting, en: "Hi, I'm {}. Tell me what you'd like me to do, or use the quick setup below. Either way, I'll ask for anything I'm missing.", es: "Hola, soy {}. Dime qué quieres que haga o usa la configuración rápida de abajo. En cualquier caso, te preguntaré lo que me falte.", pt_br: "Oi, eu sou {}. Diga o que você quer que eu faça ou use a configuração rápida abaixo. De qualquer forma, vou perguntar o que estiver faltando.", de: "Hallo, ich bin {}. Sag mir, was ich tun soll, oder nutze die Schnelleinrichtung unten. So oder so frage ich nach, wenn mir etwas fehlt.", fr: "Bonjour, je suis {}. Dites-moi ce que vous attendez de moi, ou utilisez la configuration rapide ci-dessous. Dans les deux cas, je vous demanderai ce qui me manque.", ar: "مرحبًا، أنا \u{2068}{}\u{2069}. أخبرني بما تريد أن أفعله، أو استخدم الإعداد السريع أدناه. في الحالتين سأسألك عن أي شيء ينقصني.", zh_hans: "你好，我是 {}。告诉我你想让我做什么，或使用下方的快速设置。无论哪种方式，缺少的信息我都会向你询问。", ja: "こんにちは、{} です。してほしいことを教えてください。下のクイック設定も使えます。どちらの場合も、足りない情報があればお尋ねします。" },
     Row { key: Key::BotsSetupTitle, en: "Set up {}", es: "Configurar {}", pt_br: "Configurar {}", de: "{} einrichten", fr: "Configurer {}", ar: "إعداد \u{2068}{}\u{2069}", zh_hans: "设置 {}", ja: "{} を設定" },

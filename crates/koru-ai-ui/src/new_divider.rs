@@ -122,7 +122,7 @@ impl ChatSurface {
     }
 
     /// The divider, where the layout put it: **NEW** at the column's start,
-    /// then a 1 px line across the rest, both in the accent colour.
+    /// then a half-pixel line across the rest, both in the accent colour.
     pub(crate) fn draw_new_divider(&mut self, canvas: &mut Scene, root: Affine, area: Rect) {
         let Some(top) = self.new_divider.as_ref().and_then(|divider| divider.top) else {
             return;
@@ -159,7 +159,9 @@ impl ChatSurface {
                 canvas,
                 root,
                 p.accent,
-                &scene::rect(line_x, centre.round() - 0.5, line_w, 1.0),
+                // Half a pixel, on a whole-pixel row: the old 1 px line sat
+                // across two rows and read as two (2026-11-23).
+                &scene::rect(line_x, centre.round(), line_w, 0.5),
             );
         }
     }

@@ -39,6 +39,7 @@ impl Actions<'_> {
                 primary: *primary,
                 disabled: self.disabled,
                 focused: self.focused == Some(index),
+                mnemonic: None,
             })
             .collect::<Vec<_>>();
         elements::actions_tree(self.heading, self.body, &buttons)

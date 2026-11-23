@@ -504,3 +504,81 @@ fn timing_retry_uses_original_intent_after_another_edit_changes_objective() {
     assert_eq!(detail["routine"]["objective"], "New task requested later");
     assert_eq!(detail["routine"]["revision"], 3);
 }
+
+#[test]
+fn a_routine_result_saves_whole_once_per_request_into_the_bots_workspace() {
+    use koru_ai_wire::bot_routines::{Command as C, Response as R};
+    let mut f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let occurrence = Uuid::new_v4();
+    // The engine's retained result, in two parts.
+    let inner = f.gateway.call.clone();
+    f.gateway.call = Arc::new(move |request: person::Request| {
+        if let Command::Read {
+            query:
+                Query::RoutineReview {
+                    bot,
+                    occurrence: asked,
+                    offset,
+                },
+        } = &request.command
+            && *asked == occurrence
+        {
+            let (text, next) = if *offset == 0 {
+                ("Rates held. ", Some(12))
+            } else {
+                ("Markets rose.", None)
+            };
+            return Ok(person::Reply(serde_json::json!({
+                "bot": bot,
+                "item": {
+                    "occurrence": occurrence,
+                    "routine": Uuid::nil(),
+                    "name": "Morning news",
+                    "card": Uuid::nil(),
+                    "reply": Uuid::nil(),
+                    "published_at_ms": 1,
+                    "review": "pending",
+                    "preview": "Rates held.",
+                    "truncated": true,
+                },
+                "text": text,
+                "offset": offset,
+                "next": next,
+            })));
+        }
+        inner(request)
+    });
+    let principal = crate::GatewayPrincipal {
+        label: "synthetic".into(),
+        scopes: vec![koru_ai_api::AiScope::ManageBots.as_str().into()],
+    };
+    let writes = f.store.writes.load(Ordering::Relaxed);
+    let save = C::SaveReview {
+        id: Uuid::new_v4(),
+        bot: bot.id,
+        occurrence,
+        title: "Morning news".into(),
+        document: Uuid::new_v4(),
+    };
+    let Ok(R::SavedReview {
+        workspace, title, ..
+    }) = f.gateway.routine_command(&principal, save.clone())
+    else {
+        panic!("saved")
+    };
+    assert_eq!(workspace, f.store.home.as_uuid());
+    assert_eq!(title, "Morning news");
+    assert_eq!(f.store.writes.load(Ordering::Relaxed), writes + 1);
+    assert!(matches!(
+        f.gateway.routine_command(&principal, save),
+        Ok(R::SavedReview { .. })
+    ));
+    assert_eq!(
+        f.store.writes.load(Ordering::Relaxed),
+        writes + 1,
+        "a retry finds its page"
+    );
+}

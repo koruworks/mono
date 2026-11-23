@@ -245,3 +245,44 @@ fn consecutive_empty_tool_replies_have_separate_reachable_anchors() {
         surface.bot_work_release();
     }
 }
+
+#[test]
+fn summary_counts_calls_failures_time_and_kinds_most_frequent_first() {
+    use crate::tool_groups::tests::row;
+    use koru_ai_core::Timestamp;
+    let done = ToolActivityStatus::Complete;
+    let mut first = row("agent.read", Some("Read a.rs"), done, None);
+    first.started_at = Some(Timestamp::from_millis(1_000));
+    let mut last = row(
+        "agent.command",
+        Some("`cargo test`"),
+        ToolActivityStatus::Failed,
+        None,
+    );
+    last.completed_at = Some(Timestamp::from_millis(43_000));
+    let reads = [
+        first,
+        row("agent.read", Some("Read b.rs"), done, None),
+        last,
+    ];
+    let rows: Vec<_> = reads.iter().collect();
+    let glance = summary(&rows, Lang::En);
+    assert_eq!(glance.totals, "3 tool calls, 1 of them failed · 42s");
+    assert!(glance.kinds.starts_with("Read 2 files"), "{}", glance.kinds);
+    assert!(glance.kinds.contains(" · "), "{}", glance.kinds);
+
+    let mut running = row(
+        "agent.read",
+        Some("Read a.rs"),
+        ToolActivityStatus::Running,
+        None,
+    );
+    running.started_at = Some(Timestamp::from_millis(1_000));
+    let one = [running];
+    let rows: Vec<_> = one.iter().collect();
+    assert_eq!(
+        summary(&rows, Lang::En).totals,
+        "",
+        "one call needs no count, and a running call has no time yet"
+    );
+}

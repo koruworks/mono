@@ -295,3 +295,119 @@ fn typed_settings_keep_exact_receipts_and_validate_before_mutation() {
         Err(Refusal::Engine(Error::NotAllowed))
     ));
 }
+
+/// The engine's history read answers with one synthetic message at the
+/// asked position: a published Bot reply after sequence 6, a person's
+/// words anywhere else. Every other request reaches the real engine.
+fn with_history(f: &mut Fixture, reply: Uuid, words: Uuid) {
+    let inner = f.gateway.call.clone();
+    f.gateway.call = Arc::new(move |request: person::Request| {
+        if let Command::Read {
+            query: Query::History { after, .. },
+        } = &request.command
+        {
+            let (id, sender, body) = if *after == 6 {
+                (reply, "bot:synthetic", "# Plan\n\nShip it on Friday.")
+            } else {
+                (words, "person:synthetic", "My own words")
+            };
+            return Ok(person::Reply(serde_json::json!([{
+                "id": id,
+                "sequence": after + 1,
+                "sender": sender,
+                "kind": "words",
+                "content": {
+                    "body": body,
+                    "attachments": [],
+                    "references": [],
+                    "in_reply_to": null,
+                    "deadline_ms": null,
+                    "reply_to": "thread",
+                },
+                "created_at_ms": 2,
+            }])));
+        }
+        inner(request)
+    });
+}
+
+#[test]
+fn a_bot_reply_saves_once_per_request_into_the_bots_workspace() {
+    let mut f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let (reply, words) = (Uuid::new_v4(), Uuid::new_v4());
+    with_history(&mut f, reply, words);
+    let writes = f.store.writes.load(Ordering::Relaxed);
+    let save = C::SaveReply {
+        id: Uuid::new_v4(),
+        thread: bot.main_chat,
+        message: reply,
+        sequence: 7,
+        title: "  Launch plan ".into(),
+        document: Uuid::new_v4(),
+    };
+    let C::SaveReply { document, .. } = save.clone() else {
+        unreachable!()
+    };
+    let R::Saved {
+        document: saved,
+        workspace,
+        title,
+        ..
+    } = request(&f, save.clone())
+    else {
+        panic!("saved")
+    };
+    assert_eq!(saved, document);
+    assert_eq!(workspace, f.store.home.as_uuid(), "the Bot's own workspace");
+    assert_eq!(title, "Launch plan");
+    assert_eq!(f.store.writes.load(Ordering::Relaxed), writes + 1);
+
+    // A retry after a lost answer finds the page it made.
+    assert!(matches!(request(&f, save.clone()), R::Saved { .. }));
+    assert_eq!(f.store.writes.load(Ordering::Relaxed), writes + 1);
+
+    // Another request cannot claim that page.
+    let C::SaveReply {
+        thread,
+        message,
+        sequence,
+        title,
+        ..
+    } = save
+    else {
+        unreachable!()
+    };
+    let rival = C::SaveReply {
+        id: Uuid::new_v4(),
+        thread,
+        message,
+        sequence,
+        title,
+        document,
+    };
+    assert!(matches!(
+        f.gateway.thread_command(&principal(), rival, |_| Ok(())),
+        Err(Refusal::Engine(Error::Conflict))
+    ));
+
+    // Only the engine's copy of a Bot reply is saved: a person's message,
+    // or an id that is not at that position, is refused.
+    for (message, sequence) in [(words, 3), (Uuid::new_v4(), 7)] {
+        let refused = C::SaveReply {
+            id: Uuid::new_v4(),
+            thread: bot.main_chat,
+            message,
+            sequence,
+            title: "Not a reply".into(),
+            document: Uuid::new_v4(),
+        };
+        assert!(matches!(
+            f.gateway.thread_command(&principal(), refused, |_| Ok(())),
+            Err(Refusal::Engine(Error::InvalidRequest))
+        ));
+    }
+    assert_eq!(f.store.writes.load(Ordering::Relaxed), writes + 1);
+}

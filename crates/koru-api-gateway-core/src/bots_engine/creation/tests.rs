@@ -60,13 +60,21 @@ impl BotAuthority for Store {
         }
     }
     fn create_role_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        self.create(BOT_ROLE_SCOPE, seed)
+    }
+    fn create_reply_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        self.create(koru_ai_core::bots::BOT_REPLY_SCOPE, seed)
+    }
+}
+impl Store {
+    fn create(&self, scope: &str, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
         assert_eq!(seed.owner, self.owner);
         assert_eq!(seed.profile, self.profile);
         let mut origins = self.origins.lock().unwrap();
         let proof = origins.entry(seed.candidate).or_insert_with(|| {
             self.writes.fetch_add(1, Ordering::Relaxed);
             BotRoleProof {
-                scope: BOT_ROLE_SCOPE.into(),
+                scope: scope.into(),
                 request_key: seed.request_key.clone(),
                 request_hash: seed.request_hash.clone(),
                 initial_update: seed.seed.clone(),

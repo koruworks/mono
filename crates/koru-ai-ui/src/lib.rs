@@ -135,6 +135,7 @@ mod managed_attention;
 mod managed_navigation;
 mod managed_questions;
 mod managed_review;
+mod managed_save;
 mod managed_surface;
 mod managed_tools;
 mod microphone;
@@ -712,6 +713,8 @@ pub struct ChatSurface {
     context_window_usage: HashMap<ChatId, (u64, u64)>,
     model_chevron: Tween,
     microphone_chevron: Tween,
+    /// The review pill's chevron: turned up while its card is open.
+    review_chevron: Tween,
     /// The model picker's rail, query, highlight and scroll
     /// ([`model_picker`]), reset each time it opens.
     picker: model_picker::PickerState,
@@ -1207,6 +1210,7 @@ impl ChatSurface {
             context_window_usage: HashMap::new(),
             model_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
             microphone_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
+            review_chevron: Tween::new(theme::GLYPH_MORPH_MS, false),
             picker,
             picker_tooltip: Tooltip::default(),
             tool_access_open: false,
@@ -1819,6 +1823,7 @@ impl ChatSurface {
         changed |= self.copy_feedback.maintain(_now);
         changed |= self.model_chevron.advance(_now);
         changed |= self.microphone_chevron.advance(_now);
+        changed |= self.review_chevron.advance(_now);
         changed |= self.link_card.maintain(_now);
         changed |= self.web_search_tooltip.maintain(_now);
         changed |= self.reply_tooltip.maintain(_now);
@@ -1868,6 +1873,7 @@ impl ChatSurface {
         self.copy_feedback.animating(Instant::now())
             || self.model_chevron.animating()
             || self.microphone_chevron.animating()
+            || self.review_chevron.animating()
             || self.web_search_tooltip.animating(Instant::now())
             || self.reply_tooltip.animating(Instant::now())
             || self.picker_tooltip.animating(Instant::now())
@@ -2149,7 +2155,7 @@ impl ChatSurface {
         if self.observing_bot_thread() {
             return self.observer_key(key, mods);
         }
-        if let Some(handled) = self.review_key(key, mods) {
+        if let Some(handled) = self.review_key(key, text, mods) {
             return handled;
         }
         if let Focus::ManagedQuestion(id) = self.focus
@@ -3265,7 +3271,10 @@ impl ChatSurface {
             self.response_action_hover_at(x, y)
         };
         let reply_hint = (!self.showing_setup())
-            .then(|| self.reply_tooltip_at(x, y))
+            .then(|| {
+                self.reply_tooltip_at(x, y)
+                    .or_else(|| self.review_tooltip_at(x, y))
+            })
             .flatten();
         let reply_hint_changed = self.reply_tooltip.set_hover(reply_hint, Instant::now());
         self.tool_activity_hover = if self.showing_setup() {
@@ -3288,6 +3297,8 @@ impl ChatSurface {
             self.composer.mouse_move(x, y)
         };
         let response_dragged = self.drag_response_selection(x, y);
+        // The review card's hover and its words' drag repaint at once.
+        let review_changed = self.review_pointer(old_pointer, x, y);
         let under = (!self.showing_setup())
             .then(|| self.conversation_link_at(x, y))
             .flatten();
@@ -3302,6 +3313,7 @@ impl ChatSurface {
             || mode_opened
             || pill_changed
             || response_dragged
+            || review_changed
             || link_changed
             || old_response_hover != self.response_hover
             || reply_hint_changed
@@ -3321,6 +3333,7 @@ impl ChatSurface {
             return handled;
         }
         self.conversation_scroll_drag = None;
+        self.review_release();
         self.picker.release_drag();
         self.tool_workspace_drag = None;
         self.composer.mouse_up();
@@ -3378,6 +3391,9 @@ impl ChatSurface {
         }
         if !self.observing_bot_thread() && !self.showing_setup() && self.composer.contains(x, y) {
             return self.composer.mouse_double_click(x, y);
+        }
+        if let Some(handled) = self.review_double_click(x, y) {
+            return handled;
         }
         if let Some(mut hit) = self.response_text_hit(x, y) {
             if let Some((layout, origin)) =
@@ -6529,10 +6545,9 @@ impl ChatSurface {
                 koru_i18n::t(self.lang, koru_i18n::Key::ChatsStatusNeedsYou)
             )
         });
-        let review_width = review_label.as_ref().map_or(0.0, |label| {
-            ActionButton::new(label, ActionStyle::Primary, Some(icons::CARET_DOWN))
-                .width(&mut self.engine)
-        });
+        let review_width = review_label
+            .as_ref()
+            .map_or(0.0, |label| self.review_control_width(label));
         let compact_width = available
             - review_width
             - composer_shell::controls_width(
@@ -7595,10 +7610,13 @@ impl ChatSurface {
         // One caret at a time: none here while the host's own content in
         // the empty transcript holds the keyboard.
         let focused = self.focus == Focus::Composer && !self.host_holds_keyboard();
-        let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
+        // An attached result card asks about that result, by the Bot's name.
+        let placeholder = self
+            .review_placeholder()
+            .unwrap_or_else(|| koru_i18n::t(self.lang, self.composer_placeholder_key()).to_owned());
         self.composer.set_focused(focused);
         self.composer
-            .draw(canvas, root, focused, self.pointer, placeholder);
+            .draw(canvas, root, focused, self.pointer, &placeholder);
     }
 
     fn composer_placeholder_key(&self) -> koru_i18n::Key {
@@ -7887,7 +7905,7 @@ impl ChatSurface {
             return;
         }
         // Over the transcript, under everything that floats over it.
-        self.draw_add_pill(canvas, root);
+        self.draw_add_pill(canvas, root, false);
         let composer = self.composer_rect();
         // The empty transcript: the host's content where it asked to draw
         // it, in the greeting's place and under everything that floats;
@@ -7967,6 +7985,7 @@ impl ChatSurface {
             });
         self.composer_shell = Some(shell);
         self.draw_review(canvas, root);
+        self.draw_add_pill(canvas, root, true);
         // A link's card (D95): over the transcript and the composer, under
         // the pickers and panes that float over both.
         self.link_card.draw(
@@ -10243,7 +10262,9 @@ impl ChatSurface {
                     ))
             }
             ResponseAction::Store(message) => {
-                if self.destinations.is_empty() {
+                // A Bot reply goes to its Bot's own workspace: the engine
+                // chooses, so no destination list is needed.
+                if self.destinations.is_empty() && self.managed.is_none() {
                     self.status = Some("No writable Koru workspace is available.".into());
                 } else {
                     // Named first, saved to the workspace on screen.
@@ -10292,6 +10313,9 @@ impl ChatSurface {
     }
 
     fn start_export(&mut self, through_message_id: MessageId) -> bool {
+        if self.managed.is_some() {
+            return self.save_bot_reply(through_message_id);
+        }
         let Some(chat) = self
             .transcript
             .as_ref()

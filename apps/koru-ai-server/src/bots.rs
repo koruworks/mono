@@ -137,6 +137,20 @@ impl BotAuthority for BotAuthorityAdapter {
     /// so a window with the workspace open lists it at once. A replay
     /// committed nothing and tells nothing.
     fn create_role_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        self.create_seeded_page(BOT_ROLE_SCOPE, seed)
+    }
+    /// A saved Bot reply, by the same strict path under its own scope.
+    fn create_reply_page(&self, seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        self.create_seeded_page(BOT_REPLY_SCOPE, seed)
+    }
+}
+
+impl BotAuthorityAdapter {
+    fn create_seeded_page(
+        &self,
+        scope: &'static str,
+        seed: &BotRoleSeed,
+    ) -> Result<BotRoleProof, BotError> {
         if seed.owner.device != self.device {
             return Err(BotError::Forbidden);
         }
@@ -177,7 +191,7 @@ impl BotAuthority for BotAuthorityAdapter {
                             koru_core::explore::KIND_DOCUMENT,
                             None,
                             None,
-                            BOT_ROLE_SCOPE,
+                            scope,
                             &seed.request_key,
                             &seed.request_hash,
                             seed.candidate,

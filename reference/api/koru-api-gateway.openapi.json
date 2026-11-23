@@ -6882,6 +6882,45 @@
           },
           {
             "additionalProperties": false,
+            "description": "Save one Routine result as a document in the Bot's home workspace,\nas a chat reply is saved: `id` and `document` are chosen once and\nresent unchanged after an uncertain answer. The whole retained\nresult is saved, read by the engine, never text the window sends.",
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "document": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "save_review"
+                ],
+                "type": "string"
+              },
+              "occurrence": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "occurrence",
+              "title",
+              "document"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "properties": {
               "bot": {
                 "$ref": "#/components/schemas/BotId"
@@ -7805,6 +7844,39 @@
               "request",
               "item",
               "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "document": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "saved_review"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "workspace": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "document",
+              "workspace",
+              "title"
             ],
             "type": "object"
           },
@@ -8841,6 +8913,51 @@
               "turn"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Save one published Bot reply as a document in the Bot's home\nworkspace. `id` is the save request and `document` the page it makes:\nboth are chosen once and resent unchanged after an uncertain answer,\nso a retry finds the page instead of making another. `sequence` is\nwhere the reply sits in its thread; the engine's copy is what is\nsaved, never text the window sends.",
+            "properties": {
+              "document": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "save_reply"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "sequence": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread",
+              "message",
+              "sequence",
+              "title",
+              "document"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -9598,6 +9715,39 @@
               "kind",
               "request",
               "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "document": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "saved"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "workspace": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "document",
+              "workspace",
+              "title"
             ],
             "type": "object"
           }

@@ -179,6 +179,9 @@ impl Database {
             reply_to: crate::messages::ReplyTo::Thread,
         };
         tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'setup_note',?5,'published',?6)",params![uuid::Uuid::new_v4().to_string(),thread.to_string(),crate::messages::next_sequence(&tx,thread)?,who.bot.to_string(),serde_json::to_vec(&content).map_err(|_|Error::InvalidRequest)?,now])?;
+        // A Routine's own run that could not start fails and lets the next
+        // firing try, instead of waiting for a person (routines::fail_setup).
+        crate::routines::schedule::fail_setup(&tx, thread, &turn, now)?;
         tx.execute(
             "UPDATE credentials SET revoked=1 WHERE bot=?1 AND thread=?2 AND worker_incarnation=?3",
             params![

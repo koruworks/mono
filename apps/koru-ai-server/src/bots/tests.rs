@@ -188,3 +188,64 @@ fn a_new_role_page_is_told_to_an_open_workspaces_manifest_room_once() {
     );
     assert!(window.told().is_empty(), "nothing new to tell");
 }
+
+#[test]
+fn a_saved_reply_is_its_own_scope_and_a_reimported_retry_finds_its_page() {
+    use koru_ai_core::Timestamp;
+    use koru_store_core::Locale;
+    use koru_store_server::memory::MemoryStore;
+    let memory = MemoryStore::open("bot-reply-origin-memory").unwrap();
+    let (profile, workspace) = memory
+        .with_store(|store| {
+            let at = Timestamp::from_millis(1);
+            let profile = store
+                .create_profile("First", None, None, Locale::default(), at)
+                .unwrap()
+                .id;
+            let workspace = store.create_workspace(profile, "Work", at).unwrap().id;
+            (profile, workspace)
+        })
+        .unwrap();
+    let adapter =
+        BotAuthorityAdapter::from_device(memory.client(), &uuid::Uuid::new_v4().to_string())
+            .unwrap();
+    let import = || {
+        koru_import_markdown::document_snapshot(
+            koru_core::WorkspaceId::from_uuid(workspace.as_uuid()),
+            "Launch plan",
+            "# Plan\n\nShip it on Friday.",
+        )
+        .unwrap()
+    };
+    let seed = BotRoleSeed {
+        owner: adapter.owner().unwrap(),
+        workspace,
+        profile,
+        title: "Launch plan".into(),
+        candidate: koru_ai_core::DocumentId::new(),
+        request_key: uuid::Uuid::new_v4().to_string(),
+        request_hash: "reply-hash".into(),
+        seed: import(),
+    };
+    let first = adapter.create_reply_page(&seed).unwrap();
+    assert!(first.saved_reply(&seed));
+    assert!(!first.matches(&seed), "a reply page is never a Role page");
+    assert_eq!(first.placement, BotRolePlacement::Live);
+    let count = memory
+        .with_store(move |store| store.documents(workspace).unwrap().len())
+        .unwrap();
+    // The retry imports the Markdown again; the recorded origin answers.
+    let retry = BotRoleSeed {
+        seed: import(),
+        ..seed.clone()
+    };
+    let again = adapter.create_reply_page(&retry).unwrap();
+    assert!(again.saved_reply(&retry));
+    assert_eq!(again.placement, BotRolePlacement::Live);
+    assert_eq!(
+        memory
+            .with_store(move |store| store.documents(workspace).unwrap().len())
+            .unwrap(),
+        count
+    );
+}

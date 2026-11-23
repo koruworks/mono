@@ -7,6 +7,10 @@ use super::*;
 /// The Store scope a Bot's Role page is created under. Distinct from every
 /// other creation namespace, so a key here never replays another's page.
 pub const BOT_ROLE_SCOPE: &str = "koru-bot-role";
+/// The Store scope a Bot reply saved as a document is created under. Its
+/// request key is the person's save request, so a retry after a lost answer
+/// finds the page it made instead of making a second one.
+pub const BOT_REPLY_SCOPE: &str = "koru-bot-reply";
 /// The most characters an authored Role page title may hold.
 pub const BOT_ROLE_TITLE_LIMIT: usize = 256;
 /// The most bytes of authored Role text one creation carries.
@@ -390,6 +394,14 @@ pub struct BotRoleSeed {
 }
 
 impl BotRoleProof {
+    /// This is the page a save request made: the reply scope, the same
+    /// request key and hash. The first-update bytes are not compared — a
+    /// retry imports the Markdown again, and the import is not byte-stable.
+    pub fn saved_reply(&self, seed: &BotRoleSeed) -> bool {
+        self.scope == BOT_REPLY_SCOPE
+            && self.request_key == seed.request_key
+            && self.request_hash == seed.request_hash
+    }
     /// The stored origin is exactly this creation's: same scope, key, hash
     /// and first-update bytes. A matching title or body proves nothing.
     pub fn matches(&self, seed: &BotRoleSeed) -> bool {

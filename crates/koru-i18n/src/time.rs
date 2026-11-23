@@ -699,6 +699,28 @@ const WEEKDAYS_ZH_HANS: [&str; 7] = [
 ];
 const WEEKDAYS_JA: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
 
+/// How long something worked, compactly: "42s", "3m 5s", "2h 10m".
+pub fn elapsed(lang: Lang, ms: u64) -> String {
+    use crate::number::decimal;
+    let seconds = ms / 1_000;
+    if seconds < 60 {
+        return fill(t(lang, Key::RunDurationSeconds), &[&decimal(lang, seconds)]);
+    }
+    if seconds < 3_600 {
+        return fill(
+            t(lang, Key::RunDurationMinutes),
+            &[&decimal(lang, seconds / 60), &decimal(lang, seconds % 60)],
+        );
+    }
+    fill(
+        t(lang, Key::RunDurationHours),
+        &[
+            &decimal(lang, seconds / 3_600),
+            &decimal(lang, (seconds % 3_600) / 60),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

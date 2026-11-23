@@ -16,6 +16,9 @@ pub(super) fn enqueue(
             return id(existing);
         }
     }
+    // A run that failed to start before this rule existed parked its thread
+    // for a person's Retry; this firing releases it rather than skip behind it.
+    release_setup_failure(c, row.thread, now)?;
     // A bounded settlement pass may not yet have visited another elapsed
     // scheduled occurrence. Such unclaimed work cannot make this minute busy.
     let busy:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM obligations o WHERE thread=?1 AND state IN ('owed','delivered') AND NOT (o.state='owed' AND EXISTS(SELECT 1 FROM routine_occurrences r WHERE r.message=o.message AND r.state='queued' AND r.deadline_ms<=?2))) OR EXISTS(SELECT 1 FROM turns WHERE thread=?1 AND state IN ('running','needs_you','parked')) OR EXISTS(SELECT 1 FROM operations WHERE thread=?1 AND (state='leased' OR (state='unresolved' AND json_extract(CAST(recovery AS TEXT),'$.continued_by') IS NULL)))",params![row.thread.to_string(),now],|r|r.get(0))?;
@@ -45,6 +48,80 @@ pub(super) fn enqueue(
     )?;
     Ok(key)
 }
+/// **A Routine run that could not start is a failed run, not a request.**
+/// Nobody waits on an automatic firing, so it neither asks the person for a
+/// Retry nor blocks the Routine: its unstarted firings are recorded
+/// `failed` (reason `setup`), their owed work is cancelled, and the turn
+/// ends. The next due firing starts afresh. The thread keeps its setup note.
+///
+/// Applies only in a Routine's own thread whose unanswered work is all
+/// Routine firings: words a person sent there keep the ordinary
+/// wait-for-Retry, because someone is waiting for that answer. `true` when
+/// it applied.
+pub(crate) fn fail_setup(
+    c: &Connection,
+    thread: Uuid,
+    turn: &str,
+    now: i64,
+) -> Result<bool, Error> {
+    let routine: Option<(String, String)> = c
+        .query_row(
+            "SELECT id,bot FROM routines WHERE thread=?1",
+            [thread.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((routine, bot)) = routine else {
+        return Ok(false);
+    };
+    let person_waits: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM obligations o WHERE o.thread=?1 AND o.state IN ('owed','delivered')
+         AND NOT EXISTS(SELECT 1 FROM routine_occurrences r WHERE r.routine=?2 AND r.message=o.message))",
+        params![thread.to_string(), routine],
+        |r| r.get(0),
+    )?;
+    if person_waits {
+        return Ok(false);
+    }
+    c.execute(
+        "UPDATE routine_occurrences SET state='failed',reason='setup',updated_at_ms=?3
+         WHERE routine=?2 AND state IN ('queued','running') AND message IN
+         (SELECT message FROM obligations WHERE thread=?1 AND state IN ('owed','delivered'))",
+        params![thread.to_string(), routine, now],
+    )?;
+    c.execute(
+        "DELETE FROM inbox WHERE thread=?1 AND message IN
+         (SELECT message FROM obligations WHERE thread=?1 AND state IN ('owed','delivered'))",
+        [thread.to_string()],
+    )?;
+    c.execute(
+        "UPDATE obligations SET state='cancelled' WHERE thread=?1 AND state IN ('owed','delivered')",
+        [thread.to_string()],
+    )?;
+    c.execute("UPDATE turns SET state='stopped' WHERE id=?1", [turn])?;
+    // The roster's Needs you and dot are read from these facts: refresh it.
+    super::review::invalidate(c, id(bot)?, now)?;
+    Ok(true)
+}
+
+/// The latest turn of a Routine thread parked by a setup failure, from a
+/// build before [`fail_setup`], settled by it now.
+fn release_setup_failure(c: &Connection, thread: Uuid, now: i64) -> Result<(), Error> {
+    let parked: Option<String> = c
+        .query_row(
+            "SELECT t.id FROM turns t WHERE t.thread=?1 AND t.state='needs_you'
+             AND json_extract(CAST(t.details AS TEXT),'$.setup_failure') IS NOT NULL
+             AND NOT EXISTS(SELECT 1 FROM turns n WHERE n.thread=t.thread AND n.bot=t.bot AND n.generation>t.generation)",
+            [thread.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(turn) = parked {
+        fail_setup(c, thread, &turn, now)?;
+    }
+    Ok(())
+}
+
 fn record(
     c: &Connection,
     row: &Routine,

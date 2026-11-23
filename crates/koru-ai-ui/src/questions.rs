@@ -373,6 +373,7 @@ fn spec(
             disabled: card.sent
                 || (control == Control::Submit && card.answers(questions).is_none()),
             focused: focused == Some(control),
+            mnemonic: None,
         }
     };
     elements::CardSpec {

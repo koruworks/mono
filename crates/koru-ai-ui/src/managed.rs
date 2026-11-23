@@ -89,6 +89,10 @@ pub(crate) struct State {
     pub retry_at: Instant,
     /// Take-once diagnostic from an exact engine observation, not reply prose.
     pub notice: Option<String>,
+    /// A reply being saved as a document. Kept after an uncertain answer so
+    /// saving it again under the same name resends the same request and
+    /// page, and finds the page instead of making a second one.
+    pub save: Option<wire::Command>,
 }
 
 macro_rules! redacted {
@@ -109,6 +113,7 @@ impl State {
             .collect();
         Self {
             notice: None,
+            save: None,
             navigation: crate::managed_navigation::State::new(std::mem::take(
                 &mut opened.navigation,
             )),

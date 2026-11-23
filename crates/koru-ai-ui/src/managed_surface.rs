@@ -248,6 +248,9 @@ impl ChatSurface {
     }
 
     pub(crate) fn managed_reply(&mut self, thread: ChatId, reply: R) -> bool {
+        if matches!(reply, R::Saved { .. }) {
+            return self.saved_bot_reply(thread, &reply);
+        }
         self.settle_managed_attention(thread, &reply);
         self.settle_managed_request(thread, &reply);
         let Some(state) = &mut self.managed else {
@@ -375,6 +378,9 @@ impl ChatSurface {
         command: C,
         failure: koru_ai_wire::Failure,
     ) -> bool {
+        if self.failed_bot_save(thread, &command, &failure) {
+            return true;
+        }
         if self.failed_managed_attention(thread, &command, &failure) {
             return true;
         }

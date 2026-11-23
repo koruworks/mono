@@ -34,6 +34,17 @@ pub enum Command {
         bot: BotId,
         occurrence: Uuid,
     },
+    /// Save one Routine result as a document in the Bot's home workspace,
+    /// as a chat reply is saved: `id` and `document` are chosen once and
+    /// resent unchanged after an uncertain answer. The whole retained
+    /// result is saved, read by the engine, never text the window sends.
+    SaveReview {
+        id: Uuid,
+        bot: BotId,
+        occurrence: Uuid,
+        title: String,
+        document: Uuid,
+    },
     ClaimStartup {
         id: Uuid,
         bot: BotId,
@@ -117,6 +128,12 @@ pub enum Response {
         request: Uuid,
         item: ReviewItem,
         replayed: bool,
+    },
+    SavedReview {
+        request: Uuid,
+        document: Uuid,
+        workspace: Uuid,
+        title: String,
     },
     Startup {
         request: Uuid,

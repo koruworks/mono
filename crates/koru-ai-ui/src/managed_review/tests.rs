@@ -293,12 +293,16 @@ fn review_panel_clips_long_results_and_keeps_primitives_nested() {
     assert!(footer.y + footer.h < view.composer_hit_rect.y);
     view.focus = Focus::RoutineReview;
     assert_eq!(
-        view.review_key(&Key::Named(NamedKey::PageDown), ModifiersState::empty()),
+        view.review_key(
+            &Key::Named(NamedKey::PageDown),
+            None,
+            ModifiersState::empty()
+        ),
         Some(true)
     );
     assert!(view.review.scroll > 0.0);
     assert_eq!(
-        view.review_key(&Key::Named(NamedKey::Escape), ModifiersState::empty()),
+        view.review_key(&Key::Named(NamedKey::Escape), None, ModifiersState::empty()),
         Some(true)
     );
     assert_eq!(view.focus, Focus::Composer);
@@ -363,7 +367,7 @@ fn refresh_and_stale_responses_never_replace_the_selected_context() {
         view.review.selected.as_ref().unwrap().item.occurrence,
         first.occurrence
     );
-    assert!(view.review_action(2));
+    assert!(view.review_action(Part::Close));
     assert!(view.review.selected.is_none());
     assert_eq!(view.review.count, 2);
     assert!(
@@ -386,7 +390,7 @@ fn failed_skip_retries_the_same_identity_and_keeps_the_draft() {
         next: None,
     });
     view.composer.set_text("use this context");
-    assert!(view.review_action(3));
+    assert!(view.review_action(Part::Skip));
     let Command::RoutineReview {
         request,
         command: wire::Command::SkipReview { id, .. },
@@ -403,8 +407,7 @@ fn failed_skip_retries_the_same_identity_and_keeps_the_draft() {
     };
     assert!(view.review_response(thread, request, Err(error)));
     assert!(view.review.selected.is_some());
-    let retry = view.review_labels().len() - 1;
-    assert!(view.review_action(retry));
+    assert!(view.review_action(Part::Retry));
     let Command::RoutineReview {
         command: wire::Command::SkipReview { id: retried, .. },
         ..
@@ -414,4 +417,433 @@ fn failed_skip_retries_the_same_identity_and_keeps_the_draft() {
     };
     assert_eq!(id, retried);
     assert_eq!(view.composer.text(), "use this context");
+}
+
+fn detail(bot: BotId, item: &wire::ReviewItem) -> wire::ReviewDetail {
+    wire::ReviewDetail {
+        bot: bot.as_uuid(),
+        item: item.clone(),
+        text: item.preview.clone(),
+        offset: 0,
+        next: None,
+    }
+}
+
+#[test]
+fn header_counts_the_queue_and_skip_moves_on_to_the_next_result() {
+    let (mut view, commands, _) = surface();
+    let (bot, thread, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    let (first, second) = (item(), item());
+    view.review.items = vec![first.clone(), second.clone()];
+    view.review.count = 2;
+    view.review.open = true;
+    view.review.selected = Some(detail(bot, &first));
+    assert_eq!(view.review_position_text().as_deref(), Some("1 of 2"));
+    assert_eq!(
+        view.review_parts(),
+        vec![Part::Next, Part::Close, Part::Skip],
+        "nothing before the first result; Skip ends the footer"
+    );
+
+    assert!(view.review_action(Part::Skip));
+    let Command::RoutineReview {
+        request,
+        command: wire::Command::SkipReview { id, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!()
+    };
+    let mut skipped = first.clone();
+    skipped.review = Some("skipped".into());
+    assert!(view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::SkippedReview {
+            request: id,
+            item: skipped,
+            replayed: false,
+        })
+    ));
+    assert!(view.review.open, "the card stays to show what is next");
+    let _ = view.take_activity();
+    let Command::RoutineReview {
+        request,
+        command: wire::Command::Reviews { before: None, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!()
+    };
+    assert!(view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::Reviews {
+            page: wire::ReviewPage {
+                bot: bot.as_uuid(),
+                count: 1,
+                items: vec![second.clone()],
+                next: None,
+            }
+        })
+    ));
+    let Command::RoutineReview {
+        command: wire::Command::Review { occurrence, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(
+        occurrence, second.occurrence,
+        "the next result took its place"
+    );
+}
+
+#[test]
+fn a_card_closed_during_skip_stays_closed() {
+    let (mut view, commands, _) = surface();
+    let (bot, thread, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    let first = item();
+    view.review.items = vec![first.clone(), item()];
+    view.review.count = 2;
+    view.review.open = true;
+    view.review.selected = Some(detail(bot, &first));
+    assert!(view.review_action(Part::Skip));
+    let Command::RoutineReview {
+        request,
+        command: wire::Command::SkipReview { id, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!()
+    };
+    assert!(view.review_action(Part::Close));
+    assert!(view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::SkippedReview {
+            request: id,
+            item: first,
+            replayed: false,
+        })
+    ));
+    assert!(!view.review.open);
+}
+
+#[test]
+fn an_attached_card_names_the_bot_in_the_composer_hint() {
+    let (mut view, _, _) = surface();
+    assert_eq!(view.review_placeholder(), None);
+    attach(&mut view);
+    let name = view
+        .managed
+        .as_ref()
+        .unwrap()
+        .snapshot
+        .conversation
+        .label
+        .bot_name
+        .clone();
+    let hint = view.review_placeholder().unwrap();
+    assert!(
+        hint.starts_with(&format!(
+            "Ask {name} about this, or tell it what to do instead"
+        )),
+        "{hint}"
+    );
+    // The card's keys follow, from the registry, where hints are shown.
+    if koru_keys::hint::shown(koru_keys::Section::Guide) {
+        assert!(hint.ends_with("to move · Alt+S to skip"), "{hint}");
+    }
+}
+
+#[test]
+fn escape_lets_a_selection_go_then_closes_the_card_from_the_composer() {
+    let (mut view, _, _) = surface();
+    attach(&mut view);
+    view.focus = Focus::Composer;
+    view.composer.set_text("a draft");
+    view.review.selection = Some((0, 3));
+    let escape = Key::Named(NamedKey::Escape);
+    assert_eq!(
+        view.review_key(&escape, None, ModifiersState::empty()),
+        Some(true)
+    );
+    assert!(view.review.open, "the first Escape takes the selection");
+    assert!(view.review.selection.is_none());
+    assert_eq!(
+        view.review_key(&escape, None, ModifiersState::empty()),
+        Some(true)
+    );
+    assert!(!view.review.open);
+    assert_eq!(view.composer.text(), "a draft", "the draft stays");
+}
+
+#[test]
+fn a_selection_in_the_result_offers_add_to_chat_over_the_card() {
+    let (mut view, _, _) = surface();
+    let (bot, _, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    view.review.open = true;
+    view.review.selected = Some(wire::ReviewDetail {
+        text: "Rates held steady this morning.".into(),
+        ..detail(bot, &item())
+    });
+    view.viewport = Rect::new(0.0, 0.0, 420.0, 700.0);
+    view.composer_hit_rect = Rect::new(12.0, 600.0, 396.0, 80.0);
+    view.draw_review(&mut Scene::new(), Affine::IDENTITY);
+    let words = view.review.words_at.unwrap();
+    let (y, x0, x1) = (words.y + 4.0, words.x + 1.0, words.x + 60.0);
+    assert_eq!(view.review_press(x0, y), Some(true));
+    assert!(view.review_pointer((x0, y), x1, y));
+    assert!(view.review_release());
+    assert!(view.review_selected_text().is_some());
+    view.draw_add_pill(&mut Scene::new(), Affine::IDENTITY, false);
+    assert!(view.add_pill.rect().is_none(), "not over the transcript");
+    view.draw_add_pill(&mut Scene::new(), Affine::IDENTITY, true);
+    let pill = view.add_pill.rect().expect("offered over the card");
+    assert!(pill.y + pill.h <= words.y, "just above the selected line");
+    assert!(view.add_selection_to_chat());
+    assert!(view.review_selected_text().is_none());
+    assert!(
+        view.composer.text().contains("Rates"),
+        "quoted into the message"
+    );
+}
+
+#[test]
+fn a_result_reopened_from_a_reply_has_no_queue_position_and_next_starts_the_queue() {
+    let (mut view, _, _) = surface();
+    let (bot, _, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    let mut handled = item();
+    handled.review = Some("handled".into());
+    view.review.items = vec![item()];
+    view.review.count = 1;
+    view.review.open = true;
+    view.review.selected = Some(detail(bot, &handled));
+    assert_eq!(view.review_position_text(), None);
+    assert_eq!(view.review_parts(), vec![Part::Next, Part::Close]);
+}
+
+#[test]
+fn skip_keeps_the_card_showing_its_result_until_the_next_one_arrives() {
+    let (mut view, commands, _) = surface();
+    let (bot, thread, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    let (first, second) = (item(), item());
+    view.review.items = vec![first.clone(), second.clone()];
+    view.review.count = 2;
+    view.review.open = true;
+    view.review.selected = Some(detail(bot, &first));
+    view.review.shown = view.review.selected.clone();
+    assert!(view.review_action(Part::Skip));
+    let Command::RoutineReview {
+        request,
+        command: wire::Command::SkipReview { id, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!()
+    };
+    let mut skipped = first.clone();
+    skipped.review = Some("skipped".into());
+    assert!(view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::SkippedReview {
+            request: id,
+            item: skipped,
+            replayed: false,
+        })
+    ));
+    // Between the skip and the next result the card keeps its words: it
+    // never empties to a loading line, so it does not flicker.
+    assert!(
+        view.review.selected.is_none(),
+        "nothing is attached meanwhile"
+    );
+    assert!(!view.review_send_ready());
+    let (_, words) = view.review_words();
+    assert_eq!(words, first.preview);
+    let _ = view.take_activity();
+    let Command::RoutineReview { request, .. } = commands.try_recv().unwrap() else {
+        panic!()
+    };
+    assert!(view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::Reviews {
+            page: wire::ReviewPage {
+                bot: bot.as_uuid(),
+                count: 1,
+                items: vec![second.clone()],
+                next: None,
+            }
+        })
+    ));
+    assert_eq!(view.review_words().1, first.preview, "still the old words");
+    let Command::RoutineReview { request, .. } = commands.try_recv().unwrap() else {
+        panic!()
+    };
+    assert!(view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::Review {
+            detail: detail(bot, &second)
+        })
+    ));
+    assert_eq!(view.review_words().1, second.preview);
+}
+
+#[test]
+fn alt_s_skips_and_the_arrows_step_only_when_no_caret_needs_them() {
+    let (mut view, commands, _) = surface();
+    let (bot, _, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    let (first, second) = (item(), item());
+    view.review.items = vec![first.clone(), second.clone()];
+    view.review.count = 2;
+    view.review.open = true;
+    view.review.selected = Some(detail(bot, &first));
+    view.focus = Focus::Composer;
+    let right = Key::Named(NamedKey::ArrowRight);
+
+    // A draft keeps its caret's arrow.
+    view.composer.set_text("a draft");
+    assert_eq!(view.review_key(&right, None, ModifiersState::empty()), None);
+    assert!(commands.try_recv().is_err());
+
+    view.composer.set_text("");
+    assert_eq!(
+        view.review_key(&right, None, ModifiersState::empty()),
+        Some(true)
+    );
+    let Command::RoutineReview {
+        command: wire::Command::Review { occurrence, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!("next result")
+    };
+    assert_eq!(occurrence, second.occurrence);
+
+    view.review.pending = None;
+    view.review.selected = Some(detail(bot, &second));
+    let s = Key::Character("s".into());
+    assert_eq!(
+        view.review_key(&s, Some("s"), ModifiersState::ALT),
+        Some(true)
+    );
+    assert!(matches!(
+        commands.try_recv().unwrap(),
+        Command::RoutineReview {
+            command: wire::Command::SkipReview { occurrence, .. },
+            ..
+        } if occurrence == second.occurrence
+    ));
+}
+
+#[test]
+fn a_long_result_is_read_to_its_end_before_it_is_copied() {
+    let (mut view, commands, _) = surface();
+    let (bot, thread, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    let first = item();
+    view.review.open = true;
+    view.review.selected = Some(wire::ReviewDetail {
+        next: Some(4),
+        text: "Part".into(),
+        ..detail(bot, &first)
+    });
+    assert!(view.review_action(Part::Copy));
+    let Command::RoutineReview {
+        request,
+        command: wire::Command::Review { offset: 0, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!("read from the start")
+    };
+    assert!(view.review_response(
+        thread,
+        request,
+        Ok(wire::Response::Review {
+            detail: wire::ReviewDetail {
+                next: Some(4),
+                text: "Part".into(),
+                ..detail(bot, &first)
+            }
+        })
+    ));
+    let Command::RoutineReview {
+        command: wire::Command::Review { offset: 4, .. },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!("then the rest")
+    };
+    assert_eq!(
+        view.review.selected.as_ref().unwrap().text,
+        "Part",
+        "copying does not move the card"
+    );
+}
+
+#[test]
+fn save_names_the_page_after_the_routine_and_saves_by_occurrence() {
+    let (mut view, commands, _) = surface();
+    let (bot, _, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    let first = item();
+    view.review.open = true;
+    view.review.selected = Some(detail(bot, &first));
+    assert!(view.review_action(Part::Save));
+    let reply = MessageId::from_uuid(first.reply);
+    assert_eq!(view.destination_open, Some(reply));
+    assert_eq!(view.save_name.value(), "Pricing");
+    assert!(view.save_bot_reply(reply));
+    let Command::RoutineReview {
+        command: wire::Command::SaveReview {
+            occurrence, title, ..
+        },
+        ..
+    } = commands.try_recv().unwrap()
+    else {
+        panic!("save by occurrence")
+    };
+    assert_eq!((occurrence, title.as_str()), (first.occurrence, "Pricing"));
+    assert!(view.destination_open.is_none());
+}
+
+#[test]
+fn moving_onto_a_card_control_repaints_at_once_and_skip_has_its_tooltip() {
+    let (mut view, _, _) = surface();
+    let (bot, _, _) = view.review_subject().unwrap();
+    view.review.pending = None;
+    view.review.open = true;
+    view.review.selected = Some(detail(bot, &item()));
+    view.viewport = Rect::new(0.0, 0.0, 420.0, 700.0);
+    view.composer_hit_rect = Rect::new(12.0, 600.0, 396.0, 80.0);
+    view.draw_review(&mut Scene::new(), Affine::IDENTITY);
+    let (_, skip, _) = *view
+        .review
+        .targets
+        .iter()
+        .find(|(part, _, _)| *part == Part::Skip)
+        .unwrap();
+    let outside = (skip.x - 200.0, skip.y - 200.0);
+    let inside = (skip.x + skip.w / 2.0, skip.y + skip.h / 2.0);
+    assert!(
+        view.review_pointer(outside, inside.0, inside.1),
+        "entering a control asks for a frame"
+    );
+    assert!(!view.review_pointer(inside, inside.0 + 1.0, inside.1));
+    assert_eq!(
+        view.review_tooltip_at(inside.0, inside.1).unwrap().label,
+        "Skip"
+    );
 }

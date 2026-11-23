@@ -96,6 +96,9 @@ pub(crate) struct ButtonSpec {
     pub(crate) primary: bool,
     pub(crate) disabled: bool,
     pub(crate) focused: bool,
+    /// The letter of the button's access key, underlined in its label
+    /// when the label has it: *Skip*'s S for Alt+S.
+    pub(crate) mnemonic: Option<char>,
 }
 
 /// A waiting set as the card draws it.
@@ -231,6 +234,7 @@ pub(crate) fn button(name: &'static str, spec: &ButtonSpec) -> El {
             primary: spec.primary,
             disabled: spec.disabled,
             focused: spec.focused,
+            mnemonic: spec.mnemonic,
         },
     )
     .semantic()
@@ -408,6 +412,7 @@ pub(crate) struct ButtonLeaf {
     primary: bool,
     disabled: bool,
     focused: bool,
+    mnemonic: Option<char>,
 }
 
 impl Leaf for ButtonLeaf {
@@ -442,6 +447,9 @@ impl Leaf for ButtonLeaf {
             button.draw_disabled(scene, root, engine, at);
         } else {
             button.draw_focused(scene, root, engine, at, state.hovered, self.focused);
+        }
+        if let Some(letter) = self.mnemonic {
+            button.underline_mnemonic(scene, root, engine, at, letter, !self.disabled);
         }
     }
 }

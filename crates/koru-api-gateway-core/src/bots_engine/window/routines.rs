@@ -205,6 +205,55 @@ impl Gateway {
                     replayed: result.replayed,
                 })
             }
+            wire::Command::SaveReview {
+                id,
+                bot,
+                occurrence,
+                title,
+                document,
+            } => {
+                let view = self.bot_view(
+                    owner,
+                    self.routine_read(owner, Query::Bot { bot: bot.as_uuid() })?,
+                )?;
+                let workspace = view.home_workspace;
+                let profile = self.window_profile(owner, workspace)?;
+                // The whole retained result, chunk by chunk, read under the
+                // owner's authority; past a document's limit it is refused.
+                let mut words = String::new();
+                let mut offset = Some(0);
+                while let Some(at) = offset {
+                    let detail: native::review::Detail = self.routine_read(
+                        owner,
+                        Query::RoutineReview {
+                            bot: bot.as_uuid(),
+                            occurrence,
+                            offset: at,
+                        },
+                    )?;
+                    words.push_str(&detail.text);
+                    if words.len() > koru_ai_core::bots::BOT_ROLE_MARKDOWN_LIMIT {
+                        return Err(Error::InvalidRequest);
+                    }
+                    offset = detail.next.filter(|next| *next > at);
+                }
+                let (workspace, title) = self.save_words(
+                    owner,
+                    workspace,
+                    profile,
+                    id,
+                    document,
+                    &title,
+                    &format!("{}\n{occurrence}", bot.as_uuid()),
+                    &words,
+                )?;
+                Ok(wire::Response::SavedReview {
+                    request: id,
+                    document,
+                    workspace: workspace.as_uuid(),
+                    title,
+                })
+            }
             wire::Command::ClaimStartup { id, bot } => {
                 let result: Receipt<bool> = serde_json::from_value(self.execute_owner(
                     owner,

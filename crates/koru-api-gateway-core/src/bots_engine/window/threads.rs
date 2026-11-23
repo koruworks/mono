@@ -333,6 +333,114 @@ impl Gateway {
                     replayed: result.replayed,
                 }
             }
+            wire::Command::SaveReply {
+                id,
+                thread,
+                message,
+                sequence,
+                title,
+                document,
+            } => {
+                let view: person::ThreadView = convert(read(Query::Thread {
+                    thread: thread.as_uuid(),
+                })?)?;
+                let bot = self.bot_view(
+                    owner,
+                    convert(read(Query::Bot {
+                        bot: view.thread.bot,
+                    })?)?,
+                )?;
+                // The Bot's own workspace, where its Role and Memory live.
+                let workspace = bot.home_workspace;
+                let profile = self.window_profile(owner, workspace)?;
+                // The engine's copy of one published Bot reply, read under
+                // the owner's authority: never words the window supplies.
+                let page: Vec<wire::Message> = convert(read(Query::History {
+                    thread: thread.as_uuid(),
+                    after: sequence.saturating_sub(1),
+                })?)?;
+                let reply = page
+                    .into_iter()
+                    .find(|m| {
+                        m.id == message
+                            && m.sequence == sequence
+                            && m.kind == "words"
+                            && !m.sender.starts_with("person:")
+                    })
+                    .ok_or(Error::InvalidRequest)?;
+                let (workspace, title) = self.save_words(
+                    owner,
+                    workspace,
+                    profile,
+                    id,
+                    document,
+                    &title,
+                    &format!("{}\n{message}", thread.as_uuid()),
+                    &reply.content.body,
+                )?;
+                wire::Response::Saved {
+                    request: id,
+                    document,
+                    workspace: workspace.as_uuid(),
+                    title,
+                }
+            }
         })
+    }
+}
+
+impl Gateway {
+    /// One Bot's published words saved as a document in `workspace`, under
+    /// the strict reply creation: `request` and `document` are the person's
+    /// save, `source` names what was saved for the request's hash. A retry
+    /// finds the page it made; another request cannot claim it.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::bots_engine) fn save_words(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        profile: koru_ai_core::ProfileId,
+        request: Uuid,
+        document: Uuid,
+        title: &str,
+        source: &str,
+        words: &str,
+    ) -> Result<(WorkspaceId, String), Error> {
+        use koru_ai_core::bots::{BotRolePlacement, BotRoleSeed, validate_role_text};
+        let title = title.trim().to_owned();
+        validate_role_text(&title, words).map_err(authority_error)?;
+        let seed = BotRoleSeed {
+            owner,
+            workspace,
+            profile,
+            title: title.clone(),
+            candidate: DocumentId::from_uuid(document),
+            request_key: request.to_string(),
+            request_hash: blake3::hash(format!("{source}\n{title}").as_bytes())
+                .to_hex()
+                .to_string(),
+            seed: koru_import_markdown::document_snapshot(
+                koru_core::WorkspaceId::from_uuid(workspace.as_uuid()),
+                &title,
+                words,
+            )
+            .map_err(|_| Error::InvalidRequest)?,
+        };
+        let proof = self
+            .authority
+            .create_reply_page(&seed)
+            .map_err(|error| match error {
+                BotError::Conflict => Error::Conflict,
+                other => authority_error(other),
+            })?;
+        // Another request's page under this candidate, or this request's
+        // page since removed, is not a saved reply.
+        if !proof.saved_reply(&seed) {
+            return Err(Error::Conflict);
+        }
+        if proof.placement != BotRolePlacement::Live {
+            return Err(Error::NotAllowed);
+        }
+        Ok((workspace, title))
     }
 }

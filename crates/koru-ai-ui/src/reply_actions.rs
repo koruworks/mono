@@ -49,8 +49,13 @@ impl ChatSurface {
         let normal = assistant && !self.observing_bot_thread() && !message.folded_empty_answer();
         let complete = normal && message.state == MessageState::Complete;
         let branch = !self.bot_chat_flow();
-        // Engine block IDs are layout keys, not durable Store/Link targets.
+        // Engine block IDs are layout keys, not durable Link targets. A Bot
+        // reply is saved from the engine's own copy, by its message.
         let durable_blocks = self.managed.is_none();
+        let savable = durable_blocks
+            || message
+                .id
+                .is_some_and(|id| self.bot_reply_sequence(id).is_some());
         let retry = normal
             && matches!(
                 message.state,
@@ -67,7 +72,8 @@ impl ChatSurface {
             .filter(move |action| match action {
                 Copy => complete,
                 Branch => complete && branch,
-                Store | Link => complete && durable_blocks,
+                Store => complete && savable,
+                Link => complete && durable_blocks,
                 Retry => retry,
                 Details => details,
             })

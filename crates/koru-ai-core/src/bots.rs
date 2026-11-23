@@ -187,6 +187,11 @@ pub trait BotAuthority: Send + Sync {
     fn create_role_page(&self, _seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
         Err(BotError::Unavailable)
     }
+    /// The same strict creation for a Bot reply the person saves as a
+    /// document, under [`BOT_REPLY_SCOPE`]: one page per save request.
+    fn create_reply_page(&self, _seed: &BotRoleSeed) -> Result<BotRoleProof, BotError> {
+        Err(BotError::Unavailable)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

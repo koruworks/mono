@@ -311,6 +311,63 @@ impl<'a> ActionButton<'a> {
         }
     }
 
+    /// Underline the label's first `letter`, case aside, as an access key
+    /// is marked: the label exactly where [`Self::draw_focused`] puts it,
+    /// a hairline under that letter's advance in the label's own ink. A
+    /// label without the letter (a translation, say) is left as it is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn underline_mnemonic(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        letter: char,
+        enabled: bool,
+    ) {
+        use parley::editing::Cursor;
+        use parley::layout::Affinity;
+        let Some((byte, found)) = self
+            .label
+            .char_indices()
+            .find(|(_, c)| c.to_lowercase().eq(letter.to_lowercase()))
+        else {
+            return;
+        };
+        let text = engine.simple_layout(self.label, theme::role::row());
+        let Some(metrics) = text.lines().next().map(|line| line.metrics().clone()) else {
+            return;
+        };
+        let icon_w = self.trailing_icon.map_or(0.0, |glyph| {
+            engine.icon_layout(glyph, Self::ICON_SIZE).width() + Self::GAP
+        });
+        let label_x = rect.x + (rect.w - text.width() - icon_w) * 0.5;
+        let label_y = crate::text_field::baseline_centred_y(&text, rect.y, rect.h);
+        let x0 = Cursor::from_byte_index(&text, byte, Affinity::Downstream)
+            .geometry(&text, 1.0)
+            .x0 as f32;
+        let x1 = Cursor::from_byte_index(&text, byte + found.len_utf8(), Affinity::Upstream)
+            .geometry(&text, 1.0)
+            .x0 as f32;
+        let p = theme::p();
+        let ink = if !enabled {
+            p.text_dim
+        } else {
+            match self.style {
+                ActionStyle::Primary => p.on_accent,
+                ActionStyle::Secondary | ActionStyle::Ghost => p.text,
+                ActionStyle::Destructive => p.close_hover,
+            }
+        };
+        let y = (label_y + metrics.baseline + 1.5).round();
+        scene::fill(
+            canvas,
+            root,
+            ink,
+            &scene::rect(label_x + x0, y, (x1 - x0).max(1.0), 1.0),
+        );
+    }
+
     /// Draw the same stable geometry without presenting it as actionable.
     #[track_caller]
     pub fn draw_disabled(

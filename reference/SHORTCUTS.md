@@ -140,3 +140,6 @@ Chords are shown as this platform writes them.
 | `Ctrl+Shift+↑` | Previous chat |
 | `Ctrl+Shift+↓` | Next chat |
 | `Ctrl+L` | Add to chat |
+| `←` | Previous result |
+| `→` | Next result |
+| `Alt+S` | Skip result |

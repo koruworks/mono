@@ -374,23 +374,7 @@ pub(crate) fn duration(lang: Lang, elapsed_ms: Option<u64>) -> String {
     let Some(ms) = elapsed_ms else {
         return t(lang, Key::RunUnavailable).to_owned();
     };
-    let seconds = ms / 1_000;
-    if seconds < 60 {
-        return fill(t(lang, Key::RunDurationSeconds), &[&decimal(lang, seconds)]);
-    }
-    if seconds < 3_600 {
-        return fill(
-            t(lang, Key::RunDurationMinutes),
-            &[&decimal(lang, seconds / 60), &decimal(lang, seconds % 60)],
-        );
-    }
-    fill(
-        t(lang, Key::RunDurationHours),
-        &[
-            &decimal(lang, seconds / 3_600),
-            &decimal(lang, (seconds % 3_600) / 60),
-        ],
-    )
+    koru_i18n::time::elapsed(lang, ms)
 }
 
 /// Actionable copy from a closed, content-free retained cause.

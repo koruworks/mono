@@ -139,7 +139,10 @@ impl ChatSurface {
     pub(crate) fn copy_response_selection(&mut self) -> bool {
         self.response_menu = None;
         self.response_menu_anchor = None;
-        let Some(text) = self.selected_response_text() else {
+        let Some(text) = self
+            .selected_response_text()
+            .or_else(|| self.review_selected_text())
+        else {
             return true;
         };
         koru_ui::clipboard::put_plain(&text);
@@ -157,13 +160,17 @@ impl ChatSurface {
         self.response_menu = None;
         self.response_menu_anchor = None;
         self.add_pill.hide();
-        let Some(passage) = self.selected_response_text() else {
+        let Some(passage) = self
+            .selected_response_text()
+            .or_else(|| self.review_selected_text())
+        else {
             return false;
         };
         if !self.composer.insert_quote(&passage) {
             return false;
         }
         self.response_selection = None;
+        self.clear_review_selection();
         self.focus = Focus::Composer;
         self.composer.set_focused(true);
         true
@@ -175,7 +182,8 @@ impl ChatSurface {
             self.add_pill.hide();
             return;
         }
-        let selected = self.selected_response_text().is_some();
+        let selected =
+            self.selected_response_text().is_some() || self.review_selected_text().is_some();
         if selected {
             self.add_pill.shown = true;
         } else {
@@ -190,7 +198,8 @@ impl ChatSurface {
     /// there, and only a document editor outside the chat keeps the chord
     /// as Align left (`koru_keys::ShortcutId::AddSelectionToChat`).
     pub(crate) fn add_to_chat_key_is_ours(&self) -> bool {
-        self.add_pill.shown() && self.selected_response_text().is_some()
+        (self.add_pill.shown() && self.selected_response_text().is_some())
+            || self.review_selected_text().is_some()
     }
 
     pub(crate) fn add_pill_mouse_move(&mut self, x: f32, y: f32) -> bool {
@@ -230,8 +239,15 @@ impl ChatSurface {
     /// lift, fully round; *Add to chat* and the chord in a key cap. Just
     /// above the selection's first line, below it where there is no room,
     /// always inside the transcript.
-    pub(crate) fn draw_add_pill(&mut self, canvas: &mut Scene, root: Affine) {
-        self.add_pill.rect = None;
+    ///
+    /// Painted twice a frame: over the transcript for a reply's selection
+    /// (`card` false, which also forgets last frame's place), and over the
+    /// review card for a selection in its result (`card` true), so the
+    /// card never hides the pill offered for its own words.
+    pub(crate) fn draw_add_pill(&mut self, canvas: &mut Scene, root: Affine, card: bool) {
+        if !card {
+            self.add_pill.rect = None;
+        }
         // Under anything that floats over the transcript it is neither drawn
         // nor pressed: the menu, a picker, a confirmation.
         let covered = self.response_menu.is_some()
@@ -245,10 +261,14 @@ impl ChatSurface {
         if !self.add_pill.shown || covered {
             return;
         }
-        let Some((left, top, bottom)) = self.selection_start() else {
+        let (start, area) = if card {
+            (self.review_selection_start(), self.viewport)
+        } else {
+            (self.selection_start(), self.conversation_hit_rect)
+        };
+        let Some((left, top, bottom)) = start else {
             return;
         };
-        let area = self.conversation_hit_rect;
         let label_text = koru_i18n::t(self.lang, koru_i18n::Key::AiAddToChat);
         let label = self.engine.simple_layout(label_text, role::meta());
         let hint = koru_keys::show_hint(
