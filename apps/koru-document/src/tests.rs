@@ -4712,8 +4712,10 @@ fn removing_from_tasks_clears_the_task_and_keeps_priority_and_the_check() {
 
     // Through the menu, the way a person reaches it.
     view.editor.body.focus_on(task);
-    let y = view.editor.body.row(task).expect("a row").y - view.editor.view.scroll + 2.0;
-    assert!(View::context_menu(&mut view, &mut ws, 300.0, y));
+    let row = view.editor.body.row(task).expect("a row");
+    let x = view.editor.view.content_x + row.text_x() + 4.0;
+    let y = row.y - view.editor.view.scroll + 2.0;
+    assert!(View::context_menu(&mut view, &mut ws, x, y));
     assert!(
         matches!(
             &view.menu_shape()[REMOVE_ROW],
