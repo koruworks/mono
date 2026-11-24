@@ -173,23 +173,33 @@ fn profiled_window_title(subject: &str, profile: Option<&str>, slot: &str) -> St
     parts.join(" — ")
 }
 
-/// A workspace window's title: the workspace's name, then the active tab's
-/// (the review's note — a second window is told apart by what it is showing,
-/// not by the app's name twice). A tab called the same as the workspace is
-/// not repeated; a named development replica stays visible as the last
-/// component, as in [`profiled_window_title`].
-fn workspace_window_title(workspace: &str, tab: Option<&str>, slot: &str) -> String {
-    let mut parts = vec![workspace.to_owned()];
-    if let Some(tab) = tab
-        .map(str::trim)
-        .filter(|tab| !tab.is_empty() && *tab != workspace)
-    {
-        parts.push(tab.to_owned());
+/// A workspace window's OS-visible title: `profile | workspace`, so windows
+/// across profiles and workspaces read apart in the taskbar and Alt+Tab.
+/// When either name is absent, the other stands alone (falling back to the
+/// app's name when neither is known yet); a named development replica stays
+/// visible as the last component, as in [`profiled_window_title`].
+fn workspace_window_title(
+    profile: Option<&str>,
+    workspace: Option<&str>,
+    fallback: &str,
+    slot: &str,
+) -> String {
+    let profile = profile.map(str::trim).filter(|name| !name.is_empty());
+    let workspace = workspace.map(str::trim).filter(|name| !name.is_empty());
+    let mut parts = Vec::new();
+    if let Some(profile) = profile {
+        parts.push(profile.to_owned());
+    }
+    if let Some(workspace) = workspace {
+        parts.push(workspace.to_owned());
+    }
+    if parts.is_empty() {
+        parts.push(fallback.to_owned());
     }
     if slot != session::DEFAULT_PEER {
         parts.push(slot.to_owned());
     }
-    parts.join(" — ")
+    parts.join(" | ")
 }
 
 fn trace_node(id: Option<NodeId>) -> String {
@@ -5653,8 +5663,24 @@ impl<H: Host> App<H> {
         profiled_window_title(subject, profile.as_deref(), &self.instance.slot)
     }
 
+    fn current_workspace_name(&self) -> Option<String> {
+        self.runtime
+            .workspace
+            .current()
+            .and_then(|id| self.runtime.profile.workspace(id))
+            .map(|entry| entry.name)
+            .filter(|name| !name.trim().is_empty())
+    }
+
     fn app_window_title(&self) -> String {
-        self.window_title(&self.name)
+        let profile = self.runtime.profile.name();
+        let workspace = self.current_workspace_name();
+        workspace_window_title(
+            profile.as_deref(),
+            workspace.as_deref(),
+            &self.name,
+            &self.instance.slot,
+        )
     }
 
     fn search_window_title(&self) -> String {
@@ -8649,25 +8675,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
             profile.as_deref(),
             &self.instance.slot,
         );
-        // A workspace window is titled by its workspace and its active tab;
-        // the app's name only stands in while no workspace is open.
-        let workspace = self
-            .runtime
-            .workspace
-            .current()
-            .and_then(|id| self.runtime.profile.workspace(id))
-            .map(|entry| entry.name)
-            .filter(|name| !name.trim().is_empty());
-        let subject = workspace.as_deref().unwrap_or(&self.name);
+        // A workspace window is titled `profile | workspace`; the app's name
+        // only stands in when neither is known yet.
+        let workspace_title = self.app_window_title();
         for pane in self.panes.values_mut() {
             let want = if pane.view.is_global_search() {
                 search_title.clone()
             } else {
-                workspace_window_title(
-                    subject,
-                    pane.view.active_tab_title().as_deref(),
-                    &self.instance.slot,
-                )
+                workspace_title.clone()
             };
             if pane.title != want {
                 pane.window.set_title(&want);
@@ -21365,29 +21380,35 @@ mod tests {
         assert_eq!(REVEAL_BUDGET, Duration::from_millis(400));
     }
 
-    /// **A window is titled by its workspace and its tab** (the review's note):
-    /// two windows on two workspaces read apart in Alt+Tab. A tab named as
-    /// the workspace is not said twice; a replica's slot stays last.
+    /// A workspace window is titled `profile | workspace`, falling back to
+    /// whichever name is known (or the app name when neither is), with any
+    /// explicit replica slot last.
     #[test]
-    fn a_workspace_window_is_titled_by_its_workspace_and_its_tab() {
+    fn a_workspace_window_is_titled_by_its_profile_and_workspace() {
         let slot = session::DEFAULT_PEER;
         assert_eq!(
-            workspace_window_title("Execution", Some("Notes"), slot),
-            "Execution — Notes"
+            workspace_window_title(Some("Personal"), Some("Execution"), "Koru", slot),
+            "Personal | Execution"
         );
-        assert_eq!(workspace_window_title("Execution", None, slot), "Execution");
         assert_eq!(
-            workspace_window_title("Execution", Some("  "), slot),
+            workspace_window_title(Some("Personal"), None, "Koru", slot),
+            "Personal"
+        );
+        assert_eq!(
+            workspace_window_title(Some("Personal"), Some("  "), "Koru", slot),
+            "Personal"
+        );
+        assert_eq!(
+            workspace_window_title(None, Some("Execution"), "Koru", slot),
             "Execution"
         );
         assert_eq!(
-            workspace_window_title("Koru", Some("Koru"), slot),
-            "Koru",
-            "not the same word twice"
+            workspace_window_title(Some("  "), None, "Koru", slot),
+            "Koru"
         );
         assert_eq!(
-            workspace_window_title("Execution", Some("Home"), "b"),
-            "Execution — Home — b"
+            workspace_window_title(Some("Personal"), Some("Execution"), "Koru", "b"),
+            "Personal | Execution | b"
         );
     }
 
@@ -21837,11 +21858,7 @@ mod tests {
             ) -> Result<koru_import::StoredBlob, koru_import::ImportError> {
                 let mut blobs = self.blobs.lock().unwrap();
                 let index = blobs.len() + 1;
-                blobs.push((
-                    mime.to_owned(),
-                    filename.map(str::to_owned),
-                    bytes.len(),
-                ));
+                blobs.push((mime.to_owned(), filename.map(str::to_owned), bytes.len()));
                 Ok(koru_import::StoredBlob {
                     hash: format!("b3:{index:064x}"),
                     mime: mime.to_owned(),

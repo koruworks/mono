@@ -3422,6 +3422,8 @@ pub enum Key {
     /// The swatch row's accessible name.
     SetupColorRow,
     SetupStart,
+    /// The setup card's primary when creating an additional profile inside Settings.
+    SetupCreateProfile,
     /// The primary while the Profile and workspace are being created.
     SetupFinishing,
     /// The connected first run's note: where the Profile and content live.
@@ -4555,7 +4557,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3463] = [
+    pub const ALL: [Key; 3464] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6955,6 +6957,7 @@ impl Key {
         Key::SetupWorkspaceDefaultName,
         Key::SetupColorRow,
         Key::SetupStart,
+        Key::SetupCreateProfile,
         Key::SetupFinishing,
         Key::SetupConnectedNote,
         Key::WorkspaceColorBlue,
@@ -11835,7 +11838,7 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::TerminalManagedTranscriptGap, en: "Some activity could not be loaded", es: "No se pudo cargar parte de la actividad", pt_br: "Não foi possível carregar parte da atividade", de: "Ein Teil der Aktivität konnte nicht geladen werden", fr: "Une partie de l’activité n’a pas pu être chargée", ar: "تعذّر تحميل بعض النشاط", zh_hans: "部分活动无法加载", ja: "一部のアクティビティを読み込めませんでした" },
     Row { key: Key::TerminalManagedTranscriptTruncated, en: "Earlier activity is no longer available", es: "La actividad anterior ya no está disponible", pt_br: "A atividade anterior não está mais disponível", de: "Frühere Aktivität ist nicht mehr verfügbar", fr: "L’activité antérieure n’est plus disponible", ar: "لم يعد النشاط السابق متاحًا", zh_hans: "较早的活动已不可用", ja: "以前のアクティビティは利用できません" },
     Row { key: Key::TerminalWindowAlwaysOnTop, en: "Always on top", es: "Siempre visible", pt_br: "Sempre visível", de: "Immer im Vordergrund", fr: "Toujours au premier plan", ar: "دائمًا في المقدمة", zh_hans: "始终置顶", ja: "常に手前に表示" },
-    Row { key: Key::WindowMenuAllSettings, en: "All settings", es: "Todos los ajustes", pt_br: "Todas as configurações", de: "Alle Einstellungen", fr: "Tous les paramètres", ar: "جميع الإعدادات", zh_hans: "所有设置", ja: "すべての設定" },
+    Row { key: Key::WindowMenuAllSettings, en: "Settings", es: "Ajustes", pt_br: "Configurações", de: "Einstellungen", fr: "Réglages", ar: "الإعدادات", zh_hans: "设置", ja: "設定" },
     Row { key: Key::WindowMinimize, en: "Minimize", es: "Minimizar", pt_br: "Minimizar", de: "Minimieren", fr: "Réduire", ar: "تصغير", zh_hans: "最小化", ja: "最小化" },
     Row { key: Key::WindowMaximize, en: "Maximize", es: "Maximizar", pt_br: "Maximizar", de: "Maximieren", fr: "Agrandir", ar: "تكبير", zh_hans: "最大化", ja: "最大化" },
     Row { key: Key::WindowRestore, en: "Restore", es: "Restaurar", pt_br: "Restaurar", de: "Wiederherstellen", fr: "Restaurer", ar: "استعادة", zh_hans: "还原", ja: "元に戻す" },
@@ -19083,6 +19086,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SetupWorkspaceDefaultName, en: "Personal", es: "Personal", pt_br: "Pessoal", de: "Persönlich", fr: "Personnel", ar: "شخصي", zh_hans: "个人", ja: "プライベート" },
     Row { key: Key::SetupColorRow, en: "Workspace color", es: "Color del espacio de trabajo", pt_br: "Cor do espaço de trabalho", de: "Farbe des Arbeitsbereichs", fr: "Couleur de l'espace de travail", ar: "لون مساحة العمل", zh_hans: "工作区颜色", ja: "ワークスペースの色" },
     Row { key: Key::SetupStart, en: "Start using Koru", es: "Empezar a usar Koru", pt_br: "Começar a usar o Koru", de: "Mit Koru loslegen", fr: "Commencer à utiliser Koru", ar: "ابدأ استخدام Koru", zh_hans: "开始使用 Koru", ja: "Koru を使い始める" },
+    Row { key: Key::SetupCreateProfile, en: "Create Profile", es: "Crear perfil", pt_br: "Criar perfil", de: "Profil erstellen", fr: "Créer le profil", ar: "إنشاء ملف شخصي", zh_hans: "创建配置文件", ja: "プロフィールを作成" },
     Row { key: Key::SetupFinishing, en: "Finishing…", es: "Terminando…", pt_br: "Finalizando…", de: "Wird abgeschlossen…", fr: "Finalisation…", ar: "جارٍ الإنهاء…", zh_hans: "正在完成…", ja: "完了処理中…" },
     Row { key: Key::SetupConnectedNote, en: "Your Profile and content stay on your devices. Your Koru account only helps connect them.", es: "Tu perfil y tu contenido se quedan en tus dispositivos. Tu cuenta de Koru solo ayuda a conectarlos.", pt_br: "Seu perfil e seu conteúdo ficam nos seus dispositivos. Sua conta Koru só ajuda a conectá-los.", de: "Ihr Profil und Ihre Inhalte bleiben auf Ihren Geräten. Ihr Koru-Konto hilft nur dabei, sie zu verbinden.", fr: "Votre profil et votre contenu restent sur vos appareils. Votre compte Koru sert uniquement à les relier.", ar: "يبقى ملفك الشخصي ومحتواك على أجهزتك. يساعد حساب Koru فقط في ربطها.", zh_hans: "你的个人资料和内容保存在你的设备上。Koru 账户只用于连接它们。", ja: "プロフィールとコンテンツはお使いのデバイスに保存されます。Koru アカウントはそれらをつなぐためだけに使われます。" },
     Row { key: Key::WorkspaceColorBlue, en: "Blue", es: "Azul", pt_br: "Azul", de: "Blau", fr: "Bleu", ar: "أزرق", zh_hans: "蓝色", ja: "青" },

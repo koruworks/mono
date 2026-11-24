@@ -20,7 +20,10 @@ fn workspace_setup_is_centered_and_switches_between_welcome_and_signin() {
         let (_, welcome_frame) = view.welcome_modal_frame();
         let welcome_card = rect(&welcome_frame, super::super::welcome_modal::KEY_CARD);
         let name_r = rect(&welcome_frame, super::super::welcome_modal::KEY_NAME);
-        let ws_r = rect(&welcome_frame, super::super::welcome_modal::KEY_WORKSPACE_NAME);
+        let ws_r = rect(
+            &welcome_frame,
+            super::super::welcome_modal::KEY_WORKSPACE_NAME,
+        );
         let avatar_r = rect(&welcome_frame, super::super::welcome_modal::KEY_AVATAR);
         let tile_r = rect(&welcome_frame, super::super::welcome_modal::KEY_TILE);
         assert_eq!(name_r.h, 38.0);
@@ -29,9 +32,7 @@ fn workspace_setup_is_centered_and_switches_between_welcome_and_signin() {
         assert_eq!((tile_r.w, tile_r.h), (38.0, 38.0));
         let area = view.setup_area();
         assert!((welcome_card.x + welcome_card.w * 0.5 - width * 0.5).abs() < 0.01);
-        assert!(
-            (welcome_card.y + welcome_card.h * 0.5 - (area.y + area.h * 0.5)).abs() < 0.01
-        );
+        assert!((welcome_card.y + welcome_card.h * 0.5 - (area.y + area.h * 0.5)).abs() < 0.01);
         let records = capture(&mut view);
         assert!(!records.iter().any(|r| r.name == "WelcomeSidebar"));
         // The focused input's caret is recorded as a `Cursor` part inside
@@ -42,7 +43,14 @@ fn workspace_setup_is_centered_and_switches_between_welcome_and_signin() {
             .expect("focused input records a Cursor part");
         let input_idx = records
             .iter()
-            .position(|r| r.name == "KoruTextInput" && within(&records, cursor_idx, records.iter().position(|n| std::ptr::eq(n, r)).unwrap()))
+            .position(|r| {
+                r.name == "KoruTextInput"
+                    && within(
+                        &records,
+                        cursor_idx,
+                        records.iter().position(|n| std::ptr::eq(n, r)).unwrap(),
+                    )
+            })
             .expect("Cursor is nested inside KoruTextInput");
         assert!(within(&records, cursor_idx, input_idx));
 
@@ -54,7 +62,11 @@ fn workspace_setup_is_centered_and_switches_between_welcome_and_signin() {
         let card = rect(&signin_frame, super::super::welcome_modal::KEY_CARD);
         assert!((card.x + card.w * 0.5 - width * 0.5).abs() < 0.01);
         assert!((card.y + card.h * 0.5 - (area.y + area.h * 0.5)).abs() < 0.01);
-        assert!(signin_frame.node(super::super::welcome_modal::KEY_SET_UP_SPACE).is_some());
+        assert!(
+            signin_frame
+                .node(super::super::welcome_modal::KEY_SET_UP_SPACE)
+                .is_some()
+        );
         assert!(view.controls().contains(&Hit::Back));
         assert!(view.pending.is_none());
 
@@ -71,8 +83,14 @@ fn workspace_setup_keeps_input_in_the_card_and_submits_local_creation() {
     view.show_workspace_setup();
     let (_, expanded_f) = view.welcome_modal_frame();
     let expanded_cloud = rect(&expanded_f, super::super::welcome_modal::KEY_CLOUD_CARD);
-    assert_eq!(rect(&expanded_f, super::super::welcome_modal::KEY_GOOGLE).h, 38.0);
-    assert_eq!(rect(&expanded_f, super::super::welcome_modal::KEY_APPLE).h, 38.0);
+    assert_eq!(
+        rect(&expanded_f, super::super::welcome_modal::KEY_GOOGLE).h,
+        38.0
+    );
+    assert_eq!(
+        rect(&expanded_f, super::super::welcome_modal::KEY_APPLE).h,
+        38.0
+    );
     assert_eq!(
         koru_i18n::t(view.language, koru_i18n::Key::WelcomeCloudTitle),
         "Add Koru Cloud"
@@ -128,7 +146,10 @@ fn workspace_setup_keeps_input_in_the_card_and_submits_local_creation() {
     assert_eq!(toggle_r.h, koru_ui::toggle::Toggle::H);
     let primary_r = rect(&f, super::super::welcome_modal::KEY_CONTINUE);
     assert_eq!(primary_r.h, 38.0);
-    view.mouse_move(primary_r.x + primary_r.w * 0.5, primary_r.y + primary_r.h * 0.5);
+    view.mouse_move(
+        primary_r.x + primary_r.w * 0.5,
+        primary_r.y + primary_r.h * 0.5,
+    );
     assert_eq!(
         view.tooltip.label(),
         Some(koru_i18n::t(
@@ -223,23 +244,45 @@ fn welcome_modal_dispatches_ab_oauth_signed_in_checkout_and_recovery() {
     view.show_checkout_pending();
     assert!(view.is_checkout_pending());
     let (_, pending_frame) = view.checkout_modal_frame();
-    assert!(pending_frame.node(super::super::checkout_modal::KEY_REOPEN).is_some());
-    assert!(pending_frame.node(super::super::checkout_modal::KEY_CANCEL).is_some());
+    assert!(
+        pending_frame
+            .node(super::super::checkout_modal::KEY_REOPEN)
+            .is_some()
+    );
+    assert!(
+        pending_frame
+            .node(super::super::checkout_modal::KEY_CANCEL)
+            .is_some()
+    );
 
     view.activate(Hit::ReopenCheckout);
-    assert_eq!(view.take_action(), Some(Action::StartCheckout { plan: "y1" }));
+    assert_eq!(
+        view.take_action(),
+        Some(Action::StartCheckout { plan: "y1" })
+    );
 
     view.activate(Hit::CancelCheckout);
     assert_eq!(view.screen, Screen::CheckoutIncomplete);
     assert_eq!(view.take_action(), Some(Action::CancelCheckout));
     let (_, incomplete_frame) = view.checkout_modal_frame();
-    assert!(incomplete_frame.node(super::super::checkout_modal::KEY_RETRY).is_some());
-    assert!(incomplete_frame.node(super::super::checkout_modal::KEY_OFFLINE).is_some());
+    assert!(
+        incomplete_frame
+            .node(super::super::checkout_modal::KEY_RETRY)
+            .is_some()
+    );
+    assert!(
+        incomplete_frame
+            .node(super::super::checkout_modal::KEY_OFFLINE)
+            .is_some()
+    );
 
     view.activate(Hit::BillingMonthly);
     view.activate(Hit::RetryCheckout);
     assert_eq!(view.screen, Screen::CheckoutPending);
-    assert_eq!(view.take_action(), Some(Action::StartCheckout { plan: "s1" }));
+    assert_eq!(
+        view.take_action(),
+        Some(Action::StartCheckout { plan: "s1" })
+    );
 
     // Back on CheckoutIncomplete returns to the signed-in Welcome screen.
     view.show_checkout_incomplete();
@@ -374,9 +417,19 @@ fn the_card_width_follows_the_area_beside_the_sidebar() {
 
     let mut embedded = OnboardingView::default();
     embedded.set_embedded(true);
+    embedded.set_owner_label(SetupOwnerLabel::Profile);
     embedded.show_setup();
     embedded.set_viewport(480.0, 900.0);
+    assert!(
+        !embedded.controls().contains(&Hit::Back),
+        "no Back button when embedded"
+    );
+    assert_eq!(embedded.setup_primary_label(), "Create Profile");
     let frame = frame(&mut embedded);
+    assert!(
+        frame.node(KEY_BACK).is_none(),
+        "Back is omitted in embedded new-profile mode"
+    );
     let card = rect(&frame, KEY_CARD);
     assert_eq!((card.x, card.y), (0.0, 0.0));
     assert!(

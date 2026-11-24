@@ -1025,7 +1025,8 @@ impl<T: MenuItem> Menu<T> {
             return;
         }
         let pal = theme::p();
-        if self.items[item].controls_plate() {
+        let has_plate = self.items[item].controls_plate();
+        if has_plate {
             let cells: Vec<_> = self.items[item]
                 .controls()
                 .iter()
@@ -1064,17 +1065,21 @@ impl<T: MenuItem> Menu<T> {
                     if *enabled && self.control_hover == Some((item, c)) {
                         // A spread strip's cell can be wider than a button; the
                         // square stays a button's width, centred on its glyph.
+                        // Inside a plated control (e.g. the zoom stepper), match
+                        // the plate's vertical inset and radius so the hover
+                        // never overflows its container.
                         let hw = cell.w.min(CONTROL_W);
+                        let (inset_y, radius) = if has_plate { (4.0, 6.0) } else { (2.0, 5.0) };
                         scene::fill(
                             scene,
                             root,
                             pal.hover_tint,
                             &scene::rrect(
                                 cell.x + (cell.w - hw) * 0.5,
-                                cell.y + 2.0,
+                                cell.y + inset_y,
                                 hw,
-                                cell.h - 4.0,
-                                5.0,
+                                (cell.h - inset_y * 2.0).max(0.0),
+                                radius,
                             ),
                         );
                     }
@@ -1090,13 +1095,14 @@ impl<T: MenuItem> Menu<T> {
                 }
                 Control::Readout(value) => {
                     let label = engine.simple_layout(value, theme::role::row());
+                    let y = crate::typography::control_label_y(engine, cell);
                     crate::typography::line(
                         "Control value",
                         scene,
                         root,
                         &label,
                         cell.x + (cell.w - label.width()) * 0.5,
-                        scene::centre_y_in(&label, cell),
+                        y,
                         theme::role::row(),
                         "theme::role::row()",
                         pal.text,
@@ -1123,12 +1129,17 @@ impl<T: MenuItem> Menu<T> {
                             (cell.w - 8.0).max(0.0),
                         );
                         let label = engine.simple_layout(&label, theme::role::hint());
+                        let y = crate::typography::control_label_y_for(
+                            engine,
+                            cell,
+                            theme::role::hint(),
+                        );
                         scene::draw_layout(
                             scene,
                             root,
                             &label,
                             cell.x + (cell.w - label.width()) * 0.5,
-                            scene::centre_y_in(&label, cell),
+                            y,
                             Some(pal.accent),
                         );
                     }
@@ -1474,7 +1485,7 @@ impl<T: MenuItem> Menu<T> {
                     root,
                     &icon,
                     text_x,
-                    r.y + (r.h - icon.height()) * 0.5,
+                    scene::centre_y_in(&icon, r),
                     Some(icon_ink),
                 );
                 text_x += icon.width() + icon_gap(item);
@@ -1499,7 +1510,7 @@ impl<T: MenuItem> Menu<T> {
             } else {
                 label
             };
-            let label_y = scene::centre_y_in(&label, r);
+            let label_y = crate::typography::control_label_y(engine, r);
             crate::typography::line(
                 "Menu label",
                 scene,
@@ -1547,7 +1558,7 @@ impl<T: MenuItem> Menu<T> {
                     root,
                     &check,
                     p.x + p.w - check.width() - ROW_PAD_X,
-                    r.y + (r.h - check.height()) * 0.5,
+                    scene::centre_y_in(&check, r),
                     Some(colour),
                 );
             }
@@ -1569,7 +1580,7 @@ impl<T: MenuItem> Menu<T> {
                     root,
                     &caret,
                     end - caret.width(),
-                    r.y + (r.h - caret.height()) * 0.5,
+                    scene::centre_y_in(&caret, r),
                     Some(colour),
                 );
             } else if let Some(chord) = item.shortcut() {
@@ -1577,13 +1588,14 @@ impl<T: MenuItem> Menu<T> {
                     Some(stack) => engine.simple_layout_in(&chord, theme::role::hint(), stack),
                     None => engine.simple_layout(&chord, theme::role::hint()),
                 };
+                let hint_y = crate::typography::control_label_y_for(engine, r, theme::role::hint());
                 crate::typography::line(
                     "Menu shortcut",
                     scene,
                     root,
                     &hint,
                     end - hint.width(),
-                    scene::centre_y_in(&hint, r),
+                    hint_y,
                     theme::role::hint(),
                     "theme::role::hint()",
                     pal.text_dim,
@@ -1597,7 +1609,7 @@ impl<T: MenuItem> Menu<T> {
                     root,
                     &icon,
                     end - icon.width(),
-                    r.y + (r.h - icon.height()) * 0.5,
+                    scene::centre_y_in(&icon, r),
                     Some(pal.text_dim),
                 );
             }

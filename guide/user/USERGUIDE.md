@@ -3660,17 +3660,17 @@ the letters. All of these are yours only — documents never store them.
 
 ## The title bar menu
 
-The top-left sidebar button expands or collapses the explorer. Collapsing
-keeps the app rail visible. Hover an app to preview its explorer in a floating
-panel without resizing the document; move outside to fade it away, or press
-Escape to dismiss it. Clicking an app or pressing Alt+number selects its view
-without expanding the pane; use the sidebar toggle to dock it. The docked
-explorer sits as a pane below the header with a curved top-left corner and top
-border.
-An Alt+number preview waits two seconds for you to enter it with the mouse or
-use its keyboard navigation. Keyboard activity restarts that timeout while
-the mouse is outside. Enter opens the selected item and hides the floating
-pane; an expanded pane stays open.
+On Windows and Linux the Koru logo sits at the top left above the app rail
+(macOS keeps native traffic lights there). The sidebar toggle and Search sit
+beside each other — right-aligned before the tabs when the explorer is open,
+and folded beside the logo when collapsed — separated from the tabs by a short
+vertical divider aligned with the pane edge. Collapsing hides both the explorer
+and the app rail so the document fills the window. While collapsed, pressing
+Alt+number (or Alt+H for Home) slides that app's explorer in from the left as a
+floating panel without resizing the document; picking an item, clicking outside,
+or pressing Escape slides it back out. While collapsed, an Alt+number preview
+also waits two seconds if the pointer stays outside (keyboard activity restarts
+the timer). Use the sidebar toggle to dock the rail and explorer again.
 
 The top-right keeps direct **minimize**, **maximize/restore**, and **close**
 controls. The leftmost control is an overflow `…` menu. Move the pointer onto it

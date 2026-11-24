@@ -214,7 +214,7 @@ impl MainView {
         // since a picture inside one still earns a row — and doing that for a
         // column of zero width is the whole cost for none of the benefit. The
         // staleness flag survives, so opening the sidebar builds it then.
-        let preview_alpha = self.preview_alpha();
+        let (preview_alpha, preview_dx) = self.preview_motion();
         self.refresh_explore(
             &workspace.ws,
             self.sidebar.is_open() || self.explore_preview,
@@ -638,17 +638,29 @@ impl MainView {
             self.context_view
                 .draw(scene, root, &mut self.engine, cx, subject, &workspace.ws);
         }
-        // Mask the document's corner after the adjacent columns have painted.
+        // Paint the right/bottom ground lanes, card borders and rounded corners
+        // after every column so nothing overwrites the corner arcs.
         self.draw_cards(scene, root);
         if self.explore_preview && !self.sidebar.is_open() {
             let panel = self.explore_preview_rect();
-            let shape = scene::rrect(panel.x, panel.y, panel.w, panel.h, theme::PAGE_RADIUS);
+            let drawn = Rect::new(panel.x + preview_dx, panel.y, panel.w, panel.h);
+            let shape = scene::rrect(drawn.x, drawn.y, drawn.w, drawn.h, theme::PAGE_RADIUS);
             let _scope = koru_draw::inspect::scope(
                 "Explore preview",
                 "container",
                 root,
-                scene::rect(panel.x, panel.y, panel.w, panel.h),
+                scene::rect(drawn.x, drawn.y, drawn.w, drawn.h),
                 |r| r.property("layout", "floating explorer", "rail hover"),
+            );
+            scene.push_clip_layer(
+                Fill::NonZero,
+                root,
+                &scene::rect(
+                    0.0,
+                    theme::CAPTION_H,
+                    self.viewport.0,
+                    (self.viewport.1 - theme::CAPTION_H).max(0.0),
+                ),
             );
             scene::fade_layer(
                 scene,
@@ -659,24 +671,25 @@ impl MainView {
             let _panel = scene::floating_panel_scope(
                 scene,
                 root,
-                panel.x,
-                panel.y,
-                panel.w,
-                panel.h,
+                drawn.x,
+                drawn.y,
+                drawn.w,
+                drawn.h,
                 &scene::Panel::popover(theme::PAGE_RADIUS)
                     .shadow_alpha(0.2)
                     .borderless(),
             );
             scene.push_clip_layer(Fill::NonZero, root, &shape);
-            self.explore.draw(scene, root, &mut self.engine, panel);
+            self.explore.draw(scene, root, &mut self.engine, drawn);
             scene.pop_layer();
             scene::stroke(
                 scene,
                 Affine::IDENTITY,
                 theme::p().panel_border.multiply_alpha(0.5),
                 1.0,
-                &preview_outline(root, panel),
+                &preview_outline(root, drawn),
             );
+            scene.pop_layer();
             scene.pop_layer();
         }
         // **After both columns**, and deliberately not from inside the pane's
@@ -991,51 +1004,125 @@ impl MainView {
             theme::base_fill(),
             &scene::rect(cap.x, cap.y, cap.w, cap.h),
         );
-        // Leave the curved join to draw_top_left_corner, which owns both the
-        // arc and the straight top hairline across the document's corner square
-        // without double-painting underneath the antialiased arc.
-        let corner = if Self::pane_of(self.sidebar_rect()).w > 0.0 {
-            theme::PAGE_RADIUS - 0.5
-        } else {
-            0.0
-        };
         scene::fill(
             scene,
             root,
             p.panel_border,
-            &scene::rect(
-                cap.x + corner,
-                cap.y + cap.h - 0.5,
-                (cap.w - corner).max(0.0),
-                0.5,
-            ),
+            &scene::rect(cap.x, cap.y + cap.h - 0.5, cap.w.max(0.0), 0.5),
         );
     }
 
-    /// The docked explorer and document panes each meet the chrome above them
-    /// with a top-left rounded corner. The remaining outer edges sit flush with
-    /// the window, without card gutters.
+    /// The ground lanes at the window's right and bottom edges, the cards'
+    /// outer hairlines, and the rounded corners on both the docked explorer
+    /// pane and the document/content card.
     fn draw_cards(&mut self, scene: &mut Scene, root: Affine) {
-        let pane = Self::pane_of(self.sidebar_rect());
-        if pane.w <= 0.0 {
-            return;
-        }
+        let p = theme::p();
+        let ground = theme::base_fill();
+        let left_edge = self.regions.left_edge;
+        let edge = self.regions.edge;
+        let foot = self.regions.foot;
         let top = self.content().y - 0.5;
-        // The docked explorer's top-left corner, where the white pane meets
-        // the rail and header ground.
-        draw_top_left_corner(scene, root, pane.x - 0.5, top, None);
-        // The document's top-left corner, where it meets the docked explorer.
-        // Outside the arc is the explorer pane, so the header's hairline runs
-        // straight across the corner square.
+        let r = theme::PAGE_RADIUS;
+        let sb = self.sidebar_rect();
+        let pane = (sb.w > 0.0)
+            .then(|| Self::pane_of(sb))
+            .filter(|pane| pane.w > 0.0);
         let cap = self.drawn_caption();
-        if cap.x > 0.0 {
-            draw_top_left_corner(
+        let left = pane.map(|pane| pane.x - 0.5);
+
+        if left_edge.w > 0.0 {
+            scene::fill(
                 scene,
                 root,
-                cap.x - 0.5,
-                top,
-                Some(crate::panes::explore::pane_fill()),
+                ground,
+                &scene::rect(left_edge.x, left_edge.y, left_edge.w, left_edge.h),
             );
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(
+                    left_edge.x + left_edge.w - 0.5,
+                    left_edge.y,
+                    0.5,
+                    left_edge.h,
+                ),
+            );
+            // Cover the stray caption hairline left of the document card.
+            scene::fill(
+                scene,
+                root,
+                ground,
+                &scene::rect(left_edge.x, top, (left_edge.w - 0.5).max(0.0), 0.5),
+            );
+        }
+        if edge.w > 0.0 {
+            scene::fill(
+                scene,
+                root,
+                ground,
+                &scene::rect(edge.x, edge.y, edge.w, edge.h),
+            );
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(edge.x, edge.y, 0.5, edge.h),
+            );
+            // Cover the stray caption hairline past the right-most card.
+            scene::fill(
+                scene,
+                root,
+                ground,
+                &scene::rect(edge.x + 0.5, top, (edge.w - 0.5).max(0.0), 0.5),
+            );
+        }
+        let outer_left = left
+            .or_else(|| (left_edge.w > 0.0).then_some(left_edge.x + left_edge.w - 0.5))
+            .or_else(|| (cap.x > 0.0).then_some(cap.x - 0.5));
+        if foot.h > 0.0 {
+            scene::fill(
+                scene,
+                root,
+                ground,
+                &scene::rect(foot.x, foot.y, foot.w, foot.h),
+            );
+            let x0 = outer_left.unwrap_or(0.0);
+            let x1 = if edge.w > 0.0 {
+                edge.x + 0.5
+            } else {
+                foot.x + foot.w
+            };
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(x0, foot.y, (x1 - x0).max(0.0), 0.5),
+            );
+        }
+        if pane.is_none() && left_edge.w == 0.0 && cap.x > 0.0 {
+            // Mid-close slide: keep the document card's left border beside the shrinking column.
+            let content = self.content();
+            scene::fill(
+                scene,
+                root,
+                p.panel_border,
+                &scene::rect(cap.x - 0.5, content.y, 0.5, content.h),
+            );
+        }
+
+        let bottom = foot.y + 0.5;
+        if let Some(x) = outer_left {
+            draw_card_corner(scene, root, x, top, r, (false, false));
+            if foot.h > 0.0 {
+                draw_card_corner(scene, root, x, bottom, r, (false, true));
+            }
+        }
+        if edge.w > 0.0 {
+            draw_card_corner(scene, root, edge.x + 0.5, top, r, (true, false));
+            if foot.h > 0.0 {
+                draw_card_corner(scene, root, edge.x + 0.5, bottom, r, (true, true));
+            }
         }
     }
 
@@ -1061,24 +1148,16 @@ impl MainView {
                 root,
                 koru_shell_chrome::lane::LaneRects {
                     leading: chain.leading,
+                    toggle: chain.toggle,
                     search: chain.search,
                     new: chain.new,
-                    toggle: chain.toggle,
+                    divider: chain.divider,
                 },
                 hovered(Hit::ToggleSidebar),
                 hovered(Hit::Search),
                 hovered(Hit::New),
+                false,
             );
-            if chain.divider.w > 0.0 {
-                let p = theme::p();
-                let x = (chain.divider.x + chain.divider.w * 0.5).floor();
-                scene::fill(
-                    scene,
-                    root,
-                    p.panel_border,
-                    &scene::rect(x, cap.y + 10.0, 1.0, (cap.h - 20.0).max(0.0)),
-                );
-            }
         }
         // Caption controls share the same rest and hover states. Context is a
         // document action and normally lives on the title block; this remains
@@ -1133,7 +1212,7 @@ impl MainView {
     /// caption's hairline runs under it so the two read as one band.
     fn draw_lane(&mut self, scene: &mut Scene, root: Affine, pane: Rect) {
         let leading = self.leading();
-        if leading.folded || pane.w <= 0.0 {
+        if pane.w <= 0.0 {
             return;
         }
         let lane = Rect::new(pane.x, pane.y, pane.w, theme::CAPTION_H.min(pane.h));
@@ -1148,35 +1227,24 @@ impl MainView {
         );
         let p = theme::p();
         // Keep the header continuous over the persistent rail. When the
-        // explorer is docked, the top hairline begins after the pane's top-left
-        // curved corner and hands off to the document corner at the right edge;
-        // no vertical line cuts through the header ground.
+        // explorer is docked, the top hairline runs straight across the pane
+        // from the rail border to the document seam; no vertical line cuts
+        // through the header ground.
         scene::fill(
             scene,
             root,
             theme::base_fill(),
             &scene::rect(lane.x, lane.y, lane.w, lane.h),
         );
-        if !self.sidebar.is_open() {
+        let pane_x = lane.x + theme::RAIL_W.min(lane.w);
+        let w = (lane.x + lane.w - pane_x).max(0.0);
+        if w > 0.0 {
             scene::fill(
                 scene,
                 root,
                 p.panel_border,
-                &scene::rect(lane.x, lane.y + lane.h - 0.5, lane.w, 0.5),
+                &scene::rect(pane_x, lane.y + lane.h - 0.5, w, 0.5),
             );
-        } else {
-            let pane_x = lane.x + theme::RAIL_W.min(lane.w);
-            let from = pane_x + theme::PAGE_RADIUS - 0.5;
-            let to = lane.x + lane.w - 0.5;
-            let w = (to - from).max(0.0);
-            if w > 0.0 {
-                scene::fill(
-                    scene,
-                    root,
-                    p.panel_border,
-                    &scene::rect(from, lane.y + lane.h - 0.5, w, 0.5),
-                );
-            }
         }
         let rects = koru_shell_chrome::lane::solve(lane, leading);
         let hovered = |h: Hit| self.hover == Some(h);
@@ -1187,13 +1255,47 @@ impl MainView {
             hovered(Hit::ToggleSidebar),
             hovered(Hit::Search),
             hovered(Hit::New),
+            true,
+        );
+    }
+
+    /// A short vertical separator (`|`) in a header divider slot. When
+    /// `align_right_edge` is true (docked explorer lane), it aligns with the
+    /// explorer/document pane seam at `slot.x + slot.w - 0.5`; when folded into
+    /// the caption, it sits centered in the slot.
+    fn draw_header_divider(
+        scene: &mut Scene,
+        root: Affine,
+        slot: Rect,
+        color: vello::peniko::Color,
+        align_right_edge: bool,
+    ) {
+        if slot.w <= 0.0 {
+            return;
+        }
+        let h = (slot.h - 24.0).max(0.0);
+        if h <= 0.0 {
+            return;
+        }
+        let (x, w) = if align_right_edge {
+            (slot.x + slot.w - 0.5, 0.5)
+        } else {
+            (slot.x + koru_shell_chrome::lane::DIVIDER_W - 0.5, 0.5)
+        };
+        scene::fill(
+            scene,
+            root,
+            color,
+            &scene::rect(x, slot.y + (slot.h - h) * 0.5, w, h),
         );
     }
 
     /// The lane's controls at the rects given — the same drawing whether
-    /// they sit in the lane or in the caption's chain. The mark is
-    /// `KoruLogo` at 16 px in the text colour: a logo is not a verb, so it
-    /// gets no chip and no hover.
+    /// they sit in the lane or in the caption's chain. The mark is the Koru
+    /// brand spiral at 18 px on Windows/Linux (macOS keeps native traffic
+    /// lights in the same slot): a logo is not a verb, so it gets no chip and
+    /// no hover.
+    #[allow(clippy::too_many_arguments)]
     fn draw_lane_controls(
         &mut self,
         scene: &mut Scene,
@@ -1202,18 +1304,33 @@ impl MainView {
         toggle_hot: bool,
         search_hot: bool,
         new_hot: bool,
+        align_divider_to_pane: bool,
     ) {
         let p = theme::p();
         // Only the mark is ours to draw: a Mac's lights in the same slot are
         // AppKit's (`koru_window::traffic_lights`).
         let mark = matches!(self.leading().mark, koru_shell_chrome::lane::Mark::Mark);
         if mark && rects.leading.w > 0.0 {
-            const MARK: f32 = 16.0;
-            koru_ui::logo::KoruLogo::new(MARK).tint(p.text).draw(
+            const MARK: f32 = 18.0;
+            koru_ui::logo::KoruLogo::new(MARK).draw(
                 scene,
                 root,
                 rects.leading.x + (rects.leading.w - MARK) * 0.5,
                 rects.leading.y + (rects.leading.h - MARK) * 0.5,
+            );
+        }
+        if rects.toggle.w > 0.0 {
+            koru_ui::icon_button::draw(
+                scene,
+                root,
+                &mut self.engine,
+                rects.toggle,
+                icons::PANEL_LEFT,
+                koru_ui::icon_button::State {
+                    hovered: toggle_hot,
+                    active: false,
+                    disabled: false,
+                },
             );
         }
         if rects.search.w > 0.0 {
@@ -1245,20 +1362,13 @@ impl MainView {
                 },
             );
         }
-        if rects.toggle.w > 0.0 {
-            koru_ui::icon_button::draw(
-                scene,
-                root,
-                &mut self.engine,
-                rects.toggle,
-                icons::PANEL_LEFT,
-                koru_ui::icon_button::State {
-                    hovered: toggle_hot,
-                    active: false,
-                    disabled: false,
-                },
-            );
-        }
+        Self::draw_header_divider(
+            scene,
+            root,
+            rects.divider,
+            p.panel_border,
+            align_divider_to_pane,
+        );
         // `F6`'s ring on the focused lane control, around the hover chip.
         let focused = match self.lane_chrome_focus() {
             Some(super::chrome_focus::LaneControl::Toggle) if rects.toggle.w > 0.0 => {
@@ -1647,45 +1757,58 @@ fn missing_images(ws: &WorkspaceDoc, images: &ImageCache) -> (usize, Vec<String>
     (missing, waiting)
 }
 
-/// One top-left rounded corner whose straight hairlines stop at the arc's
-/// endpoints. `(x, y)` is the corner's outer hairline edge.
-///
-/// `beside` is `None` for an outer corner against the window's ground (the
-/// docked explorer beside the rail and header) and `Some(pane_fill)` for the
-/// document corner beside the explorer pane — where the header's horizontal
-/// hairline runs straight across the corner square so no gap opens above the
-/// pane's top-right wedge.
-fn draw_top_left_corner(scene: &mut Scene, root: Affine, x: f32, y: f32, beside: Option<Color>) {
+/// One outer rounded corner of the card frame whose straight hairlines are
+/// already drawn. `(x, y)` is the card's outer hairline corner, and
+/// `(right, bottom)` picks which corner it is. The wedge outside the arc is
+/// masked in `base_fill` (bled 0.5 px into the ground so fractional-DPI
+/// antialiasing never leaks the straight hairlines past the curve), and the arc
+/// is stroked at 0.5 px so it meets the straight hairlines seamlessly.
+fn draw_card_corner(
+    scene: &mut Scene,
+    root: Affine,
+    x: f32,
+    y: f32,
+    r: f32,
+    (right, bottom): (bool, bool),
+) {
     use vello::kurbo::{BezPath, Point};
-    let r = theme::PAGE_RADIUS;
+    if r <= 0.0 {
+        return;
+    }
     let p = theme::p();
-    let outside = beside.unwrap_or_else(theme::base_fill);
-    let _corner =
-        koru_draw::inspect::scope("CardCorner", "part", root, scene::rect(x, y, r, r), |rec| {
-            rec.property("corner", "top-left", "draw_top_left_corner");
-            rec.property("radius", r, "theme::PAGE_RADIUS");
-            rec.property(
-                "outside",
-                if beside.is_some() {
-                    "the pane"
-                } else {
-                    "the ground"
-                },
-                "draw_top_left_corner",
-            );
-        });
+    let outside = theme::base_fill();
+    let corner_rect = scene::rect(
+        if right { x - r } else { x },
+        if bottom { y - r } else { y },
+        r,
+        r,
+    );
+    let _corner = koru_draw::inspect::scope("CardCorner", "part", root, corner_rect, |rec| {
+        rec.property(
+            "corner",
+            match (right, bottom) {
+                (false, false) => "top-left",
+                (true, false) => "top-right",
+                (false, true) => "bottom-left",
+                (true, true) => "bottom-right",
+            },
+            "draw_card_corner",
+        );
+        rec.property("radius", r, "theme::PAGE_RADIUS");
+    });
     const K: f64 = 0.552_284_75;
+    let dir_x = if right { -1.0 } else { 1.0 };
+    let dir_y = if bottom { -1.0 } else { 1.0 };
     let (x64, y64, r64) = (x as f64, y as f64, r as f64);
-    let pt = |dx: f64, dy: f64| Point::new(x64 + dx, y64 + dy);
+    let pt = |dx: f64, dy: f64| Point::new(x64 + dir_x * dx, y64 + dir_y * dy);
     let mut mask = BezPath::new();
-    mask.move_to(pt(0.0, 0.0));
+    mask.move_to(pt(-0.5, -0.5));
+    mask.line_to(pt(r64, -0.5));
     mask.line_to(pt(r64, 0.0));
     mask.curve_to(pt(r64 - K * r64, 0.0), pt(0.0, r64 - K * r64), pt(0.0, r64));
+    mask.line_to(pt(-0.5, r64));
     mask.close_path();
     scene::fill(scene, root, outside, &mask);
-    if beside.is_some() {
-        scene::fill(scene, root, p.panel_border, &scene::rect(x, y, r, 0.5));
-    }
     let rr = r64 - 0.25;
     let mut arc = BezPath::new();
     arc.move_to(pt(r64, 0.25));

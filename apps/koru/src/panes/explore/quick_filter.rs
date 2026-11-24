@@ -149,10 +149,11 @@ impl ExploreView {
     }
 
     fn quick_field_rect(&self, area: Rect) -> Rect {
+        let inner = self.content_area(area);
         Rect::new(
-            area.x + theme::NAV_PAD,
+            inner.x + theme::NAV_PAD,
             self.heading_band(area).y + HEADER_H + theme::NAV_PAD,
-            (area.w - theme::NAV_PAD * 2.0).max(0.0),
+            (inner.w - theme::NAV_PAD * 2.0).max(0.0),
             FIELD_H,
         )
     }
@@ -163,10 +164,11 @@ impl ExploreView {
     }
 
     fn quick_search_rect(&self, area: Rect) -> Rect {
+        let inner = self.content_area(area);
         Rect::new(
-            area.x + theme::NAV_PAD,
+            inner.x + theme::NAV_PAD,
             self.rows_top(area) + theme::NAV_ROW_H,
-            (area.w - theme::NAV_PAD * 2.0).max(0.0),
+            (inner.w - theme::NAV_PAD * 2.0).max(0.0),
             theme::NAV_ROW_H,
         )
     }
@@ -446,12 +448,13 @@ impl ExploreView {
 
         // Nothing matched: say so, and offer the search that looks inside.
         if self.quick_match_count() == 0 {
+            let inner = self.content_area(area);
             let none = engine.simple_layout("No matches", theme::role::row());
             scene::draw_layout_first_line(
                 scene,
                 root,
                 &none,
-                area.x + theme::NAV_PAD + 4.0,
+                inner.x + theme::NAV_PAD + 4.0,
                 self.rows_top(area) + (theme::NAV_ROW_H - scene::first_line_height(&none)) * 0.5,
                 Some(p.text_dim),
             );

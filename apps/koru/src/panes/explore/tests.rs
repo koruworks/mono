@@ -210,7 +210,7 @@ fn the_heading_band_names_the_app() {
         assert!(title.w > 0.0, "{mode:?} has a title");
         assert_eq!(
             title.x,
-            super::leading_x(a.x),
+            super::leading_x(v.content_area(a).x),
             "{mode:?}: where the rows' glyphs start (E76)"
         );
         let dots = v.actions_button(a);
@@ -1053,42 +1053,52 @@ fn a_profile_row_has_two_lines_and_the_linked_count_is_set_from_outside() {
     assert!(!v.set_linked_count(2), "the same count is not");
 }
 
-/// Profile descriptions identify the account without mixing in sync or device state.
+/// Profile descriptions show the known workspace count without sign-in, sync,
+/// or device state.
 #[test]
 fn the_profile_description_contains_account_identity_and_known_workspace_count() {
     let (mut v, mut profiles, _) = with_context(0);
-    assert_eq!(
-        v.profile_description(&profiles[1]),
-        "dev-data@example.com · 2 workspaces"
-    );
+    assert_eq!(v.profile_description(&profiles[1]), "2 workspaces");
     profiles[1].email.clear();
-    assert_eq!(
-        v.profile_description(&profiles[1]),
-        "No sign-in · 2 workspaces"
-    );
+    assert_eq!(v.profile_description(&profiles[1]), "2 workspaces");
     assert!(v.set_profile_workspace_counts(HashMap::from([(profiles[0].id, 1)])));
-    assert_eq!(
-        v.profile_description(&profiles[0]),
-        "koru@example.com · 1 workspace"
-    );
+    assert_eq!(v.profile_description(&profiles[0]), "1 workspace");
     assert!(v.set_linked_count(2));
-    assert_eq!(
-        v.profile_description(&profiles[1]),
-        "No sign-in · 2 workspaces"
-    );
-    assert_eq!(
-        v.profile_description(&profiles[0]),
-        "koru@example.com · 1 workspace"
-    );
+    assert_eq!(v.profile_description(&profiles[1]), "2 workspaces");
+    assert_eq!(v.profile_description(&profiles[0]), "1 workspace");
     v.set_account_state(&syncing(&profiles[1]));
-    assert_eq!(
-        v.profile_description(&profiles[1]),
-        "No sign-in · 2 workspaces"
-    );
+    assert_eq!(v.profile_description(&profiles[1]), "2 workspaces");
     assert!(v.set_linked_count(0));
+    assert_eq!(v.profile_description(&profiles[1]), "2 workspaces");
+}
+
+#[test]
+fn hovering_a_profile_row_shows_no_tooltip() {
+    let (mut v, profiles, _) = with_context(0);
+    v.open_popover(PopoverKind::Profiles);
+    let area = Rect::new(theme::RAIL_W, 0.0, 260.0, 700.0);
+    let viewport = (1200.0, 700.0);
+    let (row_rect, open_window_rect) = v
+        .with_page(area, viewport, |frame| {
+            (
+                frame
+                    .node(super::popover_elements::profiles::primary(profiles[0].id))
+                    .unwrap()
+                    .rect,
+                frame
+                    .node(super::popover_elements::profiles::manage(profiles[0].id))
+                    .unwrap()
+                    .rect,
+            )
+        })
+        .unwrap();
+    let (rx, ry) = row_rect.centre();
+    assert!(v.menu_tooltip(area, viewport, rx, ry).is_none());
+    let (ox, oy) = open_window_rect.centre();
+    let (_, tip, _) = v.menu_tooltip(area, viewport, ox, oy).unwrap();
     assert_eq!(
-        v.profile_description(&profiles[1]),
-        "No sign-in · 2 workspaces"
+        tip,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::ProfileOpenNewWindow)
     );
 }
 
@@ -3695,7 +3705,7 @@ fn a_footer_row_shares_the_library_rows_icon_lane() {
     let a = area();
     let (i, r) = v.row_rects(a).into_iter().next().unwrap();
     let doc_icon = v.row_parts(&v.rows[i], r).icon.x;
-    assert_eq!(icon_lane(a.x, 0, false), doc_icon);
+    assert_eq!(icon_lane(v.content_area(a).x, 0, false), doc_icon);
 }
 
 /// The caret lane is paid for only where a caret can appear in it: a
@@ -3712,15 +3722,16 @@ fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
     leaf.has_children = false;
     assert_eq!(
         v.row_parts(&leaf, r).icon.x,
-        a.x + theme::NAV_PAD,
+        v.content_area(a).x + theme::NAV_PAD,
         "a documents leaf has a file row's padding"
     );
     let mut parent = leaf.clone();
     parent.has_children = true;
     let parts = v.row_parts(&parent, r);
+    let inner_x = v.content_area(a).x;
     assert_eq!(
         parts.icon.x,
-        a.x + theme::NAV_PAD,
+        inner_x + theme::NAV_PAD,
         "and so does a documents parent"
     );
     assert_eq!(parts.caret, parts.icon, "its chevron is the icon's slot");
@@ -3728,13 +3739,13 @@ fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
     v.mode = NavigatorMode::Files;
     assert_eq!(
         v.row_parts(&leaf, r).icon.x,
-        a.x + theme::NAV_PAD,
+        inner_x + theme::NAV_PAD,
         "a files row never draws a caret and never reserves the lane"
     );
     v.mode = NavigatorMode::Agents;
     assert_eq!(
         v.row_parts(&leaf, r).icon.x,
-        a.x + theme::NAV_PAD,
+        inner_x + theme::NAV_PAD,
         "an agents leaf"
     );
     let mut parent = leaf.clone();
@@ -3742,12 +3753,12 @@ fn the_caret_lane_is_reserved_only_where_a_caret_can_appear() {
     let parts = v.row_parts(&parent, r);
     assert_eq!(
         parts.icon.x,
-        a.x + theme::NAV_PAD + theme::NAV_INDENT,
+        inner_x + theme::NAV_PAD + theme::NAV_INDENT,
         "an agents row with children pays for the lane"
     );
     assert_eq!(
         parts.caret.x,
-        a.x + theme::NAV_PAD,
+        inner_x + theme::NAV_PAD,
         "and its caret sits in it"
     );
 }

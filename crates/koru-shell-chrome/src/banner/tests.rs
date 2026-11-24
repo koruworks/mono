@@ -148,7 +148,10 @@ fn the_lane_reservation_is_what_triggers_a_collapse_step() {
     // The floor both apps share, with the explore pane open: `solve(720, …)`
     // leaves the caption 488 px starting at 232. DESIGN works this case in §4.
     let caption = Rect::new(232.0, 0.0, 488.0, theme::CAPTION_H);
-    assert_eq!(LANE_RESERVE, 126.0);
+    assert_eq!(
+        LANE_RESERVE,
+        theme::TAB_MIN_W + theme::TAB_GAP + theme::TAB_NEW_W
+    );
 
     let generous = Slots {
         profile: true,

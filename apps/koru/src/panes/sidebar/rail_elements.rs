@@ -149,7 +149,7 @@ impl Leaf for SquareContents {
                 let ink = if state.disabled {
                     Ink::Hint
                 } else if state.selected {
-                    Ink::Primary
+                    Ink::Accent
                 } else {
                     Ink::Secondary
                 };

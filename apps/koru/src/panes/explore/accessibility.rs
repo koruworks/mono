@@ -147,16 +147,24 @@ impl ExploreView {
             );
         }
         if cx.area.w > 0.0 {
+            let inner_cx = Context {
+                area: self.content_area(cx.area),
+                ..*cx
+            };
             children.extend(self.heading_semantics(cx));
             if self.showing_home() {
-                children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
+                children.push(self.home_nav.semantics(&inner_cx, self.rows_top(cx.area)));
             } else if self.showing_tasks() {
-                children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
-                children.push(self.rail.lists_semantics(cx, self.rows_top(cx.area)));
+                children.push(self.rail.queue_semantics(&inner_cx, self.rows_top(cx.area)));
+                children.push(self.rail.lists_semantics(&inner_cx, self.rows_top(cx.area)));
             } else if self.showing_chats() {
                 // The Chats view replaces the tree, on the rail's model: a list
                 // of rows that are chats, each with Open and Delete.
-                children.push(chats::semantics(&self.chats, cx, self.rows_top(cx.area)));
+                children.push(chats::semantics(
+                    &self.chats,
+                    &inner_cx,
+                    self.rows_top(cx.area),
+                ));
             } else if !self.showing_socials() {
                 children.push(self.tree_semantics(cx));
             }
@@ -348,8 +356,9 @@ impl ExploreView {
         // Tasks replaces the document tree. A retained document-row request
         // must not fall through to hidden library content in this mode.
         if self.showing_tasks() {
+            let inner = self.content_area(area);
             let top = self.rows_top(area);
-            return self.rail.queue_action(area, top, target, action);
+            return self.rail.queue_action(inner, top, target, action);
         }
         // Home's nav replaces the tree the same way; a press is the row's.
         if self.showing_home() {
@@ -362,8 +371,9 @@ impl ExploreView {
         // Chats replaces the tree the same way, and a request for a hidden
         // document row must not reach the library behind it either.
         if self.showing_chats() {
+            let inner = self.content_area(area);
             let top = self.rows_top(area);
-            return chats::action(&mut self.chats, area, top, target, action);
+            return chats::action(&mut self.chats, inner, top, target, action);
         }
         // A row. Everything below reaches `nav_key`, so there is exactly one
         // implementation of open, fold and step.
@@ -995,7 +1005,10 @@ impl ExploreView {
                 .iter()
                 .find(|p| node.occurrence.object == object_of(p.id.as_uuid()))
             {
-                node.description = Some(self.profile_description(profile));
+                let description = self.profile_description(profile);
+                if !description.is_empty() {
+                    node.description = Some(description);
+                }
             }
         } else if [
             super::popover_elements::profiles::MenuAction::Sync.key(),

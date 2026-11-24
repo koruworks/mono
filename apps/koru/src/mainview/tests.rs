@@ -13,26 +13,28 @@
 use super::*;
 
 #[test]
-fn collapsed_rail_previews_without_resizing_content_and_fades_on_exit() {
+fn collapsed_chord_slides_preview_without_resizing_content_and_hides_after_pick() {
     let _guard = crate::tests::lock_theme();
-    let (mut view, _) = super::harness::container();
+    let (mut view, mut workspace) = super::harness::on_document();
+    let second = super::harness::a_document(&mut workspace.ws, "Picked");
+    view.adopt(&mut workspace.ws);
     view.sidebar.set_immediately(false);
     view.relayout();
     let content = view.content();
-    assert_eq!(view.rail_area().w, theme::RAIL_W);
-    let app = view.explore.apps_rail_rects(view.rail_area()).apps[0].1;
-    let (x, y) = app.centre();
-    assert!(view.preview_pointer(x, y));
+    assert_eq!(view.rail_area().w, 0.0, "rail hides when collapsed");
+    assert!(view.show_rail_slot(0));
     assert!(view.explore_preview);
+    assert!(
+        view.explore_preview_open.is_some(),
+        "preview slides in from the left"
+    );
     assert!(!view.sidebar.is_open());
     assert_eq!(view.content(), content);
     let panel = view.explore_preview_rect();
+    assert_eq!(panel.x, theme::EDGE_LANE_W);
     assert_eq!(view.hit_at(panel.x + 10.0, panel.y + 10.0), Hit::Sidebar);
-    view.preview_pointer(panel.x - 2.0, panel.y + 10.0);
-    assert!(
-        view.explore_preview_fade.is_none(),
-        "the gap is traversable"
-    );
+    view.preview_pointer(panel.x + 10.0, panel.y + 10.0);
+    assert!(view.explore_preview_deadline.is_none());
     view.preview_pointer(panel.x + panel.w + 30.0, panel.y + 10.0);
     assert!(view.explore_preview_fade.is_some());
     view.preview_pointer(panel.x + 10.0, panel.y + 10.0);
@@ -40,10 +42,21 @@ fn collapsed_rail_previews_without_resizing_content_and_fades_on_exit() {
         view.explore_preview_fade.is_none(),
         "returning cancels dismissal"
     );
-    view.mouse_move(-1.0, -1.0);
+    // Picking a document in the preview hides it back.
+    view.refresh_explore(&workspace.ws, true);
+    let _ = second;
+    let (row_x, row_y) = view
+        .explore
+        .row_rects(panel)
+        .first()
+        .expect("document row is listed")
+        .1
+        .centre();
+    assert!(view.mouse_down(&mut workspace.ws, row_x, row_y, false));
+    assert!(view.mouse_up(&mut workspace.ws));
     assert!(
         view.explore_preview_fade.is_some(),
-        "leaving the window dismisses the preview"
+        "picking a row slides the preview back out"
     );
     view.explore_preview_fade = Some(Instant::now() - std::time::Duration::from_millis(200));
     assert_eq!(view.preview_alpha(), 0.0);

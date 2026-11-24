@@ -5,7 +5,7 @@
 use koru_core::{ProfileId, ProfileSummary};
 use koru_draw::el::{
     Action, Align, El, ElState, FrameCx, Key, Leaf, Look, Role, StateRecipe, col, icon, leaf, row,
-    scroll_y, text,
+    scroll_y, spacer, text,
 };
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
@@ -124,11 +124,6 @@ impl Leaf for ProfileTileLeaf {
 impl ExploreView {
     pub(crate) fn profile_description(&self, profile: &ProfileSummary) -> String {
         let lang = crate::format::lang();
-        let identity = if profile.email.trim().is_empty() {
-            t(lang, Words::ProfileNoSignIn)
-        } else {
-            &profile.email
-        };
         let rows = self
             .catalog
             .get(&profile.id)
@@ -142,17 +137,14 @@ impl ExploreView {
             .copied()
             .or_else(|| rows.map(|rows| rows.iter().filter(|w| w.deleted_at.is_none()).count()));
         let Some(count) = count else {
-            return identity.to_owned();
+            return String::new();
         };
         let words = if count == 1 {
             Words::ProfileWorkspaceOne
         } else {
             Words::ProfileWorkspaceMany
         };
-        format!(
-            "{identity} · {}",
-            fill(t(lang, words), &[&count.to_string()])
-        )
+        fill(t(lang, words), &[&count.to_string()])
     }
 
     pub(crate) fn profiles_page(&self, scroll: f32, avatar: Option<&ImageBrush>) -> El {
@@ -328,15 +320,18 @@ impl ExploreView {
                     .semantics(Role::MenuItem)
                     .name(Words::ProfileOpenNewWindow)
                     .w(metrics::ROW_MIN)
-                    .min_h(metrics::ROW_MIN)
+                    .h(metrics::ROW_MIN)
+                    .items_center()
                     .radius(Radius::M)
                     .states(&WORKSPACE_ROW_STATES)
                     .align_self(Align::Centre)
+                    .child(spacer())
                     .child(
                         icon(icons::POP_OUT, IconSize::M)
                             .decorative()
                             .ink(Ink::Secondary),
-                    ),
+                    )
+                    .child(spacer()),
             );
         }
         plate

@@ -81,10 +81,10 @@ fn the_lane_owns_its_squares_and_drags_by_the_rest() {
     let (x, y) = l.leading.centre();
     assert_eq!(
         at_leading(&r, 3, all_leading(), x, y),
-        Hit::ToggleSidebar,
-        "the toggle occupies the former mark slot"
+        Hit::Caption,
+        "the mark drags"
     );
-    let gap = (l.toggle.x + l.toggle.w + l.search.x) * 0.5;
+    let gap = (l.leading.x + l.leading.w + l.toggle.x) * 0.5;
     assert_eq!(
         at_leading(&r, 3, all_leading(), gap, y),
         Hit::Caption,
@@ -149,15 +149,19 @@ fn an_open_pane_leaves_the_captions_left_end_bare() {
         assert_eq!(rect.w, 0.0);
         assert_eq!(rect.x, r.caption.x);
     }
-    assert_eq!(chain.end, r.caption.x);
+    assert_eq!(chain.end, r.caption.x + caption::SEAM_GAP);
     let strip = caption::tab_strip_with_leading(r.caption, true, true, false, all_leading());
-    assert_eq!(strip.x, r.caption.x, "the tabs begin at the caption's edge");
+    assert_eq!(
+        strip.x,
+        r.caption.x + caption::SEAM_GAP,
+        "the tabs begin with symmetric air after the lane's seam divider"
+    );
     assert_eq!(
         at_leading(
             &r,
             3,
             all_leading(),
-            r.caption.x + 4.0,
+            strip.x + theme::TAB_GAP + 4.0,
             r.caption.centre().1
         ),
         Hit::Tab(0),

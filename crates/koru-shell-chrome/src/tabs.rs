@@ -62,15 +62,23 @@ impl Tab<'_> {
     }
 }
 
+fn tab_pad_x(closable: bool) -> f32 {
+    if closable {
+        theme::TAB_PAD_X
+    } else {
+        theme::PANEL_PAD
+    }
+}
+
 /// Where a tab's icon slot starts: at the label's padding for a titled tab,
 /// centred in the pill for an icon-only pin — there is no label and no close
 /// box to leave room for, so left-aligning it read as space kept for a hidden
 /// `×` (the review's note).
-pub fn icon_slot_x(pill: Rect, icon_only: bool) -> f32 {
+pub fn icon_slot_x(pill: Rect, icon_only: bool, closable: bool) -> f32 {
     if icon_only {
         pill.x + ((pill.w - crate::PAGE_ICON_SLOT) * 0.5).max(0.0)
     } else {
-        pill.x + theme::PANEL_PAD
+        pill.x + tab_pad_x(closable)
     }
 }
 
@@ -121,7 +129,7 @@ pub fn preferred_width(
     } else {
         0.0
     };
-    let pad = theme::PANEL_PAD * 2.0;
+    let pad = tab_pad_x(closable) * 2.0;
     let label_w = if label.is_empty() {
         0.0
     } else {
@@ -366,7 +374,7 @@ fn close_box(pill: Rect) -> Rect {
     }
     let pad_y = (pill.h - theme::TAB_CLOSE) * 0.5;
     Rect::new(
-        pill.x + pill.w - theme::TAB_CLOSE - theme::PANEL_PAD,
+        pill.x + pill.w - theme::TAB_CLOSE - theme::TAB_PAD_X,
         pill.y + pad_y,
         theme::TAB_CLOSE,
         theme::TAB_CLOSE,
@@ -435,6 +443,28 @@ pub fn draw(
         root,
         &scene::rect(lane.x, lane.y, lane.w, lane.h),
     );
+    let p = theme::p();
+    for pair in rects.windows(2) {
+        let (left, right) = (&pair[0], &pair[1]);
+        let (Some(left_tab), Some(right_tab)) = (tabs.get(left.index), tabs.get(right.index))
+        else {
+            continue;
+        };
+        if left_tab.dragging
+            || right_tab.dragging
+            || left_tab.slide != 0.0
+            || right_tab.slide != 0.0
+        {
+            continue;
+        }
+        let left_end = left.pill.x + (left.pill.w - left_tab.gap_after).max(0.0);
+        let x = (left_end + right.pill.x - 1.0) * 0.5;
+        let h = (left.pill.h - 14.0).clamp(0.0, 14.0);
+        if h > 0.0 {
+            let y = left.pill.y + (left.pill.h - h) * 0.5;
+            scene::fill(scene, root, p.panel_border, &scene::rect(x, y, 1.0, h));
+        }
+    }
     for t in &rects {
         if !tabs.get(t.index).is_some_and(|tab| tab.dragging) {
             draw_tab(scene, root, engine, t, tabs, active, hovered, hovered_close);
@@ -516,6 +546,7 @@ fn draw_tab(
         (t.pill.w - tab.gap_after).max(0.0),
         t.pill.h,
     );
+    let pad_x = tab_pad_x(tab.closable);
     let _inspect_tab = koru_draw::inspect::scope(
         "Tab (legacy shared)",
         "container",
@@ -527,7 +558,15 @@ fn draw_tab(
                 "Row / horizontal; vertically centered label",
                 "tabs::draw_tab",
             );
-            r.property("horizontal padding", theme::PANEL_PAD, "theme::PANEL_PAD");
+            r.property(
+                "horizontal padding",
+                pad_x,
+                if tab.closable {
+                    "theme::TAB_PAD_X"
+                } else {
+                    "theme::PANEL_PAD"
+                },
+            );
             r.property(
                 "icon gap",
                 4,
@@ -581,12 +620,13 @@ fn draw_tab(
     } else {
         0.0
     };
-    let text_x = pill.x + theme::PANEL_PAD + icon_w;
-    let text_w = (pill.w - theme::PANEL_PAD * 2.0 - close_w - icon_w).max(0.0);
-    let icon_x = icon_slot_x(pill, tab.is_icon_only());
+    let text_x = pill.x + pad_x + icon_w;
+    let text_w = (pill.w - pad_x * 2.0 - close_w - icon_w).max(0.0);
+    let icon_x = icon_slot_x(pill, tab.is_icon_only(), tab.closable);
     let colour = if selected { p.text } else { p.text_dim };
     let label = if text_w > 0.0 && !tab.label.is_empty() {
-        Some(engine.simple_layout_wrapped(tab.label, theme::role::row(), text_w))
+        let fitted = engine.elided(tab.label, theme::role::row(), text_w);
+        (!fitted.is_empty()).then(|| engine.simple_layout(&fitted, theme::role::row()))
     } else {
         None
     };

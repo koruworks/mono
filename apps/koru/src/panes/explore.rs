@@ -1280,8 +1280,9 @@ impl ExploreView {
     /// it when the list that does arrives.
     pub fn reveal_chat(&mut self, chat: koru_chats_ui::ChatId, area: Rect) -> bool {
         self.show_chats();
+        let inner = self.content_area(area);
         let top = self.rows_top(area);
-        self.chats.reveal(chat, area, top)
+        self.chats.reveal(chat, inner, top)
     }
 
     /// Where the container's rename field goes over a chat's row in the
@@ -1293,8 +1294,9 @@ impl ExploreView {
         if self.mode != NavigatorMode::Chats {
             return None;
         }
+        let inner = self.content_area(area);
         self.chats
-            .rename_rect(area, self.rows_top(area), chat, koru_ui::text_field::PAD)
+            .rename_rect(inner, self.rows_top(area), chat, koru_ui::text_field::PAD)
     }
 
     /// The chat under a point in the Chats view — what `F2` renames.
@@ -1302,8 +1304,9 @@ impl ExploreView {
         if self.mode != NavigatorMode::Chats {
             return None;
         }
+        let inner = self.content_area(area);
         let top = self.rows_top(area);
-        self.chats.chat_at(area, top, x, y)
+        self.chats.chat_at(inner, top, x, y)
     }
 
     /// What the Chats surface asked for on the press or key just handled,
@@ -1372,8 +1375,9 @@ impl ExploreView {
         area: Rect,
     ) -> bool {
         self.show_artifacts();
+        let inner = self.content_area(area);
         let top = self.rows_top(area);
-        self.artifacts.reveal_version(version, area, top)
+        self.artifacts.reveal_version(version, inner, top)
     }
 
     /// The tasks rail, for the container to push counts and lists into and to
@@ -1753,15 +1757,16 @@ impl ExploreView {
                 true
             });
         }
+        let inner = self.content_area(area);
         if self.mode == NavigatorMode::Artifacts {
             let top = self.rows_top(area);
-            return self.artifacts.focus_first(area, top);
+            return self.artifacts.focus_first(inner, top);
         }
         // **Focus enters on open**: on the chat in front of you when the
         // list holds it, else the newest.
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            if self.chats.focus_first(area, top) || self.chats.has_keyboard() {
+            if self.chats.focus_first(inner, top) || self.chats.has_keyboard() {
                 return true;
             }
             return self.hold_keyboard_for_filter();
@@ -1769,7 +1774,7 @@ impl ExploreView {
         if self.showing_tasks() {
             let top = self.rows_top(area);
             self.focus = None;
-            if self.rail.focus_queues(area, top) {
+            if self.rail.focus_queues(inner, top) {
                 return true;
             }
             return self.hold_keyboard_for_filter();
@@ -1877,12 +1882,13 @@ impl ExploreView {
         }
         // The artifacts column claims the same keys and no others, and
         // answers them itself.
+        let inner = self.content_area(area);
         if self.mode == NavigatorMode::Artifacts {
             let press = koru_artifacts_ui::Press::of(key)?;
             let top = self.rows_top(area);
             return self
                 .artifacts
-                .key(area, top, press)
+                .key(inner, top, press)
                 .then_some(Outcome::Consumed);
         }
         // The Chats view claims its contract's keys — the arrows, Home/End,
@@ -1890,14 +1896,14 @@ impl ExploreView {
         if self.mode == NavigatorMode::Chats {
             let press = koru_chats_ui::Press::of_with(key, mods)?;
             let top = self.rows_top(area);
-            if !self.chats.key(area, top, press) {
+            if !self.chats.key(inner, top, press) {
                 return None;
             }
             return Some(self.chats_outcome());
         }
         if self.showing_tasks() {
             let top = self.rows_top(area);
-            return self.rail.queue_key(area, top, key);
+            return self.rail.queue_key(inner, top, key);
         }
         let i = self.focus_index()?;
         match key {
@@ -4792,14 +4798,31 @@ impl ExploreView {
         if self.floating { 0.0 } else { WORKSPACE_ROW_H }
     }
 
+    /// The pane's horizontal content band: `area` inset by [`PANE_PAD_X`] on
+    /// both sides so the heading, quick filter, rows and mode subviews breathe
+    /// off the rail hairline and the document border.
+    ///
+    /// The pane's background fill, right border hairline, scrollbar and popover
+    /// anchoring keep the outer `area`.
+    pub fn content_area(&self, area: Rect) -> Rect {
+        let inset = PANE_PAD_X.min(area.w * 0.5).max(0.0);
+        Rect::new(
+            area.x + inset,
+            area.y,
+            (area.w - inset * 2.0).max(0.0),
+            area.h,
+        )
+    }
+
     fn heading_band(&self, area: Rect) -> Rect {
-        if area.w <= 0.0 {
+        let inner = self.content_area(area);
+        if inner.w <= 0.0 {
             return Rect::new(area.x, area.y, 0.0, 0.0);
         }
         Rect::new(
-            area.x,
-            area.y + self.lane_height() + HEADER_PAD,
-            area.w,
+            inner.x,
+            inner.y + self.lane_height() + HEADER_PAD,
+            inner.w,
             HEADER_H,
         )
     }
@@ -4992,28 +5015,21 @@ impl ExploreView {
         scene::fill(
             scene,
             root,
-            // Collapsed rails use the floating surface's neutral background.
-            if self.floating {
-                p.panel_bg
-            } else {
-                theme::base_fill()
-            },
+            theme::base_fill(),
             &scene::rect(r.band.x, r.band.y - lane_h, r.band.w, r.band.h + lane_h),
         );
-        // Hairline between the rail and the docked pane, starting below the
-        // pane's top-left rounded corner so no straight edge sits under the
-        // antialiased arc.
+        // Hairline between the rail and the docked pane, meeting the explorer's
+        // top hairline cleanly at 90 degrees.
         if !self.floating {
-            let top = theme::PAGE_RADIUS - 0.5;
             scene::fill(
                 scene,
                 root,
                 p.panel_border,
                 &scene::rect(
                     r.band.x + r.band.w - 0.5,
-                    r.band.y + top,
+                    r.band.y - 0.5,
                     0.5,
-                    (r.band.h - top).max(0.0),
+                    (r.band.h + 0.5).max(0.0),
                 ),
             );
         }
@@ -5028,8 +5044,9 @@ impl ExploreView {
     /// be able to find and reveal. Two callers, one sum, so a row can never be
     /// published somewhere other than where it is drawn.
     pub fn row_band(&self, area: Rect, i: usize) -> Rect {
+        let inner = self.content_area(area);
         let y = self.rows_top(area) + i as f32 * theme::NAV_ROW_H - self.scroll;
-        Rect::new(area.x, y, area.w, theme::NAV_ROW_H)
+        Rect::new(inner.x, y, inner.w, theme::NAV_ROW_H)
     }
 
     /// The one function that owns the row geometry. Drawing and hit-testing
@@ -5042,7 +5059,7 @@ impl ExploreView {
         // A collapsed column has no rows to offer. `Rect::contains` is
         // inclusive on every edge, so a zero-width row at x=0 would otherwise
         // answer for clicks meant for the view beside it.
-        if area.w <= 0.0 {
+        if self.content_area(area).w <= 0.0 {
             return Vec::new();
         }
         let top = self.rows_top(area);
@@ -5206,17 +5223,18 @@ impl ExploreView {
     /// inclusive on every edge and a zero-width row at `x = 0` would answer for
     /// a click meant for the view beside it.
     pub fn footer_rects(&self, area: Rect) -> Vec<(FooterRow, Rect)> {
-        if area.w <= 0.0 {
+        let inner = self.content_area(area);
+        if inner.w <= 0.0 {
             return Vec::new();
         }
         let rows = self.footer_rows();
         let mut out = Vec::with_capacity(rows.len());
         // Above the floor band (QUESTIONS.md Q-P): the pinned rows keep
         // their place at the nav's foot, and the floor is the window's.
-        let mut y = area.y + area.h - FOOTER_PAD;
+        let mut y = inner.y + inner.h - FOOTER_PAD;
         for row in rows.iter().rev() {
             y -= theme::NAV_ROW_H;
-            out.push((*row, Rect::new(area.x, y, area.w, theme::NAV_ROW_H)));
+            out.push((*row, Rect::new(inner.x, y, inner.w, theme::NAV_ROW_H)));
         }
         out.reverse();
         out
@@ -5434,6 +5452,7 @@ impl ExploreView {
         // The rail owns everything below the heading in tasks mode — including
         // the background, which is still ours: a press on it must not fall
         // through to the view beside the column.
+        let inner = self.content_area(area);
         if self.mode == NavigatorMode::Tasks {
             let top = self.rows_top(area);
             // Alt alone on a queue, a list or Reminders asks where its page
@@ -5441,14 +5460,16 @@ impl ExploreView {
             // sees the press, so nothing is selected and no list drag is
             // armed.
             if mods.asks_where()
-                && let Some(target) = self.rail.target_at(area, top, x, y)
+                && let Some(target) = self.rail.target_at(inner, top, x, y)
             {
                 return Outcome::Tasks(rail::TasksRailRequest::ChoosePlace { target, at: (x, y) });
             }
             // A queue or a list opens a page with nothing to type in: the
             // next letters are the filter's.
             self.quick_armed = true;
-            let request = self.rail.mouse_down(area, top, x, y, mods.ctrl, mods.shift);
+            let request = self
+                .rail
+                .mouse_down(inner, top, x, y, mods.ctrl, mods.shift);
             // Nothing matched: the press is on empty ground, and that is
             // still activating the pane.
             if request.is_none() {
@@ -5463,14 +5484,14 @@ impl ExploreView {
         // rail's terms.
         if self.mode == NavigatorMode::Home {
             let top = self.rows_top(area);
-            return self.home_nav.mouse_down(area, top, x, y);
+            return self.home_nav.mouse_down(inner, top, x, y);
         }
         // The artifacts surface owns everything below the heading in its
         // mode, on the rail's terms and for the rail's reason — and reports
         // no request, because it performs what it offers itself.
         if self.mode == NavigatorMode::Artifacts {
             let top = self.rows_top(area);
-            self.artifacts.mouse_down(area, top, x, y);
+            self.artifacts.mouse_down(inner, top, x, y);
             return Outcome::Consumed;
         }
         // The Chats view owns everything below the heading in its mode, and
@@ -5481,7 +5502,7 @@ impl ExploreView {
             // document row — off the row's pin and ⋯, which keep their own
             // meaning. Nothing is picked: the chooser is the answer.
             if mods.asks_where()
-                && let Some(chat) = self.chats.chat_pressed_at(area, top, x, y)
+                && let Some(chat) = self.chats.chat_pressed_at(inner, top, x, y)
             {
                 return Outcome::ChoosePlace {
                     reference: koru_editor::Reference::Chat(koru_editor::ChatTarget {
@@ -5496,8 +5517,8 @@ impl ExploreView {
             // A press off every row is the pane's empty ground. A press on a
             // row keeps the meaning it already had and does not also pull the
             // keyboard off the chat it just opened.
-            let on_row = self.chats.chat_at(area, top, x, y).is_some();
-            self.chats.mouse_down_with(area, top, x, y, ctrl, shift);
+            let on_row = self.chats.chat_at(inner, top, x, y).is_some();
+            self.chats.mouse_down_with(inner, top, x, y, ctrl, shift);
             if !on_row {
                 self.take_quick_filter_keyboard(area);
             }
@@ -5917,9 +5938,10 @@ impl ExploreView {
         // gesture for the reason it owns `mouse_down`: `self.rows` is the
         // library's, and asking it where a right-click landed in tasks mode
         // would answer with a document nothing on screen is showing.
+        let inner = self.content_area(area);
         if self.mode == NavigatorMode::Tasks {
             let top = self.rows_top(area);
-            return match self.rail.context_menu(area, top, x, y) {
+            return match self.rail.context_menu(inner, top, x, y) {
                 Some(request) => Outcome::Tasks(request),
                 None => Outcome::Consumed,
             };
@@ -5935,7 +5957,7 @@ impl ExploreView {
         // built — the boundary every other row menu here keeps.
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            return match self.chats.context_menu(area, top, x, y) {
+            return match self.chats.context_menu(inner, top, x, y) {
                 Some(chats) => Outcome::AiChatMenu { chats, at: (x, y) },
                 None => Outcome::Consumed,
             };
@@ -6105,8 +6127,9 @@ impl ExploreView {
             return false;
         }
         if self.showing_tasks() {
+            let inner = self.content_area(area);
             let top = self.rows_top(area);
-            return self.rail.toggle_fold_at(area, top, x, y);
+            return self.rail.toggle_fold_at(inner, top, x, y);
         }
         if self.mode != NavigatorMode::Documents {
             return false;
@@ -6232,12 +6255,13 @@ impl ExploreView {
         // The rail's own rows, tracked on the same pass and under the same
         // exclusions — the heading, the mode buttons and an open popover all
         // outrank it.
+        let inner = self.content_area(area);
         let artifacts_moved = if self.mode == NavigatorMode::Artifacts {
             let top = self.rows_top(area);
             if popover.is_some() || actions {
                 self.artifacts.clear_hover()
             } else {
-                self.artifacts.mouse_move(area, top, x, y)
+                self.artifacts.mouse_move(inner, top, x, y)
             }
         } else {
             false
@@ -6247,7 +6271,7 @@ impl ExploreView {
             if popover.is_some() || actions {
                 self.chats.clear_hover()
             } else {
-                self.chats.mouse_move(area, top, x, y)
+                self.chats.mouse_move(inner, top, x, y)
             }
         } else {
             false
@@ -6257,7 +6281,7 @@ impl ExploreView {
             if popover.is_some() || actions {
                 self.home_nav.clear_hover()
             } else {
-                self.home_nav.mouse_move(area, top, x, y)
+                self.home_nav.mouse_move(inner, top, x, y)
             }
         } else {
             false
@@ -6270,7 +6294,7 @@ impl ExploreView {
                 if !self.rail.dragging() && (popover.is_some() || actions) {
                     self.rail.clear_hover()
                 } else {
-                    self.rail.mouse_move(area, top, x, y)
+                    self.rail.mouse_move(inner, top, x, y)
                 }
             } else {
                 false
@@ -7176,19 +7200,20 @@ impl ExploreView {
         // The rail keeps its own offset: a workspace with forty lists scrolls,
         // and the library's scroll is a different position over a different
         // list — sharing one number would make switching modes jump.
+        let inner = self.content_area(area);
         if self.mode == NavigatorMode::Tasks {
             let top = self.rows_top(area);
-            self.rail.scroll_by(area, top, dy);
+            self.rail.scroll_by(inner, top, dy);
             return;
         }
         if self.mode == NavigatorMode::Artifacts {
             let top = self.rows_top(area);
-            self.artifacts.scroll_by(area, top, dy);
+            self.artifacts.scroll_by(inner, top, dy);
             return;
         }
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            self.chats.scroll_by(area, top, dy);
+            self.chats.scroll_by(inner, top, dy);
             return;
         }
         self.scroll -= dy;
@@ -7386,17 +7411,15 @@ impl ExploreView {
         // seam in it (the review's artboard); the card's corner meets it there.
         let lane_h = self.lane_height().min(area.h);
         if !self.floating {
-            // The document's rounded corner owns the join below the header.
-            let border_top = lane_h + theme::PAGE_RADIUS - 0.5;
             scene::fill(
                 scene,
                 root,
                 p.panel_border,
                 &scene::rect(
                     area.x + area.w - 0.5,
-                    area.y + border_top,
+                    area.y + lane_h - 0.5,
                     0.5,
-                    (area.h - border_top).max(0.0),
+                    (area.h - lane_h + 0.5).max(0.0),
                 ),
             );
         }
@@ -7505,17 +7528,18 @@ impl ExploreView {
         // The tasks mode's whole content. It comes before the empty-state
         // branch below on purpose: the rail has no rows in `self.rows` and
         // never will, so falling through would draw "Nothing here yet" over it.
+        let inner = self.content_area(area);
         if self.mode == NavigatorMode::Tasks {
             self.empty_cta = None;
             self.empty_subscribe = None;
-            self.rail.draw(scene, root, engine, area, top);
+            self.rail.draw(scene, root, engine, inner, top);
             return false;
         }
         // Home's nav, for the rail's reason: its rows are never in `self.rows`.
         if self.mode == NavigatorMode::Home {
             self.empty_cta = None;
             self.empty_subscribe = None;
-            self.home_nav.draw(scene, root, engine, area, top);
+            self.home_nav.draw(scene, root, engine, inner, top);
             return false;
         }
         // The artifacts mode's whole content, before the empty-state branch
@@ -7526,7 +7550,7 @@ impl ExploreView {
             self.empty_cta = None;
             self.empty_subscribe = None;
             self.artifacts.set_lang(crate::format::lang());
-            self.artifacts.draw(scene, root, engine, area, top);
+            self.artifacts.draw(scene, root, engine, inner, top);
             return false;
         }
         // The Chats view's whole content, before the empty-state branch for
@@ -7535,38 +7559,32 @@ impl ExploreView {
             self.empty_cta = None;
             self.empty_subscribe = None;
             self.chats.set_lang(crate::format::lang());
-            self.chats.draw(scene, root, engine, area, top);
+            self.chats.draw(scene, root, engine, inner, top);
             return false;
         }
 
         if self.showing_socials() {
             self.empty_cta = None;
             if let Some(surface) = &self.socials {
-                let band = Rect::new(area.x, top, area.w, (area.y + area.h - top).max(0.));
+                let band = Rect::new(inner.x, top, inner.w, (inner.y + inner.h - top).max(0.));
                 surface.borrow_mut().navigation_draw(scene, root, band);
             }
             return false;
         }
 
         if self.rows.is_empty() {
-            let x = area.x + theme::NAV_PAD * 2.0;
+            let lead = leading_x(0.0);
+            let x = inner.x + lead;
+            let max_w = (inner.w - lead * 2.0).max(1.0);
             if let Some(waiting) = &self.workspace_waiting {
                 self.empty_cta = None;
                 self.empty_subscribe = None;
-                let hint = engine.simple_layout_wrapped(
-                    waiting,
-                    theme::role::meta(),
-                    (area.w - theme::NAV_PAD * 4.0).max(1.0),
-                );
+                let hint = engine.simple_layout_wrapped(waiting, theme::role::meta(), max_w);
                 scene::draw_layout(scene, root, &hint, x, top, Some(p.text_dim));
                 return true;
             }
             let (hint_text, cta_label, _) = self.empty_state();
-            let hint = engine.simple_layout_wrapped(
-                hint_text,
-                theme::role::meta(),
-                (area.w - theme::NAV_PAD * 4.0).max(1.0),
-            );
+            let hint = engine.simple_layout_wrapped(hint_text, theme::role::meta(), max_w);
             scene::draw_layout(scene, root, &hint, x, top, Some(p.text_dim));
 
             // The way out of the empty state, under the sentence that describes
@@ -7589,7 +7607,7 @@ impl ExploreView {
             let cta = Rect::new(
                 x,
                 top + hint.height() + CTA_GAP,
-                (label.width() + CTA_PAD_X * 2.0).min((area.w - theme::NAV_PAD * 4.0).max(1.0)),
+                (label.width() + CTA_PAD_X * 2.0).min(max_w),
                 CTA_H,
             );
             self.empty_cta = Some(cta);
@@ -7602,8 +7620,7 @@ impl ExploreView {
                 let rect = Rect::new(
                     x,
                     cta.y + cta.h + SUBSCRIBE_GAP,
-                    koru_ui::button::button_width(engine, label)
-                        .min((area.w - theme::NAV_PAD * 4.0).max(1.0)),
+                    koru_ui::button::button_width(engine, label).min(max_w),
                     CTA_H,
                 );
                 koru_ui::button::draw_button(
@@ -7818,7 +7835,7 @@ impl ExploreView {
             // The mode's own lane: a pinned row reserves no caret lane, as no
             // row above it does any more, so the footer cannot drift a lane
             // right of the list it is pinned under.
-            let icon_x = icon_lane(area.x, 0, false);
+            let icon_x = icon_lane(r.x, 0, false);
             draw_icon(
                 scene,
                 root,
@@ -8167,13 +8184,14 @@ impl ExploreView {
         // Keep the block for the rows band even if the pointer has left it, so
         // a drag past the top or bottom does not paint over the header.
         let _ = top;
+        let inner = self.content_area(area);
         for j in first_start..end {
             let mut row = self.rows[j].clone();
             if d.item_count > 1 {
                 row.label = multi_drag_label(&row.label, d.item_count);
             }
             let ry = block_top + (j - first_start) as f32 * theme::NAV_ROW_H;
-            let r = Rect::new(area.x, ry, area.w, theme::NAV_ROW_H);
+            let r = Rect::new(inner.x, ry, inner.w, theme::NAV_ROW_H);
             // Lifted, so it wears a card: the sheet colour, outlined. That is
             // what "off the column" looks like here, and a carried row is off
             // the column by definition.
@@ -8580,6 +8598,10 @@ fn next_selectable(rows: &[PopoverRow], from: Option<usize>, forward: bool) -> O
 const HEADER_H: f32 = apps_rail::SQUARE;
 /// Above the heading band: the rail's own pad, for the same reason.
 const HEADER_PAD: f32 = apps_rail::PAD_TOP;
+/// Horizontal breathing room inside the explorer pane, separating its heading,
+/// quick filter, rows and mode subviews from the rail hairline on the left and
+/// the document border on the right.
+pub(super) const PANE_PAD_X: f32 = 8.0;
 
 /// The lane's band at the top of the pane: `CAPTION_H` tall, one row with the
 /// caption across the divide, drawn by the window (`MainView::draw_lane`).

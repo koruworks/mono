@@ -475,11 +475,15 @@ fn pressing_a_tab_in_the_title_bar_focuses_its_pane() {
 fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
     let (mut v, mut workspace) = container();
     assert_eq!(
-        v.regions.sidebar.w,
-        theme::RAIL_W,
-        "only the rail by default"
+        v.regions.sidebar.w, 0.0,
+        "sidebar and rail both hide when collapsed"
     );
-    assert_eq!(v.content().x, theme::RAIL_W, "the rail remains");
+    assert_eq!(v.rail_area().w, 0.0, "rail hides with the collapsed pane");
+    assert_eq!(
+        v.content().x,
+        theme::EDGE_LANE_W,
+        "left ground margin frames the content card"
+    );
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
@@ -497,35 +501,45 @@ fn the_explore_column_starts_shut_and_ctrl_e_opens_it() {
     assert!(!v.sidebar.is_open());
     assert_eq!(
         v.content().x,
-        theme::RAIL_W,
-        "and took the explorer space back"
+        theme::EDGE_LANE_W,
+        "and took the explorer and rail space back"
     );
 }
 
-/// The pane runs the full height of the window and pushes the caption — logo,
-/// tabs and all — to the right of it. That is the whole of the redesign, in
-/// terms of geometry.
+/// The pane runs the full height of the window and pushes the caption — tabs
+/// and all — to the right of it, while the top-left logo stays fixed and the
+/// toggle + search travel to the explorer header's trailing edge.
 #[test]
-fn opening_the_pane_pushes_the_caption_but_keeps_the_toggle_over_the_rail() {
+fn opening_the_pane_pushes_the_caption_and_keeps_the_logo_over_the_rail() {
     let (mut v, mut workspace) = container();
-    let shut_toggle = v.settled_lane_controls().toggle;
-    assert_eq!(v.regions.caption.x, theme::RAIL_W, "the rail stays visible");
-    assert_eq!(shut_toggle.x, 0.0);
+    let shut = v.settled_lane_controls();
+    assert_eq!(v.regions.caption.x, 0.0, "the rail hides when collapsed");
+    assert_eq!(shut.leading.x, 0.0);
+    assert_eq!(shut.leading.w, theme::RAIL_W);
+    assert_eq!(
+        shut.toggle.x,
+        theme::RAIL_W,
+        "folded toggle sits right after the logo"
+    );
+    assert_eq!(shut.search.x, shut.toggle.x + shut.toggle.w);
 
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
 
     assert_eq!(v.regions.sidebar.y, 0.0, "the pane starts at the top");
     assert_eq!(
-        v.regions.sidebar.h, v.viewport.1,
+        v.regions.sidebar.h, v.regions.foot.y,
         "and runs to the foot lane"
     );
     assert_eq!(v.regions.caption.x, theme::SIDEBAR_W + theme::RAIL_W);
-    let open_toggle = v.settled_lane_controls().toggle;
+    let open = v.settled_lane_controls();
+    assert_eq!(open.leading, shut.leading, "the top-left logo never moves");
     assert_eq!(
-        open_toggle.x - shut_toggle.x,
-        0.0,
-        "the toggle stays in the top-left corner"
+        open.divider.x + open.divider.w,
+        v.regions.caption.x,
+        "trailing divider aligns with the pane edge before the tab strip"
     );
+    assert_eq!(open.search.x + open.search.w, open.divider.x);
+    assert_eq!(open.toggle.x + open.toggle.w, open.search.x);
 }
 
 /// The buttons are anchored to the far edge, which the pane does not move, so
@@ -581,7 +595,10 @@ fn the_fold_reflows_once_and_settles_with_the_slide() {
     use std::time::Duration;
     let (mut v, mut workspace) = container();
     assert!(!v.sidebar.is_open());
-    assert!(!v.chain_drawn(), "the controls stay in the rail lane");
+    assert!(
+        v.chain_drawn(),
+        "when shut, toggle and search fold into the caption after the rail logo"
+    );
     let before = v.relayouts;
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert_eq!(v.relayouts, before + 1, "one reflow at the toggle");
@@ -589,7 +606,7 @@ fn the_fold_reflows_once_and_settles_with_the_slide() {
     assert!(v.fold.is_some_and(|(_, opening)| opening));
     assert!(
         !v.chain_drawn(),
-        "opening does not duplicate the lane controls"
+        "opening moves controls into the lane without duplicating them"
     );
     assert_eq!(
         v.fold_content_alpha(),
@@ -624,6 +641,7 @@ fn the_fold_reflows_once_and_settles_with_the_slide() {
 fn reduced_motion_lands_the_fold_at_once() {
     let (mut v, mut workspace) = container();
     v.reduced_motion = true;
+    assert!(v.chain_drawn());
     assert!(v.key(&mut workspace.ws, &ch("e"), Some("e"), PRIMARY_SHIFT));
     assert!(v.sidebar.is_open());
     assert!(!v.sidebar.animating(), "no slide");
@@ -634,6 +652,7 @@ fn reduced_motion_lands_the_fold_at_once() {
     assert!(v.toggle_sidebar() == false || !v.sidebar.is_open());
     assert_eq!(v.sidebar.progress(), 0.0);
     assert!(!v.sidebar.animating());
+    assert!(v.chain_drawn());
 }
 
 /// ADR-26: the slide costs frames only while it is running, and stops asking
@@ -923,7 +942,7 @@ fn both_columns_open_together_and_the_offset_still_holds() {
     assert_eq!(c.x, theme::SIDEBAR_W + theme::RAIL_W);
     assert_eq!(
         c.w,
-        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W
+        1200.0 - theme::SIDEBAR_W - theme::RAIL_W - theme::CONTEXT_W - theme::EDGE_LANE_W
     );
 
     let view = v.focused_view_rect();
@@ -1121,8 +1140,16 @@ fn the_content_rect_sits_below_the_caption() {
     let (v, _w) = container();
     let r: Rect = v.content();
     assert_eq!(r.y, v.regions.caption.h);
-    assert_eq!(r.x, theme::RAIL_W, "the collapsed explorer leaves its rail");
-    assert_eq!(r.w, 1200.0 - theme::RAIL_W, "and so is the right");
+    assert_eq!(
+        r.x,
+        theme::EDGE_LANE_W,
+        "collapsed explorer hides the rail and keeps the left ground lane"
+    );
+    assert_eq!(
+        r.w,
+        1200.0 - theme::EDGE_LANE_W * 2.0,
+        "left and right margins carved by the ground lanes"
+    );
 }
 
 // ============================================================ drag-to-move
@@ -1328,25 +1355,29 @@ fn move_nodes_can_promote_a_nested_selection_to_the_library_root() {
     );
 }
 
-/// Content and side panels reach the right and bottom window edges.
+/// Content and side panels leave the right and bottom ground margins.
 #[test]
 fn the_window_content_is_flush_with_its_edges() {
     let (mut v, mut workspace) = on_document();
     let edge = v.regions.edge;
-    assert_eq!(edge.w, 0.0);
+    assert_eq!(edge.w, theme::EDGE_LANE_W);
     assert_eq!(edge.x + edge.w, v.viewport.0);
     assert_eq!(v.content().x + v.content().w, edge.x);
     let verge = v.regions.left_edge;
-    assert_eq!(verge, Rect::new(0.0, edge.y, 0.0, edge.h));
-    assert_eq!(v.content().x, theme::RAIL_W, "the rail owns the left edge");
+    assert_eq!(verge, Rect::new(0.0, edge.y, theme::EDGE_LANE_W, edge.h));
+    assert_eq!(
+        v.content().x,
+        theme::EDGE_LANE_W,
+        "collapsed sidebar hides the rail and leaves the left ground lane"
+    );
     assert!(v.toggle_sidebar());
     assert_eq!(v.regions.left_edge.w, 0.0, "the pane is the window's left");
     assert_eq!(v.content().x, v.regions.sidebar.w);
     assert!(v.toggle_sidebar());
-    assert_eq!(v.regions.left_edge.w, 0.0);
+    assert_eq!(v.regions.left_edge.w, theme::EDGE_LANE_W);
     v.adopt(&mut workspace.ws);
     let foot = v.regions.foot;
-    assert_eq!(foot.h, 0.0);
+    assert_eq!(foot.h, theme::EDGE_LANE_W);
     assert_eq!(foot.y + foot.h, v.viewport.1);
     assert_eq!(v.content().y + v.content().h, foot.y);
     assert_eq!(edge.y + edge.h, foot.y);

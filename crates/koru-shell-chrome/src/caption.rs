@@ -197,10 +197,14 @@ pub struct Chain {
     pub end: f32,
 }
 
-/// The divider between the folded chain and the tabs: a hairline with a
-/// square's worth of air either side would read as a gap; one square's width
-/// with the rule drawn at its centre keeps the tabs' pitch.
-pub const DIVIDER_W: f32 = 9.0;
+/// Air between the vertical header divider (`|`) and the tab strip, matching
+/// the optical gap on the left of the divider (`SEAM_GAP + TAB_GAP = 10 px`).
+pub const SEAM_GAP: f32 = 5.0;
+
+/// The divider slot between the folded chain and the tabs: [`lane::DIVIDER_W`]
+/// left of the vertical rule plus [`SEAM_GAP`] to its right so both sides of
+/// the divider keep equal visual spacing.
+pub const DIVIDER_W: f32 = lane::DIVIDER_W + SEAM_GAP;
 
 /// **The leading chain.** Each rect takes its left edge from its neighbour's
 /// right, starting at `caption.x`; a slot the window does not offer is
@@ -211,10 +215,12 @@ pub fn leading_chain(caption: Rect, leading: lane::Leading) -> Chain {
     let s = toggle_w(caption);
     let right = caption.x + caption.w;
     let mut x = caption.x;
-    // **Unfolded: the lane holds the controls and the caption's left end is
-    // bare.** Every link is zero-width at `caption.x`, so a caller does one
-    // arithmetic either way and the tabs begin at the caption's edge.
+    // **Unfolded: the lane holds the controls and the caption's left end holds
+    // no controls** — only the symmetric air after the lane's seam divider so
+    // the first tab sits as far right of `|` as the trailing icon sits left.
     if !leading.folded {
+        let has_chrome = leading.search || leading.new || leading.mark != lane::Mark::None;
+        let end = (x + if has_chrome { SEAM_GAP } else { 0.0 }).min(right);
         let z = Rect::new(x, caption.y, 0.0, caption.h);
         return Chain {
             leading: z,
@@ -222,7 +228,7 @@ pub fn leading_chain(caption: Rect, leading: lane::Leading) -> Chain {
             search: z,
             new: z,
             divider: z,
-            end: x,
+            end,
         };
     }
     let mut take = |w: f32| {
@@ -231,7 +237,23 @@ pub fn leading_chain(caption: Rect, leading: lane::Leading) -> Chain {
         x += w;
         r
     };
-    let leading_rect = take(lane::leading_w(caption, leading.mark));
+    let lead_w = match leading.mark {
+        lane::Mark::None => 0.0,
+        // When a persistent rail already precedes the caption (`caption.x > 0`),
+        // the rail's lane carries the Koru mark; only a bare shut caption
+        // reserves it here.
+        lane::Mark::Mark => {
+            if caption.x > 0.0 {
+                0.0
+            } else {
+                theme::RAIL_W.max(lane::leading_w(caption, leading.mark))
+            }
+        }
+        // Native macOS traffic lights span from window x=0 across `w`; subtract
+        // any persistent rail already left of the caption.
+        lane::Mark::Lights(w) => (w - caption.x).max(0.0),
+    };
+    let leading_rect = take(lead_w);
     let toggle = take(s);
     let search = take(if leading.search { s } else { 0.0 });
     let new = take(if leading.new { s } else { 0.0 });

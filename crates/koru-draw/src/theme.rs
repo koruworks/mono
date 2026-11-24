@@ -3149,12 +3149,12 @@ pub const ROW_H: f32 = text_metrics::SM.line_height + ROW_PAD_V; // 18 + 8 = 26
 // view, and a collapsible context column on the right. Per-site constants rather
 // than a scale, the same as the toolbar above.
 
-/// The caption row: tabs and the window buttons share its 42 px height.
+/// The caption row: tabs and the window buttons share its 38 px height.
 ///
 /// A literal, **not** derived from a text tier: it is sized by the window
 /// buttons, the drag area, and the tab shape, not by the label inside it. Do
 /// not rewrite it as label-metrics + pad — the exemption is on purpose.
-pub const CAPTION_H: f32 = 42.0;
+pub const CAPTION_H: f32 = 38.0;
 /// Width of a caption icon control. Independent of the lane height so a
 /// taller tab lane keeps Search and the other controls visible in the sidebar.
 pub const CAPTION_CONTROL_W: f32 = 42.0;
@@ -3183,8 +3183,8 @@ pub const SIDEBAR_MAX_W: f32 = 600.0;
 /// The rail at the sidebar's left edge — the apps, and at its foot Settings,
 /// Help and the profile (the review's artboard 11). The pane and its widths
 /// above are what sits after it; the sidebar as a whole is the two together.
-/// A 36 px square keeps three pixels of air either side.
-pub const RAIL_W: f32 = 42.0;
+/// A 36 px square keeps six pixels of air either side.
+pub const RAIL_W: f32 = 48.0;
 pub const CONTEXT_W: f32 = 268.0;
 /// The narrowest the active view may become before a side column is dropped.
 /// Content is what the window is for; the panels give way first.
@@ -3200,9 +3200,7 @@ pub const PANEL_SLIDE_MS: f32 = 140.0;
 
 /// Icons in the caption row — the tab close box, the `+`, the two panel
 /// toggles and the window buttons.
-///
-/// Matches the 18 px icons in the app rail.
-pub const CAPTION_ICON: f32 = 18.0;
+pub const CAPTION_ICON: f32 = 14.0;
 
 /// The optical inset either side of a caption's contents.
 ///
@@ -3229,10 +3227,11 @@ pub const PULSE_LOOP_MS: f32 = 1200.0;
 /// current UI font, then clamped here. Below the minimum the strip scrolls
 /// rather than shrinking further; above the maximum the label truncates.
 pub const TAB_MIN_W: f32 = 96.0;
-pub const TAB_MAX_W: f32 = 200.0;
+pub const TAB_MAX_W: f32 = 150.0;
 pub const TAB_PINNED_W: f32 = 36.0;
 pub const TAB_PIN_GAP: f32 = 6.0;
-pub const TAB_GAP: f32 = 2.0;
+/// Gap between adjacent tabs: 2 px margin on each side of the 1 px separator.
+pub const TAB_GAP: f32 = 5.0;
 /// The close box inside a tab, and the `+` that follows the last one.
 pub const TAB_CLOSE: f32 = 16.0;
 pub const TAB_NEW_W: f32 = 28.0;
@@ -3247,11 +3246,13 @@ pub const TAB_SCROLLBAR_H: f32 = SCROLLBAR_W;
 /// two apart is what makes the label's padding even — centring it in the row
 /// while drawing the pill lower is what made the text look like it was sitting
 /// on the floor of its tab.
-/// The original 33 px pill left 15 px around its 18 px content. Halving
-/// that internal padding gives a 25.5 px pill within the unchanged 42 px lane.
-pub const TAB_INSET_TOP: f32 = 7.75;
+/// Matches the 28 px height of the `+` button beside the tabs inside the
+/// 38 px lane (`4.5` above, `5.5` below).
+pub const TAB_INSET_TOP: f32 = 4.5;
 /// One extra pixel below keeps the pill clear of the caption hairline.
-pub const TAB_INSET_BOTTOM: f32 = 8.75;
+pub const TAB_INSET_BOTTOM: f32 = 5.5;
+/// Horizontal padding inside a non-pinned tab pill, each side.
+pub const TAB_PAD_X: f32 = 10.0;
 
 /// The caption's icon controls and identity chips keep their existing padding.
 pub const CAPTION_INSET_TOP: f32 = 4.0;

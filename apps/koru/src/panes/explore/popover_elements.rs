@@ -289,13 +289,6 @@ impl ExploreView {
                     None,
                 ));
             }
-            if let Some((rect, description)) = self.profiles.iter().find_map(|profile| {
-                let rect = frame.node(profiles::primary(profile.id))?.rect;
-                rect.contains(x, y)
-                    .then(|| (rect, self.profile_description(profile)))
-            }) {
-                return Some((rect, description, None));
-            }
             self.workspaces.iter().find_map(|workspace| {
                 let rect = frame.node(pin(workspace.id))?.rect;
                 if !rect.contains(x, y) {

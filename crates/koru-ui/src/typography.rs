@@ -108,6 +108,15 @@ pub fn control_label_y(
     engine: &mut koru_draw::text::TextEngine,
     rect: koru_draw::geometry::Rect,
 ) -> f32 {
-    let reference = engine.simple_layout("Hgj", koru_draw::theme::role::row());
+    control_label_y_for(engine, rect, theme::role::row())
+}
+
+/// Stable optical baseline for short controls in a chosen [`theme::TextStyle`].
+pub fn control_label_y_for(
+    engine: &mut koru_draw::text::TextEngine,
+    rect: koru_draw::geometry::Rect,
+    style: theme::TextStyle,
+) -> f32 {
+    let reference = engine.simple_layout("Hgj", style);
     koru_draw::scene::centre_y_in(&reference, rect)
 }

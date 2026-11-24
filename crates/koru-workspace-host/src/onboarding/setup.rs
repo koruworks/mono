@@ -163,9 +163,11 @@ impl OnboardingView {
     }
 
     /// Whether the card has a *Back* / *Change*: only when there is an entry
-    /// choice to go back to.
+    /// choice to go back to, and never when embedded in Settings → New profile.
     pub(super) fn setup_has_back(&self) -> bool {
-        self.setup_has_change() || (!self.workspace_modal && Screen::first() != Screen::Setup)
+        !self.embedded
+            && (self.setup_has_change()
+                || (!self.workspace_modal && Screen::first() != Screen::Setup))
     }
 
     /// Which subtitle the setup card displays for the active onboarding mode.
@@ -216,6 +218,8 @@ impl OnboardingView {
             T::SetupFinishing
         } else if self.creation_conflict {
             T::ProfileCreationManage
+        } else if self.owner_label == SetupOwnerLabel::Profile {
+            T::SetupCreateProfile
         } else {
             T::SetupStart
         };

@@ -137,9 +137,13 @@ fn the_pill_keeps_halved_internal_padding_in_the_full_header() {
     );
     assert_eq!(t.body.h, s.h, "the header hit area stays full height");
     assert_eq!(
+        t.pill.h, 28.0,
+        "28 px tab pill matching the + button height"
+    );
+    assert_eq!(
         t.pill.h - theme::CAPTION_ICON,
-        7.5,
-        "half the original 15 px of internal padding"
+        14.0,
+        "28 px pill around the 14 px caption icon"
     );
 }
 
@@ -470,13 +474,14 @@ fn variable_widths_pack_left_to_right() {
 #[test]
 fn an_icon_only_pin_centres_its_icon() {
     let pill = Rect::new(100.0, 0.0, theme::TAB_PINNED_W, 24.0);
-    let x = icon_slot_x(pill, true);
+    let x = icon_slot_x(pill, true, false);
     assert_eq!(
         x + crate::PAGE_ICON_SLOT * 0.5,
         pill.x + pill.w * 0.5,
         "the slot's centre is the pill's"
     );
-    assert_eq!(icon_slot_x(pill, false), pill.x + theme::PANEL_PAD);
+    assert_eq!(icon_slot_x(pill, false, false), pill.x + theme::PANEL_PAD);
+    assert_eq!(icon_slot_x(pill, false, true), pill.x + theme::TAB_PAD_X);
     let titled = Tab {
         label: "Brief",
         icon: None,
@@ -493,4 +498,86 @@ fn an_icon_only_pin_centres_its_icon() {
         ..titled
     };
     assert!(pin.is_icon_only());
+}
+
+#[test]
+fn tab_separators_appear_between_active_and_inactive_tabs() {
+    let mut engine = koru_draw::text::TextEngine::new();
+    let mut scene = vello::Scene::new();
+    let s = strip();
+    let tab = |label| Tab {
+        label,
+        icon: None,
+        closable: true,
+        slide: 0.0,
+        dragging: false,
+        gap_after: 0.0,
+        status: None,
+    };
+    let tabs = [tab("One"), tab("Two"), tab("Three")];
+    let widths = [90.0_f32, 90.0, 90.0];
+    let frame = koru_draw::inspect::Frame::begin(
+        1,
+        vello::kurbo::Affine::IDENTITY,
+        koru_draw::scene::rect(s.x, s.y, s.w, s.h),
+    );
+    draw(
+        &mut scene,
+        vello::kurbo::Affine::IDENTITY,
+        &mut engine,
+        s,
+        &tabs,
+        &widths,
+        0.0,
+        1,
+        None,
+        None,
+        false,
+        false,
+        false,
+    );
+    let records = frame.finish().records;
+    let border = koru_draw::inspect::color(theme::p().panel_border);
+    let separators = records
+        .iter()
+        .filter(|r| {
+            r.name == "fill"
+                && (r.rect().width() - 1.0).abs() < 0.01
+                && r.rect().height() > 0.0
+                && r.properties
+                    .iter()
+                    .any(|p| p.name == "color" && p.value == border)
+        })
+        .count();
+    assert_eq!(
+        separators, 2,
+        "both gaps adjacent to the active middle tab wear a separator"
+    );
+}
+
+#[test]
+fn tab_max_width_is_150_and_long_labels_elide_with_ellipsis() {
+    let mut engine = koru_draw::text::TextEngine::new();
+    let long = "A very long document title that definitely exceeds one hundred fifty pixels";
+    let w = preferred_width(&mut engine, long, false, true);
+    assert_eq!(theme::TAB_MAX_W, 150.0);
+    assert_eq!(w, 150.0);
+    let pill = pill(Rect::new(0.0, 0.0, w, theme::CAPTION_H));
+    let close = close_box(pill);
+    let pad_x = tab_pad_x(true);
+    let close_w = if close.w > 0.0 {
+        theme::TAB_CLOSE + theme::PANEL_PAD
+    } else {
+        0.0
+    };
+    let text_w = (pill.w - pad_x * 2.0 - close_w).max(0.0);
+    let fitted = engine.elided(long, theme::role::row(), text_w);
+    assert!(
+        fitted.ends_with('…'),
+        "long tab label should end with ellipsis, got {fitted:?}"
+    );
+    assert!(
+        engine.simple_layout(&fitted, theme::role::row()).width() <= text_w + 0.5,
+        "elided tab label fits inside the 150 px tab"
+    );
 }

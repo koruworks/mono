@@ -348,16 +348,9 @@ fn the_docked_explorer_and_document_keep_curved_top_left_corners_and_top_line() 
             .map(|(i, _)| i)
             .collect::<Vec<_>>()
     };
-    let corner_at = |x: f32| {
-        records
-            .iter()
-            .position(|r| r.name == "CardCorner" && r.rect().x0 == x as f64)
-            .unwrap_or_else(|| panic!("a card corner at x = {x}"))
-    };
     let sb = view.sidebar_rect();
     let pane = MainView::pane_of(sb);
     let top = view.content().y - 0.5;
-    let r = theme::PAGE_RADIUS;
     let pane_fill = inspect::color(crate::panes::explore::pane_fill());
     let ground = inspect::color(theme::base_fill());
     let border = inspect::color(theme::p().panel_border);
@@ -365,56 +358,91 @@ fn the_docked_explorer_and_document_keep_curved_top_left_corners_and_top_line() 
         pane_fill, ground,
         "the docked explorer uses pane_bg rather than the rail ground"
     );
-
-    // The docked explorer's top-left corner: masked in the rail/header ground,
-    // with no straight hairline drawn across the corner square.
-    let outer = corner_at(pane.x - 0.5);
-    assert_eq!(records[outer].rect().y0, top as f64);
-    let fills = fills_of(outer);
-    assert_eq!(colour(fills[0]), ground);
+    let corners: Vec<_> = records.iter().filter(|r| r.name == "CardCorner").collect();
     assert_eq!(
-        fills.len(),
-        1,
-        "only the mask is a fill; the arc is a stroke"
+        corners.len(),
+        4,
+        "only the four outer corners of the unified explorer+document frame are rounded"
+    );
+    assert!(
+        corners
+            .iter()
+            .all(|r| (r.rect().x0 - (view.drawn_caption().x - 0.5) as f64).abs() > 1.0),
+        "the explorer/document interior seam stays straight at top and bottom"
     );
 
-    // The document's top-left corner, on the explorer pane's inside hairline:
-    // masked in the white explorer pane with the header hairline across its top.
-    let inner = corner_at(sb.x + sb.w - 0.5);
-    assert_eq!(records[inner].rect().y0, top as f64);
-    let fills = fills_of(inner);
-    assert_eq!(
-        colour(fills[0]),
-        pane_fill,
-        "masked in the pane, not the ground"
-    );
-    let run = fills
-        .iter()
-        .copied()
-        .find(|&i| records[i].rect() == scene::rect(sb.x + sb.w - 0.5, top, r, 0.5))
-        .expect("the header's hairline runs across the document corner");
-    assert_eq!(colour(run), border);
-
-    // The lane draws the explorer's top hairline starting after its curved
-    // corner and draws no vertical divider up through the header ground.
+    // The lane draws the explorer's top hairline across the pane, one
+    // short vertical divider aligned to the explorer/document pane seam, and
+    // no full-height vertical divider cutting through the header.
     let lane = records
         .iter()
         .rposition(|r| r.name == "KoruLane")
         .expect("the window lane is drawn");
     let lane_fills = fills_of(lane);
-    let expected_top = scene::rect(pane.x + r - 0.5, top, (pane.w - r).max(0.0), 0.5);
+    let expected_top = scene::rect(pane.x, top, pane.w.max(0.0), 0.5);
     assert!(
         lane_fills
             .iter()
             .any(|&i| records[i].rect() == expected_top && colour(i) == border),
         "the lane draws the explorer's top hairline"
     );
+    let short_dividers: Vec<_> = lane_fills
+        .iter()
+        .filter_map(|&i| {
+            let rect = records[i].rect();
+            (rect.width() <= 1.0 && (rect.height() - (theme::CAPTION_H as f64 - 24.0)).abs() < 0.5)
+                .then_some(rect)
+        })
+        .collect();
+    assert_eq!(
+        short_dividers.len(),
+        1,
+        "only the trailing vertical divider before the tabs is drawn"
+    );
+    assert_eq!(
+        short_dividers[0].x0,
+        (sb.x + sb.w - 0.5) as f64,
+        "the divider aligns with the explorer/document pane border"
+    );
     assert!(
         !lane_fills.iter().any(|&i| {
             let rect = records[i].rect();
-            rect.width() <= 1.0 && rect.height() >= theme::CAPTION_H as f64 * 0.5
+            rect.width() <= 1.0 && rect.height() >= theme::CAPTION_H as f64 * 0.75
         }),
-        "no vertical divider cuts through the header ground"
+        "no full-height vertical divider cuts through the header ground"
+    );
+}
+
+#[test]
+fn collapsed_sidebar_hides_the_rail_and_rounds_all_four_document_corners() {
+    let (mut view, workspace) = crate::mainview::harness::on_document();
+    view.viewport = (1200.0, 700.0);
+    view.sidebar.set_immediately(false);
+    view.relayout();
+    let root = Affine::IDENTITY;
+    let frame = inspect::Frame::begin(1, root, scene::rect(0.0, 0.0, 1200.0, 700.0));
+    view.draw_frame(
+        &mut Scene::new(),
+        &workspace,
+        &ImageCache::new(),
+        root,
+        false,
+        (-1.0, -1.0),
+    );
+    let records = frame.finish().records;
+    assert!(
+        !records.iter().any(|r| r.name == "KoruRail"),
+        "collapsed sidebar hides the app rail"
+    );
+    assert!(
+        !records.iter().any(|r| r.name == "KoruLane"),
+        "collapsed sidebar folds controls into the caption"
+    );
+    let corners: Vec<_> = records.iter().filter(|r| r.name == "CardCorner").collect();
+    assert_eq!(
+        corners.len(),
+        4,
+        "all four corners of the collapsed document card are rounded"
     );
 }
 

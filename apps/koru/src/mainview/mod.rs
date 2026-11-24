@@ -389,6 +389,36 @@ const WINDOW_BUTTONS: bool = true;
 fn reminder_bell() -> bool {
     koru_features::reminders()
 }
+
+/// Whether an Explore outcome picks an item or opens a destination — used to
+/// hide the floating preview pane back after a selection.
+fn outcome_picks_from_preview(out: &Outcome) -> bool {
+    use crate::panes::explore::rail::TasksRailRequest;
+    matches!(
+        out,
+        Outcome::OpenNode(_)
+            | Outcome::OpenNote(_)
+            | Outcome::OpenFile(_)
+            | Outcome::DownloadFile(_)
+            | Outcome::OpenSession(_)
+            | Outcome::OpenRun(_)
+            | Outcome::OpenAiChat(_)
+            | Outcome::NewAiChat
+            | Outcome::OpenSocials
+            | Outcome::OpenHome
+            | Outcome::OpenRecentDocument(_)
+            | Outcome::OpenTrash
+            | Outcome::OpenSettings
+            | Outcome::NewDocument
+            | Outcome::NewCanvas
+            | Outcome::ImportFiles
+            | Outcome::Tasks(
+                TasksRailRequest::OpenBucket { .. }
+                    | TasksRailRequest::OpenList { .. }
+                    | TasksRailRequest::OpenReminders { .. }
+            )
+    )
+}
 /// The first [`TooltipContent`] key a menu **control** claims; the control's
 /// index is added to it.
 ///
@@ -699,6 +729,7 @@ pub struct MainView {
     /// The explore column, and whether it is in or out.
     sidebar: Panel,
     explore_preview: bool,
+    explore_preview_open: Option<Instant>,
     explore_preview_fade: Option<Instant>,
     explore_preview_deadline: Option<Instant>,
     explore: ExploreView,
@@ -1952,6 +1983,7 @@ impl MainView {
             // than no tree, and the toggle is one keystroke away.
             sidebar: Panel::new(theme::SIDEBAR_W + theme::RAIL_W, false),
             explore_preview: false,
+            explore_preview_open: None,
             explore_preview_fade: None,
             explore_preview_deadline: None,
             explore: ExploreView::new(),
@@ -9733,9 +9765,10 @@ impl MainView {
                 // (nested-lists §6), if the keyboard was in the rail at all.
                 if self.explore.rail().focus().is_some() {
                     let area = self.explore_area();
+                    let content = self.explore.content_area(area);
                     let top = self.explore.rail_top(area);
                     let above = self.explore.rail().focus_above(id);
-                    self.explore.rail_mut().set_focus(area, top, above);
+                    self.explore.rail_mut().set_focus(content, top, above);
                 }
                 self.list_edits
                     .push(koru_workspace_host::tasks::ListEdit::DeleteTree { id, inside });
@@ -9831,8 +9864,9 @@ impl MainView {
         // column, or under a shut parent: bring it into view, as a new list's
         // row is.
         let area = self.explore_area();
+        let content = self.explore.content_area(area);
         let top = self.explore.rail_top(area);
-        self.explore.rail_mut().reveal_list(area, top, id);
+        self.explore.rail_mut().reveal_list(content, top, id);
         true
     }
 
@@ -9902,8 +9936,9 @@ impl MainView {
         // The keyboard goes back to the row the field was opened from.
         if let Some(origin) = self.list_field_origin.take() {
             let area = self.explore_area();
+            let content = self.explore.content_area(area);
             let top = self.explore.rail_top(area);
-            self.explore.rail_mut().set_focus(area, top, origin);
+            self.explore.rail_mut().set_focus(content, top, origin);
         }
         had
     }
@@ -9919,8 +9954,9 @@ impl MainView {
         self.explore.rail_mut().begin_new_list(parent);
         self.new_list = Some(new_list::NewList::new(&mut self.engine, &color, parent));
         let area = self.explore_area();
+        let content = self.explore.content_area(area);
         let top = self.explore.rail_top(area);
-        self.explore.rail_mut().reveal_new_list(area, top);
+        self.explore.rail_mut().reveal_new_list(content, top);
         true
     }
 
@@ -9969,10 +10005,11 @@ impl MainView {
     /// different rows.
     fn new_list_field_rect(&self) -> Option<Rect> {
         let area = self.explore_area();
+        let content = self.explore.content_area(area);
         let top = self.explore.rail_top(area);
         match self.new_list.as_ref()?.target() {
-            new_list::Target::New(_) => self.explore.rail().new_list_field_rect(area, top),
-            new_list::Target::Existing(id) => self.explore.rail().list_field_rect(area, top, id),
+            new_list::Target::New(_) => self.explore.rail().new_list_field_rect(content, top),
+            new_list::Target::Existing(id) => self.explore.rail().list_field_rect(content, top, id),
         }
     }
 
@@ -11322,13 +11359,17 @@ impl MainView {
         // document, so it must not cost you the press that dismissed it.
         // `handled` picks it up at the tail, so the frame still happens.
         let dismissed = hit != Hit::Sidebar && self.explore.close_popover();
+        let preview_dismissed = hit != Hit::Sidebar && self.explore_preview;
+        if preview_dismissed {
+            self.dismiss_explore_preview(true);
+        }
         // **A press anywhere else gives the tree's keyboard back.** Without
         // this, clicking a row and then clicking into the document would leave
         // the arrows moving through the tree while the caret sat still — a
         // window that has quietly stopped answering the keys you are pressing,
         // with nothing on screen to say why.
         let unfocused = hit != Hit::Sidebar && self.explore.clear_focus();
-        let dismissed = dismissed || unfocused;
+        let dismissed = dismissed || unfocused || preview_dismissed;
         // A rail view still held at a fresh press lost its release (the
         // button came up outside the window): it drops where it is, rather
         // than following the next gesture.
@@ -11381,7 +11422,12 @@ impl MainView {
             self.refresh_drag_item_count(ws);
             // Expanding a row changes the tree, and the tree is a cache.
             self.explore_stale = true;
-            return self.apply(ws, out);
+            let dismiss = self.explore_preview && outcome_picks_from_preview(&out);
+            let applied = self.apply(ws, out);
+            if dismiss {
+                self.dismiss_explore_preview(true);
+            }
+            return applied || dismiss;
         }
         if hit == Hit::Context {
             let out = self.context_view.mouse_down(self.regions.context, x, y);
@@ -11631,12 +11677,13 @@ impl MainView {
         // document) or `OpenNode` for a click that never armed.
         if self.explore.pointer_active() {
             let row_drag = self.explore.drag_active();
+            let drag_armed = self.explore.drag_armed();
             // A document carried out of the column and released over a pane
             // opens there — the slot, the split, or the group — rather than
             // moving in the tree. The tree's move is an answer only inside
             // the column, and a multi-select drop keeps it.
             let roots = self.explore.dragged_roots();
-            if row_drag && roots.len() == 1 {
+            if drag_armed && roots.len() == 1 {
                 let (x, y) = self.pointer;
                 if self.pane_at(x, y).is_some()
                     && (self.content().contains(x, y) || self.drop_slot.is_some())
@@ -11647,6 +11694,9 @@ impl MainView {
                     // The cache still shows the drag's folded view; rebuild it.
                     self.explore_stale = true;
                     self.drop_document_into_pane(ws, roots[0], x, y, slot, intent);
+                    if self.explore_preview {
+                        self.dismiss_explore_preview(true);
+                    }
                     return true;
                 }
             }
@@ -11664,7 +11714,14 @@ impl MainView {
                 }
                 // `apply` handles `OpenNode` (and the no-op arms) the same way a
                 // press would.
-                other => self.apply(ws, other),
+                other => {
+                    let dismiss = self.explore_preview && outcome_picks_from_preview(&other);
+                    let applied = self.apply(ws, other);
+                    if dismiss {
+                        self.dismiss_explore_preview(true);
+                    }
+                    applied || dismiss
+                }
             };
         }
         // Tasks carried off a Tasks page onto a list in the sidebar join it.
@@ -12627,7 +12684,12 @@ impl View for MainView {
             let out = self
                 .explore
                 .mouse_double_click(self.explore_area(), self.viewport, x, y);
-            return self.apply(ws, out);
+            let dismiss = self.explore_preview && outcome_picks_from_preview(&out);
+            let applied = self.apply(ws, out);
+            if dismiss {
+                self.dismiss_explore_preview(true);
+            }
+            return applied || dismiss;
         }
         if hit != Hit::Content {
             return false;
@@ -13393,6 +13455,7 @@ impl View for MainView {
         self.tooltip.animating(Instant::now())
             || self.reminder_shell.animating()
             || self.sidebar.animating()
+            || self.explore_preview_open.is_some()
             || self.explore_preview_fade.is_some()
             || self.ai_panel.animating()
             || (self.ai_visible() && self.ai_chat.animating())
@@ -17469,10 +17532,7 @@ impl MainView {
             && self.menu.is_none()
             && !self.explore.popover_open()
         {
-            self.explore_preview = false;
-            self.explore_preview_fade = None;
-            self.explore_preview_deadline = None;
-            self.explore.clear_focus();
+            self.dismiss_explore_preview(false);
             return true;
         }
         // **A recovery pill that `F6` has landed on**, asked beside the bell
@@ -17595,14 +17655,12 @@ impl MainView {
             // An expand or a collapse changed which rows there are.
             self.explore_stale = true;
             self.preview_keyboard_activity(Instant::now());
-            let dismiss =
-                self.explore_preview && matches!(key, Key::Named(winit::keyboard::NamedKey::Enter));
+            let dismiss = self.explore_preview
+                && (matches!(key, Key::Named(winit::keyboard::NamedKey::Enter))
+                    || outcome_picks_from_preview(&out));
             let applied = self.apply(ws, out);
             if dismiss {
-                self.explore_preview = false;
-                self.explore_preview_fade = None;
-                self.explore_preview_deadline = None;
-                self.explore.clear_focus();
+                self.dismiss_explore_preview(false);
             }
             return applied || dismiss;
         }
@@ -19393,7 +19451,7 @@ impl MainView {
             // No New in the lane (the review's note, E44): the tab strip's `+`
             // is the Add… menu's one door. E21's lane `+` is superseded.
             new: false,
-            folded: cfg!(target_os = "macos") && !self.sidebar.is_open(),
+            folded: !self.sidebar.is_open(),
         }
     }
 
@@ -19480,25 +19538,30 @@ impl MainView {
     }
 
     /// The same controls on the **settled** rects — where the hit test reads
-    /// them, where a menu opened from one of them hangs, and what a test
-    /// asks mid-slide.
-    #[cfg(test)]
+    /// them, where accessibility publishes them, where a menu opened from one
+    /// of them hangs, and what a test asks mid-slide.
     pub(crate) fn settled_lane_controls(&self) -> koru_shell_chrome::lane::LaneRects {
         self.lane_controls_in(self.regions.caption, self.regions.sidebar)
     }
 
     fn lane_controls_in(&self, caption: Rect, pane: Rect) -> koru_shell_chrome::lane::LaneRects {
         let leading = self.leading();
+        let lane = Rect::new(pane.x, pane.y, pane.w, theme::CAPTION_H.min(pane.h));
         if leading.folded {
             let chain = koru_shell_chrome::caption::leading_chain(caption, leading);
+            let leading_rect = if chain.leading.w > 0.0 || pane.w <= 0.0 {
+                chain.leading
+            } else {
+                koru_shell_chrome::lane::solve(lane, leading).leading
+            };
             koru_shell_chrome::lane::LaneRects {
-                leading: chain.leading,
+                leading: leading_rect,
+                toggle: chain.toggle,
                 search: chain.search,
                 new: chain.new,
-                toggle: chain.toggle,
+                divider: chain.divider,
             }
         } else {
-            let lane = Rect::new(pane.x, pane.y, pane.w, theme::CAPTION_H.min(pane.h));
             koru_shell_chrome::lane::solve(lane, leading)
         }
     }
@@ -19657,8 +19720,7 @@ impl MainView {
         let rail_focus = self.focused_rail_identity();
         chrome_debug::chrome_debug!("app switch by chord to {}", mode.token());
         if !self.sidebar.is_open() {
-            self.explore_preview = true;
-            self.explore_preview_fade = None;
+            self.open_explore_preview();
         }
         match mode {
             crate::panes::explore::NavigatorMode::Documents => self.explore.show_documents(),

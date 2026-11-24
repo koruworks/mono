@@ -97,7 +97,7 @@ impl MainView {
     /// is toggled — so the content reflows once per toggle rather than once per
     /// animation frame. The sliding is entirely in where a column is *drawn*.
     pub(super) fn resolve_regions(&mut self) {
-        let sidebar_w = self.sidebar.layout_width().max(theme::RAIL_W);
+        let sidebar_w = self.sidebar.layout_width();
         self.explore.set_floating(!self.sidebar.is_open());
         let ai_w = self.ai_panel.layout_width();
         self.regions = regions::solve(
@@ -105,7 +105,8 @@ impl MainView {
             self.viewport.1,
             sidebar_w,
             ai_w.max(self.context.layout_width()),
-        );
+        )
+        .with_ground(theme::EDGE_LANE_W);
     }
 
     pub(super) fn content(&self) -> Rect {
@@ -305,9 +306,6 @@ impl MainView {
     /// while it is arriving or leaving.
     pub(super) fn sidebar_rect(&self) -> Rect {
         let r = self.regions.sidebar;
-        if !self.sidebar.is_open() {
-            return Rect::new(0.0, r.y, theme::RAIL_W.min(self.viewport.0), r.h);
-        }
         // **At rest the column is drawn where it is hit-tested**: in the
         // settled region. The panel's own width is the one that was *asked
         // for*, and the two differ whenever the window is too narrow to give
@@ -316,13 +314,13 @@ impl MainView {
         // pane sat to one side of where it answered the pointer — the heading
         // button lit with the pointer some way off it (owner, 2026-11-16).
         // Only a drag or a slide draws anywhere else, and both end here.
-        if self.sidebar_drag.is_none() && !self.sidebar.animating() && r.w > 0.0 {
+        if self.sidebar_drag.is_none() && !self.sidebar.animating() {
             return r;
         }
         Rect::new(
             0.0,
             r.y,
-            (self.sidebar.drawn_width() - self.sidebar.slide_offset()).max(theme::RAIL_W),
+            (self.sidebar.drawn_width() - self.sidebar.slide_offset()).max(0.0),
             r.h,
         )
     }
@@ -352,7 +350,12 @@ impl MainView {
         } else if self.regions.sidebar.w > theme::RAIL_W {
             Self::pane_of(self.regions.sidebar)
         } else {
-            Self::pane_of(Rect::new(0.0, 0.0, self.sidebar.full(), self.viewport.1))
+            Self::pane_of(Rect::new(
+                0.0,
+                self.regions.sidebar.y,
+                self.sidebar.full(),
+                self.regions.sidebar.h,
+            ))
         }
     }
 
@@ -385,15 +388,37 @@ impl MainView {
     }
 
     pub(super) fn explore_preview_rect(&self) -> Rect {
-        let gap = theme::Space::S1.px(theme::Profile::Desktop);
-        let x = theme::RAIL_W + gap;
-        let y = theme::CAPTION_H + gap;
+        let gap = theme::EDGE_LANE_W;
+        let x = gap;
+        let y = theme::CAPTION_H;
         Rect::new(
             x,
             y,
             (self.sidebar.full() - theme::RAIL_W).min((self.viewport.0 - x - gap).max(0.0)),
             (self.viewport.1 - y - gap).max(0.0),
         )
+    }
+
+    pub(super) fn open_explore_preview(&mut self) {
+        if !self.explore_preview || self.explore_preview_fade.is_some() {
+            self.explore_preview = true;
+            self.explore_preview_fade = None;
+            self.explore_preview_open = (!self.reduced_motion).then(Instant::now);
+        }
+    }
+
+    pub(super) fn dismiss_explore_preview(&mut self, animate: bool) {
+        self.explore_preview_open = None;
+        self.explore_preview_deadline = None;
+        self.explore.clear_focus();
+        if animate && !self.reduced_motion {
+            if self.explore_preview && self.explore_preview_fade.is_none() {
+                self.explore_preview_fade = Some(Instant::now());
+            }
+        } else {
+            self.explore_preview = false;
+            self.explore_preview_fade = None;
+        }
     }
 
     pub(super) fn preview_pointer(&mut self, x: f32, y: f32) -> bool {
@@ -421,18 +446,12 @@ impl MainView {
                 }
                 self.explore_stale = true;
             }
-            self.explore_preview = true;
-            self.explore_preview_fade = None;
+            self.open_explore_preview();
             return changed;
         }
-        // Include the narrow bridge so the pointer can enter the floating pane.
+        // Include the narrow bridge from the left window edge so the pointer can enter the floating pane.
         let panel = self.explore_preview_rect();
-        let bridge = Rect::new(
-            theme::RAIL_W,
-            panel.y,
-            panel.x + panel.w - theme::RAIL_W,
-            panel.h,
-        );
+        let bridge = Rect::new(0.0, panel.y, panel.x + panel.w, panel.h);
         if self.explore_preview && (bridge.contains(x, y) || self.explore.popover_open()) {
             let entered = panel.contains(x, y) || self.explore.popover_open();
             let released = entered && self.explore_preview_deadline.take().is_some();
@@ -442,29 +461,43 @@ impl MainView {
             return false;
         }
         if self.explore_preview && self.explore_preview_fade.is_none() {
-            if self.reduced_motion {
-                self.explore_preview = false;
-                self.explore.clear_focus();
-            } else {
-                self.explore_preview_fade = Some(Instant::now());
-            }
+            self.dismiss_explore_preview(true);
             return true;
         }
         false
     }
 
-    pub(super) fn preview_alpha(&mut self) -> f32 {
-        let Some(started) = self.explore_preview_fade else {
-            return 1.0;
-        };
-        let alpha = (1.0 - started.elapsed().as_secs_f32() / 0.14).max(0.0);
-        if alpha == 0.0 {
-            self.explore_preview = false;
-            self.explore_preview_fade = None;
-            self.explore_preview_deadline = None;
-            self.explore.clear_focus();
+    pub(super) fn preview_motion(&mut self) -> (f32, f32) {
+        const DURATION: f32 = 0.14;
+        let panel = self.explore_preview_rect();
+        let travel = panel.x + panel.w;
+        if let Some(started) = self.explore_preview_fade {
+            let t = (started.elapsed().as_secs_f32() / DURATION).clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - t).powi(3);
+            let alpha = (1.0 - t).max(0.0);
+            if t >= 1.0 {
+                self.explore_preview = false;
+                self.explore_preview_fade = None;
+                self.explore_preview_open = None;
+                self.explore_preview_deadline = None;
+                self.explore.clear_focus();
+            }
+            return (alpha, -travel * eased);
         }
-        alpha
+        if let Some(started) = self.explore_preview_open {
+            let t = (started.elapsed().as_secs_f32() / DURATION).clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - t).powi(3);
+            if t >= 1.0 {
+                self.explore_preview_open = None;
+            }
+            return (1.0, -travel * (1.0 - eased));
+        }
+        (1.0, 0.0)
+    }
+
+    #[cfg(test)]
+    pub(super) fn preview_alpha(&mut self) -> f32 {
+        self.preview_motion().0
     }
 
     /// Keyboard entry gets an idle deadline instead of following an unrelated
@@ -826,6 +859,7 @@ impl MainView {
     /// Open or shut the pane. What the logo and the toggle button do.
     pub(super) fn toggle_sidebar(&mut self) -> bool {
         self.explore_preview = false;
+        self.explore_preview_open = None;
         self.explore_preview_fade = None;
         self.explore_preview_deadline = None;
         let now = Instant::now();
@@ -898,12 +932,12 @@ impl MainView {
         }
     }
 
-    /// Whether the caption's leading chain is drawn this frame: while the
-    /// pane is shut, and through the fold either way — it rides the drawn
-    /// pane's edge out to the corner and back (frame 9's blue note).
+    /// Whether the caption's leading chain is drawn this frame: whenever the
+    /// explorer pane is shut, its toggle, search, and dividers fold into the
+    /// caption immediately after the persistent rail's logo (or traffic lights
+    /// on macOS).
     pub(super) fn chain_drawn(&self) -> bool {
-        cfg!(target_os = "macos")
-            && (!self.sidebar.is_open() || (self.fold.is_some() && self.sidebar.animating()))
+        !self.sidebar.is_open()
     }
 
     /// Show the workspaces switcher without changing the Explore pane.
@@ -1349,7 +1383,10 @@ impl MainView {
     /// furniture (it is called with empty tab widths) and the lanes answer for
     /// themselves below.
     pub(super) fn hit_at(&mut self, x: f32, y: f32) -> koru_shell_chrome::regions::Hit {
-        if self.explore_preview && self.explore_preview_rect().contains(x, y) {
+        if self.explore_preview
+            && self.explore_preview_fade.is_none()
+            && self.explore_preview_rect().contains(x, y)
+        {
             return koru_shell_chrome::regions::Hit::Sidebar;
         }
         // Ask the shared chrome resolver with empty tab widths so the old caption

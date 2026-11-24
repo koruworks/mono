@@ -134,14 +134,14 @@ impl ChatsSurface {
                 let layout = engine.simple_layout_wrapped(
                     t(lang, key),
                     theme::role::meta(),
-                    (area.w - theme::NAV_PAD * 4.0).max(1.0),
+                    (area.w - theme::NAV_PAD * 2.0).max(1.0),
                 );
                 self.work.layouts += 1;
                 scene::draw_layout(
                     scene,
                     root,
                     &layout,
-                    area.x + theme::NAV_PAD * 2.0,
+                    area.x + theme::NAV_PAD,
                     rect.y,
                     Some(p.text_dim),
                 );

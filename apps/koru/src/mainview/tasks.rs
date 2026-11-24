@@ -311,10 +311,11 @@ impl MainView {
             && self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Tasks
         {
             let area = self.explore_area();
+            let content = self.explore.content_area(area);
             let top = self.explore.rail_top(area);
             match area
                 .contains(x, y)
-                .then(|| self.explore.rail().target_at(area, top, x, y))
+                .then(|| self.explore.rail().target_at(content, top, x, y))
                 .flatten()
             {
                 Some(RailTarget::List(id)) => Some(id),

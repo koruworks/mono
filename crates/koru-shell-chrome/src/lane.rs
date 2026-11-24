@@ -79,6 +79,11 @@ impl Leading {
     };
 }
 
+/// The width reserved left of the vertical header divider (`|`) in the lane so
+/// the gap from the trailing icon chip to the divider matches the gap on the
+/// tab side (`6.5 + 3.5 = 10 px`).
+pub const DIVIDER_W: f32 = 4.0;
+
 /// The lane's rects, left to right. A slot the window does not offer is a
 /// **zero-width rect** at the place it would have been, the idiom every
 /// collapsed thing in this crate uses, so a caller does one arithmetic and a
@@ -86,9 +91,11 @@ impl Leading {
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct LaneRects {
     pub leading: Rect,
+    pub toggle: Rect,
     pub search: Rect,
     pub new: Rect,
-    pub toggle: Rect,
+    /// A short vertical rule aligned with the pane seam before the tabs.
+    pub divider: Rect,
 }
 
 /// A lane control keeps the caption's control width as the band grows taller.
@@ -106,41 +113,23 @@ pub fn leading_w(band: Rect, mark: Mark) -> f32 {
     }
 }
 
-/// Lay the lane out: the leading slot at the left edge, the squares packed
-/// against the right edge in the order search · new · toggle. In a lane
-/// narrower than its furniture the optional squares **decline the room**
-/// from the left — search first, then new — each drawn whole or not at all,
-/// the way the explore heading's buttons already yield; the toggle keeps the
-/// corner and is the one square allowed to shrink, because the toggle is how
-/// the pane is put away and a pane that cannot be shut is a trap.
+/// Lay the lane out: the leading slot (Koru mark on Windows/Linux, traffic
+/// lights on macOS) at the left edge, and the trailing squares packed against
+/// the right edge in the order `toggle · search · new · divider` immediately
+/// before the tabs, with `divider` aligned to the pane's right edge.
+///
+/// When `leading.folded` is true (the explorer pane is shut while a persistent
+/// rail stays visible), the lane holds only the leading slot; the controls and
+/// divider fold into [`crate::caption::leading_chain`].
+///
+/// In a narrow open lane, optional squares **decline the room** before the
+/// toggle — search first, then new — each drawn whole or not at all; the toggle
+/// is always kept so an open pane can always be shut.
 pub fn solve(lane: Rect, leading: Leading) -> LaneRects {
     let s = square(lane);
-    if leading.mark == Mark::Mark {
-        let toggle = Rect::new(lane.x, lane.y, s.min(lane.w), lane.h);
-        let right = lane.x + lane.w;
-        let floor = toggle.x + toggle.w;
-        let new_w = if leading.new && right - floor >= s {
-            s
-        } else {
-            0.0
-        };
-        let new = Rect::new(right - new_w, lane.y, new_w, lane.h);
-        let search_w = if leading.search && new.x - floor >= s {
-            s
-        } else {
-            0.0
-        };
-        return LaneRects {
-            leading: Rect::new(lane.x, lane.y, 0.0, lane.h),
-            toggle,
-            new,
-            search: Rect::new(new.x - search_w, lane.y, search_w, lane.h),
-        };
-    }
     // **The mark sits over the rail.** In the lane its slot is the rail's
-    // width, so the mark is centred on the column of app squares under it
-    // (the review's note on artboard 11); in the caption's chain, which has no
-    // rail under it, the slot stays one square (`caption::leading_chain`).
+    // width, so the mark is centred on the column of app squares under it;
+    // in a bare folded caption with no rail under it, the slot stays one square.
     let lead_w = match leading.mark {
         Mark::Mark => theme::RAIL_W.max(s),
         _ => leading_w(lane, leading.mark),
@@ -148,21 +137,51 @@ pub fn solve(lane: Rect, leading: Leading) -> LaneRects {
     .min(lane.w);
     let leading_rect = Rect::new(lane.x, lane.y, lead_w, lane.h);
     let right = lane.x + lane.w;
+    if leading.folded {
+        let zero_at_end = Rect::new(right, lane.y, 0.0, lane.h);
+        return LaneRects {
+            leading: leading_rect,
+            toggle: zero_at_end,
+            search: zero_at_end,
+            new: zero_at_end,
+            divider: zero_at_end,
+        };
+    }
     let floor = leading_rect.x + leading_rect.w;
-    // Right to left, each square taking its right edge from its neighbour's
-    // left, and declining when the room before the leading slot is short.
-    let toggle_w = s.min((right - floor).max(0.0));
-    let toggle = Rect::new(right - toggle_w, lane.y, toggle_w, lane.h);
-    let whole = |offered: bool, edge: f32| if offered && edge - floor >= s { s } else { 0.0 };
-    let new_w = whole(leading.new, toggle.x);
-    let new = Rect::new(toggle.x - new_w, lane.y, new_w, lane.h);
-    let search_w = whole(leading.search, new.x);
+    let avail = (right - floor).max(0.0);
+    let has_chrome = leading.mark != Mark::None || leading.search || leading.new;
+    let div_w = if has_chrome && avail >= s + DIVIDER_W {
+        DIVIDER_W
+    } else {
+        0.0
+    };
+    let rem = (avail - div_w).max(0.0);
+    // Toggle gets first claim on the room; then new, then search — each whole
+    // or absent, never clipped. Packed right-to-left ending at `divider`:
+    // `toggle · search · new · divider`.
+    let toggle_w = s.min(rem);
+    let rem_after_toggle = (rem - toggle_w).max(0.0);
+    let new_w = if leading.new && rem_after_toggle >= s {
+        s
+    } else {
+        0.0
+    };
+    let rem_after_new = (rem_after_toggle - new_w).max(0.0);
+    let search_w = if leading.search && rem_after_new >= s {
+        s
+    } else {
+        0.0
+    };
+    let divider = Rect::new(right - div_w, lane.y, div_w, lane.h);
+    let new = Rect::new(divider.x - new_w, lane.y, new_w, lane.h);
     let search = Rect::new(new.x - search_w, lane.y, search_w, lane.h);
+    let toggle = Rect::new(search.x - toggle_w, lane.y, toggle_w, lane.h);
     LaneRects {
         leading: leading_rect,
+        toggle,
         search,
         new,
-        toggle,
+        divider,
     }
 }
 

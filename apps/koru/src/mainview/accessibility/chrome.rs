@@ -120,10 +120,10 @@ impl MainView {
     /// The caption's own controls — the ones the *container* performs.
     pub(super) fn caption_semantics(&self, cx: &Shell) -> Vec<SemanticNode> {
         let caption = self.regions.caption;
-        // The lane's controls, wherever they are this frame: in the pane's
-        // top band while it is open, in the caption's leading chain while it
-        // is shut. One geometry function either way (`lane_controls`).
-        let lane = self.lane_controls();
+        // The lane's controls at their settled rects (matching hit-testing,
+        // even mid-slide): in the pane's top band while open, in the caption's
+        // leading chain while shut.
+        let lane = self.settled_lane_controls();
         let mut out = vec![
             SemanticNode::new(cx.surface(SHELL, parts::TOGGLE_EXPLORE), Role::Button)
                 .with_label(t(cx.lang, Key::A11yToggleNavigator))
