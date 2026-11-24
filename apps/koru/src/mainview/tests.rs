@@ -2653,6 +2653,10 @@ fn the_swap_follows_the_tab_rather_than_the_pointer() {
             strip.centre().1,
             false,
         );
+        assert!(
+            v.group_drag().is_some(),
+            "grip {grip} must land on the tab body, not its close box"
+        );
         let mut x = rects[3].body.x + grip;
         while v.tabs().active() == 3 && x > strip.x - 400.0 {
             x -= 1.0;
@@ -2663,8 +2667,11 @@ fn the_swap_follows_the_tab_rather_than_the_pointer() {
         x - grip
     }
 
+    let (mut probe, _) = four_tabs();
+    let probe_rects = tab_rects(&mut probe);
+    let middle = ((probe_rects[3].close.x - probe_rects[3].body.x) * 0.5).max(16.0);
     let by_the_edge = swaps_at(4.0);
-    let by_the_middle = swaps_at(70.0);
+    let by_the_middle = swaps_at(middle);
     assert!(
         (by_the_edge - by_the_middle).abs() <= 1.0,
         "the tab swapped at {by_the_edge} gripped by its edge and {by_the_middle} \
@@ -9885,7 +9892,10 @@ fn alt_digits_show_the_views_and_the_icons_teach_them() {
     assert!(v.key(&mut w.ws, &Key::Character("1".into()), Some("1"), alt));
     assert_eq!(v.explore.navigator_mode(), NavigatorMode::Documents);
 
-    // The tooltips wait for the column's slide to end, as the caption's do.
+    // Open the sidebar to check the rail icons' tooltips (the collapsed rail
+    // is hidden). The tooltips wait for the column's slide to end, as the
+    // caption's do.
+    v.toggle_sidebar();
     v.sidebar.advance(Instant::now() + Duration::from_secs(5));
     v.relayout();
     for mode in NavigatorMode::visible() {
@@ -9930,18 +9940,24 @@ fn app_clicks_and_slot_shortcuts_preserve_the_explorer_docking_state() {
         view.sidebar.set_immediately(expanded);
         view.relayout();
         let content = view.content();
-        for mode in [
-            NavigatorMode::Files,
-            NavigatorMode::Tasks,
-            NavigatorMode::Chats,
-        ] {
-            let (x, y) = mode_icon(&view, mode).centre();
-            assert!(view.mouse_down(&mut workspace.ws, x, y, false));
-            view.mouse_up(&mut workspace.ws);
-            assert_eq!(view.explore.navigator_mode(), mode);
-            assert_eq!(view.sidebar.is_open(), expanded);
-            assert_eq!(view.content(), content);
-            assert_eq!(view.explore_preview, !expanded);
+        if expanded {
+            for mode in [
+                NavigatorMode::Files,
+                NavigatorMode::Tasks,
+                NavigatorMode::Chats,
+            ] {
+                let (x, y) = mode_icon(&view, mode).centre();
+                assert!(view.mouse_down(&mut workspace.ws, x, y, false));
+                view.mouse_up(&mut workspace.ws);
+                assert_eq!(view.explore.navigator_mode(), mode);
+                assert_eq!(view.sidebar.is_open(), expanded);
+                assert_eq!(view.content(), content);
+                assert_eq!(view.explore_preview, !expanded);
+            }
+        } else {
+            // While collapsed, the rail is hidden; slot shortcuts open the
+            // floating preview without docking the sidebar.
+            assert_eq!(view.rail_area().w, 0.0);
         }
         for slot in 0..3 {
             assert!(view.show_rail_slot(slot));
