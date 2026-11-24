@@ -1115,10 +1115,26 @@ async fn run(
     // by this device's clock; a Cloud Workspace waits for the time its Cloud
     // session vouches for, which the Cloud driver records here.
     let trash_times = Arc::new(trash_sweep::TrustedTimes::default());
+    let told = Arc::clone(&state);
     trash_sweep::install(
         &tokio::runtime::Handle::current(),
         store_client.clone(),
         Arc::clone(&trash_times),
+        // What the sweep removed reaches open windows through their rooms,
+        // as the reading coordinator's commits do, and replication now.
+        Arc::new(move |wrote| {
+            match wrote {
+                koru_replication::cloud::client_store::expiry::Wrote::Document {
+                    document,
+                    update,
+                } => told.broadcast_document(document, update),
+                koru_replication::cloud::client_store::expiry::Wrote::Listing {
+                    workspace,
+                    update,
+                } => told.broadcast_manifest(workspace, update),
+            }
+            told.notify_replication();
+        }),
     );
     let replication = if host_iroh {
         tracing::info!("store startup: replication (iroh)");

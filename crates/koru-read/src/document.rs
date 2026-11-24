@@ -325,6 +325,26 @@ impl ReadingDoc {
 
     // ------------------------------------------------------------ writing
 
+    /// Remove `hash`'s entry, because its parent no longer holds that blob
+    /// anywhere, its bin included (COLLECTOR.final rung 2). Returns whether
+    /// there was one.
+    ///
+    /// The key goes, so no reader, mirror or index finds the words again;
+    /// like any deleted text they stay in the document's history until the
+    /// parent itself is purged. The entry is a mergeable map, so a device
+    /// that reads the same bytes again later writes into the same container
+    /// and its reading is whole again — the bytes, and so the words, are the
+    /// same.
+    pub fn forget(&self, hash: &str) -> Result<bool> {
+        let root = self.root();
+        if root.get(hash).is_none() {
+            return Ok(false);
+        }
+        root.delete(hash)?;
+        self.doc.commit();
+        Ok(true)
+    }
+
     /// The entry map for `hash`, created mergeable if it is not there.
     fn ensure_entry(&self, hash: &str) -> Result<LoroMap> {
         if !is_blob_hash(hash) {

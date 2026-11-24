@@ -42,3 +42,6 @@ koru-recurrence = { path = "../koru-recurrence" }
 # The same suite writes the pill that references a run into a real page, so
 # trashing the page (D31) is trashing what a person would actually trash.
 koru-core = { path = "../koru-core" }
+# The 30-day sweep forgets the OCR text of pictures a page no longer holds;
+# its test writes a real reading document.
+koru-read = { path = "../koru-read" }

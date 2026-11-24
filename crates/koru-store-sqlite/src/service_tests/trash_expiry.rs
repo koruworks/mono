@@ -3,12 +3,16 @@
 //! The 30-day trash sweep (`koru_replication::cloud::client_store::expiry`)
 //! against real storage held in memory: a due document goes with its whole
 //! subtree and one purge event each, a younger one stays, bin rows go only
-//! when their own stamp is due, and only the trusted time decides.
+//! when their own stamp is due, only the trusted time decides, the OCR text of
+//! a picture goes once its page holds it nowhere, and every edit is handed to
+//! the host complete enough for an open view to catch up.
 
 use super::*;
 use koru_core::{Node, WorkspaceDoc, schema::Parent, trash_expiry::DAY_MS};
 use koru_replication::cloud::client_store::{expiry, removal};
 use koru_store_core::DocumentId;
+use koru_store_core::ids::reading_document_id;
+use koru_store_core::ports::UpdateOrigin;
 
 type MemoryStore = Store<SqliteCatalog, SqliteBackend>;
 
@@ -48,14 +52,39 @@ fn present(store: &mut MemoryStore, workspace: WorkspaceId, document: DocumentId
 }
 
 fn sweep(store: &mut MemoryStore, workspace: WorkspaceId, trusted_now: i64) -> expiry::Swept {
-    expiry::sweep(
+    told(store, workspace, trusted_now).0
+}
+
+/// The sweep, and every edit it handed its host.
+fn told(
+    store: &mut MemoryStore,
+    workspace: WorkspaceId,
+    trusted_now: i64,
+) -> (expiry::Swept, Vec<expiry::Wrote>) {
+    let mut wrote = Vec::new();
+    let swept = expiry::sweep(
         store,
         workspace,
         trusted_now,
         0x5eed,
         Timestamp::from_millis(trusted_now),
+        |edit| wrote.push(edit),
     )
-    .unwrap()
+    .unwrap();
+    (swept, wrote)
+}
+
+/// A view that has `document` open: told only what the host passes on, it
+/// ends where the Store is.
+fn catches_up(
+    store: &mut MemoryStore,
+    workspace: WorkspaceId,
+    view: &loro::LoroDoc,
+    document: DocumentId,
+    update: &[u8],
+) {
+    view.import(update).unwrap();
+    assert_eq!(view.oplog_vv(), store.version(workspace, document).unwrap());
 }
 
 #[test]
@@ -73,11 +102,20 @@ fn a_document_due_goes_with_its_subtree_and_a_younger_one_stays() {
     assert_eq!(sweep(&mut store, workspace, T + 30 * DAY_MS).documents, 0);
     assert!(present(&mut store, workspace, old));
 
-    let swept = sweep(&mut store, workspace, T + 31 * DAY_MS);
+    let manifest = store.manifest_id(workspace).unwrap();
+    let listing = loro::LoroDoc::new();
+    listing
+        .import(&store.snapshot(workspace, manifest).unwrap())
+        .unwrap();
+    let (swept, wrote) = told(&mut store, workspace, T + 31 * DAY_MS);
     assert_eq!(
         swept.documents, 3,
         "the due document and both levels under it"
     );
+    let [expiry::Wrote::Listing { update, .. }] = &wrote[..] else {
+        panic!("the first purge creates the system document; only the listing is told: {wrote:?}");
+    };
+    catches_up(&mut store, workspace, &listing, manifest, update);
     for gone in [old, child, grandchild] {
         assert!(!present(&mut store, workspace, gone));
         assert_eq!(store.locate(gone).unwrap(), None);
@@ -103,8 +141,21 @@ fn a_document_due_goes_with_its_subtree_and_a_younger_one_stays() {
         expiry::Swept::default(),
         "a second sweep has nothing left to do"
     );
-    assert_eq!(sweep(&mut store, workspace, T + 33 * DAY_MS).documents, 1);
+    // Now the system document exists, and a window that has it open is told
+    // of the new purge event too.
+    let system = system.document;
+    let events = store.fork_document(workspace, system).unwrap();
+    let (swept, wrote) = told(&mut store, workspace, T + 33 * DAY_MS);
+    assert_eq!(swept.documents, 1);
     assert!(!present(&mut store, workspace, young));
+    let update = wrote
+        .iter()
+        .find_map(|edit| match edit {
+            expiry::Wrote::Document { document, update } if *document == system => Some(update),
+            _ => None,
+        })
+        .expect("the system document's purge event is told");
+    catches_up(&mut store, workspace, &events, system, update);
 }
 
 #[test]
@@ -153,9 +204,15 @@ fn bin_rows_go_when_their_own_stamp_is_due_and_nothing_else_is_rewritten() {
         .unwrap();
     let untouched = page(&mut store, workspace, None);
     let before = store.version(workspace, untouched).unwrap();
+    let open = store.fork_document(workspace, binned).unwrap();
 
-    let swept = sweep(&mut store, workspace, T + 31 * DAY_MS);
+    let (swept, wrote) = told(&mut store, workspace, T + 31 * DAY_MS);
     assert_eq!((swept.rows, swept.rewritten), (1, 1));
+    let [expiry::Wrote::Document { document, update }] = &wrote[..] else {
+        panic!("one rewritten bin, one edit told: {wrote:?}");
+    };
+    assert_eq!(*document, binned);
+    catches_up(&mut store, workspace, &open, binned, update);
 
     let after = WorkspaceDoc::adopt(store.fork_document(workspace, binned).unwrap()).unwrap();
     let left: Vec<_> = after
@@ -172,4 +229,85 @@ fn bin_rows_go_when_their_own_stamp_is_due_and_nothing_else_is_rewritten() {
         before,
         "a document with nothing due is not rewritten"
     );
+}
+
+const SHOWN: &str = "b3:1111111111111111111111111111111111111111111111111111111111111111";
+const DELETED: &str = "b3:2222222222222222222222222222222222222222222222222222222222222222";
+const BINNED: &str = "b3:3333333333333333333333333333333333333333333333333333333333333333";
+
+fn picture(hash: &str) -> Node {
+    Node::image(
+        koru_core::node::BlobHash(hash.into()),
+        "image/png",
+        None,
+        None,
+    )
+    .unwrap()
+}
+
+fn readings(store: &mut MemoryStore, workspace: WorkspaceId, page: DocumentId) -> Vec<String> {
+    let document = reading_document_id(page);
+    koru_read::ReadingDoc::from_doc(store.fork_document(workspace, document).unwrap()).hashes()
+}
+
+/// A picture deleted outright loses its OCR text on the next sweep; one in the
+/// page's bin keeps it until the bin row itself goes, in the same pass; a
+/// picture still shown keeps it throughout.
+#[test]
+fn the_words_of_a_picture_go_once_its_page_holds_it_nowhere() {
+    let (mut store, workspace) = workspace();
+    let mut doc = WorkspaceDoc::create(koru_core::WorkspaceId::new(), "pictures").unwrap();
+    doc.insert(Parent::Root, picture(SHOWN)).unwrap();
+    let deleted = doc.insert(Parent::Root, picture(DELETED)).unwrap();
+    let binned = doc.insert(Parent::Root, picture(BINNED)).unwrap();
+    doc.delete(deleted).unwrap();
+    doc.trash(binned, T, None).unwrap();
+    let (page, _) = store
+        .import_document(
+            workspace,
+            "pictures",
+            "page",
+            None,
+            doc.export_snapshot().unwrap(),
+            at(),
+        )
+        .unwrap();
+    let reading = store.ensure_reading(workspace, page, at()).unwrap().id;
+    let words = koru_read::ReadingDoc::new();
+    for hash in [SHOWN, DELETED, BINNED] {
+        words
+            .begin(hash, &koru_read::ReaderId::text(), koru_read::GENERATION)
+            .unwrap();
+    }
+    store
+        .apply_update(
+            workspace,
+            reading,
+            words.export_snapshot().unwrap(),
+            at(),
+            UpdateOrigin::Store,
+        )
+        .unwrap();
+    store.flush(workspace, reading, at()).unwrap();
+    let open = store.fork_document(workspace, reading).unwrap();
+
+    // Not a matter of age: the deleted picture's words go on the first pass.
+    let (swept, wrote) = told(&mut store, workspace, T + DAY_MS);
+    assert_eq!((swept.rows, swept.readings), (0, 1));
+    assert_eq!(readings(&mut store, workspace, page), [SHOWN, BINNED]);
+    let [expiry::Wrote::Document { document, update }] = &wrote[..] else {
+        panic!("one reading document rewritten: {wrote:?}");
+    };
+    assert_eq!(*document, reading);
+    catches_up(&mut store, workspace, &open, reading, update);
+
+    assert_eq!(
+        sweep(&mut store, workspace, T + 2 * DAY_MS),
+        expiry::Swept::default()
+    );
+
+    // The binned picture's row goes at 31 days, and its words with it.
+    let swept = sweep(&mut store, workspace, T + 31 * DAY_MS);
+    assert_eq!((swept.rows, swept.readings), (1, 1));
+    assert_eq!(readings(&mut store, workspace, page), [SHOWN]);
 }

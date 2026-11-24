@@ -2,6 +2,8 @@
 //! **Both trashes empty themselves after 30 days**
 //! (docs/cloud-platform/koru-free/COLLECTOR.final.md, rung 2): trashed
 //! documents in the Workspace listing, and rows in each document's own bin.
+//! With them goes the OCR text of pictures a page no longer holds anywhere,
+//! its bin included ([`forget_readings`]).
 //! The rule — 30 days promised, 31 waited, and whose clock decides — is
 //! [`koru_core::trash_expiry`]; this applies it to one Workspace's Store state.
 //!
@@ -9,8 +11,17 @@
 //! Store process, Android's embedded Store) at start and daily. Every removal
 //! is an ordinary durable edit, so other devices converge on it and the
 //! publication that carries it is what proves a file unused in the Cloud.
+//!
+//! **Every step hands back what it wrote** ([`Wrote`]). The Store applies a
+//! Store-origin update without telling anyone, so the host passes each one on:
+//! to the views that have that document or the Workspace listing open, and to
+//! the replication that carries it to peers and the Cloud. Without that, an
+//! open window keeps showing what the sweep removed until it reopens.
 use super::*;
+use koru_core::schema::file_references::{ReferenceBudget, inspect_file_references};
 use koru_core::{WorkspaceDoc, trash_expiry::expired};
+use koru_store_core::ids::reading_document_id;
+use std::collections::HashSet;
 
 /// What one sweep removed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -21,6 +32,24 @@ pub struct Swept {
     pub rows: usize,
     /// Documents rewritten to delete those rows.
     pub rewritten: usize,
+    /// OCR readings of pictures their page no longer holds.
+    pub readings: usize,
+}
+
+/// One edit a step made through the Store, for its host to pass on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Wrote {
+    /// `update` was applied to `document`: a bin, a reading document, or the
+    /// system document that records a purge.
+    Document {
+        document: DocumentId,
+        update: Vec<u8>,
+    },
+    /// `update` was applied to `workspace`'s listing: a purge released rows.
+    Listing {
+        workspace: WorkspaceId,
+        update: Vec<u8>,
+    },
 }
 
 /// Sweep one Workspace by `trusted_now_ms`: the Cloud-vouched time for a Cloud
@@ -30,23 +59,33 @@ pub struct Swept {
 ///
 /// All of it in one call, for a caller that may hold the Store that long.
 /// A Store owner that also serves people runs the steps one at a time instead
-/// ([`due_documents`], [`purge_subtree`], [`bin_candidates`], [`sweep_bin`]),
-/// so a save never waits behind a whole Workspace.
+/// ([`due_documents`], [`purge_subtree`], [`bin_candidates`], [`sweep_bin`],
+/// [`reading_candidates`], [`forget_readings`]), so a save never waits behind
+/// a whole Workspace. `tell` receives every edit, in the order made.
 pub fn sweep<C: Catalog, B: Backend>(
     store: &mut Store<C, B>,
     workspace: WorkspaceId,
     trusted_now_ms: i64,
     peer: u64,
     at: Timestamp,
+    mut tell: impl FnMut(Wrote),
 ) -> Result<Swept, Failure> {
     let mut swept = Swept::default();
     for root in due_documents(store, workspace, trusted_now_ms)? {
-        swept.documents += purge_subtree(store, workspace, root, at)?;
+        let (documents, wrote) = purge_subtree(store, workspace, root, at)?;
+        swept.documents += documents;
+        wrote.into_iter().for_each(&mut tell);
     }
     for document in bin_candidates(store, workspace)? {
-        let rows = sweep_bin(store, workspace, document, trusted_now_ms, peer, at)?;
+        let (rows, wrote) = sweep_bin(store, workspace, document, trusted_now_ms, peer, at)?;
         swept.rows += rows;
         swept.rewritten += usize::from(rows > 0);
+        wrote.into_iter().for_each(&mut tell);
+    }
+    for page in reading_candidates(store, workspace)? {
+        let (readings, wrote) = forget_readings(store, workspace, page, peer, at)?;
+        swept.readings += readings;
+        wrote.into_iter().for_each(&mut tell);
     }
     Ok(swept)
 }
@@ -73,22 +112,57 @@ pub fn due_documents<C: Catalog, B: Backend>(
 /// Purge `root` with its whole subtree — notes, OCR readings, and children
 /// trashed with it by inheritance — deepest first, because releasing a parent
 /// detaches its children rather than losing them. Returns how many documents
-/// went; 0 when `root` is already gone (it went with a due ancestor).
+/// went (0 when `root` is already gone: it went with a due ancestor), and what
+/// the purges wrote to the system documents and the listing.
 pub fn purge_subtree<C: Catalog, B: Backend>(
     store: &mut Store<C, B>,
     workspace: WorkspaceId,
     root: DocumentId,
     at: Timestamp,
-) -> Result<usize, Failure> {
+) -> Result<(usize, Vec<Wrote>), Failure> {
     let entries = store.documents(workspace)?;
     if !entries.iter().any(|entry| entry.id == root) {
-        return Ok(0);
+        return Ok((0, Vec::new()));
     }
+    let manifest = store.manifest_id(workspace)?;
+    let listing = store.version(workspace, manifest)?;
+    // The system documents a window may have open. One the first purge
+    // creates is announced by its row in the listing instead.
+    let systems: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.kind == koru_core::explore::KIND_SYSTEM)
+        .filter_map(|entry| Some((entry.id, store.version(workspace, entry.id).ok()?)))
+        .collect();
     let order = deepest_first(&entries, root);
     for document in &order {
         removal::purge(store, workspace, *document, root, at)?;
     }
-    Ok(order.len())
+    let mut wrote = Vec::new();
+    for (system, before) in systems {
+        if let Some(update) = written_since(store, workspace, system, &before)? {
+            wrote.push(Wrote::Document {
+                document: system,
+                update,
+            });
+        }
+    }
+    if let Some(update) = written_since(store, workspace, manifest, &listing)? {
+        wrote.push(Wrote::Listing { workspace, update });
+    }
+    Ok((order.len(), wrote))
+}
+
+/// What `document` holds beyond `before`, or `None` when nothing was written.
+fn written_since<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    workspace: WorkspaceId,
+    document: DocumentId,
+    before: &loro::VersionVector,
+) -> Result<Option<Vec<u8>>, Failure> {
+    if store.version(workspace, document)? == *before {
+        return Ok(None);
+    }
+    Ok(Some(store.updates_since(workspace, document, before)?))
 }
 
 /// `root` and everything under it in the listing, children before parents.
@@ -133,10 +207,10 @@ pub fn bin_candidates<C: Catalog, B: Backend>(
         .collect())
 }
 
-/// Delete `document`'s bin rows whose stamp is due; returns how many. The
-/// document is read only to look, and rewritten only when it has such rows. A
-/// row with no stamp — binned by a build that did not record when — stays:
-/// its age cannot be known.
+/// Delete `document`'s bin rows whose stamp is due; returns how many, and the
+/// update that deleted them. The document is read only to look, and rewritten
+/// only when it has such rows. A row with no stamp — binned by a build that
+/// did not record when — stays: its age cannot be known.
 pub fn sweep_bin<C: Catalog, B: Backend>(
     store: &mut Store<C, B>,
     workspace: WorkspaceId,
@@ -144,20 +218,20 @@ pub fn sweep_bin<C: Catalog, B: Backend>(
     trusted_now_ms: i64,
     peer: u64,
     at: Timestamp,
-) -> Result<usize, Failure> {
+) -> Result<(usize, Option<Wrote>), Failure> {
     let fork = match store.fork_document(workspace, document) {
         Ok(fork) => fork,
         // Listed before its body arrived, or purged since it was listed.
-        Err(error) if error.code() == Code::DocumentNotFound => return Ok(0),
+        Err(error) if error.code() == Code::DocumentNotFound => return Ok((0, None)),
         Err(error) => return Err(error.into()),
     };
     let Ok(mut model) = WorkspaceDoc::adopt(fork) else {
         // Not a node document (a file's bytes, a newer schema): not ours to
         // rewrite.
-        return Ok(0);
+        return Ok((0, None));
     };
     let Ok(binned) = model.trashed() else {
-        return Ok(0);
+        return Ok((0, None));
     };
     let due: Vec<_> = binned
         .into_iter()
@@ -168,7 +242,7 @@ pub fn sweep_bin<C: Catalog, B: Backend>(
         .map(|row| row.node)
         .collect();
     if due.is_empty() {
-        return Ok(0);
+        return Ok((0, None));
     }
     model.doc().set_peer_id(peer).map_err(|_| Error::Invalid)?;
     let before = model.version();
@@ -180,13 +254,99 @@ pub fn sweep_bin<C: Catalog, B: Backend>(
     let update = model
         .export_updates_since(&before)
         .map_err(|_| Error::Invalid)?;
+    apply(store, workspace, document, &update, at)?;
+    Ok((due.len(), Some(Wrote::Document { document, update })))
+}
+
+/// The pages whose reading document is listed: the only ones that can hold
+/// the OCR text of a picture they no longer have.
+pub fn reading_candidates<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    workspace: WorkspaceId,
+) -> Result<Vec<DocumentId>, Failure> {
+    let entries = store.documents(workspace)?;
+    let listed: HashSet<_> = entries.iter().map(|entry| entry.id).collect();
+    Ok(entries
+        .iter()
+        .filter(|entry| entry.kind == koru_core::explore::KIND_DOCUMENT)
+        .filter(|entry| listed.contains(&reading_document_id(entry.id)))
+        .map(|entry| entry.id)
+        .collect())
+}
+
+/// Remove from `page`'s reading document the OCR text of every picture the
+/// page no longer holds anywhere, its bin included (COLLECTOR.final rung 2),
+/// so the words of a deleted picture are not kept. Returns how many readings
+/// went, and the update that removed them. Not tied to the 30 days: a picture
+/// deleted outright has no bin row to wait for.
+///
+/// What the page holds is the strict walk the storage count trusts
+/// ([`inspect_file_references`]): every raw image slot, bin and retained
+/// slots included. A page it cannot prove — a newer schema, a damaged shape,
+/// over its budget — keeps every reading, because "not found" there means
+/// "not known", not "gone". A picture restored or pasted again afterwards is
+/// read again or, for the same bytes, finds its words where they were
+/// ([`koru_read::ReadingDoc::forget`]).
+pub fn forget_readings<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    workspace: WorkspaceId,
+    page: DocumentId,
+    peer: u64,
+    at: Timestamp,
+) -> Result<(usize, Option<Wrote>), Failure> {
+    let body = match store.fork_document(workspace, page) {
+        Ok(body) => body,
+        Err(error) if error.code() == Code::DocumentNotFound => return Ok((0, None)),
+        Err(error) => return Err(error.into()),
+    };
+    let Ok(held) = inspect_file_references(&body, ReferenceBudget::default()) else {
+        return Ok((0, None));
+    };
+    let held: HashSet<&str> = held.blobs().iter().map(String::as_str).collect();
+    let document = reading_document_id(page);
+    let readings = match store.fork_document(workspace, document) {
+        Ok(readings) => koru_read::ReadingDoc::from_doc(readings),
+        Err(error) if error.code() == Code::DocumentNotFound => return Ok((0, None)),
+        Err(error) => return Err(error.into()),
+    };
+    let stale: Vec<String> = readings
+        .hashes()
+        .into_iter()
+        .filter(|hash| !held.contains(hash.as_str()))
+        .collect();
+    if stale.is_empty() {
+        return Ok((0, None));
+    }
+    readings
+        .doc()
+        .set_peer_id(peer)
+        .map_err(|_| Error::Invalid)?;
+    let before = readings.version();
+    for hash in &stale {
+        readings.forget(hash).map_err(|_| Error::Invalid)?;
+    }
+    let update = readings
+        .export_updates_since(&before)
+        .map_err(|_| Error::Invalid)?;
+    apply(store, workspace, document, &update, at)?;
+    Ok((stale.len(), Some(Wrote::Document { document, update })))
+}
+
+/// One Store-origin edit, flushed like any commit.
+fn apply<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    workspace: WorkspaceId,
+    document: DocumentId,
+    update: &[u8],
+    at: Timestamp,
+) -> Result<(), Failure> {
     store.apply_update(
         workspace,
         document,
-        update,
+        update.to_vec(),
         at,
         koru_store_core::ports::UpdateOrigin::Store,
     )?;
     store.flush(workspace, document, at)?;
-    Ok(due.len())
+    Ok(())
 }

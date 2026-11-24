@@ -17,7 +17,10 @@
 //! same Store worker, so the two platforms sweep identically.
 //!
 //! Every step is its own Store call — the due documents, one subtree purge,
-//! one document's bin — so a save never waits behind a whole Workspace.
+//! one document's bin, one page's readings — so a save never waits behind a
+//! whole Workspace. What each step wrote goes to the host's [`Tell`] once the
+//! Store is free again: the desktop tells the rooms of open windows and wakes
+//! replication; Android's views re-read by revision, so it wakes its sync.
 
 use super::StoreWorkerClient;
 use koru_replication::cloud::client_store::expiry;
@@ -33,6 +36,10 @@ const FIRST_LOOK_AFTER: Duration = Duration::from_secs(120);
 const LOOK_EVERY: Duration = Duration::from_secs(60 * 60);
 /// How often one Workspace is swept.
 const SWEEP_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Where the sweep's edits go after each step: whatever this host does so an
+/// open view and the replicas hear of a Store-origin edit.
+pub type Tell = Arc<dyn Fn(expiry::Wrote) + Send + Sync>;
 
 /// The Cloud-vouched time per Workspace: the newest credential issue time a
 /// session in this process was admitted with. Memory only; a restart waits
@@ -73,6 +80,7 @@ pub fn install(
     runtime: &tokio::runtime::Handle,
     store: StoreWorkerClient,
     trusted: Arc<TrustedTimes>,
+    tell: Tell,
 ) {
     runtime.spawn(async move {
         // The peer this process edits bins with: one per process, as
@@ -81,7 +89,7 @@ pub fn install(
         let mut swept: HashMap<WorkspaceId, Instant> = HashMap::new();
         tokio::time::sleep(FIRST_LOOK_AFTER).await;
         loop {
-            pass(&store, &trusted, peer, &mut swept).await;
+            pass(&store, &trusted, &tell, peer, &mut swept).await;
             tokio::time::sleep(LOOK_EVERY).await;
         }
     });
@@ -90,6 +98,7 @@ pub fn install(
 async fn pass(
     store: &StoreWorkerClient,
     trusted: &TrustedTimes,
+    tell: &Tell,
     peer: u64,
     swept: &mut HashMap<WorkspaceId, Instant>,
 ) {
@@ -126,11 +135,11 @@ async fn pass(
         let Some(now) = clock(mode, trusted.get(workspace), Timestamp::now().millis()) else {
             continue;
         };
-        match sweep(store, workspace, now, peer).await {
+        match sweep(store, tell, workspace, now, peer).await {
             Ok(result) => {
                 swept.insert(workspace, Instant::now());
                 if result != expiry::Swept::default() {
-                    tracing::info!(target: "store.trash_expiry", workspace = %workspace, mode = mode.as_storage(), documents = result.documents, rows = result.rows, rewritten = result.rewritten, "trash sweep removed what was due");
+                    tracing::info!(target: "store.trash_expiry", workspace = %workspace, mode = mode.as_storage(), documents = result.documents, rows = result.rows, rewritten = result.rewritten, readings = result.readings, "trash sweep removed what was due");
                 }
             }
             Err(code) => {
@@ -143,6 +152,7 @@ async fn pass(
 /// One Workspace, a step per Store call.
 async fn sweep(
     store: &StoreWorkerClient,
+    tell: &Tell,
     workspace: WorkspaceId,
     now: i64,
     peer: u64,
@@ -164,19 +174,31 @@ async fn sweep(
     let mut result = expiry::Swept::default();
     let due = step(store, move |s| expiry::due_documents(s, workspace, now)).await?;
     for root in due {
-        result.documents += step(store, move |s| {
+        let (documents, wrote) = step(store, move |s| {
             expiry::purge_subtree(s, workspace, root, Timestamp::now())
         })
         .await?;
+        result.documents += documents;
+        wrote.into_iter().for_each(|wrote| tell(wrote));
     }
     let candidates = step(store, move |s| expiry::bin_candidates(s, workspace)).await?;
     for document in candidates {
-        let rows = step(store, move |s| {
+        let (rows, wrote) = step(store, move |s| {
             expiry::sweep_bin(s, workspace, document, now, peer, Timestamp::now())
         })
         .await?;
         result.rows += rows;
         result.rewritten += usize::from(rows > 0);
+        wrote.into_iter().for_each(|wrote| tell(wrote));
+    }
+    let pages = step(store, move |s| expiry::reading_candidates(s, workspace)).await?;
+    for page in pages {
+        let (readings, wrote) = step(store, move |s| {
+            expiry::forget_readings(s, workspace, page, peer, Timestamp::now())
+        })
+        .await?;
+        result.readings += readings;
+        wrote.into_iter().for_each(|wrote| tell(wrote));
     }
     Ok(result)
 }

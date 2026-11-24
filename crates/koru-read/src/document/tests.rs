@@ -620,3 +620,29 @@ fn a_blob_key_is_exactly_what_the_store_mints() {
     ));
     assert!(doc.hashes().is_empty(), "a refused key was written");
 }
+
+/// A forgotten entry is gone on every replica, its neighbour stays, and the
+/// same bytes read again later are whole again.
+#[test]
+fn a_forgotten_reading_is_gone_everywhere_and_a_later_reading_is_whole() {
+    let a = device(1);
+    read(&a, GENERATION, &[1], "kept", Some(read_outcome()));
+    a.write(H2, &a.reading(H).unwrap()).unwrap();
+    let b = device(2);
+    sync(&a, &b);
+
+    assert!(a.forget(H).unwrap());
+    assert!(!a.forget(H).unwrap(), "a second forget finds nothing");
+    sync(&a, &b);
+    for doc in [&a, &b] {
+        assert_eq!(doc.hashes(), vec![H2.to_owned()]);
+        assert!(doc.reading(H).is_none());
+    }
+
+    read(&b, GENERATION, &[1], "again", Some(read_outcome()));
+    sync(&a, &b);
+    assert_eq!(
+        a.reading(H).unwrap().pages[&1].as_str(),
+        format!("g{GENERATION} p1 again")
+    );
+}

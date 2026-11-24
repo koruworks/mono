@@ -817,11 +817,19 @@ impl MobileHost {
         host.refresh_authorization();
         host.start_maintenance();
         // The 30-day trash sweep, the desktop Store's own module over this
-        // host's Store worker.
+        // host's Store worker. Open notes re-read by Store revision, so what
+        // the sweep removed only has to wake this phone's sync.
+        let told = Arc::downgrade(&host);
         koru_store_server::trash_sweep::install(
             &host.tokio(),
             host.store.clone(),
             Arc::clone(&host.trash_times),
+            Arc::new(move |_| {
+                if let Some(host) = told.upgrade() {
+                    host.network.notify_local_change();
+                    host.wake_cloud();
+                }
+            }),
         );
         Ok(host)
     }
