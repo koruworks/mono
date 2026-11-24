@@ -58,10 +58,12 @@ impl TrustedTimes {
 
 /// The clock one Workspace sweeps by, or `None` when it must not sweep now.
 fn clock(mode: TransportMode, trusted: Option<i64>, device_now_ms: i64) -> Option<i64> {
+    if !mode.empties_trash() {
+        return None;
+    }
     match mode {
-        TransportMode::LocalOnly => Some(device_now_ms),
         TransportMode::Cloud => trusted,
-        TransportMode::P2p => None,
+        _ => Some(device_now_ms),
     }
 }
 

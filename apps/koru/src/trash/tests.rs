@@ -355,3 +355,18 @@ fn a_mid_title_emoji_stays_in_the_name() {
     assert_eq!(v.entries[0].icon, None);
     assert_eq!(v.entries[0].name, "Ship it \u{1F680}");
 }
+
+/// A peer-to-peer workspace's trash is emptied only by hand, so its rows say
+/// when they were deleted and nothing about when they go; a workspace whose
+/// trash empties by itself says both.
+#[test]
+fn only_a_trash_that_empties_by_itself_says_when_it_removes() {
+    let mut v = view(1);
+    let day = koru_core::trash_expiry::DAY_MS;
+    v.now_ms = 1_700_000_000_000 + 3 * day;
+    let stamp = Some(1_700_000_000_000);
+    assert_eq!(v.when(stamp), "Deleted 3 days ago");
+    assert!(v.set_empties(true));
+    assert!(!v.set_empties(true), "an unchanged push costs no frame");
+    assert_eq!(v.when(stamp), "Deleted 3 days ago · Removed in 27 days");
+}

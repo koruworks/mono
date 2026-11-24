@@ -1102,6 +1102,10 @@ pub struct MainView {
     /// The workspace's trashed documents, pushed by the shell. Kept so a Trash
     /// tab opened later can be handed the list it needs.
     trashed_documents: Option<Vec<koru_core::explore::ExploreEntry>>,
+    /// Whether this workspace's trash empties by itself, pushed by the shell
+    /// beside the list, for the same reason: a Trash tab opened later says
+    /// "Removed in N days" only where it is true.
+    trash_empties: bool,
     /// Whether the offline chip's popover is open.
     ///
     /// The chip says *that* something is wrong; the popover says what, and how
@@ -2137,6 +2141,7 @@ impl MainView {
             file_menu_opened: None,
             store_trouble: None,
             trashed_documents: None,
+            trash_empties: false,
             offline_open: false,
             save_status: accessibility::persistence::Persistence::default(),
             reminder_news: accessibility::reminders::ReminderNews::default(),
@@ -7320,8 +7325,10 @@ impl MainView {
             }
         }
         let documents = self.trashed_documents.clone();
+        let empties = self.trash_empties;
         if let TabView::Trash(t) = &mut self.tabs_mut().active_mut().view {
             t.set_actor(actor);
+            t.set_empties(empties);
             // A tab opened now missed the last push, and nothing pushes again
             // until the manifest changes — so it would sit reading "The Trash is
             // empty" over a bin with things in it.
@@ -14731,6 +14738,18 @@ impl View for MainView {
             acted = true;
         }
         acted
+    }
+
+    fn set_trash_empties(&mut self, empties: bool) -> bool {
+        if self.trash_empties == empties {
+            return false;
+        }
+        self.trash_empties = empties;
+        // Every group, as for the list itself.
+        self.each_tab_mut(|tab| match &mut tab.view {
+            TabView::Trash(t) => t.set_empties(empties),
+            _ => false,
+        })
     }
 
     fn set_remote_files(&mut self, remote: Vec<koru_core::DocumentId>) -> bool {

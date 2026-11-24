@@ -1206,6 +1206,13 @@ impl View for ManagerView {
         }
     }
 
+    fn set_trash_empties(&mut self, empties: bool) -> bool {
+        match self {
+            Self::Container(c) => c.set_trash_empties(empties),
+            Self::Document(_) => false,
+        }
+    }
+
     fn set_entries(
         &mut self,
         entries: Vec<koru_core::explore::ExploreEntry>,

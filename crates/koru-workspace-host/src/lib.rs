@@ -1192,6 +1192,14 @@ pub trait View {
         false
     }
 
+    /// Whether the open Workspace's trash empties by itself after 30 days
+    /// (`koru_store_core::TransportMode::empties_trash`), so the Trash view
+    /// may say when each item goes. `false` for a peer-to-peer Workspace,
+    /// whose trash is emptied only by hand, and until the Store has said.
+    fn set_trash_empties(&mut self, _empties: bool) -> bool {
+        false
+    }
+
     /// Which of this workspace's files are listed here but held on another
     /// device.
     ///

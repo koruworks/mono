@@ -6355,9 +6355,29 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             client = Some(client_at(profile_refresh_root.as_deref())?);
                         }
                         let client = client.as_ref().expect("just connected");
+                        let profiles = koru_workspace::fromstore::profiles_with_client(client)?;
+                        let trash_empties = profiles
+                            .iter()
+                            .filter_map(|profile| {
+                                client
+                                    .profile_transport_mode(
+                                        koru_store_core::ids::ProfileId::from_uuid(
+                                            profile.id.as_uuid(),
+                                        ),
+                                    )
+                                    .ok()
+                            })
+                            .flat_map(|settings| settings.workspaces)
+                            .filter(|row| {
+                                koru_store_core::TransportMode::parse(&row.mode)
+                                    .is_ok_and(koru_store_core::TransportMode::empties_trash)
+                            })
+                            .filter_map(|row| koru_core::WorkspaceId::parse(&row.id))
+                            .collect();
                         Ok(StoreCatalogRefresh {
-                            profiles: koru_workspace::fromstore::profiles_with_client(client)?,
+                            profiles,
                             workspaces: client.workspaces_including_deleted()?,
+                            trash_empties,
                         })
                     })()
                     .map_err(|error: koru_store_core::Error| error.to_string());
@@ -8972,6 +8992,10 @@ Nothing was written. The store starts on demand, so this usually means it could 
             if pane.view.set_retained_profiles(retained_profiles.clone())
                 | pane.view.set_hidden_profile_count(hidden_profiles)
             {
+                changed = true;
+                pane.window.request_redraw();
+            }
+            if pane.view.set_trash_empties(self.runtime.trash_empties()) {
                 changed = true;
                 pane.window.request_redraw();
             }

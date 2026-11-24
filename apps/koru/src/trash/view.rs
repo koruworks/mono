@@ -153,6 +153,10 @@ pub struct TrashView {
     /// list, so they arrive here by their own road, named by the two words
     /// a person recognises rather than by the manifest's `run-9f2c11ab`.
     runs: Vec<koru_runs_ui::TrashedRunRow>,
+    /// Whether this workspace's trash empties by itself after 30 days, so a
+    /// row may say when it goes. Off for a peer-to-peer workspace, which is
+    /// emptied only by hand, and until the shell has said.
+    pub(super) empties: bool,
 }
 
 impl Default for TrashView {
@@ -179,6 +183,7 @@ impl TrashView {
             pending: None,
             documents: None,
             runs: Vec::new(),
+            empties: false,
         }
     }
 
@@ -210,6 +215,24 @@ impl TrashView {
         self.runs = runs;
         self.stale = true;
         true
+    }
+
+    /// Whether the trash empties by itself. Returns whether that changed, so
+    /// an unchanged push costs no frame.
+    pub fn set_empties(&mut self, empties: bool) -> bool {
+        let changed = self.empties != empties;
+        self.empties = empties;
+        changed
+    }
+
+    /// A row's "when" cell: how long it has been here and, where the trash
+    /// empties by itself, when it goes.
+    pub(super) fn when(&self, trashed_at_ms: Option<i64>) -> String {
+        if self.empties {
+            crate::format::trash_when(trashed_at_ms, self.now_ms)
+        } else {
+            crate::format::deleted_ago(trashed_at_ms, self.now_ms)
+        }
     }
 
     pub fn catch_up(&mut self, ws: &WorkspaceDoc) -> bool {

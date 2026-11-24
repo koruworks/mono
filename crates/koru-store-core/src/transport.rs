@@ -89,6 +89,16 @@ impl TransportMode {
     pub fn allows_cloud(self) -> bool {
         self == Self::Cloud
     }
+
+    /// Whether a Workspace in this mode empties its trash by itself after
+    /// 30 days (`koru_core::trash_expiry`). Local-only uses the device's
+    /// clock and Cloud the Cloud's; a peer-to-peer Workspace has no clock its
+    /// peers agreed on, so its trash is emptied only by hand (CTO,
+    /// 2026-11-24). The sweep and the Trash view's "Removed in N days" both
+    /// ask this, so the notice never promises what the sweep will not do.
+    pub fn empties_trash(self) -> bool {
+        self != Self::P2p
+    }
 }
 
 /// What a mode row is about. A Profile row names itself; a Workspace row names

@@ -10,7 +10,7 @@ use super::view::{
     CONTROL_GAP, DOTS_W, Hit, LANE_W, PAD, RESTORE_W, SUBTITLE_TEXT, TITLE_GAP, TITLE_TEXT,
     TrashView,
 };
-use crate::format::{nested_suffix, trash_when};
+use crate::format::nested_suffix;
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{icons, scene, theme};
@@ -102,7 +102,6 @@ impl TrashView {
         let t = self.table();
         let bands = self.bands();
         let cols = self.columns();
-        let now = self.now_ms;
 
         for i in t.visible(&bands) {
             let Some(entry) = self.entries.get(i).cloned() else {
@@ -198,7 +197,7 @@ impl TrashView {
 
             for (c, text) in [
                 (1, entry.origin.clone()),
-                (2, trash_when(entry.trashed_at_ms, now)),
+                (2, self.when(entry.trashed_at_ms)),
                 (3, entry.deleted_by.clone()),
             ] {
                 t.paint_cell(

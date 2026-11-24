@@ -57,6 +57,13 @@ impl ProfilePersistence {
 pub(crate) struct StoreCatalogRefresh {
     pub(crate) profiles: Vec<ProfileSummary>,
     pub(crate) workspaces: Vec<koru_store_core::model::Workspace>,
+    /// The Workspaces whose trash empties by itself after 30 days
+    /// ([`koru_store_core::TransportMode::empties_trash`]), from each listed
+    /// Profile's sync settings. Read with the catalog so the Trash view's
+    /// "Removed in N days" follows a mode change within one poll; a Profile
+    /// whose settings would not read contributes nothing, and the notice is
+    /// then left off rather than promised.
+    pub(crate) trash_empties: std::collections::HashSet<WorkspaceId>,
 }
 
 /// Blob bytes for document export, fetched from the Store on the worker thread.
@@ -122,6 +129,8 @@ pub(crate) struct ProfileRuntime {
     pub(crate) profile: koru_core::profile::ProfileDoc,
     pub(crate) profile_catalog: Vec<ProfileSummary>,
     pub(crate) catalog_workspaces: Vec<koru_store_core::model::Workspace>,
+    /// See [`StoreCatalogRefresh::trash_empties`].
+    pub(crate) catalog_trash_empties: std::collections::HashSet<WorkspaceId>,
     pub(crate) profile_session: ProfilePersistence,
     pub(crate) profile_activation: profile_activation::Inbox,
     pub(crate) workspace: Workspace,
@@ -170,6 +179,7 @@ impl ProfileRuntime {
             profile,
             profile_catalog,
             catalog_workspaces: Vec::new(),
+            catalog_trash_empties: std::collections::HashSet::new(),
             profile_session,
             profile_activation,
             workspace,
@@ -259,6 +269,10 @@ impl ProfileRuntime {
                     self.catalog_workspaces = refresh.workspaces.clone();
                     changed = true;
                 }
+                if refresh.trash_empties != self.catalog_trash_empties {
+                    self.catalog_trash_empties = refresh.trash_empties;
+                    changed = true;
+                }
                 if refresh.profiles != self.profile_catalog {
                     self.profile_catalog = refresh.profiles;
                     // While the rows are still here: the names are kept for
@@ -295,6 +309,12 @@ impl ProfileRuntime {
             }
             None => false,
         }
+    }
+
+    /// Whether the open Workspace's trash empties by itself, so its Trash
+    /// view may say when. `false` until the first catalog read says so.
+    pub(crate) fn trash_empties(&self) -> bool {
+        self.live_workspace && self.catalog_trash_empties.contains(&self.current)
     }
 
     pub(crate) fn active_workspace_counts(&self) -> std::collections::HashMap<ProfileId, usize> {
