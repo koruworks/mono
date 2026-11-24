@@ -5991,9 +5991,8 @@ mod tests {
         assert_eq!(
             with_test_store(&host, move |store| store
                 .version(workspace, document)
-                .unwrap()
-                .encode()),
-            original
+                .unwrap()),
+            loro::VersionVector::decode(&original).unwrap()
         );
         host.quiesce_document_removal(&document.to_storage())
             .unwrap();
@@ -6001,7 +6000,10 @@ mod tests {
         let prompt = &inventory.document_removals[0];
         assert!(!prompt.needs_quiescence);
         assert!(!prompt.unknown);
-        assert_ne!(prompt.expected_version, original);
+        assert_ne!(
+            loro::VersionVector::decode(&prompt.expected_version).unwrap(),
+            loro::VersionVector::decode(&original).unwrap()
+        );
         host.decide_document_removal(&document.to_storage(), &prompt.expected_version, true)
             .unwrap();
         with_test_store(&host, move |store| {

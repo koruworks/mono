@@ -35,7 +35,7 @@ fn the_empty_composer_placeholder_cannot_paint_over_the_document_caret() {
     let caret = records
         .iter()
         .find(|record| {
-            record.name == "fill"
+            record.name == "Cursor"
                 && (record.rect().width() - f64::from(theme::caret_w())).abs() < 0.01
                 && record
                     .properties
@@ -123,7 +123,7 @@ fn typed_chat_surface_uses_live_document_caret_preferences() {
         let caret = records
             .iter()
             .find(|record| {
-                record.name == "fill"
+                record.name == "Cursor"
                     && inside_composer(record)
                     && (record.rect().width() - f64::from(width.px())).abs() < 0.01
                     && record
@@ -142,7 +142,7 @@ fn typed_chat_surface_uses_live_document_caret_preferences() {
         surface.draw_with_caret_phase(&mut Scene::new(), Affine::IDENTITY, false);
         assert!(
             !capture.finish().records.iter().any(|record| {
-                record.name == "fill"
+                record.name == "Cursor"
                     && record.bounds == caret.bounds
                     && record
                         .properties

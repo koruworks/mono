@@ -162,6 +162,13 @@
     "remix_filled": "System/checkbox-multiple-fill",
     "tabler": "square-check"
   },
+  "CIRCLE_HALF": {
+    "filled": "contrast",
+    "lucide": "contrast",
+    "remix": "Design/contrast-line",
+    "remix_filled": "Design/contrast-fill",
+    "tabler": "contrast"
+  },
   "CIRCLE_NOTCH": {
     "filled": null,
     "lucide": "loader-circle",

@@ -1,0 +1,83 @@
+title = "Unified Settings, sharper desktop chrome, and inline chat diagrams"
+
+summary = [
+  "Account, Cloud, Devices, Profiles, Workspaces, Preferences, and Agent runtimes now live together in one searchable Settings tab.",
+  "Desktop windows gain a slimmer top bar, capped tabs, an accent border on the active workspace, a floating explorer when the sidebar is collapsed, and per-view quick filters.",
+  "Text rendering and caret colors can be tuned per theme, and AI chat now renders Mermaid diagrams inline with click-to-zoom.",
+  "Permanent document deletion syncs durably across devices, Koru Cloud shows cached info while refreshing in the background, and you can sign out and catch up later.",
+]
+
+body = """
+## Unified Settings
+
+Account management and app preferences are now brought together in a single
+**Settings** tab — covering **Cloud**, **Devices**, **Profiles**, and
+**Workspaces** under Account, alongside **Appearance**, **Editor**,
+**Terminal**, **System**, **Shortcuts**, and **Agent runtimes**.
+
+- Searching Settings highlights matching sections and controls as you type.
+- The profile button in the top-left corner opens a circular profile menu with
+  a **Help** flyout and **Open in new window**.
+- Under **Agent runtimes**, the **Yolo** permission level is shown in red and
+  notes *Not recommended* underneath when selected.
+
+## Desktop chrome, sidebar, and quick filter
+
+- Desktop windows now use a slimmer top bar, capped tab widths with vertical
+  dividers, a rounded workspace frame, and an accent-color border on the active
+  workspace in the rail. Window titles now read `profile | workspace`.
+- Collapsing the sidebar hides the rail too; pressing **Alt+1–8** (or switching
+  views) slides an app explorer preview in from the left and closes it once you
+  pick a destination.
+- The sidebar quick filter now stays active per view when you switch between
+  **Documents**, **Tasks**, and **Chats**, clearing only when you delete the
+  text or press **Esc**.
+
+## Typography and per-theme text rendering
+
+- Text rendering controls (hinting, anti-aliasing, gamma, cutoff, and physical
+  offset) and caret colors are now adjustable per theme, with live previews in
+  the dropdowns and an editable sample document.
+- Document body text defaults to 14 px with refined heading weights and scroll
+  speed options up to 16×. On Windows, UI and document text default to Segoe UI.
+
+## Simpler first run
+
+- Opening Koru for the first time now presents a single **Welcome** setup card
+  with your profile, your first workspace (name, color, and a row of ten
+  emoji), and an optional Koru Cloud card instead of a multi-step wizard.
+- New workspaces start with a single starter document (*What Koru means*), and
+  creating another profile in Settings no longer renames your account.
+
+## Koru Cloud and durable document deletion
+
+- **Koru Cloud** now keeps your cached account, storage, and sync details on
+  screen while refreshing in the background instead of rebuilding the page from
+  scratch each time you open it.
+- A new **Sign out…** button on the Cloud page lets you sign out cleanly;
+  nothing syncs while signed out, and signing back in later catches up.
+- Cloud storage now displays sizes in KB, MB, and GB instead of exact bytes.
+- Permanently deleting a document is now durable across devices. If a document
+  deleted on another device still has local changes here, you can choose to keep
+  or delete it from the workspace menu on both desktop and Android.
+
+## Inline Mermaid diagrams in AI chat
+
+Fenced Mermaid code blocks in AI chat tabs and the AI side pane now render
+inline as diagrams while keeping the raw source readable during streaming or on
+invalid syntax. Copying or saving a reply preserves the original Markdown, and
+clicking a rendered diagram opens it in the diagram viewer with zoom, pan, copy,
+and save actions.
+
+## Fixes
+
+- The **Trash** row is back at the foot of the navigator, **Delete permanently**
+  now works on individual Trash rows, and Trash tabs in split panes update
+  together.
+- Creating a workspace on a newly provisioned Cloud profile no longer waits for
+  identity sync to finish first.
+- Newly signed-in devices select held Profiles up front so file sync starts
+  working right away.
+- Deleting a hosted Profile now re-authenticates with the sign-in provider your
+  session actually used, with proper cancel and error recovery.
+"""

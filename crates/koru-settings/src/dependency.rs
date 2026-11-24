@@ -138,6 +138,9 @@ fn preferences_conf_has_one_locator_outside_the_authority() {
         // replaces could take no root — survey note 3.
         "crates/koru-settings/src/dependency.rs",
         "crates/koru-settings/src/paths.rs",
+        // UI Lab's own isolation test, which lists `user_preferences_path` as
+        // a forbidden token rather than calling it.
+        "apps/koru/src/ui_lab/tests.rs",
     ]
     .into_iter()
     .map(str::to_owned)
