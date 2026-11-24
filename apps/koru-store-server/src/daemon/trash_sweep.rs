@@ -16,8 +16,8 @@
 //! Android's host runs this same module beside its embedded Store, with the
 //! same Store worker, so the two platforms sweep identically.
 //!
-//! Every step is its own Store call — the due documents, one subtree purge,
-//! one document's bin, one page's readings — so a save never waits behind a
+//! Every step is its own Store call — the due documents or notes, one subtree
+//! purge, one document's bin, one page's readings — so a save never waits behind a
 //! whole Workspace. What each step wrote goes to the host's [`Tell`] once the
 //! Store is free again: the desktop tells the rooms of open windows and wakes
 //! replication; Android's views re-read by revision, so it wakes its sync.
@@ -139,7 +139,7 @@ async fn pass(
             Ok(result) => {
                 swept.insert(workspace, Instant::now());
                 if result != expiry::Swept::default() {
-                    tracing::info!(target: "store.trash_expiry", workspace = %workspace, mode = mode.as_storage(), documents = result.documents, rows = result.rows, rewritten = result.rewritten, readings = result.readings, "trash sweep removed what was due");
+                    tracing::info!(target: "store.trash_expiry", workspace = %workspace, mode = mode.as_storage(), documents = result.documents, notes = result.notes, rows = result.rows, rewritten = result.rewritten, readings = result.readings, "trash sweep removed what was due");
                 }
             }
             Err(code) => {
@@ -179,6 +179,15 @@ async fn sweep(
         })
         .await?;
         result.documents += documents;
+        wrote.into_iter().for_each(|wrote| tell(wrote));
+    }
+    let notes = step(store, move |s| expiry::due_notes(s, workspace, now)).await?;
+    for root in notes {
+        let (notes, wrote) = step(store, move |s| {
+            expiry::purge_subtree(s, workspace, root, Timestamp::now())
+        })
+        .await?;
+        result.notes += notes;
         wrote.into_iter().for_each(|wrote| tell(wrote));
     }
     let candidates = step(store, move |s| expiry::bin_candidates(s, workspace)).await?;

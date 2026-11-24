@@ -311,3 +311,127 @@ fn the_words_of_a_picture_go_once_its_page_holds_it_nowhere() {
     assert_eq!((swept.rows, swept.readings), (1, 1));
     assert_eq!(readings(&mut store, workspace, page), [SHOWN]);
 }
+
+/// A task-list note's document, as the page registry derives it.
+fn note(
+    store: &mut MemoryStore,
+    workspace: WorkspaceId,
+    bucket: koru_core::tasks::Bucket,
+) -> DocumentId {
+    let id = koru_core::ids::page_document_id(
+        koru_core::WorkspaceId::from_uuid(workspace.as_uuid()),
+        koru_core::ids::PageKey::Bucket(bucket),
+        0,
+    );
+    let doc = WorkspaceDoc::create(koru_core::WorkspaceId::new(), "note").unwrap();
+    store
+        .import_document_at(
+            workspace,
+            DocumentId::from_uuid(id.as_uuid()),
+            "",
+            koru_core::explore::KIND_DOCUMENT,
+            None,
+            None,
+            doc.export_snapshot().unwrap(),
+            at(),
+        )
+        .unwrap()
+        .0
+}
+
+/// Stable v0.1.6–v0.1.9 deleted a task-list note by writing a deletion event
+/// and keeping its copy. The copy goes 31 days after the newest event still
+/// in force — not when a Recover ended the event, not while someone's later
+/// writing is waiting on Keep deleted / Recover, and not while it sits in the
+/// Workspace trash with its own promise.
+#[test]
+fn a_deleted_task_list_note_goes_after_30_days_unless_recovered_or_in_conflict() {
+    use koru_core::ids::PageKey;
+    use koru_core::pages::deletion::EventId;
+    use koru_core::tasks::Bucket;
+    let (mut store, workspace) = workspace();
+    let deleted = note(&mut store, workspace, Bucket::Today);
+    let recovered = note(&mut store, workspace, Bucket::Next);
+    let conflict = note(&mut store, workspace, Bucket::Upcoming);
+    let again = note(&mut store, workspace, Bucket::Later);
+    let trashed = note(&mut store, workspace, Bucket::Completed);
+    trash(&mut store, workspace, trashed, T + 20 * DAY_MS);
+
+    let mut system = koru_core::SystemDoc::create().unwrap();
+    let covers = loro::VersionVector::default();
+    for bucket in Bucket::ALL {
+        let page = PageKey::Bucket(bucket);
+        system.add_page_generation(page, 0).unwrap();
+        system
+            .write_deletion(page, 0, EventId::new(), &covers, T)
+            .unwrap();
+    }
+    let next = PageKey::Bucket(Bucket::Next);
+    let events = system.deletion_record(next, 0).events().collect::<Vec<_>>();
+    system.write_recover(next, 0, 7, events).unwrap();
+    let written = loro::LoroDoc::new();
+    written.get_text("t").insert(0, "after").unwrap();
+    written.commit();
+    let upcoming = PageKey::Bucket(Bucket::Upcoming);
+    let event = system.deletion_record(upcoming, 0).events().next().unwrap();
+    system
+        .report_uncovered(upcoming, 0, 7, event, &written.oplog_vv())
+        .unwrap();
+    // Deleted, recovered, then deleted again ten days on: the 30 days restart.
+    let later = PageKey::Bucket(Bucket::Later);
+    let first = system
+        .deletion_record(later, 0)
+        .events()
+        .collect::<Vec<_>>();
+    system.write_recover(later, 0, 7, first).unwrap();
+    system
+        .write_deletion(later, 0, EventId::new(), &covers, T + 10 * DAY_MS)
+        .unwrap();
+    store
+        .import_document(
+            workspace,
+            "",
+            koru_core::explore::KIND_SYSTEM,
+            None,
+            system.export_snapshot().unwrap(),
+            at(),
+        )
+        .unwrap();
+
+    assert_eq!(sweep(&mut store, workspace, T + 30 * DAY_MS).notes, 0);
+    let swept = sweep(&mut store, workspace, T + 31 * DAY_MS);
+    assert_eq!((swept.notes, swept.documents), (1, 0));
+    assert!(!present(&mut store, workspace, deleted));
+    assert!(present(&mut store, workspace, recovered), "recovered: live");
+    assert!(
+        present(&mut store, workspace, conflict),
+        "the person decides"
+    );
+    assert!(
+        present(&mut store, workspace, again),
+        "deleted again 21 days ago"
+    );
+    assert!(
+        present(&mut store, workspace, trashed),
+        "its Trash row decides"
+    );
+    let purged = removal::load(&mut store, workspace)
+        .unwrap()
+        .unwrap()
+        .content
+        .purged_documents();
+    assert_eq!(purged.len(), 1);
+    assert_eq!(purged[0].as_uuid(), deleted.as_uuid());
+
+    let swept = sweep(&mut store, workspace, T + 41 * DAY_MS);
+    assert_eq!(swept.notes, 1);
+    assert!(!present(&mut store, workspace, again));
+    assert_eq!(
+        sweep(&mut store, workspace, T + 400 * DAY_MS).notes,
+        0,
+        "the conflict and the recovered note stay; the trashed one went by its own stamp"
+    );
+    assert!(present(&mut store, workspace, conflict));
+    assert!(present(&mut store, workspace, recovered));
+    assert!(!present(&mut store, workspace, trashed));
+}

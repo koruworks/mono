@@ -2,8 +2,9 @@
 //! **Both trashes empty themselves after 30 days**
 //! (docs/cloud-platform/koru-free/COLLECTOR.final.md, rung 2): trashed
 //! documents in the Workspace listing, and rows in each document's own bin.
-//! With them goes the OCR text of pictures a page no longer holds anywhere,
-//! its bin included ([`forget_readings`]).
+//! With them go the retained copies of deleted task-list notes
+//! ([`due_notes`]) and the OCR text of pictures a page no longer holds
+//! anywhere, its bin included ([`forget_readings`]).
 //! The rule — 30 days promised, 31 waited, and whose clock decides — is
 //! [`koru_core::trash_expiry`]; this applies it to one Workspace's Store state.
 //!
@@ -18,16 +19,20 @@
 //! the replication that carries it to peers and the Cloud. Without that, an
 //! open window keeps showing what the sweep removed until it reopens.
 use super::*;
+use koru_core::ids::PageKey;
+use koru_core::pages::deletion::Resolution;
 use koru_core::schema::file_references::{ReferenceBudget, inspect_file_references};
 use koru_core::{WorkspaceDoc, trash_expiry::expired};
 use koru_store_core::ids::reading_document_id;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// What one sweep removed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Swept {
     /// Documents purged from the Workspace trash, children included.
     pub documents: usize,
+    /// Retained copies of deleted task-list notes purged, children included.
+    pub notes: usize,
     /// Rows deleted from documents' own bins.
     pub rows: usize,
     /// Documents rewritten to delete those rows.
@@ -59,8 +64,9 @@ pub enum Wrote {
 ///
 /// All of it in one call, for a caller that may hold the Store that long.
 /// A Store owner that also serves people runs the steps one at a time instead
-/// ([`due_documents`], [`purge_subtree`], [`bin_candidates`], [`sweep_bin`],
-/// [`reading_candidates`], [`forget_readings`]), so a save never waits behind
+/// ([`due_documents`], [`due_notes`], [`purge_subtree`], [`bin_candidates`],
+/// [`sweep_bin`], [`reading_candidates`], [`forget_readings`]), so a save
+/// never waits behind
 /// a whole Workspace. `tell` receives every edit, in the order made.
 pub fn sweep<C: Catalog, B: Backend>(
     store: &mut Store<C, B>,
@@ -74,6 +80,11 @@ pub fn sweep<C: Catalog, B: Backend>(
     for root in due_documents(store, workspace, trusted_now_ms)? {
         let (documents, wrote) = purge_subtree(store, workspace, root, at)?;
         swept.documents += documents;
+        wrote.into_iter().for_each(&mut tell);
+    }
+    for root in due_notes(store, workspace, trusted_now_ms)? {
+        let (notes, wrote) = purge_subtree(store, workspace, root, at)?;
+        swept.notes += notes;
         wrote.into_iter().for_each(&mut tell);
     }
     for document in bin_candidates(store, workspace)? {
@@ -107,6 +118,82 @@ pub fn due_documents<C: Catalog, B: Backend>(
         })
         .map(|entry| entry.id)
         .collect())
+}
+
+/// The retained copies of deleted task-list notes that are due by
+/// `trusted_now_ms` (COLLECTOR.final rung 2, decision 1).
+///
+/// Stable v0.1.6–v0.1.9 deleted a note by writing a deletion event to the
+/// system document and keeping the note's document, recoverable without a
+/// time limit; nothing shows that copy except the *Keep deleted* / *Recover*
+/// prompt after a conflicting edit. A copy is due when its generation is
+/// plainly deleted and the newest event still in force is due — a Recover
+/// ends an event, and a later deletion restarts the 30 days.
+///
+/// **A conflict is never due.** Someone wrote the note after it was deleted
+/// and the person is being asked which wins; purging would answer for them.
+/// A copy in the Workspace trash is left to its own trash stamp, which is
+/// what its Trash row promises.
+pub fn due_notes<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    workspace: WorkspaceId,
+    trusted_now_ms: i64,
+) -> Result<Vec<DocumentId>, Failure> {
+    let Some(system) = removal::load(store, workspace)? else {
+        return Ok(Vec::new());
+    };
+    let entries = store.documents(workspace)?;
+    let parents: HashMap<_, _> = entries
+        .iter()
+        .map(|entry| (entry.id, (entry.parent, entry.trashed_at.is_some())))
+        .collect();
+    let trashed = |mut document: DocumentId| {
+        // Bounded: a malformed cycle cannot loop forever.
+        for _ in 0..=parents.len() {
+            match parents.get(&document) {
+                Some((_, true)) => return true,
+                Some((Some(parent), false)) => document = *parent,
+                _ => return false,
+            }
+        }
+        false
+    };
+    let owner = koru_core::WorkspaceId::from_uuid(workspace.as_uuid());
+    let mut pages: Vec<PageKey> = system
+        .content
+        .all_lists()
+        .into_iter()
+        .map(|list| PageKey::List(list.id))
+        .collect();
+    pages.extend(
+        koru_core::tasks::Bucket::ALL
+            .into_iter()
+            .map(PageKey::Bucket),
+    );
+    let mut due = Vec::new();
+    for page in pages {
+        for generation in system.content.page_generations(page) {
+            let record = system.content.deletion_record(page, generation);
+            if record.resolve() != Resolution::Deleted {
+                continue;
+            }
+            let newest = record
+                .events_in_force()
+                .into_iter()
+                .filter_map(|event| record.deletion(event).map(|deletion| deletion.deleted_ms))
+                .max();
+            if !newest.is_some_and(|deleted_ms| expired(deleted_ms, trusted_now_ms)) {
+                continue;
+            }
+            let document = DocumentId::from_uuid(
+                koru_core::ids::page_document_id(owner, page, generation).as_uuid(),
+            );
+            if parents.contains_key(&document) && !trashed(document) {
+                due.push(document);
+            }
+        }
+    }
+    Ok(due)
 }
 
 /// Purge `root` with its whole subtree — notes, OCR readings, and children
