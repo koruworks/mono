@@ -10,7 +10,7 @@ use super::view::{
     CONTROL_GAP, DOTS_W, Hit, LANE_W, PAD, RESTORE_W, SUBTITLE_TEXT, TITLE_GAP, TITLE_TEXT,
     TrashView,
 };
-use crate::format::{deleted_ago, nested_suffix};
+use crate::format::{nested_suffix, trash_when};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::{icons, scene, theme};
@@ -198,7 +198,7 @@ impl TrashView {
 
             for (c, text) in [
                 (1, entry.origin.clone()),
-                (2, deleted_ago(entry.trashed_at_ms, now)),
+                (2, trash_when(entry.trashed_at_ms, now)),
                 (3, entry.deleted_by.clone()),
             ] {
                 t.paint_cell(

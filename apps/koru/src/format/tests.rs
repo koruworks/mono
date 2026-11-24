@@ -69,3 +69,17 @@ fn bytes_reads_like_a_file_manager() {
     assert_eq!(bytes(1024 * 20), "20 KB");
     assert_eq!(bytes(1024 * 1024 * 3), "3.0 MB");
 }
+
+#[test]
+fn the_trash_says_when_it_removes_an_item() {
+    let when = |secs: i64| trash_when(Some(NOW - secs * 1000), NOW);
+    assert_eq!(when(0), "Deleted today · Removed in 30 days");
+    assert_eq!(when(3 * DAY), "Deleted 3 days ago · Removed in 27 days");
+    assert_eq!(when(29 * DAY), "Deleted 29 days ago · Removed in 1 day");
+    assert_eq!(when(30 * DAY), "Deleted last month · Removed today");
+    assert_eq!(
+        trash_when(None, NOW),
+        deleted_ago(None, NOW),
+        "no recorded time, no promise: the sweep keeps it"
+    );
+}

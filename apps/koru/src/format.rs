@@ -129,6 +129,27 @@ pub fn deleted_ago(then_ms: Option<i64>, now_ms: i64) -> String {
     koru_i18n::time::deleted_long(lang(), then_ms, now_ms)
 }
 
+/// When the trash removes the item for good, counted down from the 30 days it
+/// promises (`koru_core::trash_expiry`), by this device's clock — a notice,
+/// not the sweep's decision, which waits a day longer and trusts the Cloud's
+/// time. `None` for an item with no recorded time: the sweep keeps it.
+pub fn removal_notice(then_ms: Option<i64>, now_ms: i64) -> Option<String> {
+    koru_i18n::time::removal_long(
+        lang(),
+        then_ms.map(|then| koru_core::trash_expiry::days_left(then, now_ms)),
+    )
+}
+
+/// The trash's "when" cell: how long it has been there and, when known, when
+/// it goes — "Deleted 3 days ago · Removed in 27 days".
+pub fn trash_when(then_ms: Option<i64>, now_ms: i64) -> String {
+    let deleted = deleted_ago(then_ms, now_ms);
+    match removal_notice(then_ms, now_ms) {
+        Some(removal) => format!("{deleted} · {removal}"),
+        None => deleted,
+    }
+}
+
 /// "3 nested", or nothing at all when there is nothing inside.
 ///
 /// Singular at one, because "1 nested items" is the sort of thing that makes a

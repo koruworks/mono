@@ -412,6 +412,23 @@ pub fn deleted_long(lang: Lang, then_ms: Option<i64>, now_ms: i64) -> String {
     }
 }
 
+/// When the trash will remove an item for good: "Removed in 27 days", then
+/// "Removed in 1 day", then "Removed today" (`koru_core::trash_expiry`, whose
+/// count this is handed rather than recomputing it).
+///
+/// `None` for an item binned by a build that did not record a time: its age
+/// is unknown, so the sweep keeps it and the trash promises nothing.
+pub fn removal_long(lang: Lang, days_left: Option<u32>) -> Option<String> {
+    Some(match days_left? {
+        0 => t(lang, Key::RemovedToday).to_string(),
+        1 => t(lang, Key::RemovedInOneDay).to_string(),
+        n => fill(
+            t(lang, Key::RemovedInDays),
+            &[&crate::number::decimal(lang, u64::from(n))],
+        ),
+    })
+}
+
 /// A wall-clock moment, already converted to the reader's local time zone.
 /// The caller owns that conversion; see the module note.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

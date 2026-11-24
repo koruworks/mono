@@ -616,6 +616,9 @@ pub enum Key {
     DeletedDaysAgo,
     DeletedLastMonth,
     DeletedMonthsAgo,
+    RemovedToday,
+    RemovedInOneDay,
+    RemovedInDays,
 
     // ------------------------------------------------------------ voice
     // What the listening surface says while a dictation is open, and what it
@@ -4570,7 +4573,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3476] = [
+    pub const ALL: [Key; 3479] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5071,6 +5074,9 @@ impl Key {
         Key::DeletedDaysAgo,
         Key::DeletedLastMonth,
         Key::DeletedMonthsAgo,
+        Key::RemovedToday,
+        Key::RemovedInOneDay,
+        Key::RemovedInDays,
         Key::VoiceStarting,
         Key::VoiceListening,
         Key::VoiceFinishing,
@@ -12069,6 +12075,42 @@ pub const ROWS: &[Row] = &[
         ar: "حُذف قبل {} شهر",
         zh_hans: "{}个月前删除",
         ja: "{}か月前に削除",
+    },
+    // The trash's promise (COLLECTOR.final, rung 2): what is in it is removed
+    // for good 30 days after it went in. Future tense in every language,
+    // because the past-tense "Deleted …" sits beside it in the same cell.
+    Row {
+        key: Key::RemovedToday,
+        en: "Removed today",
+        es: "Se elimina hoy",
+        pt_br: "Será excluído hoje",
+        de: "Wird heute entfernt",
+        fr: "Suppression aujourd'hui",
+        ar: "يُحذف اليوم",
+        zh_hans: "将于今天删除",
+        ja: "今日削除されます",
+    },
+    Row {
+        key: Key::RemovedInOneDay,
+        en: "Removed in 1 day",
+        es: "Se elimina en 1 día",
+        pt_br: "Será excluído em 1 dia",
+        de: "Wird in 1 Tag entfernt",
+        fr: "Suppression dans 1 jour",
+        ar: "يُحذف بعد يوم واحد",
+        zh_hans: "将于1天后删除",
+        ja: "1日後に削除されます",
+    },
+    Row {
+        key: Key::RemovedInDays,
+        en: "Removed in {} days",
+        es: "Se elimina en {} días",
+        pt_br: "Será excluído em {} dias",
+        de: "Wird in {} Tagen entfernt",
+        fr: "Suppression dans {} jours",
+        ar: "يُحذف بعد {} يوم",
+        zh_hans: "将于{}天后删除",
+        ja: "{}日後に削除されます",
     },
     Row {
         key: Key::VoiceStarting,
