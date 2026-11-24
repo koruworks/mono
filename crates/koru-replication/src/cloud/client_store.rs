@@ -4,6 +4,7 @@
 //! This is synchronous Store work: the host must submit the entire Completed
 //! value to its retained Store owner, never run this on a UI/transport executor.
 //! No peer identity, listener, local mode representation or authority is minted.
+pub mod expiry;
 mod export;
 pub mod removal;
 pub use export::{Export, ExportRequest, version};

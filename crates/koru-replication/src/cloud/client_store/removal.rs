@@ -6,6 +6,7 @@ use koru_core::{
     SystemDoc,
     pages::purge::{Event, Insert},
 };
+use koru_store_core::Timestamp;
 use uuid::Uuid;
 
 pub struct System {
@@ -195,5 +196,100 @@ pub fn consume<C: Catalog, B: Backend>(
         scope.principal.update_origin(),
     )?;
     store.commit_document_removals(workspace, incarnation, system.document, &events, cursor, at)?;
+    Ok(())
+}
+
+/// A stable, UUIDv4-shaped id per device, document and exact version, for a
+/// removal step that may be replayed after a crash. Store's durable receipts
+/// are the authority on replay; this only makes the replay ask for the same id.
+pub fn identity(document: DocumentId, peer: u64, version: &[u8], purpose: &str) -> (String, Uuid) {
+    let key = format!(
+        "{purpose}:{}:{peer:x}:{}",
+        document,
+        koru_store_core::checksum(version)
+    );
+    let derived = Uuid::new_v5(&document.as_uuid(), key.as_bytes());
+    (
+        key,
+        uuid::Builder::from_random_bytes(*derived.as_bytes()).into_uuid(),
+    )
+}
+
+/// **Delete one listed document for good**, the person's own "Delete
+/// forever": a durable purge event in the Workspace system document first,
+/// then the freeze and release of the document's local bytes (ADR-501). Refuses
+/// a kind nobody lists, so a mis-wired caller cannot reach the helpers.
+pub fn permanent<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    workspace: WorkspaceId,
+    document: DocumentId,
+    at: Timestamp,
+) -> Result<(), Failure> {
+    let entry = store
+        .documents(workspace)?
+        .into_iter()
+        .find(|entry| entry.id == document)
+        .ok_or_else(invalid)?;
+    if !koru_core::explore::listed(&entry.kind) {
+        return Err(invalid());
+    }
+    purge(store, workspace, document, document, at)
+}
+
+/// The purge itself, for `document` inside the subtree rooted at `root`. Each
+/// purged document gets its own event, naming the root the person (or the
+/// sweep) removed. Release detaches children rather than losing them, so a
+/// caller removing a subtree purges it deepest first.
+pub(super) fn purge<C: Catalog, B: Backend>(
+    store: &mut Store<C, B>,
+    workspace: WorkspaceId,
+    document: DocumentId,
+    root: DocumentId,
+    at: Timestamp,
+) -> Result<(), Failure> {
+    let started = std::time::Instant::now();
+    store.flush(workspace, document, at)?;
+    let version = store.version(workspace, document)?;
+    let mut system = match load(store, workspace)? {
+        Some(system) => system,
+        None => {
+            let content = SystemDoc::create().map_err(|_| invalid())?;
+            let snapshot = content.export_snapshot().map_err(|_| invalid())?;
+            let (document, _) = store.import_document(
+                workspace,
+                "",
+                koru_core::explore::KIND_SYSTEM,
+                None,
+                snapshot,
+                at,
+            )?;
+            System { document, content }
+        }
+    };
+    let mut event = Event::new(document.as_uuid(), root.as_uuid(), Some(&version), "");
+    event.event_id = identity(document, store.peer_id(), &version.encode(), "del").1;
+    let event = transfer::removal::bounded_event(event)?;
+    if system
+        .content
+        .write_purge_event(&event)
+        .map_err(|_| invalid())?
+        == Insert::Conflict
+    {
+        return Err(invalid());
+    }
+    let update = system.content.export_all_updates().map_err(|_| invalid())?;
+    store.apply_update(
+        workspace,
+        system.document,
+        update,
+        at,
+        koru_store_core::ports::UpdateOrigin::Store,
+    )?;
+    store.flush(workspace, system.document, at)?;
+    tracing::info!(target: "cloud.document.removal", event_id = %event.event_id, document_id = %document, stage = "event", code = "intent_durable", age_ms = started.elapsed().as_millis() as u64, age_scope = "intent");
+    // Only the acknowledged system tombstone permits freezing and release.
+    store.freeze_document_purge(workspace, document, at)?;
+    store.release_document_purge(workspace, document, &version, None, at)?;
+    tracing::info!(target: "cloud.document.removal", document_id = %document, stage = "reconciled", code = "deleted", age_ms = started.elapsed().as_millis() as u64, age_scope = "intent");
     Ok(())
 }

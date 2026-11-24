@@ -2295,8 +2295,10 @@ impl WorkspaceDoc {
     /// One undo step — but do not promise the user one. Since `loro-internal`
     /// 1.13.9 undo does survive most concurrent remote changes, but it still
     /// declines outright on a node another peer deleted, and this is a hard
-    /// delete of many nodes at once. **Never called on a timer**: nothing in
-    /// this app purges the trash by itself (ADR-69).
+    /// delete of many nodes at once. **Never called on a timer**: this is the
+    /// person's own Empty. The 30-day sweep
+    /// (`koru_replication::cloud::client_store::expiry`) removes only rows whose
+    /// own stamp is due, one by one, through [`delete_permanently`](Self::delete_permanently).
     pub fn empty_trash(&mut self) -> Result<usize> {
         let items = self.trashed_ids()?;
         if items.is_empty() {

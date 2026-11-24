@@ -3,11 +3,8 @@
 //! Mobile adapter for durable permanent-delete evidence and local decisions.
 use super::*;
 mod journal;
-use koru_core::{
-    SystemDoc, WorkspaceDoc,
-    pages::purge::{Coverage, Event, Insert},
-};
-use koru_replication::cloud::{client_store::removal, transfer};
+use koru_core::{WorkspaceDoc, pages::purge::Coverage};
+use koru_replication::cloud::client_store::removal;
 use koru_store_core::{Backend, Store, ports::Catalog};
 
 #[derive(Serialize)]
@@ -42,85 +39,16 @@ fn source_title(source: &WorkspaceDoc) -> Option<String> {
         .or_else(|| source.name())
 }
 
-fn identity(
-    document: DocumentId,
-    peer: u64,
-    version: &[u8],
-    purpose: &str,
-) -> (String, uuid::Uuid) {
-    let key = format!(
-        "{purpose}:{}:{peer:x}:{}",
-        document,
-        koru_store_core::checksum(version)
-    );
-    let derived = uuid::Uuid::new_v5(&document.as_uuid(), key.as_bytes());
-    // A stable, UUIDv4-shaped candidate per device and exact frozen coverage.
-    // Store's durable seeded-creation receipt is the authority on replay.
-    (
-        key,
-        uuid::Builder::from_random_bytes(*derived.as_bytes()).into_uuid(),
-    )
-}
-
 pub(super) fn permanent<C: Catalog, B: Backend>(
     store: &mut Store<C, B>,
     workspace: WorkspaceId,
     document: DocumentId,
     at: Timestamp,
 ) -> Result<(), String> {
-    let started = std::time::Instant::now();
-    let entries = db(store.documents(workspace))?;
-    let entry = entries
-        .iter()
-        .find(|entry| entry.id == document)
-        .ok_or_else(invalid)?;
-    if !koru_core::explore::listed(&entry.kind) {
-        return Err(invalid());
-    }
-    db(store.flush(workspace, document, at))?;
-    let version = db(store.version(workspace, document))?;
-    let mut system = match removal::load(store, workspace).map_err(|_| invalid())? {
-        Some(system) => system,
-        None => {
-            let content = SystemDoc::create().map_err(|_| invalid())?;
-            let snapshot = content.export_snapshot().map_err(|_| invalid())?;
-            let (document, _) = db(store.import_document(
-                workspace,
-                "",
-                koru_core::explore::KIND_SYSTEM,
-                None,
-                snapshot,
-                at,
-            ))?;
-            removal::System { document, content }
-        }
-    };
-    let mut event = Event::new(document.as_uuid(), document.as_uuid(), Some(&version), "");
-    event.event_id = identity(document, store.peer_id(), &version.encode(), "del").1;
-    let event = transfer::removal::bounded_event(event).map_err(|_| invalid())?;
-    if system
-        .content
-        .write_purge_event(&event)
-        .map_err(|_| invalid())?
-        == Insert::Conflict
-    {
-        return Err(invalid());
-    }
-    let update = system.content.export_all_updates().map_err(|_| invalid())?;
-    db(store.apply_update(
-        workspace,
-        system.document,
-        update,
-        at,
-        koru_store_core::ports::UpdateOrigin::Store,
-    ))?;
-    db(store.flush(workspace, system.document, at))?;
-    tracing::info!(target: "cloud.document.removal", event_id = %event.event_id, document_id = %document, stage = "event", code = "intent_durable", age_ms = started.elapsed().as_millis() as u64, age_scope = "intent");
-    // Only the acknowledged system tombstone permits freezing and release.
-    db(store.freeze_document_purge(workspace, document, at))?;
-    db(store.release_document_purge(workspace, document, &version, None, at))?;
-    tracing::info!(target: "cloud.document.removal", document_id = %document, stage = "reconciled", code = "deleted", age_ms = started.elapsed().as_millis() as u64, age_scope = "intent");
-    Ok(())
+    removal::permanent(store, workspace, document, at).map_err(|failure| match failure {
+        koru_replication::cloud::client_store::Failure::Store(code) => code.as_str().to_owned(),
+        koru_replication::cloud::client_store::Failure::Transfer(_) => invalid(),
+    })
 }
 
 pub(super) fn reconcile<C: Catalog, B: Backend>(
@@ -228,7 +156,8 @@ pub(super) fn decide<C: Catalog, B: Backend>(
                     koru_core::explore::KIND_DOCUMENT
                 })
                 .to_owned();
-            let (key, candidate) = identity(document, store.peer_id(), &expected.encode(), "keep");
+            let (key, candidate) =
+                removal::identity(document, store.peer_id(), &expected.encode(), "keep");
             journal::Decision::Keep {
                 candidate: DocumentId::from_uuid(candidate).to_storage(),
                 title,

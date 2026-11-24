@@ -27,6 +27,7 @@ pub mod tasks;
 pub mod text;
 pub mod time;
 pub mod timing;
+pub mod trash_expiry;
 
 pub use attributes::{
     AccentColor, AttributeDefinition, AttributeScope, Cardinality, Lifecycle, Priority, TaskReason,

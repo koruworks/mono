@@ -437,9 +437,10 @@ pub struct DocumentEntry {
     /// whoever draws the listing filters on this field.
     ///
     /// A timestamp rather than a `bool` because the answer to "when did this go"
-    /// is worth having and costs the same, and because a sweep that empties the
-    /// trash on age has something to sort on if one is ever wanted. Nothing
-    /// purges on a timer today.
+    /// is worth having and costs the same, and because the trash empties on
+    /// age: 30 days after this stamp, by a time the Cloud vouched for in a
+    /// Cloud Workspace (`koru_core::trash_expiry`,
+    /// `koru_replication::cloud::client_store::expiry`).
     ///
     /// `#[serde(default)]` so a manifest written before this existed reads as
     /// *not trashed*, which is the truth about every document in it.

@@ -22,6 +22,7 @@ mod replica_discard;
 mod replica_listing;
 mod sync_modes;
 mod transport_modes;
+mod trash_expiry;
 
 /// Every file in the one object store, by name. The assertion that a
 /// cross-Workspace association copied nothing is a count of these.
