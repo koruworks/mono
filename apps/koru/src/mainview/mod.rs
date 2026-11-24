@@ -1067,6 +1067,10 @@ pub struct MainView {
     workspaces_poll_due: Option<Instant>,
     /// One workspace controller for this window, also borrowed by Manage.
     workspace_controller: crate::manage::SharedWorkspaces,
+    /// Last known Koru Cloud facts for the signed-in account, seeded into a
+    /// newly opened Settings tab so Cloud paints cached data immediately and
+    /// refreshes in the background.
+    cloud_cache: Option<crate::manage::profiles::CloudCache>,
     profile_wait: profile_wait::WaitPane,
     /// **The preferences as this container last heard them.** Most of what a
     /// Settings page draws reads a process global, but the pieces it keeps a
@@ -2126,6 +2130,7 @@ impl MainView {
             workspace_controller: std::rc::Rc::new(std::cell::RefCell::new(
                 koru_workspaces_ui::WorkspacesController::with_links(workspace_links),
             )),
+            cloud_cache: None,
             preferences: Settings::default(),
             entries: None,
             reading_offers: std::collections::HashMap::new(),
@@ -7969,6 +7974,11 @@ impl MainView {
         }
         self.tabs_mut().push(tab);
         self.push_manage_profiles_context();
+        if let Some(cache) = self.cloud_cache.clone()
+            && let TabView::Settings(view) = &mut self.tabs_mut().active_mut().view
+        {
+            view.seed_cloud_cache(&cache);
+        }
         self.arm_workspaces_poll();
         self.slides_mut().clear();
         self.mark_tab_widths_stale();
@@ -7979,6 +7989,22 @@ impl MainView {
         // readiness; ask for both now, off the loop thread.
         self.prepare_agent_providers();
         true
+    }
+
+    fn sync_cloud_cache(&mut self) {
+        let latest = self
+            .panes
+            .iter_groups()
+            .flat_map(|(_, group)| group.tabs().iter())
+            .find_map(|tab| match &tab.view {
+                TabView::Settings(crate::settings_view::SettingsView { manage: view, .. }) => {
+                    view.cloud_cache()
+                }
+                _ => None,
+            });
+        if latest.is_some() {
+            self.cloud_cache = latest;
+        }
     }
 
     /// `Ctrl+,`: the Settings tab, with the keyboard in its search box. A
@@ -15064,6 +15090,7 @@ impl View for MainView {
         // Targeted results intentionally chain (Status -> Inspect -> Profiles
         // -> local CAS). Each link leaves through the ordinary PaneRequest
         // queue in this same event-loop turn, never through an idle poll.
+        self.sync_cloud_cache();
         opened | changed | self.drain_manage_profiles_request()
     }
 
@@ -15119,7 +15146,20 @@ impl View for MainView {
         if self.account_state == state {
             return false;
         }
+        let account_changed = self.account_state.active_scope != state.active_scope
+            || self.account_state.active_account_id != state.active_account_id;
         self.account_state = state.clone();
+        if account_changed
+            || matches!(
+                state.stage,
+                koru_agent_wire::AccountStage::SignedOut
+                    | koru_agent_wire::AccountStage::Cancelled
+                    | koru_agent_wire::AccountStage::Failed
+                    | koru_agent_wire::AccountStage::Unavailable
+            )
+        {
+            self.cloud_cache = None;
+        }
         let explore_changed = self.explore.set_account_state(&state);
         let scope_changed = self.account_scope != state.active_scope;
         self.account_scope = state.active_scope;
@@ -16634,7 +16674,7 @@ impl View for MainView {
         // What is collapsed is per workspace. **The pane's width is not**: it
         // is left exactly as it is across a switch.
         // Nor is the quick filter: it was typed over the other workspace.
-        self.explore.clear_quick_filter();
+        self.explore.clear_all_quick_filters();
         let collapsed = settings
             .workspace
             .map(|id| settings.collapsed_in(id).to_vec())

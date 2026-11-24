@@ -341,10 +341,14 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
             .any(|l| l.contains("Yolo means the agent runs everything without asking")),
         "{lines:?}"
     );
-    for word in ["Manual", "Auto", "Yolo (not recommended)"] {
+    for word in ["Manual", "Auto", "Yolo"] {
         let (_, on) = segment(&surface, "Supported agents", word).expect(word);
         assert_eq!(on, word == "Manual", "{word}");
     }
+    assert!(
+        !lines.iter().any(|l| l == "Not recommended"),
+        "not recommended appears only once Yolo is picked"
+    );
     assert!(
         segment(&surface, "Other agents", "Auto").is_none(),
         "no Auto"
@@ -367,11 +371,8 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
         segment(&surface, "Supported agents", "Auto").map(|(_, on)| on),
         Some(true)
     );
-    assert!(press_segment(
-        &mut surface,
-        "Other agents",
-        "Yolo (not recommended)"
-    ));
+    assert!(!page_lines(&surface).iter().any(|l| l == "Not recommended"));
+    assert!(press_segment(&mut surface, "Other agents", "Yolo"));
     assert_eq!(
         surface.take_requests(),
         [Request::SetAgentPermission {
@@ -379,16 +380,32 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
             permission: AgentPermission::Yolo
         }]
     );
-    // The same choice again asks for nothing.
+    // The same choice again asks for nothing, and "Not recommended" sits below the control.
     surface.relayout();
-    assert!(press_segment(
-        &mut surface,
-        "Other agents",
-        "Yolo (not recommended)"
-    ));
+    assert_eq!(
+        page_lines(&surface)
+            .iter()
+            .filter(|l| l.as_str() == "Not recommended")
+            .count(),
+        1,
+        "Not recommended appears below Other agents when Yolo is picked"
+    );
+    assert!(press_segment(&mut surface, "Other agents", "Yolo"));
     assert!(surface.take_requests().is_empty());
 
-    // Restore defaults puts both back on Manual.
+    // Picking Yolo on Supported agents too shows "Not recommended" below both controls.
+    assert!(press_segment(&mut surface, "Supported agents", "Yolo"));
+    let _ = surface.take_requests();
+    surface.relayout();
+    assert_eq!(
+        page_lines(&surface)
+            .iter()
+            .filter(|l| l.as_str() == "Not recommended")
+            .count(),
+        2
+    );
+
+    // Restore defaults puts both back on Manual and removes the warning.
     assert!(press_on(
         &mut surface,
         PageId::AgentProviders,
@@ -396,6 +413,8 @@ fn the_default_permission_card_offers_its_choices_and_asks_the_host() {
     ));
     assert_eq!(surface.take_requests(), [Request::RestoreAgentDefaults]);
     assert_eq!(*surface.agent_defaults(), AgentDefaults::default());
+    surface.relayout();
+    assert!(!page_lines(&surface).iter().any(|l| l == "Not recommended"));
 }
 
 /// The *Default agent* chips, as `(label, mark, selected, hit)`.

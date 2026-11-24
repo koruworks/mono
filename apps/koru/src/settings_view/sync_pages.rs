@@ -29,6 +29,12 @@ impl SettingsView {
         self.layout_manage();
     }
 
+    pub(crate) fn seed_cloud_cache(&mut self, cache: &crate::manage::profiles::CloudCache) {
+        if self.manage.delegate(|c| c.seed_cloud_cache(cache)) {
+            self.sync_navigation();
+        }
+    }
+
     pub(crate) fn manage_visible(&self) -> bool {
         matches!(self.surface.visible_page(), Some(PageId::Host(_)))
     }

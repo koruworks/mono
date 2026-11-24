@@ -529,3 +529,62 @@ fn an_account_without_koru_cloud_can_ask_for_free_and_reads_a_full_refusal() {
         ))
     );
 }
+
+#[test]
+fn reopening_cloud_keeps_cached_info_visible_while_refreshing_in_background() {
+    let mut c = subscribed();
+    let rows = vec![
+        row(&c.profiles[0].clone(), true, 2, 2),
+        row(&c.profiles[1].clone(), false, 0, 1),
+    ];
+    answer_sync(&mut c, rows);
+    assert_eq!(c.cloud_status(), Status::Manage);
+    assert_eq!(c.cloud_profile_counts(), Some((1, 2)));
+    assert!(c.cloud_actionable());
+
+    // Leaving and re-entering Cloud keeps the cached status, counts and link
+    // visible while issuing a background refresh.
+    c.set_cloud_visible(false);
+    c.set_cloud_visible(true);
+    assert_eq!(c.cloud_status(), Status::Manage);
+    assert_eq!(c.cloud_profile_counts(), Some((1, 2)));
+    assert!(c.cloud_actionable());
+    let (request_id, _) = start(&mut c);
+    assert_eq!(
+        c.cloud_status(),
+        Status::Manage,
+        "in-flight refresh keeps the cached subscription status on screen"
+    );
+    assert!(c.cloud_actionable());
+    assert!(c.complete_scoped(
+        1,
+        0,
+        AccountOperationResult::CloudSubscription {
+            request_id,
+            current: Some(true),
+            access: Some(true),
+            subscription_kind: None,
+        }
+    ));
+
+    // Closing and reopening the Settings tab seeds a fresh controller from the
+    // cached snapshot and still refreshes session + Cloud in the background.
+    let cache = c.cloud_cache().expect("cached Cloud state");
+    let mut reopened = ProfilesController::new();
+    reopened.pending = None;
+    reopened.set_account(c.account.clone());
+    reopened.profiles = c.profiles.clone();
+    assert!(reopened.seed_cloud_cache(&cache));
+    assert_eq!(reopened.cloud_status(), Status::Manage);
+    assert_eq!(reopened.cloud_profile_counts(), Some((1, 2)));
+    assert!(reopened.cloud_actionable());
+    reopened.set_cloud_visible(true);
+    assert_eq!(reopened.cloud_status(), Status::Manage);
+    assert_eq!(
+        reopened.take_request(),
+        Some(AccountCommand::InspectAccountSession)
+    );
+    let _ = start(&mut reopened);
+    assert_eq!(reopened.cloud_status(), Status::Manage);
+    assert_eq!(reopened.cloud_profile_counts(), Some((1, 2)));
+}

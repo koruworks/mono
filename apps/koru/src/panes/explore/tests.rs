@@ -7346,10 +7346,11 @@ fn activating_the_pane_while_it_is_filtered_lets_escape_clear_it() {
     assert_eq!(view.quick_filter(), None);
 }
 
-/// A chord is never filter text, and another view starts unfiltered.
+/// A chord is never filter text, and each view keeps its own filter across
+/// switches until its text is deleted or Escape clears it.
 #[test]
 fn a_chord_is_not_filter_text_and_the_filter_is_the_views_own() {
-    use winit::keyboard::{Key, ModifiersState};
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
     let rows = entries(&[("Design", None), ("Roadmap", None)]);
     let mut view = ExploreView::new();
     view.rebuild_from_entries(&rows);
@@ -7363,8 +7364,83 @@ fn a_chord_is_not_filter_text_and_the_filter_is_the_views_own() {
     ));
     assert!(typed(&mut view, "road"));
     assert_eq!(labels(&view), ["Roadmap"]);
+
+    // Switching to Tasks or Files shows that view unfiltered without erasing
+    // Documents' filter.
+    view.show_tasks();
+    assert_eq!(view.quick_filter(), None);
     view.show_files();
     assert_eq!(view.quick_filter(), None);
+
+    // Coming back to Documents restores its quick filter and filtered rows.
     view.show_documents();
+    assert_eq!(view.quick_filter(), Some("road"));
+    assert_eq!(labels(&view), ["Roadmap"]);
+
+    // Deleting the text removes the filter and restores every row.
+    let none = ModifiersState::empty();
+    for _ in 0..4 {
+        assert!(pressed(&mut view, NamedKey::Backspace, none));
+    }
+    assert_eq!(view.quick_filter(), None);
     assert_eq!(labels(&view), ["Design", "Roadmap"]);
+}
+
+/// Switching Documents -> Tasks -> Documents keeps each view's quick filter
+/// independent; Escape clears only the current view, and clearing all filters
+/// (workspace switch) clears parked filters too.
+#[test]
+fn switching_between_tasks_and_documents_preserves_each_views_quick_filter() {
+    use winit::keyboard::{ModifiersState, NamedKey};
+    let rows = entries(&[
+        ("General Testing Notes", None),
+        ("Notes Generative UI", None),
+        ("Roadmap", None),
+    ]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+
+    assert!(typed(&mut view, "notes gener"));
+    assert_eq!(
+        labels(&view),
+        ["General Testing Notes", "Notes Generative UI"]
+    );
+
+    // Switch to Tasks and type its own filter.
+    view.show_tasks();
+    assert_eq!(view.quick_filter(), None);
+    view.arm_quick_filter(true);
+    assert!(typed(&mut view, "sprint"));
+    assert_eq!(view.quick_filter(), Some("sprint"));
+
+    // Return to Documents: its filter and narrowed rows are still intact.
+    view.show_documents();
+    assert_eq!(view.quick_filter(), Some("notes gener"));
+    assert_eq!(
+        labels(&view),
+        ["General Testing Notes", "Notes Generative UI"]
+    );
+
+    // Escape clears Documents' filter without touching Tasks' parked filter.
+    assert!(pressed(
+        &mut view,
+        NamedKey::Escape,
+        ModifiersState::empty()
+    ));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(
+        labels(&view),
+        ["General Testing Notes", "Notes Generative UI", "Roadmap"]
+    );
+
+    view.show_tasks();
+    assert_eq!(view.quick_filter(), Some("sprint"));
+
+    // A workspace switch clears every view's filter.
+    view.show_documents();
+    assert!(view.clear_all_quick_filters());
+    view.show_tasks();
+    assert_eq!(view.quick_filter(), None);
 }

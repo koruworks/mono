@@ -875,6 +875,39 @@ fn a_screen_reader_hears_switches_buttons_and_the_disclosure() {
     assert_eq!(view.accessible_focus(&cx), cx_dialog(&view, &cx));
 }
 
+#[test]
+fn cloud_account_card_offers_sign_out_with_catch_up_notice_when_signed_in() {
+    let mut view = subscribed();
+    let sign_out = view
+        .laid
+        .placed(Control::SignOut)
+        .expect("Sign out button is on the Koru Cloud Account card");
+    let accounts = view
+        .laid
+        .placed(Control::Accounts)
+        .expect("Accounts button is on the Koru Cloud Account card");
+    assert!(
+        sign_out.rect.x + sign_out.rect.w < accounts.rect.x,
+        "Sign out sits to the left of Accounts"
+    );
+
+    assert!(press(&mut view, Control::SignOut));
+    let Some(crate::manage::dialogs::Dialog::SignOut(confirm)) = view.dialog() else {
+        panic!("pressing Sign out opens the confirmation dialog");
+    };
+    assert!(confirm.body().contains("nothing will be synced"));
+    assert!(confirm.body().contains("catch up"));
+    assert!(key(&mut view, NamedKey::Tab));
+    assert!(key(&mut view, NamedKey::Enter));
+    assert_eq!(view.c.take_request(), Some(AccountCommand::Logout));
+
+    // When signed out, Sign out is not shown on the Account card.
+    view.c.account_mut().stage = AccountStage::SignedOut;
+    view.relayout();
+    assert!(view.laid.placed(Control::SignOut).is_none());
+    assert!(view.laid.placed(Control::Accounts).is_some());
+}
+
 fn cx_dialog(
     view: &ManageView,
     cx: &accessibility::Context,

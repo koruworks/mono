@@ -76,3 +76,85 @@ fn keyboard_order_follows_reordered_views_after_the_workspace() {
         assert!(controls.contains(&Hit::App(NavigatorMode::Documents)));
     });
 }
+
+#[test]
+fn active_workspace_paints_an_accent_border_and_inactive_workspaces_do_not() {
+    use koru_core::WorkspaceId;
+    let active = WorkspaceId::new();
+    let other = WorkspaceId::new();
+    let rail = Rail {
+        workspaces: vec![
+            Item {
+                hit: Hit::Workspace(active),
+                name: "Active".into(),
+                contents: Contents::Tile {
+                    name: "Active".into(),
+                    icon: None,
+                    color: Some("red".into()),
+                },
+                selected: true,
+                dimmed: false,
+            },
+            Item {
+                hit: Hit::Workspace(other),
+                name: "Other".into(),
+                contents: Contents::Tile {
+                    name: "Other".into(),
+                    icon: None,
+                    color: Some("blue".into()),
+                },
+                selected: false,
+                dimmed: false,
+            },
+        ],
+        views: Vec::new(),
+        pins: Vec::new(),
+        foot: Vec::new(),
+    };
+    crate::input_engine::with(|engine| {
+        let layout = rail.layout(
+            engine,
+            &mut TextCache::default(),
+            band(),
+            Interaction::default(),
+        );
+        let active_node = layout.frame.node(key(Hit::Workspace(active))).unwrap();
+        let other_node = layout.frame.node(key(Hit::Workspace(other))).unwrap();
+        assert!(active_node.state.selected);
+        assert!(!other_node.state.selected);
+
+        // Paint both squares into separate scenes: the active workspace adds
+        // its accent border stroke while an inactive workspace does not.
+        let mut active_scene = Scene::new();
+        let mut other_scene = Scene::new();
+        let cx = FrameCx::root();
+        let active_leaf = SquareContents {
+            contents: rail.workspaces[0].contents.clone(),
+            dimmed: false,
+        };
+        let other_leaf = SquareContents {
+            contents: rail.workspaces[1].contents.clone(),
+            dimmed: false,
+        };
+        active_leaf.paint(
+            &mut active_scene,
+            Affine::IDENTITY,
+            engine,
+            active_node.rect,
+            &cx,
+            active_node.state,
+        );
+        other_leaf.paint(
+            &mut other_scene,
+            Affine::IDENTITY,
+            engine,
+            other_node.rect,
+            &cx,
+            other_node.state,
+        );
+        assert!(
+            active_scene.encoding().path_tags.len() > other_scene.encoding().path_tags.len(),
+            "the active workspace draws an additional accent border path"
+        );
+    });
+}

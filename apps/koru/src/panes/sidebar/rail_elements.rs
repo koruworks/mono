@@ -10,7 +10,7 @@ use koru_draw::el::{
 };
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::theme::{Ink, Line, Radius, Space, Surface, metrics};
+use koru_draw::theme::{Accent, Ink, Line, Radius, Space, Surface, metrics};
 use vello::{Scene, kurbo::Affine};
 
 pub(crate) const SURFACE: &str = "rail";
@@ -137,6 +137,24 @@ impl Leaf for SquareContents {
                             .resolve(&cx.theme, cx.contrast)
                             .multiply_alpha(WAITING_TILE_VEIL),
                         &koru_draw::scene::rect(tile.x, tile.y, tile.w, tile.h),
+                    );
+                }
+                if state.selected {
+                    let width = koru_draw::theme::BORDER_W * 1.5;
+                    let inset = (width * 0.5) as f32;
+                    let radius = (Radius::L.px(cx.profile, at.w, at.h) - inset).max(0.0);
+                    koru_draw::scene::stroke(
+                        scene,
+                        root,
+                        Accent::Base.of(cx.palette()),
+                        width,
+                        &koru_draw::scene::rrect(
+                            at.x + inset,
+                            at.y + inset,
+                            (at.w - inset * 2.0).max(0.0),
+                            (at.h - inset * 2.0).max(0.0),
+                            radius,
+                        ),
                     );
                 }
             }

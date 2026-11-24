@@ -243,6 +243,10 @@ impl ManageView {
         self.c.profiles()
     }
 
+    pub(crate) fn cloud_cache(&self) -> Option<profiles::CloudCache> {
+        self.c.cloud_cache()
+    }
+
     pub(crate) fn embed(
         &mut self,
         viewport: (f32, f32),

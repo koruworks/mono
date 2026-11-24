@@ -12,8 +12,9 @@
 //! by a press on the field or on a row that does not hand the keyboard to a
 //! page; it is disarmed by opening a document or a chat with a click or
 //! Enter, because then the next letters are meant for that page (owner,
-//! 2026-11-16). The filter itself stays, with its rows, until it is cleared:
-//! Escape, the `×`, or another view. Escape does that whenever the pane holds
+//! 2026-11-16). The filter itself stays per view, with its rows, across view
+//! switches until it is cleared: deleting its text, Escape, or the `×`. Escape
+//! does that whenever the pane holds
 //! the keyboard, armed or not — a press on the pane's empty ground (a filter
 //! that matched nothing has no row to land on) is what gives it the keyboard
 //! back, so the next Escape can put the filter away.
@@ -243,7 +244,7 @@ impl ExploreView {
         true
     }
 
-    /// Put the filter away. `true` when there was one.
+    /// Put the current view's filter away. `true` when there was one.
     pub fn clear_quick_filter(&mut self) -> bool {
         self.quick_holds_keyboard = false;
         if self.quick.take().is_none() {
@@ -254,15 +255,54 @@ impl ExploreView {
         true
     }
 
+    /// Put away every view's filter — current and parked. Called on a
+    /// workspace switch so filters from another workspace never carry over.
+    pub fn clear_all_quick_filters(&mut self) -> bool {
+        let had_parked = !self.quick_parked.is_empty();
+        self.quick_parked.clear();
+        self.clear_quick_filter() || had_parked
+    }
+
+    /// Park the outgoing mode's quick filter and restore any filter saved for
+    /// `next`. Switching views keeps each view's filter intact until its text
+    /// is deleted, cleared with `×`, or dismissed with Escape.
+    pub(super) fn switch_quick_filter_mode(&mut self, next: NavigatorMode) {
+        if let Some(typed) = self.quick.take() {
+            let input = self.quick_input.take();
+            self.quick_parked.insert(self.mode, (typed, input));
+        } else {
+            self.quick_input = None;
+            self.quick_parked.remove(&self.mode);
+        }
+        self.quick_holds_keyboard = false;
+        self.quick_dim.clear();
+        self.quick_matches = 0;
+        if let Some((typed, input)) = self.quick_parked.remove(&next) {
+            self.quick = Some(typed);
+            self.quick_input = input;
+        }
+        let typed = self.quick_words();
+        let on = self.quick.is_some() && !typed.is_empty();
+        self.rail
+            .set_filter((next == NavigatorMode::Tasks && on).then(|| typed.clone()));
+        self.chats.set_filter(
+            (next == NavigatorMode::Chats && on).then(|| self.quick.clone().unwrap_or_default()),
+        );
+        self.quick_stale = true;
+    }
+
     /// The filter's words moved: tell the two views that keep their own
     /// rows, and build this one's again.
     fn quick_changed(&mut self) {
         self.scroll = 0.0;
         let typed = self.quick_words();
         let on = self.quick.is_some() && !typed.is_empty();
-        self.rail.set_filter(on.then(|| typed.clone()));
-        self.chats
-            .set_filter(on.then(|| self.quick.clone().unwrap_or_default()));
+        self.rail
+            .set_filter((self.mode == NavigatorMode::Tasks && on).then(|| typed.clone()));
+        self.chats.set_filter(
+            (self.mode == NavigatorMode::Chats && on)
+                .then(|| self.quick.clone().unwrap_or_default()),
+        );
         self.quick_stale = true;
         if self.mode.kind().is_some() && !self.manifest_entries.is_empty() {
             self.rebuild_manifest_rows();

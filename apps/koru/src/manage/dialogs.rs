@@ -129,7 +129,7 @@ impl Dialog {
 const ADD_GOOGLE_BODY: &str = "This Google Account will be able to help connect new devices to this Profile. Your Profile content stays on your devices.";
 const OFFLINE_BODY: &str = "This removes the last sign-in method. Local content and established trusted-device sync remain. Connect a Google Account again before adding a new device.";
 const SIGN_OUT_TITLE: &str = "Sign out of Koru on this computer?";
-const SIGN_OUT_BODY: &str = "Every signed-in profile on this computer stops syncing until you sign in again. Your profiles and their workspaces stay on this computer.";
+const SIGN_OUT_BODY: &str = "Every signed-in profile on this computer stops syncing, and nothing will be synced in the meantime. Your profiles and their workspaces stay on this computer, and you can sign in again later to catch up.";
 const UNLINK_DEVICE_BODY: &str =
     "It will stop receiving updates immediately. Link it again later to restore access.";
 

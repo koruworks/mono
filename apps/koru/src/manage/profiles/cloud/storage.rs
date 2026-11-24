@@ -7,6 +7,7 @@ use koru_account_wire::cloud_plan::CloudPlanResponseV1;
 use koru_agent_wire::CloudPlanPayload;
 use std::time::{Duration, Instant};
 
+#[derive(Clone)]
 pub(crate) struct Snapshot {
     pub plan: CloudPlanResponseV1,
     deadline: Option<Instant>,

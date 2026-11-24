@@ -93,6 +93,7 @@ pub(crate) const FEATURES: [TextKey; 10] = [
 const LEAD: &str = "One subscription covers every profile on this computer. Each signed-in profile chooses whether it syncs.";
 const ACCOUNT_TITLE: &str = "Account";
 const ACCOUNTS: &str = "Accounts\u{2026}";
+const SIGN_OUT: &str = "Sign out\u{2026}";
 const SIGNED_IN_HINT: &str = "Signed in on this computer";
 /// Before the time Koru Cloud last accepted the sign-in.
 const CHECKED: &str = "checked";
@@ -129,6 +130,8 @@ pub(super) const ROW_TILE: f32 = 28.0;
 const TILE_GAP: f32 = 12.0;
 /// Between a control and the text beside it.
 const CONTROL_GAP: f32 = 12.0;
+/// Between side-by-side buttons in a row.
+const BUTTON_GAP: f32 = 8.0;
 
 /// The account row inside the *Account* card.
 #[derive(Clone, Debug, PartialEq)]
@@ -381,28 +384,53 @@ impl ManageView {
             words
         });
 
-        // The account, and its switcher.
+        // The account, its sign-out action, and its switcher.
         let card_top = y;
         let row_y = y + Card::new(Some(ACCOUNT_TITLE)).header_h();
         let (label, hint) = self.account_words();
         // No *Accounts…* in a build with no Koru Cloud: there is no account
         // to switch to, and the hint beside the row says why.
         let switcher = !self.cloud_not_configured();
+        let sign_out = switcher && self.c.account().stage == AccountStage::SignedIn;
         let accounts_w = if switcher {
             button::button_width(&mut self.engine, ACCOUNTS)
         } else {
             0.0
         };
-        let text_w = CardRow::text_w(column.w, accounts_w);
+        let sign_out_w = if sign_out {
+            button::button_width(&mut self.engine, SIGN_OUT)
+        } else {
+            0.0
+        };
+        let controls_w = if sign_out {
+            sign_out_w + BUTTON_GAP + accounts_w
+        } else {
+            accounts_w
+        };
+        let text_w = CardRow::text_w(column.w, controls_w);
         let row_h = CardRow::new(&label)
             .hint(&hint)
             .height(&mut self.engine, text_w, button::H)
             .max(CardRow::MIN_H);
         let row = Rect::new(column.x, row_y, column.w, row_h);
         if switcher {
+            let slot = CardRow::control_slot(row, controls_w, button::H);
+            if sign_out {
+                controls.push(Placed {
+                    control: Control::SignOut,
+                    rect: Rect::new(slot.x, slot.y, sign_out_w, button::H),
+                    label: SIGN_OUT.into(),
+                    look: Look::Button(ButtonRole::Secondary),
+                });
+            }
+            let accounts_x = if sign_out {
+                slot.x + sign_out_w + BUTTON_GAP
+            } else {
+                slot.x
+            };
             controls.push(Placed {
                 control: Control::Accounts,
-                rect: CardRow::control_slot(row, accounts_w, button::H),
+                rect: Rect::new(accounts_x, slot.y, accounts_w, button::H),
                 label: ACCOUNTS.into(),
                 look: Look::Button(ButtonRole::Secondary),
             });
@@ -948,6 +976,10 @@ impl ManageView {
             return Some(result);
         }
         let intent = match control {
+            Control::SignOut => {
+                self.ask_to_sign_out();
+                return Some(true);
+            }
             Control::Accounts => {
                 self.open_account_switcher();
                 return Some(true);
@@ -1145,8 +1177,10 @@ impl ManageView {
             row.text_w,
             1.0,
         );
-        if let Some(placed) = self.laid.placed(Control::Accounts).cloned() {
-            self.paint_control(canvas, root, &placed);
+        for control in [Control::SignOut, Control::Accounts] {
+            if let Some(placed) = self.laid.placed(control).cloned() {
+                self.paint_control(canvas, root, &placed);
+            }
         }
     }
 

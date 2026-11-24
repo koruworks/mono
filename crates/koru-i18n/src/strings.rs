@@ -2934,6 +2934,7 @@ pub enum Key {
     SettingsPermissionManual,
     SettingsPermissionAuto,
     SettingsPermissionYolo,
+    SettingsPermissionYoloWarning,
     SettingsDefaultAgent,
     SettingsDefaultAgentHint,
     SettingsDefaultAgentAuto,
@@ -4569,7 +4570,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3475] = [
+    pub const ALL: [Key; 3476] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6645,6 +6646,7 @@ impl Key {
         Key::SettingsPermissionManual,
         Key::SettingsPermissionAuto,
         Key::SettingsPermissionYolo,
+        Key::SettingsPermissionYoloWarning,
         Key::SettingsDefaultAgent,
         Key::SettingsDefaultAgentHint,
         Key::SettingsDefaultAgentAuto,
@@ -18404,7 +18406,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsOtherAgentsHint, en: "Agents without an auto mode. Yolo applies only where the agent offers full access; elsewhere a chat starts in Manual.", es: "Agentes sin modo automático. Yolo solo se aplica donde el agente ofrece acceso total; en los demás, el chat empieza en Manual.", pt_br: "Agentes sem modo automático. Yolo só vale onde o agente oferece acesso total; nos demais, o chat começa em Manual.", de: "Agenten ohne Automodus. Yolo gilt nur, wo der Agent Vollzugriff anbietet; sonst beginnt ein Chat in Manuell.", fr: "Agents sans mode automatique. Yolo ne s'applique que si l'agent propose un accès complet ; sinon, la discussion démarre en Manuel.", ar: "الوكلاء الذين ليس لديهم وضع تلقائي. ينطبق Yolo فقط حيث يوفّر الوكيل وصولًا كاملًا؛ وإلا تبدأ المحادثة بالوضع اليدوي.", zh_hans: "没有自动模式的智能体。只有在智能体提供完全访问时 Yolo 才生效；否则聊天以手动模式开始。", ja: "自動モードのないエージェント。Yolo はエージェントがフルアクセスを提供する場合にのみ適用され、それ以外ではチャットは手動で始まります。" },
     Row { key: Key::SettingsPermissionManual, en: "Manual", es: "Manual", pt_br: "Manual", de: "Manuell", fr: "Manuel", ar: "يدوي", zh_hans: "手动", ja: "手動" },
     Row { key: Key::SettingsPermissionAuto, en: "Auto", es: "Auto", pt_br: "Auto", de: "Auto", fr: "Auto", ar: "تلقائي", zh_hans: "自动", ja: "自動" },
-    Row { key: Key::SettingsPermissionYolo, en: "Yolo (not recommended)", es: "Yolo (no recomendado)", pt_br: "Yolo (não recomendado)", de: "Yolo (nicht empfohlen)", fr: "Yolo (déconseillé)", ar: "Yolo (غير موصى به)", zh_hans: "Yolo（不推荐）", ja: "Yolo（非推奨）" },
+    Row { key: Key::SettingsPermissionYolo, en: "Yolo", es: "Yolo", pt_br: "Yolo", de: "Yolo", fr: "Yolo", ar: "Yolo", zh_hans: "Yolo", ja: "Yolo" },
+    Row { key: Key::SettingsPermissionYoloWarning, en: "Not recommended", es: "No recomendado", pt_br: "Não recomendado", de: "Nicht empfohlen", fr: "Déconseillé", ar: "غير موصى به", zh_hans: "不推荐", ja: "非推奨" },
     // Agent providers: the agent a new chat starts with (D40).
     Row { key: Key::SettingsDefaultAgent, en: "Default agent", es: "Agente predeterminado", pt_br: "Agente padrão", de: "Standardagent", fr: "Agent par défaut", ar: "الوكيل الافتراضي", zh_hans: "默认智能体", ja: "既定のエージェント" },
     Row { key: Key::SettingsDefaultAgentHint, en: "New chats start with this agent. Auto starts them with the last agent you used.", es: "Los chats nuevos empiezan con este agente. Auto los empieza con el último agente que usaste.", pt_br: "Novos chats começam com este agente. Auto os começa com o último agente que você usou.", de: "Neue Chats beginnen mit diesem Agenten. Auto beginnt sie mit dem zuletzt verwendeten Agenten.", fr: "Les nouvelles discussions démarrent avec cet agent. Auto les démarre avec le dernier agent utilisé.", ar: "تبدأ المحادثات الجديدة بهذا الوكيل. تلقائي يبدؤها بآخر وكيل استخدمته.", zh_hans: "新聊天会使用此智能体。自动：使用你上次用过的智能体。", ja: "新しいチャットはこのエージェントで始まります。自動は最後に使ったエージェントで始めます。" },

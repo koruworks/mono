@@ -185,6 +185,9 @@ fn permissions(b: &mut Builder<'_>, lang: Lang, defaults: &AgentDefaults) {
         )
     };
     b.card(Some(t(lang, Key::SettingsDefaultPermission)));
+    if defaults.permission == AgentPermission::Yolo {
+        b.next_row_danger_note(t(lang, Key::SettingsPermissionYoloWarning));
+    }
     b.row_choice(
         t(lang, Key::SettingsSupportedAgents),
         Some(t(lang, Key::SettingsSupportedAgentsHint)),
@@ -193,6 +196,9 @@ fn permissions(b: &mut Builder<'_>, lang: Lang, defaults: &AgentDefaults) {
             .map(|permission| choice(false, *permission, defaults.permission))
             .collect(),
     );
+    if defaults.permission_other == AgentPermission::Yolo {
+        b.next_row_danger_note(t(lang, Key::SettingsPermissionYoloWarning));
+    }
     b.row_choice(
         t(lang, Key::SettingsOtherAgents),
         Some(t(lang, Key::SettingsOtherAgentsHint)),

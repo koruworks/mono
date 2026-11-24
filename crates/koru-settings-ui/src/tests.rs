@@ -119,6 +119,7 @@ pub(crate) fn page_lines(surface: &SettingsSurface) -> Vec<String> {
                     out.extend(row.hint.clone());
                     out.extend(row.link.as_ref().map(|(text, _)| text.clone()));
                     out.extend(row.chip.clone());
+                    out.extend(row.danger_note.as_ref().map(|(text, _)| text.clone()));
                 }
             }
             Block::Caption { title, link, .. } => {

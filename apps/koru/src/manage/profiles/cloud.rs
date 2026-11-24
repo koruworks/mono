@@ -35,6 +35,30 @@ pub enum Status {
     Active,
     Unavailable,
 }
+
+impl Status {
+    /// Whether this status is a known answer from Koru Cloud that can stay on
+    /// screen while a background refresh runs.
+    pub(super) fn is_known(self) -> bool {
+        matches!(self, Self::Subscribe | Self::Manage | Self::Active)
+    }
+}
+
+/// Cached Koru Cloud page facts held across closing and reopening the Settings
+/// tab for the same signed-in account scope, so reopening Cloud paints the last
+/// known view immediately and refreshes in the background.
+#[derive(Clone)]
+pub(crate) struct CloudCache {
+    scope: u64,
+    account_id: String,
+    signed_in_identity: Option<(String, String)>,
+    account_profiles: Vec<AccountProfileRow>,
+    status: Status,
+    access: Option<bool>,
+    kind: Option<koru_agent_wire::CloudSubscriptionKind>,
+    sync: Option<Vec<CloudSyncProfile>>,
+    storage: Option<storage::Snapshot>,
+}
 pub(super) struct Pending {
     id: u64,
     submission: CommandSubmissionId,
@@ -142,11 +166,80 @@ impl ProfilesController {
         self.cloud.storage.refresh();
         if self.cloud.pending.is_none() {
             self.cloud.due = true;
-            self.cloud.status = Status::Unknown;
+            // Keep a known answer visible while the background refresh runs;
+            // only Unknown/Unavailable fall back to the checking state.
+            if !self.cloud.status.is_known() {
+                self.cloud.status = Status::Unknown;
+            }
         }
         if self.cloud.sync_pending.is_none() {
             self.cloud.sync_due = true;
         }
+    }
+    /// Snapshot the current signed-in account's Koru Cloud facts so a newly
+    /// opened Settings tab can paint them immediately while refreshing.
+    pub(crate) fn cloud_cache(&self) -> Option<CloudCache> {
+        if self.account.stage != AccountStage::SignedIn {
+            return None;
+        }
+        let account_id = self.account.active_account_id.clone()?;
+        let has_data = self.signed_in_identity.is_some()
+            || !self.account_profiles.is_empty()
+            || self.cloud.status.is_known()
+            || self.cloud.sync.is_some()
+            || self.cloud.storage.snapshot.is_some();
+        if !has_data {
+            return None;
+        }
+        Some(CloudCache {
+            scope: self.account.active_scope,
+            account_id,
+            signed_in_identity: self.signed_in_identity.clone(),
+            account_profiles: self.account_profiles.clone(),
+            status: if self.cloud.status.is_known() {
+                self.cloud.status
+            } else {
+                Status::Unknown
+            },
+            access: self.cloud.access,
+            kind: self.cloud.kind,
+            sync: self.cloud.sync.clone(),
+            storage: self.cloud.storage.snapshot.clone(),
+        })
+    }
+    /// Seed a fresh controller with cached Koru Cloud facts for the same
+    /// signed-in account scope without suppressing its background refresh.
+    pub(crate) fn seed_cloud_cache(&mut self, cache: &CloudCache) -> bool {
+        if self.account.stage != AccountStage::SignedIn
+            || self.account.active_scope != cache.scope
+            || self.account.active_account_id.as_deref() != Some(cache.account_id.as_str())
+        {
+            return false;
+        }
+        let mut changed = false;
+        if self.signed_in_identity.is_none() && cache.signed_in_identity.is_some() {
+            self.signed_in_identity = cache.signed_in_identity.clone();
+            changed = true;
+        }
+        if self.account_profiles.is_empty() && !cache.account_profiles.is_empty() {
+            self.account_profiles = cache.account_profiles.clone();
+            changed = true;
+        }
+        if !self.cloud.status.is_known() && cache.status.is_known() {
+            self.cloud.status = cache.status;
+            self.cloud.access = cache.access;
+            self.cloud.kind = cache.kind;
+            changed = true;
+        }
+        if self.cloud.sync.is_none() && cache.sync.is_some() {
+            self.cloud.sync = cache.sync.clone();
+            changed = true;
+        }
+        if self.cloud.storage.snapshot.is_none() && cache.storage.is_some() {
+            self.cloud.storage.snapshot = cache.storage.clone();
+            changed = true;
+        }
+        changed
     }
     pub(super) fn refresh_cloud_sync(&mut self) {
         self.cloud.sync_due = true;
@@ -183,7 +276,9 @@ impl ProfilesController {
         if self.cloud.due && self.cloud.pending.is_none() {
             let id = next_request_id();
             self.cloud.due = false;
-            self.cloud.status = Status::Loading;
+            if !self.cloud.status.is_known() {
+                self.cloud.status = Status::Loading;
+            }
             self.cloud.pending = Some(Pending {
                 id,
                 submission: CommandSubmissionId::next(),
@@ -542,7 +637,8 @@ impl ProfilesController {
         }
     }
     pub fn cloud_actionable(&self) -> bool {
-        self.cloud.pending.is_none()
+        let waiting = self.cloud.pending.is_some() && !self.cloud.status.is_known();
+        !waiting
             && match self.account.stage {
                 AccountStage::SignedIn => !matches!(
                     self.cloud.status,

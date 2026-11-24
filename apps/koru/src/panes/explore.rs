@@ -174,7 +174,7 @@ pub struct Row {
 /// container sends the typed backend verb — the tree reflects the
 /// `ProjectsChanged`/catalog that comes back on the wake path (Q-E4/Q-E6,
 /// ADR-264).
-#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub enum NavigatorMode {
     /// **Home**: Today, with Inbox and Upcoming to come (workspace
     /// foundation, rung 5). First in the row; `Alt+H` (the review's note, E69
@@ -1000,6 +1000,9 @@ pub struct ExploreView {
     quick: Option<String>,
     /// The field it is typed in: the shared one-line input.
     quick_input: Option<koru_ui::text_input::TextInput>,
+    /// Quick filters parked for other navigator modes so switching views
+    /// preserves each view's filter until its text is deleted or Escape clears it.
+    quick_parked: HashMap<NavigatorMode, (String, Option<koru_ui::text_input::TextInput>)>,
     /// Whether typing in the sidebar goes to the quick filter.
     quick_armed: bool,
     /// The filter holds the keyboard when no row can: nothing matched, so
@@ -1482,10 +1485,9 @@ impl ExploreView {
         if self.mode == mode {
             return;
         }
-        // The quick filter is about the view it was typed over.
-        if self.mode != mode {
-            self.clear_quick_filter();
-        }
+        // Each view keeps its own quick filter across view switches; only
+        // deleting its text, clicking ×, Escape, or a workspace switch clears it.
+        self.switch_quick_filter_mode(mode);
         self.mode = mode;
         self.scroll = 0.0;
         self.focus = None;

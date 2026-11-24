@@ -39,7 +39,7 @@ mod selection_tests;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use cloud::inventory;
+pub(crate) use cloud::{CloudCache, inventory};
 pub use cloud::{Status as CloudStatus, SyncAvailability};
 pub use effect::Effect;
 pub use intent::{Intent, LinkControl, SessionAction};

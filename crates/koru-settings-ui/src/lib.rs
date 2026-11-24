@@ -1932,6 +1932,16 @@ impl SettingsSurface {
                         &self.search.value(),
                     );
                     self.draw_widget(scene_out, root, &row.widget, hovered, alpha);
+                    if let Some((note, at)) = &row.danger_note {
+                        koru_ui::text_paragraph::KoruTextParagraph::new(
+                            note,
+                            theme::role::meta(),
+                            "theme::role::meta()",
+                            p.close_hover.multiply_alpha(alpha),
+                        )
+                        .highlight(&self.search.value())
+                        .draw(scene_out, root, &mut self.engine, *at);
+                    }
                 }
             }
             // The host draws its own rows through `draw_host_section`.

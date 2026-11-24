@@ -382,6 +382,9 @@ pub(crate) struct RowLaid {
     pub(crate) drag: Option<(usize, Rect)>,
     pub(crate) text_w: f32,
     pub(crate) widget: Widget,
+    /// A warning line drawn in red directly under the row's control — e.g.
+    /// *Not recommended* when Yolo is chosen.
+    pub(crate) danger_note: Option<(String, Rect)>,
 }
 
 impl RowLaid {
@@ -405,6 +408,8 @@ pub(crate) const GRIP_INSET: f32 = 3.0;
 pub(crate) const MARK_SLOT: f32 = 28.0;
 /// The mark's own square.
 pub(crate) const MARK_SIZE: f32 = 18.0;
+/// Gap between a row's control and its warning caption below it.
+const DANGER_NOTE_GAP: f32 = 4.0;
 
 pub(crate) struct CardLaid {
     pub(crate) rect: Rect,
@@ -498,6 +503,9 @@ pub(crate) struct Builder<'a> {
     /// Set by [`next_row_draggable`](Self::next_row_draggable); taken by
     /// the next row.
     pending_drag: Option<usize>,
+    /// Set by [`next_row_danger_note`](Self::next_row_danger_note); taken by
+    /// the next row.
+    pending_danger_note: Option<String>,
     query: String,
 }
 
@@ -532,8 +540,14 @@ impl<'a> Builder<'a> {
             pending_chip: None,
             pending_mark: None,
             pending_drag: None,
+            pending_danger_note: None,
             query: String::new(),
         }
+    }
+
+    /// Show a red warning caption directly below the next row's control.
+    pub(crate) fn next_row_danger_note(&mut self, text: &str) {
+        self.pending_danger_note = Some(text.to_owned());
     }
 
     /// Make the next row draggable — index `n` among the page's draggable
@@ -1003,6 +1017,7 @@ impl<'a> Builder<'a> {
                 drag: None,
                 text_w: 0.0,
                 widget: Widget::Chips(chips),
+                danger_note: None,
             });
         }
         self.y += h;
@@ -1034,9 +1049,24 @@ impl<'a> Builder<'a> {
             self.card(None);
         }
         let (control_w, control_h) = self.measure(&spec);
+        let pending_danger = self.pending_danger_note.take().map(|text| {
+            let w = self
+                .engine
+                .simple_layout(&text, theme::role::meta())
+                .width();
+            let h = theme::role::meta().metrics.line_height;
+            (text, w, h)
+        });
+        let (slot_w, slot_h) = match &pending_danger {
+            Some((_, note_w, note_h)) => (
+                control_w.max(*note_w),
+                control_h + DANGER_NOTE_GAP + *note_h,
+            ),
+            None => (control_w, control_h),
+        };
         let mark = self.pending_mark.take();
         let indent = if mark.is_some() { MARK_SLOT } else { 0.0 };
-        let text_w = CardRow::text_w(self.w - indent, control_w);
+        let text_w = CardRow::text_w(self.w - indent, slot_w);
         let pending_link = self.pending_link.take();
         let chip = self.pending_chip.take();
         let row = CardRow {
@@ -1045,9 +1075,7 @@ impl<'a> Builder<'a> {
             link: pending_link.as_ref().map(|(text, _)| text.as_str()),
             chip: chip.as_deref(),
         };
-        let h = row
-            .height(self.engine, text_w, control_h)
-            .max(CardRow::MIN_H);
+        let h = row.height(self.engine, text_w, slot_h).max(CardRow::MIN_H);
         let rect = Rect::new(self.x, self.y, self.w, h);
         // The handle's press covers the whole inset, the row's full height,
         // so it is not a 12-pixel target.
@@ -1078,8 +1106,20 @@ impl<'a> Builder<'a> {
             }
             _ => None,
         };
-        let slot = CardRow::control_slot(rect, control_w, control_h);
-        let widget = self.place(spec, slot);
+        let slot = CardRow::control_slot(rect, slot_w, slot_h);
+        let control_slot = Rect::new(slot.x + slot.w - control_w, slot.y, control_w, control_h);
+        let widget = self.place(spec, control_slot);
+        let danger_note = pending_danger.map(|(text, note_w, note_h)| {
+            (
+                text,
+                Rect::new(
+                    slot.x + slot.w - note_w,
+                    slot.y + control_h + DANGER_NOTE_GAP,
+                    note_w,
+                    note_h,
+                ),
+            )
+        });
         if let Some((n, _)) = drag {
             self.push_hit(rect, Target::Row(n));
         }
@@ -1094,6 +1134,7 @@ impl<'a> Builder<'a> {
                 drag,
                 text_w,
                 widget,
+                danger_note,
             });
         }
         self.y += h;
