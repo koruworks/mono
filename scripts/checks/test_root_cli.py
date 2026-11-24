@@ -47,7 +47,7 @@ class RootArguments(unittest.TestCase):
         )
         setup = self.repo / "scripts/setup"
         setup.mkdir()
-        for name in ["fetch-fonts", "fetch-third-party"]:
+        for name in ["fetch-fonts", "fetch-third-party", "fetch-voice-runtime"]:
             (setup / (name + ".ps1")).write_text('Write-Host "TEST_SETUP"\n')
         self.stub = self.repo / "stubs"
         self.stub.mkdir()
@@ -79,7 +79,7 @@ class RootArguments(unittest.TestCase):
             'sys.exit(int(os.environ.get("TEST_FAIL_CODE", "7")) '
             'if sys.argv[1] == os.environ.get("TEST_FAIL") else 0)\n'
         )
-        for command in ["sccache", "cargo", "git", "claude", "codex", "gemini"]:
+        for command in ["sccache", "cargo", "cmake", "git", "claude", "codex", "gemini"]:
             (self.stub / (command + ".cmd")).write_text(
                 f'@"{sys.executable}" "{collector}" {command} %*\n'
             )
@@ -125,6 +125,7 @@ class RootArguments(unittest.TestCase):
         self.assertEqual(self.calls("cargo"), [[
             "build", "--target-dir", str(self.repo / "target"),
             "-p", "koru-agent", "-p", "koru", "-p", "koru-mcp",
+            "-p", "koru-read-worker", "--features", "koru-read-worker/recognition",
         ]])
         for cli in ["claude", "codex", "gemini"]:
             call = self.calls(cli)[0]
