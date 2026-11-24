@@ -84,14 +84,10 @@ internal class KoruApiNative(
     fun runTimeline(id: String, newestFirstFrom: Int, len: Int) = call("store.run_timeline", RunTimelineRequest.newBuilder().setHost(host).setDocumentId(id).setNewestFirstFrom(newestFirstFrom).setLen(len).build(), RunTimelineWindow::parseFrom)
     fun mutateWorkspace(id: String, action: String, title: String) = call("store.mutate_workspace", WorkspaceMutation.newBuilder().setHost(host).setWorkspaceId(id).setAction(action).setTitle(title).build(), MutationResult::parseFrom)
     fun mutateProfile(id: String, action: String, value: String) = call("store.mutate_profile", ProfileMutation.newBuilder().setHost(host).setProfileId(id).setAction(action).setValue(value).build(), MutationResult::parseFrom)
-    fun mutateDocument(id: String, action: String, title: String) = call("store.mutate_document", DocumentMutation.newBuilder().setHost(host).setDocumentId(id).setAction(action).setTitle(title).build(), MutationResult::parseFrom)
-    fun editBlockText(id: String, edit: app.koru.mobile.domain.DocumentCommand.EditBlockText) = call(
+    fun mutateDocument(id: String, action: String, title: String, expectedVersion: ByteString = ByteString.EMPTY) = call("store.mutate_document", DocumentMutation.newBuilder().setHost(host).setDocumentId(id).setAction(action).setTitle(title).setExpectedVersion(expectedVersion).build(), MutationResult::parseFrom)
+    fun editBlockText(id: String, edit: app.koru.mobile.domain.DocumentCommand.EditBlockText, action: String = "edit_text") = call(
         "store.mutate_document", DocumentMutation.newBuilder().setHost(host).setDocumentId(id)
-            .setAction("edit_text").setTextEdit(DocumentTextEdit.newBuilder()
-                .setBlockId(edit.blockId.value).setBefore(edit.before).setAfter(edit.after)
-                .setCreateParagraph(edit.createParagraph).apply {
-                    edit.split?.let { setSplit(DocumentTextSplit.newBuilder().setBlockId(it.blockId.value).setAtUtf8(it.atUtf8)) }
-                }).build(), MutationResult::parseFrom)
+            .setAction(action).setTextEdit(edit.toWireEdit()).build(), MutationResult::parseFrom)
     fun importFile(workspace: String, name: String, mime: String, path: String, note: String? = null) = call("store.import_file", ImportFileRequest.newBuilder().setHost(host).setWorkspaceId(workspace).setName(name).setMime(mime).setPath(path).apply { note?.let(::setNote) }.build(), DocumentIdResult::parseFrom)
     fun ensureFileNote(document: String) = call("store.ensure_file_note", FileNoteRequest.newBuilder().setHost(host).setDocumentId(document).build(), DocumentIdResult::parseFrom)
     fun startPairing() = call(

@@ -539,6 +539,7 @@ impl Host for DesktopCloudHost {
                     queued_jobs: record.queued_jobs,
                     pending_consent_ids: record.pending_consent_ids.clone(),
                     error_code: record.error_code.as_deref().map(cloud::static_code),
+                    remote_hint: record.error_code.as_deref() == Some(cloud::DOCUMENT_REMOVED),
                     ..SessionReport::default()
                 });
             }
@@ -676,8 +677,9 @@ impl Host for DesktopCloudHost {
             if terminal(record.stage) {
                 break SessionReport {
                     stage: record.stage.into(),
-                    // The live gateway handles hints on this same stream.
-                    remote_hint: false,
+                    // Ordinary hints stay on the live stream. A removal ended
+                    // that stream and requires admission followed by a list read.
+                    remote_hint: record.error_code.as_deref() == Some(cloud::DOCUMENT_REMOVED),
                     bytes_held: record.bytes_held,
                     queued_jobs: record.queued_jobs,
                     pending_consent_ids: record.pending_consent_ids.clone(),
@@ -710,7 +712,9 @@ impl Host for DesktopCloudHost {
                 };
             }
         };
-        if matches!(report.stage, Stage::Settled | Stage::CheckingCoverage) {
+        if matches!(report.stage, Stage::Settled | Stage::CheckingCoverage)
+            && report.error_code != Some(cloud::DOCUMENT_REMOVED)
+        {
             // Debug: the ordinary end of every workspace's reconciliation.
             tracing::debug!(permit_id = %permit.permit_id, dataset = ?dataset,
                 "cloud subscription: retained after initial reconciliation");

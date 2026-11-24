@@ -242,3 +242,24 @@ The pinned windows-core 0.62.2 nullable-interface conversion returns
 or a window. Fixture traversal treats only that proven sentinel as branch end;
 real E_POINTER, E_FAIL and destroyed-element errors remain failures. Treating
 E_POINTER as the null sentinel aborted discovery at the first leaf.
+
+## Custom message buttons and Common Controls v6
+
+`rfd` 0.15 defaults to `MessageBoxW` on Windows. That backend accepts
+`YesNoCancelCustom` but displays system Yes/No/Cancel labels and returns
+`Yes`/`No`, not `Custom(label)`. Enabling `common-controls-v6` selects a static
+`TaskDialogIndirect` import throughout the unified dependency graph. Application
+executables have the v6 manifest from `koru-winres`; some library/integration
+test executables do not, and fail before main with `STATUS_ENTRYPOINT_NOT_FOUND`.
+
+The document-removal choice follows `koru-updater`'s established dynamic
+`TaskDialogIndirect` lookup instead. It uses translated Keep/Delete/Cancel
+buttons, Keep as the safe default, and RTL layout for Arabic. A missing API or
+failed dialog retains the source and reports pending deletion. Other platforms
+use rfd, accepting typed Yes/No as well as custom-label results; cancellation
+and unknown results never release the source. The app's selected language owns
+these labels, not the machine locale.
+
+The pinned [rfd Windows implementation](https://github.com/PolyMeilex/rfd/blob/0.15.4/src/backend/win_cid/message_dialog.rs)
+contains both upstream paths. Pure decision tests do not establish native
+labels or accessibility; those remain Windows acceptance checks.

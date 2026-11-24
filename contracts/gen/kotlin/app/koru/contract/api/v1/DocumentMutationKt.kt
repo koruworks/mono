@@ -148,6 +148,31 @@ public object DocumentMutationKt {
 
     public val DocumentMutationKt.Dsl.textEditOrNull: app.koru.contract.api.v1.DocumentTextEdit?
       get() = _builder.textEditOrNull
+
+    /**
+     * ```
+     * Exact frozen local version being answered by purge_keep/purge_delete.
+     * ```
+     *
+     * `bytes expected_version = 6 [json_name = "expectedVersion"];`
+     */
+    public var expectedVersion: com.google.protobuf.ByteString
+      @kotlin.jvm.JvmName("getExpectedVersion")
+        get() = _builder.expectedVersion
+      @kotlin.jvm.JvmName("setExpectedVersion")
+        set(value) {
+        _builder.expectedVersion = value
+      }
+    /**
+     * ```
+     * Exact frozen local version being answered by purge_keep/purge_delete.
+     * ```
+     *
+     * `bytes expected_version = 6 [json_name = "expectedVersion"];`
+     */
+    public fun clearExpectedVersion() {
+      _builder.clearExpectedVersion()
+    }
   }
 }
 public inline fun app.koru.contract.api.v1.DocumentMutation.copy(block: `app.koru.contract.api.v1`.DocumentMutationKt.Dsl.() -> kotlin.Unit): app.koru.contract.api.v1.DocumentMutation =

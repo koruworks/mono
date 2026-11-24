@@ -834,6 +834,26 @@ pub trait View {
         false
     }
 
+    /// Close every view of a final-purged source before its kept copy is made.
+    /// Source content/revisions stay with the workspace until durable release.
+    fn quiesce_purged_document(
+        &mut self,
+        _document: koru_core::DocumentId,
+        _root: Option<NodeId>,
+    ) -> bool {
+        false
+    }
+
+    /// Unanswered local Keep/Delete choices in the current workspace.
+    fn set_pending_document_deletions(&mut self, _count: usize) -> bool {
+        false
+    }
+
+    /// Revisit deferred choices without restarting. Does not decide or release content.
+    fn take_review_document_deletions(&mut self) -> bool {
+        false
+    }
+
     fn pinned_search_rows(
         &self,
     ) -> Vec<(String, koru_core::DocumentId, koru_core::WorkspaceId, bool)> {

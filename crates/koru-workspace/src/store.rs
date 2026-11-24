@@ -54,6 +54,7 @@ use loro_protocol::BatchId;
 
 pub mod link;
 pub mod outbox;
+pub(crate) mod purge_intent;
 pub mod revisions;
 use link::{Inbound, Link, ThreadLink};
 

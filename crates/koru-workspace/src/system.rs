@@ -566,13 +566,6 @@ impl SystemSession {
         self.active.is_some() && self.pending.is_none() && self.local.is_none()
     }
 
-    pub(crate) fn pages_version(&self) -> Option<loro::VersionVector> {
-        self.active
-            .as_ref()
-            .map(|live| live.doc.version())
-            .or_else(|| self.local.as_ref().map(SystemDoc::version))
-    }
-
     /// A containing acknowledged version proves every event and decision we
     /// just read is durable. Joining a room does not advance `acked`.
     pub(crate) fn pages_durable(&self) -> bool {
@@ -584,6 +577,73 @@ impl SystemSession {
             })
     }
 
+    pub(crate) fn purge_events(
+        &self,
+    ) -> Result<Option<Vec<koru_core::pages::purge::Event>>, String> {
+        let Some(active) = &self.active else {
+            return Ok(None);
+        };
+        if !self.pages_loaded() {
+            return Ok(None);
+        }
+        active
+            .doc
+            .purge_events()
+            .map(Some)
+            .map_err(|e| e.to_string())
+    }
+
+    pub(crate) fn is_document_purged(&self, id: DocumentId) -> bool {
+        self.active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())
+            .is_some_and(|doc| doc.is_document_purged(id))
+    }
+
+    pub(crate) fn purge_coverage(
+        &self,
+        id: DocumentId,
+    ) -> Option<koru_core::pages::purge::Coverage> {
+        self.active
+            .as_ref()
+            .map(|live| &live.doc)
+            .or(self.local.as_ref())?
+            .purge_coverage(id)
+    }
+
+    /// Repeated calls with the same batch publish the same immutable events.
+    /// Success means the Store acknowledged the containing system version.
+    pub(crate) fn ingest_purge_events(
+        &mut self,
+        events: &[koru_core::pages::purge::Event],
+    ) -> Result<bool, String> {
+        if !self.pages_loaded() {
+            return Ok(false);
+        }
+        let active = self.active.as_mut().ok_or("system document is not open")?;
+        for event in events {
+            match active
+                .doc
+                .write_purge_event(event)
+                .map_err(|e| e.to_string())?
+            {
+                koru_core::pages::purge::Insert::Conflict => {
+                    tracing::warn!(event_id = %event.event_id, "ignored conflicting document purge event");
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        active
+            .session
+            .publish(&active.doc)
+            .map_err(|e| e.to_string())?;
+        Ok(self.pages_durable())
+    }
+
+    // Retained in fixtures to verify compatibility with recoverable evidence.
+    #[cfg(test)]
     pub(crate) fn write_deletion(
         &mut self,
         page: PageKey,

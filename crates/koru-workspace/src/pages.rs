@@ -209,15 +209,12 @@ impl PageEntry {
 /// Every page document this process is responsible for, by id.
 #[derive(Default)]
 pub struct PageRegistry {
-    last_deletion_scan: Option<(
-        Option<WorkspaceId>,
-        Option<loro::VersionVector>,
-        Option<loro::VersionVector>,
-    )>,
     entries: HashMap<DocumentId, PageEntry>,
-    /// Requested roots and the exact events they must not outlive. An empty
-    /// list means classification is waiting for the system document to open.
-    pending_purges: HashMap<DocumentId, Vec<(PageKey, u64, koru_core::pages::deletion::EventId)>>,
+    /// Explicit local requests only: received events never enter this map.
+    pending_purges: HashMap<DocumentId, purge::PendingPurge>,
+    purge_discovery:
+        Option<mpsc::Receiver<Result<Vec<Vec<koru_core::pages::purge::Event>>, String>>>,
+    purges_discovered: bool,
 }
 
 impl PageRegistry {
@@ -297,6 +294,7 @@ fn register(
     Ok(Registration { session, snapshot })
 }
 
+mod purge;
 mod workspace;
 
 #[cfg(test)]

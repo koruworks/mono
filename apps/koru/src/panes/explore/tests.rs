@@ -3667,7 +3667,8 @@ fn the_library_stops_above_the_floor_and_does_not_scroll_into_it() {
     let mut v = with_rows(60);
     let a = area();
     let floor = v.rows_bottom(a);
-    assert_eq!(floor, a.y + a.h, "the band ends where the floor begins");
+    let (_, trash) = v.footer_rects(a)[0];
+    assert_eq!(floor, trash.y, "the band ends where the Trash row begins");
 
     v.scroll_by(a, -100_000.0);
     assert_eq!(
@@ -3683,18 +3684,24 @@ fn the_library_stops_above_the_floor_and_does_not_scroll_into_it() {
 
 /// **A list, not a special case.** The footer is whatever `footer_rows` says,
 /// bottom-anchored, so adding one grows the stack upward and the library's band
-/// shrinks by exactly that much. Nothing is pinned since the Trash row left for
-/// the floor menu (E63); the library's band runs to the floor.
+/// shrinks by exactly that much. The Trash is the one pinned row, and the
+/// library's band stops above it.
 #[test]
 fn the_footer_is_a_bottom_anchored_stack() {
-    let v = with_rows(3);
+    let mut v = with_rows(3);
     let a = area();
     let rows = v.footer_rects(a);
-    assert!(
-        rows.is_empty(),
-        "nothing pinned: the Trash is the floor menu's"
+    assert_eq!(rows.len(), 1, "the Trash is pinned at the foot");
+    let (row, r) = rows[0];
+    assert_eq!(row, FooterRow::Trash);
+    assert_eq!(v.rows_bottom(a), r.y, "the band stops above the Trash");
+    let (x, y) = r.centre();
+    assert_eq!(v.footer_at(a, x, y), Some(FooterRow::Trash));
+    assert_eq!(
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::OpenTrash,
+        "the row opens the Trash"
     );
-    assert_eq!(v.rows_bottom(a), a.y + a.h, "the band runs to the floor");
 }
 
 /// A pinned row lines up with the rows above it. Drifting a few pixels left
@@ -3913,10 +3920,17 @@ fn files_ocr_heading_and_background_use_the_same_menu_route() {
         }
     );
     assert!(view.popover.is_none());
+    let above_trash = view.rows_bottom(a) - 2.0;
     assert!(matches!(
-        view.context_menu(a, a.x + a.w * 0.5, a.y + a.h - 2.0),
+        view.context_menu(a, a.x + a.w * 0.5, above_trash),
         Outcome::LibraryMenu { .. }
     ));
+    let (_, trash) = view.footer_rects(a)[0];
+    assert_eq!(
+        view.context_menu(a, trash.centre().0, trash.centre().1),
+        Outcome::Consumed,
+        "the pinned Trash row swallows the press"
+    );
 }
 
 #[test]
@@ -3949,12 +3963,13 @@ fn right_clicking_a_row_reports_its_menu_at_the_cursor() {
         },
         "empty space below the rows offers import"
     );
+    let above_trash = v.rows_bottom(a) - 2.0;
     assert_eq!(
-        v.context_menu(a, a.x + 4.0, a.y + a.h - 2.0),
+        v.context_menu(a, a.x + 4.0, above_trash),
         Outcome::LibraryMenu {
-            at: (a.x + 4.0, a.y + a.h - 2.0)
+            at: (a.x + 4.0, above_trash)
         },
-        "the former floor is now library space"
+        "library space runs down to the Trash row"
     );
 }
 

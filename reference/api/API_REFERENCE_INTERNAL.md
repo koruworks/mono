@@ -84,6 +84,8 @@ Generated from the route catalog. Do not edit.
 - POST `/v1/workspaces/{id}/transfer` — Move a document and its explore subtree into another workspace (Public)
 - POST `/v1/internal/workspaces/{id}/documents/seeded` — Plant opaque document content before publishing its manifest entry (Internal)
 - POST `/v2/internal/workspaces/{id}/documents/seeded` — Plant opaque document content at a caller-minted document identity (Internal)
+- POST `/v1/internal/workspaces/{id}/documents/{document}/purge-freeze` — Freeze a permanently purged identity and capture its durable source (Internal)
+- POST `/v1/internal/workspaces/{id}/documents/purge-release` — Release an exactly decided local copy after permanent deletion (Internal)
 - GET `/v1/workspaces/{id}/manifest` — The document id a client joins to see the workspace's contents (Public)
 - GET `/v1/sync` — WebSocket carrying the standard Loro Protocol (Public)
 - POST `/v1/workspaces/{id}/snapshot/{document}` — A document's whole state, for a client that has none (Public)

@@ -55,6 +55,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         origin: UpdateOrigin,
         retention: Option<UpdateRetention>,
     ) -> Result<()> {
+        if self.document_purge_frozen(workspace, document)? {
+            return Err(Error::bare(Code::InvalidRequest));
+        }
         // The import below decodes Loro bytes, whose own warnings (an
         // inconsistent tree says "Missing in parent's children") name no
         // document; the span puts both ids on them.

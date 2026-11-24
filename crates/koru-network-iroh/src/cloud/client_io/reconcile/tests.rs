@@ -3,6 +3,8 @@
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod removal;
+
 #[tokio::test]
 async fn room_interest_negotiates_and_leaves_on_the_same_stream() {
     let (client, mut reader, mut writer, _, scope, budget) =

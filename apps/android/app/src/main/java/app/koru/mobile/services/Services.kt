@@ -157,6 +157,9 @@ interface DocumentService {
     suspend fun create(workspaceId: WorkspaceId, title: String): DocumentSummary
     suspend fun rename(id: DocumentId, title: String): DocumentSummary
     suspend fun moveToTrash(id: DocumentId)
+    suspend fun deletePermanently(id: DocumentId) { error("document_removal_unavailable") }
+    suspend fun quiesceRemoval(prompt: DocumentRemovalPrompt, edits: List<DocumentCommand.EditBlockText>) { error("document_removal_unavailable") }
+    suspend fun answerRemoval(prompt: DocumentRemovalPrompt, keep: Boolean) { error("document_removal_unavailable") }
     suspend fun open(id: DocumentId): DocumentSession
 }
 

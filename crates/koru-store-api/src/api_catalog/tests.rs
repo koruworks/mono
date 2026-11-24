@@ -357,9 +357,10 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // `…/restore-to`) is one more public row over one more path. The
     // workspaces in the trash here that the account still holds (P2, P4:
     // `…/trashed-in-account` and its `…/acknowledge`) are two more public
-    // rows over two more paths.
-    assert_eq!(ROUTES.len(), 134, "a row was added or removed");
-    assert_eq!(paths.len(), 110, "a path was added or removed");
+    // rows over two more paths. Final document removal adds two internal
+    // adapter paths for freezing and releasing the local source.
+    assert_eq!(ROUTES.len(), 136, "a row was added or removed");
+    assert_eq!(paths.len(), 112, "a path was added or removed");
 }
 
 #[test]
@@ -520,6 +521,9 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/internal/workspaces/catalog-watch",
             "/v1/internal/workspaces/{id}/documents/seeded",
             "/v2/internal/workspaces/{id}/documents/seeded",
+            // Ours: durable device reconciliation, not a public deletion API.
+            "/v1/internal/workspaces/{id}/documents/{document}/purge-freeze",
+            "/v1/internal/workspaces/{id}/documents/purge-release",
             // Ours: a Cloud diagnostic whose fields change whenever something
             // new is worth seeing, and which promises a third party nothing.
             "/v1/workspaces/{id}/documents/{document}/cloud-sync",

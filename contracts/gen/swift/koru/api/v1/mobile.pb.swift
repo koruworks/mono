@@ -1275,6 +1275,9 @@ public nonisolated struct KORAPIDocumentMutation: Sendable {
   /// Clears the value of `textEdit`. Subsequent reads from it will return its default value.
   public mutating func clearTextEdit() {self._textEdit = nil}
 
+  /// Exact frozen local version being answered by purge_keep/purge_delete.
+  public var expectedVersion: Data = Data()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2013,11 +2016,41 @@ public nonisolated struct KORAPIInventory: Sendable {
   /// reached through its pill, never as a row.
   public var hiddenRuns: UInt32 = 0
 
+  public var documentRemovals: [KORAPIDocumentRemovalPrompt] = []
+
+  public var pendingDocumentRemovals: UInt32 = 0
+
+  /// Close old editor identities even when no user decision is necessary.
+  public var purgedDocumentIds: [String] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _errorCode: String? = nil
+}
+
+public nonisolated struct KORAPIDocumentRemovalPrompt: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var documentID: String = String()
+
+  public var workspaceID: String = String()
+
+  public var title: String = String()
+
+  public var unknown: Bool = false
+
+  public var expectedVersion: Data = Data()
+
+  /// The UI must durably stage pending edits and close its editor before acknowledging.
+  public var needsQuiescence: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 public nonisolated struct KORAPIBlockProperties: Sendable {
@@ -5803,7 +5836,7 @@ nonisolated extension KORAPIProfileMutation: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension KORAPIDocumentMutation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DocumentMutation"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}host\0\u{3}document_id\0\u{1}action\0\u{1}title\0\u{3}text_edit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}host\0\u{3}document_id\0\u{1}action\0\u{1}title\0\u{3}text_edit\0\u{3}expected_version\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5816,6 +5849,7 @@ nonisolated extension KORAPIDocumentMutation: SwiftProtobuf.Message, SwiftProtob
       case 3: try { try decoder.decodeSingularStringField(value: &self.action) }()
       case 4: try { try decoder.decodeSingularStringField(value: &self.title) }()
       case 5: try { try decoder.decodeSingularMessageField(value: &self._textEdit) }()
+      case 6: try { try decoder.decodeSingularBytesField(value: &self.expectedVersion) }()
       default: break
       }
     }
@@ -5841,6 +5875,9 @@ nonisolated extension KORAPIDocumentMutation: SwiftProtobuf.Message, SwiftProtob
     try { if let v = self._textEdit {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
     } }()
+    if !self.expectedVersion.isEmpty {
+      try visitor.visitSingularBytesField(value: self.expectedVersion, fieldNumber: 6)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -5850,6 +5887,7 @@ nonisolated extension KORAPIDocumentMutation: SwiftProtobuf.Message, SwiftProtob
     if lhs.action != rhs.action {return false}
     if lhs.title != rhs.title {return false}
     if lhs._textEdit != rhs._textEdit {return false}
+    if lhs.expectedVersion != rhs.expectedVersion {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -6910,7 +6948,7 @@ nonisolated extension KORAPIInventoryDocument: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension KORAPIInventory: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Inventory"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}profiles\0\u{1}workspaces\0\u{1}documents\0\u{3}deleted_workspaces\0\u{3}trashed_documents\0\u{3}failed_workspaces\0\u{3}error_code\0\u{3}hidden_runs\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}profiles\0\u{1}workspaces\0\u{1}documents\0\u{3}deleted_workspaces\0\u{3}trashed_documents\0\u{3}failed_workspaces\0\u{3}error_code\0\u{3}hidden_runs\0\u{3}document_removals\0\u{3}pending_document_removals\0\u{3}purged_document_ids\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -6926,6 +6964,9 @@ nonisolated extension KORAPIInventory: SwiftProtobuf.Message, SwiftProtobuf._Mes
       case 6: try { try decoder.decodeSingularUInt32Field(value: &self.failedWorkspaces) }()
       case 7: try { try decoder.decodeSingularStringField(value: &self._errorCode) }()
       case 8: try { try decoder.decodeSingularUInt32Field(value: &self.hiddenRuns) }()
+      case 9: try { try decoder.decodeRepeatedMessageField(value: &self.documentRemovals) }()
+      case 10: try { try decoder.decodeSingularUInt32Field(value: &self.pendingDocumentRemovals) }()
+      case 11: try { try decoder.decodeRepeatedStringField(value: &self.purgedDocumentIds) }()
       default: break
       }
     }
@@ -6960,6 +7001,15 @@ nonisolated extension KORAPIInventory: SwiftProtobuf.Message, SwiftProtobuf._Mes
     if self.hiddenRuns != 0 {
       try visitor.visitSingularUInt32Field(value: self.hiddenRuns, fieldNumber: 8)
     }
+    if !self.documentRemovals.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.documentRemovals, fieldNumber: 9)
+    }
+    if self.pendingDocumentRemovals != 0 {
+      try visitor.visitSingularUInt32Field(value: self.pendingDocumentRemovals, fieldNumber: 10)
+    }
+    if !self.purgedDocumentIds.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.purgedDocumentIds, fieldNumber: 11)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -6972,6 +7022,64 @@ nonisolated extension KORAPIInventory: SwiftProtobuf.Message, SwiftProtobuf._Mes
     if lhs.failedWorkspaces != rhs.failedWorkspaces {return false}
     if lhs._errorCode != rhs._errorCode {return false}
     if lhs.hiddenRuns != rhs.hiddenRuns {return false}
+    if lhs.documentRemovals != rhs.documentRemovals {return false}
+    if lhs.pendingDocumentRemovals != rhs.pendingDocumentRemovals {return false}
+    if lhs.purgedDocumentIds != rhs.purgedDocumentIds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension KORAPIDocumentRemovalPrompt: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DocumentRemovalPrompt"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}document_id\0\u{3}workspace_id\0\u{1}title\0\u{1}unknown\0\u{3}expected_version\0\u{3}needs_quiescence\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.documentID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.workspaceID) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.title) }()
+      case 4: try { try decoder.decodeSingularBoolField(value: &self.unknown) }()
+      case 5: try { try decoder.decodeSingularBytesField(value: &self.expectedVersion) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.needsQuiescence) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.documentID.isEmpty {
+      try visitor.visitSingularStringField(value: self.documentID, fieldNumber: 1)
+    }
+    if !self.workspaceID.isEmpty {
+      try visitor.visitSingularStringField(value: self.workspaceID, fieldNumber: 2)
+    }
+    if !self.title.isEmpty {
+      try visitor.visitSingularStringField(value: self.title, fieldNumber: 3)
+    }
+    if self.unknown != false {
+      try visitor.visitSingularBoolField(value: self.unknown, fieldNumber: 4)
+    }
+    if !self.expectedVersion.isEmpty {
+      try visitor.visitSingularBytesField(value: self.expectedVersion, fieldNumber: 5)
+    }
+    if self.needsQuiescence != false {
+      try visitor.visitSingularBoolField(value: self.needsQuiescence, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: KORAPIDocumentRemovalPrompt, rhs: KORAPIDocumentRemovalPrompt) -> Bool {
+    if lhs.documentID != rhs.documentID {return false}
+    if lhs.workspaceID != rhs.workspaceID {return false}
+    if lhs.title != rhs.title {return false}
+    if lhs.unknown != rhs.unknown {return false}
+    if lhs.expectedVersion != rhs.expectedVersion {return false}
+    if lhs.needsQuiescence != rhs.needsQuiescence {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -291,6 +291,7 @@ impl FakeCloud {
             reader,
             writer,
             session: Session {
+                document_removal: false,
                 accepted,
                 scope,
                 automatic_limit: transfer::MAX_PAYLOAD,

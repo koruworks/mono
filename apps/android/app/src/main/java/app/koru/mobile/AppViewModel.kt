@@ -130,6 +130,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     val run = mutableRun.asStateFlow()
     private var runJob: Job? = null
     private var session: DocumentSession? = null
+    private var documentOpenGeneration = 0L
     val documentEdits = app.koru.mobile.services.DocumentEdits(viewModelScope) { id, command ->
         // Keep an already admitted write bound to its document even if navigation changes.
         val writer = container.documents.open(id)
@@ -144,8 +145,24 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     private var eventJob: Job? = null
     private val commands = Channel<Pair<DocumentId, DocumentCommand>>(Channel.UNLIMITED)
 
+    val documentRemovals = container.documentRemovals
+    val purgedDocumentIds = container.purgedDocumentIds
+    private val mutablePreparingRemovals = MutableStateFlow<Set<DocumentId>>(emptySet())
+    val preparingRemovals = mutablePreparingRemovals.asStateFlow()
+    private val mutableFailedRemovalPreparations = MutableStateFlow<Set<DocumentId>>(emptySet())
+    val failedRemovalPreparations = mutableFailedRemovalPreparations.asStateFlow()
+
     init {
+        container.registerRemovalEditor(this, { id ->
+            closeRemovedDocument(id)
+            documentEdits.quiesce(id)
+        }, documentEdits::transferred, documentEdits::flushAndWait, documentEdits::resume)
         mutableState.update { it.copy(loading = false) }
+        viewModelScope.launch {
+            container.documentRemovals.collect { prompts ->
+                prompts.filter { it.needsQuiescence }.forEach(::prepareDocumentRemoval)
+            }
+        }
         viewModelScope.launch {
             container.pendingLink.filterNotNull().collect { link ->
                 container.pendingLink.value = null
@@ -177,15 +194,27 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun openDocument(id: DocumentId) {
+        if (id in container.purgedDocumentIds.value) return
+        val generation = ++documentOpenGeneration
         activeDocument.value = id
         updateActive()
         viewModelScope.launch {
             runCatching {
+                if (generation != documentOpenGeneration) return@runCatching
                 snapshotJob?.cancel()
                 eventJob?.cancel()
-                session?.close()
+                val previous = session
+                session = null
+                previous?.close()
+                if (generation != documentOpenGeneration || activeDocument.value != id) return@runCatching
                 mutableDocument.value = null
                 val opened = container.documents.open(id)
+                // Inventory can freeze/retire this document while the native
+                // open suspends. A late completion must not reinstall its editor.
+                if (generation != documentOpenGeneration || activeDocument.value != id || id in container.purgedDocumentIds.value) {
+                    opened.close()
+                    return@runCatching
+                }
                 session = opened
                 snapshotJob = launch {
                     try {
@@ -386,6 +415,56 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
             .onFailure(::showError)
     }
 
+    fun prepareDocumentRemoval(prompt: app.koru.mobile.services.DocumentRemovalPrompt) {
+        if (!prompt.needsQuiescence || prompt.documentId in mutablePreparingRemovals.value) return
+        mutablePreparingRemovals.value += prompt.documentId
+        mutableFailedRemovalPreparations.value -= prompt.documentId
+        viewModelScope.launch {
+            try {
+                container.prepareDocumentRemoval(prompt)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                mutableFailedRemovalPreparations.value += prompt.documentId
+                showError(error)
+            } finally {
+                mutablePreparingRemovals.value -= prompt.documentId
+            }
+        }
+    }
+
+    suspend fun closeRemovedDocument(id: DocumentId) {
+        val wasActive = activeDocument.value == id
+        val previous = session?.takeIf { it.documentId == id }
+        if (!wasActive && previous == null) return
+        if (wasActive) {
+            ++documentOpenGeneration
+            activeDocument.value = null
+            mutableDocument.value = null
+        }
+        if (previous != null) {
+            snapshotJob?.cancel()
+            eventJob?.cancel()
+            session = null
+        }
+        updateActive()
+        // Detach before suspending so a concurrent new open cannot be cleared
+        // by the old editor's close completion.
+        previous?.close()
+    }
+
+    fun deleteDocumentPermanently(id: DocumentId) = viewModelScope.launch {
+        runCatching {
+            container.deleteDocumentPermanently(id)
+        }.onFailure(::showError)
+    }
+
+    fun answerDocumentRemoval(prompt: app.koru.mobile.services.DocumentRemovalPrompt, keep: Boolean) = viewModelScope.launch {
+        if (prompt.needsQuiescence || prompt.documentId in mutablePreparingRemovals.value) return@launch
+        closeRemovedDocument(prompt.documentId)
+        runCatching { container.documents.answerRemoval(prompt, keep) }.onFailure(::showError)
+    }
+
     fun moveDocumentToTrash(id: DocumentId) = viewModelScope.launch {
         runCatching { container.documents.moveToTrash(id) }.onFailure(::showError)
     }
@@ -552,6 +631,7 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     override fun onCleared() {
+        container.unregisterRemovalEditor(this)
         snapshotJob?.cancel()
         eventJob?.cancel()
         runJob?.cancel()

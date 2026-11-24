@@ -2216,8 +2216,15 @@ fn trashing_a_document_is_reversible_and_survives_a_restart() {
 
     // ---- emptying the trash is the one that really deletes
     ws.trash_document(binned).expect("trash again");
-    assert_eq!(ws.empty_trashed_documents().expect("empty"), 1);
-    assert!(ws.trashed_entries().is_empty());
+    assert_eq!(
+        ws.empty_trashed_documents().expect("empty"),
+        0,
+        "the manifest must wait for durable final-purge evidence"
+    );
+    wait_for("durable purge to remove the trashed document", || {
+        ws.tick();
+        ws.is_document_purged(binned) && ws.trashed_entries().is_empty()
+    });
     assert_eq!(ws.entries().len(), 1, "it took the wrong one with it");
     settle(&mut ws);
 

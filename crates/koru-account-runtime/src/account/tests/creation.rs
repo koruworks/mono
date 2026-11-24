@@ -171,6 +171,7 @@ impl Transport for BrowserTransport {
             panic!("unexpected fake browser route");
         };
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: response,
         })

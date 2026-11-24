@@ -12,6 +12,35 @@ import org.junit.Test
  */
 class NativeDeviceSnapshotTest {
     @Test
+    fun removal_prompt_preserves_binary_version_and_retired_ids_through_generated_contract() {
+        val version = com.google.protobuf.ByteString.copyFrom(byteArrayOf(0, 1, 127, -128, -1))
+        val prompt = app.koru.contract.api.v1.DocumentRemovalPrompt.newBuilder()
+            .setDocumentId("old-document").setWorkspaceId("workspace").setTitle("Notes")
+            .setUnknown(true).setExpectedVersion(version).setNeedsQuiescence(true)
+        val wire = app.koru.contract.api.v1.Inventory.newBuilder()
+            .addDocumentRemovals(prompt).addPurgedDocumentIds("old-document")
+            .setPendingDocumentRemovals(2).build()
+        val decoded = app.koru.contract.api.v1.Inventory.parseFrom(wire.toByteArray()).toInventory()
+        val removal = decoded.documentRemovals.single()
+        assertEquals("old-document", removal.documentId.value)
+        assertEquals("workspace", removal.workspaceId.value)
+        assertEquals("Notes", removal.title)
+        assertTrue(removal.unknown)
+        assertTrue(removal.needsQuiescence)
+        assertEquals(version, removal.expectedVersion)
+        assertEquals(setOf(removal.documentId), decoded.purgedDocumentIds)
+        assertEquals(2, decoded.pendingDocumentRemovals)
+        for (action in listOf("purge_keep", "purge_delete")) {
+            val mutation = app.koru.contract.api.v1.DocumentMutation.newBuilder()
+                .setDocumentId(removal.documentId.value).setAction(action)
+                .setExpectedVersion(removal.expectedVersion).build()
+            val roundTrip = app.koru.contract.api.v1.DocumentMutation.parseFrom(mutation.toByteArray())
+            assertEquals(action, roundTrip.action)
+            assertEquals(version, roundTrip.expectedVersion)
+        }
+    }
+
+    @Test
     fun local_account_binding_survives_both_inventory_paths_and_domain_projection() {
         for (binding in listOf("", "koru:10000000-0000-4000-8000-000000000001", " malformed ")) {
             val json = parseInventory(

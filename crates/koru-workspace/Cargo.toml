@@ -12,6 +12,7 @@ koru-env = { path = "../koru-env" }
 # no document, and the span's fields are what put one on them.
 tracing = { workspace = true }
 koru-core = { path = "../koru-core" }
+koru-replication = { path = "../koru-replication" }
 koru-docstore = { path = "../koru-docstore" }
 # The workspace's list of documents is the store's `Manifest`, not a local twin
 # of it. `koru-store-core` is synchronous and links no HTTP by design — a mobile
@@ -29,6 +30,9 @@ loro = { workspace = true }
 # (`store::revisions`); nothing else in this crate is serialized.
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # The outbox writes files, and its tests must not write them where a person's

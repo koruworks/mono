@@ -48,6 +48,7 @@ fn descriptor(placement: Option<CloudId>) -> CloudWorkspaceDescriptorV2 {
 /// names: the ordinary case after a bootstrap.
 fn permit() -> CloudPermitV2 {
     CloudPermitV2 {
+        document_removal: false,
         version: CLOUD_PERMIT_VERSION_V2,
         permit_id: v4(9),
         account_id: cloud(v4(1)),
@@ -316,6 +317,10 @@ fn stages_map_one_to_one_and_unknown_codes_collapse_to_one_static() {
         assert_eq!(Stage::from(control), runtime);
     }
     assert_eq!(static_code("replica_fenced"), "replica_fenced");
+    assert_eq!(
+        static_code("cloud_document_removed"),
+        super::super::DOCUMENT_REMOVED
+    );
     assert_eq!(
         static_code("credential_expired"),
         crate::cloud::CREDENTIAL_EXPIRED

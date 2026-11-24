@@ -15,6 +15,92 @@ use koru_account_session::{
 };
 use koru_device::{DeviceId, DevicePublicKey, ReplicationEndpointId};
 
+#[test]
+fn document_removal_requires_one_exact_supported_http_header() {
+    use reqwest::header::{HeaderMap, HeaderValue};
+    let mut headers = HeaderMap::new();
+    assert!(!document_removal_header(&headers));
+    for value in ["0", "2", "true", "1, 1", " 1"] {
+        headers.insert(
+            "koru-document-removal",
+            HeaderValue::from_str(value).unwrap(),
+        );
+        assert!(!document_removal_header(&headers));
+    }
+    headers.insert("koru-document-removal", HeaderValue::from_static("1"));
+    assert!(document_removal_header(&headers));
+    headers.append("koru-document-removal", HeaderValue::from_static("1"));
+    assert!(!document_removal_header(&headers));
+}
+
+#[test]
+fn issued_workspace_token_carries_only_its_own_http_capability() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let workspace = koru_account_core::WorkspaceId::from_uuid(uuid::Uuid::new_v4());
+    let scope = CloudSyncScopeV2::Workspace {
+        workspace_id: workspace,
+    };
+    let response = serde_json::json!({
+        "version": 2,
+        "credential": format!("e30.e30.{}", URL_SAFE_NO_PAD.encode([0u8;64])),
+        "expires_at_seconds": 100,
+        "catalog_scope_id": uuid::Uuid::new_v4(),
+        "scope": scope,
+        "authority_generation": 1,
+        "dataset": {"kind": "workspace", "workspace_id": workspace,
+            "incarnation_id": uuid::Uuid::new_v4(), "logical_replica_id": uuid::Uuid::new_v4()},
+        "route": CloudRouteResultV2::Available {
+            route: CloudSyncRouteV1::new(ReplicationEndpointId::from_bytes(SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes()), vec!["127.0.0.1:7777".into()], None).unwrap()
+        }
+    });
+    let access = AccessToken("test-token".into());
+    let transport = FakeTransport::empty();
+    let client = AccountClient::with_transport(transport.clone());
+    for advertised in [false, true, false] {
+        transport.responses.lock().unwrap().push_back(HttpResponse {
+            document_removal: advertised,
+            status: 200,
+            body: serde_json::to_vec(&response).unwrap(),
+        });
+        let issued = client
+            .issue_cloud_sync_token_v2(
+                &SyncTokenRequestV2 {
+                    version: Version2,
+                    scope,
+                },
+                &AccountAuthorization::Bearer(&access),
+            )
+            .unwrap();
+        assert_eq!(issued.document_removal, advertised);
+        let json = serde_json::to_value(&issued).unwrap();
+        assert!(json.get("document_removal").is_none());
+        assert!(
+            !serde_json::from_value::<SyncTokenResponseV2>(json)
+                .unwrap()
+                .document_removal
+        );
+    }
+    let mut unavailable = response;
+    unavailable["route"] = serde_json::json!({"state":"unavailable","code":"sync_unavailable","retry_after_seconds":5});
+    transport.responses.lock().unwrap().push_back(HttpResponse {
+        document_removal: true,
+        status: 200,
+        body: serde_json::to_vec(&unavailable).unwrap(),
+    });
+    assert!(
+        !client
+            .issue_cloud_sync_token_v2(
+                &SyncTokenRequestV2 {
+                    version: Version2,
+                    scope
+                },
+                &AccountAuthorization::Bearer(&access)
+            )
+            .unwrap()
+            .document_removal
+    );
+}
+
 struct FakeTransport {
     requests: Mutex<Vec<HttpRequest>>,
     responses: Mutex<VecDeque<HttpResponse>>,
@@ -25,6 +111,7 @@ impl FakeTransport {
         Arc::new(Self {
             requests: Mutex::new(Vec::new()),
             responses: Mutex::new(VecDeque::from([HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(value).unwrap(),
             }])),
@@ -305,6 +392,7 @@ fn server_error_messages_are_not_retained_by_client_errors() {
     let transport = Arc::new(FakeTransport {
         requests: Mutex::new(Vec::new()),
         responses: Mutex::new(VecDeque::from([HttpResponse {
+            document_removal: false,
             status: 503,
             body: serde_json::to_vec(&DeveloperErrorV1 {
                 retry_after_millis: None,
@@ -332,6 +420,7 @@ fn rate_limit_delay_survives_transport_with_bounded_legacy_fallback() {
         let transport = Arc::new(FakeTransport {
             requests: Mutex::new(Vec::new()),
             responses: Mutex::new(VecDeque::from([HttpResponse {
+                document_removal: false,
                 status: 429,
                 body: serde_json::to_vec(&DeveloperErrorV1 {
                     code: ErrorCode::parse(ErrorCode::RATE_LIMITED).unwrap(),
@@ -1015,6 +1104,7 @@ fn workspace_cloud_lifecycle_surfaces_the_hosted_refusal_code() {
     let access = AccessToken("access-sentinel".into());
     let transport = FakeTransport::empty();
     transport.responses.lock().unwrap().push_back(HttpResponse {
+        document_removal: false,
         status: 409,
         body: br#"{"code":"workspace_version_mismatch","message":"stale"}"#.to_vec(),
     });
@@ -1054,6 +1144,7 @@ fn a_refusal_without_the_error_envelope_keeps_its_status() {
     for body in bodies {
         let transport = FakeTransport::empty();
         transport.responses.lock().unwrap().push_back(HttpResponse {
+            document_removal: false,
             status: 404,
             body: body.to_vec(),
         });
@@ -1074,6 +1165,7 @@ fn a_refusal_without_the_error_envelope_keeps_its_status() {
     }
     let transport = FakeTransport::empty();
     transport.responses.lock().unwrap().push_back(HttpResponse {
+        document_removal: false,
         status: 200,
         body: b"<html>not a binding</html>".to_vec(),
     });

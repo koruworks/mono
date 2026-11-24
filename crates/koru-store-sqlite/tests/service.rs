@@ -24,6 +24,8 @@ use koru_store_core::{
 use koru_store_sqlite::{SqliteBackend, SqliteCatalog, SqliteWorkspace};
 
 type TestStore = Store<SqliteCatalog, SqliteBackend>;
+#[path = "service/document_purge.rs"]
+mod document_purge;
 
 fn at(ms: i64) -> Timestamp {
     Timestamp::from_millis(1_770_000_000_000 + ms)

@@ -81,6 +81,8 @@ use crate::tags;
 use crate::tasks::Bucket;
 use crate::time::TimeZoneName;
 
+mod purge;
+
 // Root containers.
 const C_META: &str = "meta";
 const C_DEFINITIONS: &str = "definitions";
@@ -685,6 +687,7 @@ impl SystemDoc {
     /// Merge a batch of update frames. The same shape `WorkspaceDoc` has, so a
     /// host can sync this document through the same session machinery.
     pub fn import_frames(&mut self, frames: &[Vec<u8>]) -> Result<()> {
+        self.check_purge_import(frames.iter().map(Vec::as_slice))?;
         for frame in frames {
             self.doc.import(frame)?;
         }
@@ -693,6 +696,7 @@ impl SystemDoc {
     }
 
     pub fn import(&mut self, bytes: &[u8]) -> Result<()> {
+        self.check_purge_import([bytes])?;
         self.doc.import(bytes)?;
         self.fold_duplicate_tags()?;
         Ok(())

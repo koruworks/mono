@@ -112,6 +112,26 @@ impl std::fmt::Debug for Start {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Control {
+    CloudRemoveDocument {
+        version: Version1,
+        operation_id: uuid::Uuid,
+        document_id: uuid::Uuid,
+        event: koru_core::pages::purge::Event,
+    },
+    CloudRemovalsRead {
+        version: Version1,
+        cursor: u64,
+    },
+    CloudRemovals {
+        version: Version1,
+        events: Vec<super::removal::Entry>,
+        next_cursor: u64,
+    },
+    CloudDocumentRemoved {
+        version: Version1,
+        event_id: uuid::Uuid,
+        document_id: uuid::Uuid,
+    },
     TransferPolicy {
         version: Version1,
         policy_generation: i64,
@@ -159,6 +179,29 @@ impl Control {
     }
     pub fn validate(&self) -> Result<(), Error> {
         match self {
+            Self::CloudRemoveDocument {
+                operation_id,
+                document_id,
+                event,
+                ..
+            } if *operation_id == event.event_id && *document_id == event.document_id => {
+                event.validate().map_err(|_| Error::Invalid)
+            }
+            Self::CloudRemovalsRead { cursor, .. } if *cursor <= i64::MAX as u64 => Ok(()),
+            Self::CloudRemovals {
+                events,
+                next_cursor,
+                ..
+            } => super::removal::validate_page(events, *next_cursor),
+            Self::CloudDocumentRemoved {
+                event_id,
+                document_id,
+                ..
+            } if event_id.get_version_num() == 4
+                && matches!(document_id.get_version_num(), 4 | 5) =>
+            {
+                Ok(())
+            }
             Self::TransferPolicy {
                 policy_generation,
                 automatic_limit_bytes,

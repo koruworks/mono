@@ -280,6 +280,11 @@ class NativeDeviceLinkService(
         api.editBlockText(id.value, edit).requireOk()
     }
 
+    internal suspend fun stageRemovedDocumentText(id: DocumentId, edit: DocumentCommand.EditBlockText) = withContext(Dispatchers.IO) {
+        check(loaded) { "native_library_missing" }
+        api.editBlockText(id.value, edit, "purge_stage_text").requireOk()
+    }
+
     internal suspend fun run(id: DocumentId): RunSnapshot = withContext(Dispatchers.IO) {
         check(loaded) { "native_library_missing" }
         api.run(id.value).toSnapshot()
@@ -402,10 +407,10 @@ class NativeDeviceLinkService(
             api.mutateWorkspace(id, action, title).requireOk()
         }
 
-    internal suspend fun mutateDocument(id: String, action: String, title: String = "") =
+    internal suspend fun mutateDocument(id: String, action: String, title: String = "", expectedVersion: com.google.protobuf.ByteString = com.google.protobuf.ByteString.EMPTY) =
         withContext(Dispatchers.IO) {
             check(loaded) { "native_library_missing" }
-            api.mutateDocument(id, action, title).requireOk()
+            api.mutateDocument(id, action, title, expectedVersion).requireOk()
         }
 
     internal suspend fun importFile(
@@ -542,6 +547,8 @@ internal fun WireInventory.toInventory(): NativeInventory {
             it.updatedAtMillis,
         ) },
         deletedWorkspaces, trashedDocuments, failedWorkspaces, hiddenRuns,
+        documentRemovalsList.map { DocumentRemovalPrompt(DocumentId(it.documentId), WorkspaceId(it.workspaceId), it.title, it.unknown, it.expectedVersion, it.needsQuiescence) },
+        pendingDocumentRemovals, purgedDocumentIdsList.map(::DocumentId).toSet(),
     )
 }
 
@@ -738,6 +745,12 @@ data class NativeInventoryDocument(
     /** When this last changed, so a list can put the newest first. */
     val updatedAtMillis: Long = 0,
 )
+data class DocumentRemovalPrompt(
+    val documentId: DocumentId, val workspaceId: WorkspaceId, val title: String,
+    val unknown: Boolean, val expectedVersion: com.google.protobuf.ByteString,
+    val needsQuiescence: Boolean = false,
+)
+
 data class NativeInventory(
     val profiles: List<NativeInventoryProfile> = emptyList(),
     val workspaces: List<NativeInventoryWorkspace> = emptyList(),
@@ -747,6 +760,9 @@ data class NativeInventory(
     val failedWorkspaces: Int = 0,
     /** Run and schedule documents the host hid from the listing (P1.0 F6). */
     val hiddenRuns: Int = 0,
+    val documentRemovals: List<DocumentRemovalPrompt> = emptyList(),
+    val pendingDocumentRemovals: Int = 0,
+    val purgedDocumentIds: Set<DocumentId> = emptySet(),
 )
 
 // The JSON twin of the Protobuf shape above. It delegates rather than

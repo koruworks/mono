@@ -105,6 +105,16 @@ impl ExportRequest {
         authorize: impl FnOnce(&mut Store<C, B>, Scope, Unit) -> Result<(), Refusal>,
     ) -> Result<Option<Export>, Failure> {
         let target = authorized_target(store, self.scope, self.unit, authorize)?;
+        if let Target::Document(workspace, document) = &target
+            && *document != self.scope.manifest
+            && super::removal::load(store, *workspace)?.is_some_and(|system| {
+                system
+                    .content
+                    .is_document_purged(koru_core::DocumentId::from_uuid(document.as_uuid()))
+            })
+        {
+            return Ok(None);
+        }
         let version = target.version(store, at)?;
         if !crate::reconcile::missing(&version, &self.known).upload {
             return Ok(None);

@@ -501,4 +501,16 @@
     <string name="cloud_upload_physical_bytes">Cloud ストレージが物理的な安全上限に達しました。このアップロードは待機中です。</string>
     <string name="cloud_upload_staging_bytes">Cloud の一時ストレージがいっぱいです。このアップロードは待機中です。</string>
     <string name="cloud_upload_removal_capacity">Cloud のクリーンアップ容量を一時的に利用できません。この操作は待機中です。</string>
+    <!-- Permanent document removal and changed-copy choices. -->
+    <string name="document_deleted_changed">「%1$s」は別の端末で削除されました。その後、この端末で変更しています。このバージョンを残しますか、削除しますか？</string>
+    <string name="document_deleted_unknown">「%1$s」は削除されました。Koru はこのコピーに変更があるかどうかを判断できません。このバージョンを残しますか、削除しますか？</string>
+    <string name="document_deleted_title">ドキュメントが削除されました</string>
+    <string name="document_deleted_keep">自分のバージョンを残す</string>
+    <string name="document_deleted_delete">削除</string>
+    <string name="document_delete_pending">削除中…</string>
+    <string name="document_delete_progress">Koru Cloud から %1$d 件を削除中…</string>
+    <string name="document_delete_forever_title">完全に削除しますか？</string>
+    <string name="document_delete_forever_body">「%1$s」は完全に削除されます。この操作は取り消せません。</string>
+    <string name="document_delete_forever_confirm">完全に削除</string>
+    <string name="document_delete_review">保留中の削除を確認</string>
 </resources>

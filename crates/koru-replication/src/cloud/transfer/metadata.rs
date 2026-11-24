@@ -230,6 +230,7 @@ pub fn decode(scope: Scope, frame: PeerFrame, capacity: usize) -> Result<Vec<Met
                 "sync_unavailable" => Error::Unavailable,
                 "sync_unit_exists" => Error::UnitExists,
                 "sync_document_claimed" => Error::DocumentClaimed,
+                "cloud_document_removed" => Error::CloudDocumentRemoved,
                 _ => Error::from_admission_code(&code)
                     .unwrap_or_else(|| Error::Authority(Refusal::from_code(&code))),
             });

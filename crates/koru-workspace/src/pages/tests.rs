@@ -13,6 +13,8 @@ use koru_core::schema::{WorkspaceDoc, genesis_root_id, genesis_seed_id};
 use super::*;
 use crate::store::revisions::{DiskFs, discover};
 
+mod purge_sources;
+
 /// A workspace that believes it is open on a store at `root`, with no store
 /// there: a registration fails at once, which is the branch these tests are
 /// about.
@@ -416,12 +418,13 @@ fn a_pages_note_and_attachments_ride_on_its_state() {
     assert_eq!(ws.ensure_page(page).unwrap().attachments, vec![b]);
 }
 
-/// No disk or real store: a parent purge must wait for its page child's
-/// deletion event to be durably acknowledged by the system room.
+/// A parent purge must wait for its page child's deletion event to be durably
+/// acknowledged by the fake system room. A scoped Store API serves source bytes.
 #[test]
 fn parent_purge_waits_for_page_tombstone_acknowledgment() {
-    let (mut ws, root, page_doc, system_id, store) = deletion_fixture();
+    let (mut ws, root, page_doc, system_id, store, _directory) = deletion_fixture();
     assert!(!ws.purge_document(root).unwrap());
+    wait_for_purge_events(&mut ws);
     assert!(
         ws.manifest
             .as_ref()
@@ -442,9 +445,10 @@ fn parent_purge_waits_for_page_tombstone_acknowledgment() {
 }
 
 #[test]
-fn restoring_a_parent_cancels_its_childs_queued_deletion() {
-    let (mut ws, root, page_doc, system_id, store) = deletion_fixture();
+fn restoring_a_parent_cannot_cancel_its_final_purge() {
+    let (mut ws, root, page_doc, system_id, store, _directory) = deletion_fixture();
     assert!(!ws.purge_document(root).unwrap());
+    wait_for_purge_events(&mut ws);
     ws.manifest
         .as_mut()
         .unwrap()
@@ -459,11 +463,12 @@ fn restoring_a_parent_cancels_its_childs_queued_deletion() {
     ws.system.as_mut().unwrap().tick();
     ws.tick_pages();
     assert!(
-        ws.manifest
+        !ws.manifest
             .as_ref()
             .unwrap()
             .contains(explore::store_document(page_doc))
     );
+    assert!(ws.is_document_purged(page_doc));
     assert!(ws.pages.pending_purges.is_empty());
 }
 
@@ -473,6 +478,7 @@ fn deletion_fixture() -> (
     DocumentId,
     DocumentId,
     std::sync::Arc<crate::system::tests::FakeStore>,
+    (tempfile::TempDir, purge_sources::SnapshotServer),
 ) {
     use crate::system::tests::FakeStore;
     let workspace = WorkspaceId::new();
@@ -531,7 +537,125 @@ fn deletion_fixture() -> (
         ws.system.as_mut().unwrap().tick();
         std::thread::yield_now();
     }
-    (ws, parent, page_doc, system_id, store)
+    let directory = tempfile::tempdir().unwrap();
+    ws.store = Some(("test".into(), Some(directory.path().to_path_buf())));
+    let sources = purge_sources::SnapshotServer::new(workspace, [parent, page_doc]);
+    ws.client = Some(sources.client());
+    (ws, parent, page_doc, system_id, store, (directory, sources))
+}
+
+fn wait_for_purge_events(ws: &mut Workspace) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        ws.tick_pages();
+        if ws
+            .document_purge_events()
+            .unwrap()
+            .is_some_and(|events| !events.is_empty())
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "purge events should reach the system document"
+        );
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn final_purge_keeps_one_fixed_event_per_document_and_the_original_root() {
+    let (mut ws, root, child, _system_id, _store, _directory) = deletion_fixture();
+    assert!(!ws.purge_document(root).unwrap());
+    wait_for_purge_events(&mut ws);
+    let before = ws.document_purge_events().unwrap().unwrap();
+    assert_eq!(before.len(), 2);
+    for event in &before {
+        assert_eq!(
+            event.version,
+            Some(
+                _directory
+                    .1
+                    .version(DocumentId::from_uuid(event.document_id))
+                    .encode()
+            ),
+            "a closed source still has exact stored coverage"
+        );
+    }
+    assert!(before.iter().all(|event| event.root_id == root.as_uuid()));
+    assert!(
+        before
+            .iter()
+            .any(|event| event.document_id == child.as_uuid())
+    );
+    for _ in 0..3 {
+        assert!(!ws.purge_document(root).unwrap());
+    }
+    assert_eq!(ws.document_purge_events().unwrap().unwrap(), before);
+}
+
+#[test]
+fn restart_recovers_only_local_intent_with_the_same_event_payloads() {
+    let (mut ws, root, child, system_id, store, _directory) = deletion_fixture();
+    assert!(!ws.purge_document(root).unwrap());
+    wait_for_purge_events(&mut ws);
+    let before = ws.document_purge_events().unwrap().unwrap();
+    // Lose the process-local request map. The flushed intent journal is the
+    // only source that may recover authority to finish this local request.
+    ws.pages = PageRegistry::default();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !ws.pages.purges_discovered {
+        ws.tick_pages();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(ws.document_purge_events().unwrap().unwrap(), before);
+    assert!(
+        ws.manifest
+            .as_ref()
+            .unwrap()
+            .contains(explore::store_document(child))
+    );
+    let link = store.link(system_id);
+    link.acks(
+        loro_protocol::BatchId((link.sent().len() as u64).to_le_bytes()),
+        loro_protocol::UpdateStatusCode::Ok,
+    );
+    ws.system.as_mut().unwrap().tick();
+    ws.tick_pages();
+    assert!(
+        !ws.manifest
+            .as_ref()
+            .unwrap()
+            .contains(explore::store_document(child))
+    );
+}
+
+#[test]
+fn received_event_waits_for_ack_and_never_authorizes_local_manifest_removal() {
+    let (mut ws, root, child, system_id, store, _directory) = deletion_fixture();
+    let event = koru_core::pages::purge::Event::new(child.as_uuid(), root.as_uuid(), None, "peer");
+    assert!(!ws.ingest_document_purge_events(&[event.clone()]).unwrap());
+    ws.tick_pages();
+    assert!(ws.pages.pending_purges.is_empty());
+    let link = store.link(system_id);
+    link.acks(
+        loro_protocol::BatchId((link.sent().len() as u64).to_le_bytes()),
+        loro_protocol::UpdateStatusCode::Ok,
+    );
+    ws.system.as_mut().unwrap().tick();
+    assert!(ws.ingest_document_purge_events(&[event]).unwrap());
+    ws.tick_pages();
+    assert!(
+        ws.manifest
+            .as_ref()
+            .unwrap()
+            .contains(explore::store_document(child))
+    );
+    let page = PageKey::Bucket(koru_core::tasks::Bucket::Today);
+    assert!(!ws.recover_page(page));
+    assert!(!ws.keep_page_deleted(page));
+    assert_ne!(ws.page_document(page).unwrap().0, child);
 }
 
 #[test]
@@ -553,4 +677,19 @@ fn a_revision_reply_is_required_before_registration_can_start() {
     assert_eq!(ws.pages.phase(id), Some(PagePhase::Empty));
     assert!(ws.pages.entries[&id].request.is_none());
     assert!(ws.pages.entries[&id].written.is_none());
+}
+
+#[test]
+fn requesting_final_purge_quiesces_editors_before_durable_evidence() {
+    let workspace = WorkspaceId::new();
+    let mut ws = Workspace::new(WorkspaceDoc::create(workspace, "test").unwrap());
+    let document = DocumentId::new();
+    assert!(!ws.document_purge_frozen(document));
+    ws.request_page_purge(document);
+    assert!(ws.document_purge_frozen(document));
+    assert!(
+        !ws.is_document_purged(document),
+        "intent alone cannot release source bytes"
+    );
+    assert!(!ws.document_purge_frozen(DocumentId::new()));
 }

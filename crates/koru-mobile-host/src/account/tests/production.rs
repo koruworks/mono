@@ -37,6 +37,7 @@ fn tokens(refresh: &str) -> hosted::TokenPairV1 {
 }
 fn response(value: &impl serde::Serialize) -> Result<HttpResponse, TransportError> {
     Ok(HttpResponse {
+        document_removal: false,
         status: 200,
         body: serde_json::to_vec(value).unwrap(),
     })

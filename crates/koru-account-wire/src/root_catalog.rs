@@ -336,6 +336,9 @@ fn sync_unavailable_code_schema(_: &mut SchemaGenerator) -> Schema {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SyncTokenResponseV2 {
+    /// HTTP response metadata; absent from the frozen JSON and credential.
+    #[serde(skip)]
+    pub document_removal: bool,
     pub version: Version2,
     pub credential: SyncCredential,
     pub expires_at_seconds: i64,

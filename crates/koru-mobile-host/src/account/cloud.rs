@@ -676,6 +676,7 @@ impl Host for MobileCloudHost {
             return Err(Failure::Unavailable);
         };
         let session = cloud_sync::Session {
+            document_removal: permit.document_removal,
             accepted: dialed.prepared,
             scope,
             // TECHNICAL §4.4 on a phone: the network policy operation exists
@@ -763,6 +764,9 @@ impl Host for MobileCloudHost {
         let inspection_deadline = tokio::time::Instant::now()
             .checked_add(std::time::Duration::from_millis(inspection_expiry as u64))
             .unwrap_or_else(tokio::time::Instant::now);
+        let removal_pending = Arc::clone(&host.document_removal_pending);
+        let removal_host = self.host.clone();
+        let document_removal = permit.document_removal;
         let task = host.tokio().spawn(async move {
             let blob_work = async {
                 while completed_rx.changed().await.is_ok() {
@@ -808,6 +812,14 @@ impl Host for MobileCloudHost {
                     uploads: None,
                     interest: None,
                     progress: move |progress| match progress {
+                        Progress::Removing { pending } => {
+                            if let Some(workspace) = blob_workspace {
+                                removal_pending
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .insert(workspace, pending);
+                            }
+                        }
                         Progress::PassStarted => {
                             task_reports.send_if_modified(|report| {
                                 if let Some(report) = report {
@@ -864,11 +876,20 @@ impl Host for MobileCloudHost {
             }
             let error_code = result.err().map(|error| cloud::static_code(error.code()));
             tracing::info!(?dataset, error_code, "cloud subscription: ended");
+            let refresh_removals = document_removal && error_code == Some(cloud::DOCUMENT_REMOVED);
             reports.send_replace(Some(SessionReport {
-                stage: Stage::Unavailable,
+                stage: if refresh_removals {
+                    Stage::CheckingCoverage
+                } else {
+                    Stage::Unavailable
+                },
+                remote_hint: refresh_removals,
                 error_code,
                 ..SessionReport::default()
             }));
+            if refresh_removals && let Some(host) = removal_host.upgrade() {
+                host.wake_cloud();
+            }
         });
         let subscription = Subscription {
             connection,

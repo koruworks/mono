@@ -353,6 +353,8 @@ message DocumentMutation {
   // Present only for action "edit_text". The host applies a minimal text splice,
   // never a replacement document projection.
   DocumentTextEdit text_edit = 5;
+  // Exact frozen local version being answered by purge_keep/purge_delete.
+  bytes expected_version = 6;
 }
 message DocumentTextEdit {
   string block_id = 1;
@@ -506,6 +508,20 @@ message Inventory {
   // Run and schedule documents the listing hides (P1.0 F6): a run is
   // reached through its pill, never as a row.
   uint32 hidden_runs = 8;
+  repeated DocumentRemovalPrompt document_removals = 9;
+  uint32 pending_document_removals = 10;
+  // Close old editor identities even when no user decision is necessary.
+  repeated string purged_document_ids = 11;
+}
+
+message DocumentRemovalPrompt {
+  string document_id = 1;
+  string workspace_id = 2;
+  string title = 3;
+  bool unknown = 4;
+  bytes expected_version = 5;
+  // The UI must durably stage pending edits and close its editor before acknowledging.
+  bool needs_quiescence = 6;
 }
 
 message BlockProperties {

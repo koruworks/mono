@@ -8,6 +8,7 @@ mod claim;
 mod codec;
 mod fragments;
 pub mod metadata;
+pub mod removal;
 mod state;
 pub use claim::{ClaimReferences, UploadContext};
 pub use codec::{
@@ -55,6 +56,8 @@ pub enum Error {
     /// the unit's head did not move. Only a connection's session ever
     /// produces or receives it.
     DocumentClaimed,
+    /// Permanent removal; only sent after the peer reads the removal list.
+    CloudDocumentRemoved,
     CloudPolicyUnavailable,
     CloudPlanRequired,
     CloudDocumentCountLimit,
@@ -78,6 +81,7 @@ impl Error {
             Self::Unavailable => "sync_unavailable",
             Self::UnitExists => "sync_unit_exists",
             Self::DocumentClaimed => "sync_document_claimed",
+            Self::CloudDocumentRemoved => "cloud_document_removed",
             Self::CloudPolicyUnavailable => "cloud_policy_unavailable",
             Self::CloudPlanRequired => "cloud_plan_required",
             Self::CloudDocumentCountLimit => "cloud_document_count_limit",

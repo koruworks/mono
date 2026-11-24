@@ -287,6 +287,7 @@ fn sync_scopes_are_one_at_a_time_and_the_response_dataset_matches_the_scope() {
         retry_after_seconds: 5,
     };
     let response = SyncTokenResponseV2 {
+        document_removal: false,
         version: Version2,
         credential: credential(),
         expires_at_seconds: 100,

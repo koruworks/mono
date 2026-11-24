@@ -68,6 +68,7 @@ impl Transport for CreationTransport {
             let mut start = native_start(false);
             start.expires_at_millis = CREATION_NOW + 300_000;
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&start).unwrap(),
             });
@@ -81,6 +82,7 @@ impl Transport for CreationTransport {
                 cancel.store(true, Ordering::Release);
             }
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(
                     &GoogleNativeTokenCompleteResponseV1::ConfirmationRequired {
@@ -132,6 +134,7 @@ impl Transport for CreationTransport {
             }
             if self.expired.load(Ordering::Acquire) {
                 return Ok(HttpResponse {
+                    document_removal: false,
                     status: 410,
                     body: serde_json::to_vec(&koru_account_wire::DeveloperErrorV1 {
                         retry_after_millis: None,
@@ -154,6 +157,7 @@ impl Transport for CreationTransport {
                 AccountCreationResponseV1::Cancelled { version: Version1 }
             };
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&result).unwrap(),
             });
@@ -192,6 +196,7 @@ impl Transport for CreationTransport {
 }
 fn expired_creation_response() -> HttpResponse {
     HttpResponse {
+        document_removal: false,
         status: 410,
         body: serde_json::to_vec(&koru_account_wire::DeveloperErrorV1 {
             retry_after_millis: None,
@@ -205,10 +210,12 @@ impl CreationTransport {
     fn take_uncertain_response(&self) -> Option<HttpResponse> {
         match self.uncertain_response.swap(0, Ordering::AcqRel) {
             1 => Some(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: b"{\"version\":".to_vec(),
             }),
             2 => Some(HttpResponse {
+                document_removal: false,
                 status: 408,
                 body: serde_json::to_vec(&koru_account_wire::DeveloperErrorV1 {
                     retry_after_millis: None,
@@ -490,6 +497,7 @@ impl Transport for TokenTransport {
         if request.path_and_query.ends_with("/native/token/start") {
             self.starts.fetch_add(1, Ordering::AcqRel);
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&native_start(false)).unwrap(),
             });
@@ -541,6 +549,7 @@ impl Transport for TokenTransport {
                 }
             };
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&response).unwrap(),
             });
@@ -557,6 +566,7 @@ impl Transport for TokenTransport {
         }
         if request.path_and_query.ends_with("/logout") {
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&koru_account_wire::EmptyResponseV1 { version: Version1 })
                     .unwrap(),

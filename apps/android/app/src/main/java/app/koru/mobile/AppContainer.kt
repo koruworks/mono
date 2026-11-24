@@ -9,6 +9,14 @@ import app.koru.mobile.sharing.AndroidShareIntentReader
 import app.koru.mobile.sharing.RecentDestinations
 import android.net.Uri
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import app.koru.mobile.domain.DocumentId
+import app.koru.mobile.domain.DocumentCommand
 
 class AppContainer(application: Application) {
     val logger = AppLogger()
@@ -20,6 +28,9 @@ class AppContainer(application: Application) {
     private val content =
         NativeContentServices(deviceLink, logger, application.cacheDir.resolve("shared-content"))
     val contentSyncStatus = content.syncStatus
+    val removalDrafts = PurgeDraftJournal(application.filesDir.resolve("document-purge-drafts"))
+    val documentRemovals = content.removalPrompts
+    val purgedDocumentIds = content.purgedDocumentIds
     val profiles: ProfileService = content
     val workspaces: WorkspaceService = content
     val documents: DocumentService = content
@@ -35,6 +46,57 @@ class AppContainer(application: Application) {
     val updates = AppUpdates(application, logger)
     val serviceImplementation = "native-link + replicated-store"
     internal val pendingLink = MutableStateFlow<String?>(null)
+    private val removalPreparation = Mutex()
+    private val removalScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private data class RemovalEditor(
+        val quiesce: suspend (DocumentId) -> List<DocumentCommand.EditBlockText>,
+        val transferred: (DocumentId) -> Unit,
+        val flush: suspend (DocumentId) -> Unit,
+        val resume: (DocumentId) -> Unit,
+    )
+    private val removalEditors = mutableMapOf<Any, RemovalEditor>()
+
+    internal fun registerRemovalEditor(
+        owner: Any,
+        quiesce: suspend (DocumentId) -> List<DocumentCommand.EditBlockText>,
+        transferred: (DocumentId) -> Unit,
+        flush: suspend (DocumentId) -> Unit,
+        resume: (DocumentId) -> Unit,
+    ) { removalEditors[owner] = RemovalEditor(quiesce, transferred, flush, resume) }
+
+    internal fun unregisterRemovalEditor(owner: Any) { removalEditors.remove(owner) }
+
+    /** All Activity/ViewModel editors share one native source. None may leave
+     *  buffered text behind another window's quiescence acknowledgement. */
+    internal suspend fun prepareDocumentRemoval(prompt: DocumentRemovalPrompt) = removalScope.async {
+        removalPreparation.withLock {
+            // Application-owned until native acknowledgement: Activity teardown
+            // may stop awaiting this handoff, but cannot cancel its journal write.
+            val editors = removalEditors.values.toList()
+            val pending = mutableListOf<DocumentCommand.EditBlockText>()
+            for (editor in editors) pending += editor.quiesce(prompt.documentId)
+            val retained = removalDrafts.retain(prompt.documentId, pending)
+            documents.quiesceRemoval(prompt, retained)
+            editors.forEach { it.transferred(prompt.documentId) }
+            removalDrafts.transferred(prompt.documentId)
+        }
+    }.await()
+
+    internal suspend fun deleteDocumentPermanently(id: DocumentId) = removalPreparation.withLock {
+        val editors = removalEditors.values.toList()
+        try {
+            editors.forEach { it.flush(id) }
+            for (editor in editors) {
+                // A second Activity could type while the first write awaited IO.
+                // Preserve that new draft and retry instead of deleting over it.
+                check(editor.quiesce(id).isEmpty()) { "document_edits_pending" }
+            }
+            documents.deletePermanently(id)
+        } catch (error: Throwable) {
+            editors.forEach { it.resume(id) }
+            throw error
+        }
+    }
 
     fun acceptLinkIntent(uri: Uri?) {
         if (uri?.scheme == "https" && uri.host == "koru.do" && uri.path == "/link-device") {

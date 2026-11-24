@@ -437,6 +437,9 @@ struct World {
     remote_hints: usize,
     open_failures: usize,
     expired_opens: usize,
+    removal_opens: usize,
+    document_removal: bool,
+    downgrade_after_removal: bool,
     blocked: HashMap<WorkspaceId, Arc<Mutex<mpsc::Receiver<()>>>>,
     live_permits: BTreeSet<Uuid>,
 }
@@ -495,6 +498,7 @@ fn codeless_hosted_api(world: Arc<Mutex<World>>, status: u16) -> HostedApi {
                 request.method, request.path_and_query, self.status
             ));
             Ok(koru_account_client::HttpResponse {
+                document_removal: false,
                 status: self.status,
                 body: br#"{"detail":"this deployment does not serve that route"}"#.to_vec(),
             })
@@ -526,6 +530,7 @@ fn coded_hosted_api(world: Arc<Mutex<World>>, status: u16, code: &str) -> Hosted
                 request.method, request.path_and_query, self.status
             ));
             Ok(koru_account_client::HttpResponse {
+                document_removal: false,
                 status: self.status,
                 body: self.body.clone(),
             })
@@ -824,6 +829,8 @@ impl Api for FakeApi {
             }
         };
         Ok(SyncTokenResponseV2 {
+            document_removal: world.document_removal
+                && matches!(scope, CloudSyncScopeV2::Workspace { .. }),
             version: Version2,
             credential,
             expires_at_seconds: world.token_expiry,
@@ -1063,6 +1070,18 @@ impl Host for FakeHost {
             return Ok(SessionReport {
                 stage: Stage::Unavailable,
                 error_code: Some(CREDENTIAL_EXPIRED),
+                ..SessionReport::default()
+            });
+        }
+        if world.removal_opens > 0 && matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }) {
+            world.removal_opens -= 1;
+            if world.downgrade_after_removal {
+                world.document_removal = false;
+            }
+            return Ok(SessionReport {
+                stage: Stage::CheckingCoverage,
+                error_code: Some(DOCUMENT_REMOVED),
+                remote_hint: true,
                 ..SessionReport::default()
             });
         }
@@ -3186,14 +3205,16 @@ fn a_refused_workspace_of_a_profile_on_this_device_is_selected_and_then_admitted
 /// owns two Profiles with a Workspace each and this device holds the second.
 /// The first Profile's Workspace is never requested, selected or created
 /// here — which is the device's rule now that the service no longer requires
-/// a device to be bound to a Profile before it issues a credential.
+/// a device to be bound to a Profile before it issues a credential. The
+/// second, held here, is selected once (up front, for the file routes).
 #[test]
 fn a_workspace_of_a_profile_that_is_not_here_is_not_asked_for() {
     let world = hosted([1, 2]);
     lock(&world).held_profiles = Some(BTreeSet::from([profile(2)]));
     let harness = Harness::start(world);
     harness.control.update_authorization(authority("1"));
-    harness.wait_for(|world| {
+    // The pass that selects defers; the next comes at the debounce.
+    harness.tick_until(1_000, |world| {
         world
             .permits()
             .iter()
@@ -3203,7 +3224,19 @@ fn a_workspace_of_a_profile_that_is_not_here_is_not_asked_for() {
 
     let state = lock(&harness.world);
     assert_eq!(state.tokens("workspace:1"), 0, "{:?}", state.log);
-    assert_eq!(selections(&state.log), 0);
+    assert!(
+        !state
+            .log
+            .contains(&format!("select:{}", workspace(1).to_storage())),
+        "the Profile that is not here is never selected: {:?}",
+        state.log
+    );
+    assert_eq!(
+        selections(&state.log),
+        1,
+        "the held one, once: {:?}",
+        state.log
+    );
     assert!(
         state
             .permits()
@@ -3622,4 +3655,133 @@ fn every_stage_keeps_its_control_protocol_spelling() {
             "settled",
         ]
     );
+}
+
+/// **A held Profile is selected even when nothing is refused.** Content
+/// admission no longer asks about the Profile, so documents are admitted
+/// without it, but the Cloud file routes still require this device to be
+/// provisioned for the Profile — which only selection does for a device that
+/// has just signed in. Waiting for a refusal meant a new device synced its
+/// documents and was refused every file (dev build, 2026-11-18). Once per
+/// Profile per authorization, then the Workspaces are admitted as before.
+#[test]
+fn a_held_profile_is_selected_once_up_front_even_when_nothing_is_refused() {
+    let world = hosted([1, 2]);
+    lock(&world).held_profiles = Some(BTreeSet::from([profile(1), profile(2)]));
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.tick_until(1_000, |world| {
+        [profile(1), profile(2)].iter().all(|held| {
+            world
+                .permits()
+                .iter()
+                .any(|permit| is_workspace(permit) && placement_of(permit) == Some(*held))
+        })
+    });
+    harness.wait_snapshot(|snapshot| snapshot.failure_code.is_none());
+    let state = lock(&harness.world);
+    assert_eq!(
+        selections(&state.log),
+        2,
+        "one per held Profile: {:?}",
+        state.log
+    );
+    // A later pass under the same authorization does not ask again.
+    drop(state);
+    harness.control.wake();
+    harness.tick(2_000);
+    assert_eq!(selections(&harness.log()), 2, "not repeated");
+}
+
+#[test]
+fn removed_document_readmits_immediately_and_fences_before_retry() {
+    let world = one_hosted_pair();
+    {
+        let mut state = lock(&world);
+        state.document_removal = true;
+        state.removal_opens = 1;
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    // No clock advance/wake: the replacement must run in the same lane turn.
+    harness.wait_for(|world| world.opened.len() == 2);
+    harness.wait_snapshot(|snapshot| snapshot.stage == Stage::Settled);
+    let snapshot = harness.control.snapshot();
+    assert!(snapshot.failure_code.is_none());
+    assert!(snapshot.retry_at_millis.is_none());
+    let state = lock(&harness.world);
+    assert_eq!(state.contexts.len(), 2);
+    let old: BTreeSet<_> = state.contexts[0].2.iter().map(|p| p.permit_id).collect();
+    let renewed: BTreeSet<_> = state.contexts[1].2.iter().map(|p| p.permit_id).collect();
+    assert!(old.is_disjoint(&renewed));
+    assert_eq!(renewed.len(), 1);
+    assert!(old.contains(&state.fenced[0][0]));
+}
+
+#[test]
+fn repeated_removal_refresh_is_bounded_without_outage_backoff() {
+    let world = one_hosted_pair();
+    {
+        let mut state = lock(&world);
+        state.document_removal = true;
+        state.removal_opens = 100;
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| {
+        snapshot
+            .records
+            .iter()
+            .any(|record| record.error_code == Some(DOCUMENT_REMOVED))
+    });
+    let snapshot = harness.control.snapshot();
+    assert!(snapshot.failure_code.is_none());
+    assert!(snapshot.retry_at_millis.is_none());
+    assert_eq!(
+        lock(&harness.world).removal_opens,
+        98,
+        "one immediate re-admission"
+    );
+    assert!(snapshot.records.iter().any(|record| {
+        record.error_code == Some(DOCUMENT_REMOVED) && record.stage == Stage::CheckingCoverage
+    }));
+}
+
+#[test]
+fn removal_refresh_does_not_downgrade_to_an_old_worker() {
+    let world = one_hosted_pair();
+    {
+        let mut state = lock(&world);
+        state.document_removal = true;
+        state.removal_opens = 1;
+        state.downgrade_after_removal = true;
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(WORKER_UNAVAILABLE));
+    assert!(
+        !lock(&harness.world)
+            .opened
+            .iter()
+            .any(|dataset| { matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }) }),
+        "a stream without the mandatory removal-list read never starts"
+    );
+    // The requirement survives another coordinator pass, rather than just the
+    // immediate renewal attempt. Only a capable admission can resume it.
+    let issued = lock(&harness.world).tokens("workspace");
+    harness.tick_until(2_000, |world| world.tokens("workspace") > issued);
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(WORKER_UNAVAILABLE));
+    assert!(
+        !lock(&harness.world)
+            .opened
+            .iter()
+            .any(|dataset| { matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }) })
+    );
+    lock(&harness.world).document_removal = true;
+    harness.tick_until(2_000, |world| {
+        world
+            .opened
+            .iter()
+            .any(|dataset| matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }))
+    });
 }

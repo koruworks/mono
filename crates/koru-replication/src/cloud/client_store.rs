@@ -5,6 +5,7 @@
 //! value to its retained Store owner, never run this on a UI/transport executor.
 //! No peer identity, listener, local mode representation or authority is minted.
 mod export;
+pub mod removal;
 pub use export::{Export, ExportRequest, version};
 
 use super::{

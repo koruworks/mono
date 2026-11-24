@@ -312,6 +312,7 @@ impl MainView {
         }
         if !asked {
             let count = nodes.len();
+            let lang = crate::format::lang();
             let (title, body) = if count == 1 {
                 // **A run is named by the two words a person knows it by.**
                 // `name_of` reads the open document, which holds no run: a
@@ -323,9 +324,10 @@ impl MainView {
                     None => koru_workspace::name_of(ws, nodes[0]),
                 };
                 (
-                    "Delete permanently?".to_owned(),
-                    format!(
-                        "\u{201C}{name}\u{201D} will be removed for good. This cannot be undone."
+                    koru_i18n::t(lang, koru_i18n::Key::DocumentDeleteForeverTitle).to_owned(),
+                    koru_i18n::fill(
+                        koru_i18n::t(lang, koru_i18n::Key::DocumentDeleteForeverBody),
+                        &[&name],
                     ),
                 )
             } else {
@@ -337,7 +339,11 @@ impl MainView {
                 )
             };
             self.confirm = Some((
-                Confirm::new(title, body, "Delete permanently"),
+                Confirm::new(
+                    title,
+                    body,
+                    koru_i18n::t(lang, koru_i18n::Key::DocumentDeleteForeverConfirm),
+                ),
                 ConfirmSubject::DeleteForever(nodes),
             ));
             return true;
@@ -348,6 +354,20 @@ impl MainView {
         // the Run document only follows once that has answered.
         let (runs, nodes) = self.split_runs(nodes);
         let mut acted = self.purge_runs(runs);
+        // **Documents go to the shell, which owns the manifest** — the split
+        // `drain_restore` and `queue_trash` make. A Trash row's `NodeId` is a
+        // `DocumentId`'s bytes, so `ws.delete_permanently` found no such node
+        // in the open document and the row stayed, while Empty Trash (which
+        // asks the shell) worked.
+        let (documents, nodes) = self.split_documents(nodes);
+        if !documents.is_empty() {
+            for document in &documents {
+                self.trashed_here
+                    .remove(&NodeId::from_uuid(document.as_uuid()));
+            }
+            self.ask_pane(koru_workspace_host::PaneRequest::PurgeDocuments(documents));
+            acted = true;
+        }
         for node in nodes {
             if ws.delete_permanently(node).is_ok() {
                 self.trashed_here.remove(&node);

@@ -96,6 +96,8 @@ pub const WORKER_UNAVAILABLE: &str = "cloud_worker_unavailable";
 pub const BOOTSTRAP_FAILED: &str = "cloud_bootstrap_failed";
 /// Renew through admission; never extend a worker credential locally.
 pub const CREDENTIAL_EXPIRED: &str = "credential_expired";
+/// A document was removed during this stream. Re-admit and read removals first.
+pub const DOCUMENT_REMOVED: &str = "cloud_document_removed";
 pub const SESSION_RENEW_BEFORE_SECONDS: i64 = 90;
 pub const ACCESS_REVOKED: &str = "cloud_access_revoked";
 pub const SESSION_EXPIRED: &str = "session_revoked";

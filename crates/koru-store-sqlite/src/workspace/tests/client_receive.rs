@@ -19,6 +19,7 @@ use koru_store_core::{
 use loro::{ExportMode, LoroDoc};
 
 mod exports;
+mod removal;
 
 struct Fixture {
     store: Store<crate::SqliteCatalog, MemoryWorkspace>,

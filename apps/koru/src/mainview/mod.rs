@@ -1055,6 +1055,7 @@ pub struct MainView {
     /// A window-level action the caption row asked for. Drained by the shell
     /// inside the same press, because dragging a window has to be.
     window_request: Option<WindowRequest>,
+    review_document_deletions: bool,
     /// What the pane's switcher asked for. At most one can be in flight: each
     /// ends in a document being swapped, a folder picker, or a new process.
     /// What this view has asked the shell for, in the order it asked.
@@ -2118,6 +2119,7 @@ impl MainView {
             image_request: None,
             attachment_request: None,
             window_request: None,
+            review_document_deletions: false,
             pane_requests: std::collections::VecDeque::new(),
             workspaces_poll_due: None,
             profile_wait: profile_wait::WaitPane::default(),
@@ -8728,6 +8730,10 @@ impl MainView {
                 crate::manage::workspaces::catalog_profile(profile),
             ),
             Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
+            Outcome::ReviewDocumentDeletions => {
+                self.review_document_deletions = true;
+                true
+            }
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))
             }
@@ -12065,6 +12071,8 @@ impl View for MainView {
     /// would leave every tab subscribed to a document nobody holds, rendering
     /// once and then going quiet with nothing to show for it.
     fn reseat(&mut self, _ws: &WorkspaceDoc) {
+        self.review_document_deletions = false;
+        self.explore.set_pending_document_deletions(0);
         // **The strip is left alone** (the user, 2026-11-10: "don't close
         // chats when I switch workspaces, leave them open"). This used to
         // reset the main strip to one Welcome tab, so a live workspace switch
@@ -13780,6 +13788,32 @@ impl View for MainView {
         self.unpin_live_document(document)
     }
 
+    fn quiesce_purged_document(
+        &mut self,
+        document: koru_core::DocumentId,
+        _root: Option<NodeId>,
+    ) -> bool {
+        let before = self.shown_documents();
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let doomed: Vec<_> = group
+                .iter_tabs()
+                .enumerate()
+                .filter(|(_, tab)| tab.edits() == Some(document))
+                .map(|(index, _)| index)
+                .collect();
+            for index in doomed.into_iter().rev() {
+                changed |= group.close_tab(index);
+            }
+        }
+        if changed {
+            self.released(before);
+            self.flush_closed_tab_bursts();
+            self.size_visible_groups();
+        }
+        changed
+    }
+
     fn pinned_search_rows(
         &self,
     ) -> Vec<(String, koru_core::DocumentId, koru_core::WorkspaceId, bool)> {
@@ -13872,6 +13906,14 @@ impl View for MainView {
 
     fn take_window_request(&mut self) -> Option<WindowRequest> {
         self.window_request.take()
+    }
+
+    fn set_pending_document_deletions(&mut self, count: usize) -> bool {
+        self.explore.set_pending_document_deletions(count)
+    }
+
+    fn take_review_document_deletions(&mut self) -> bool {
+        std::mem::take(&mut self.review_document_deletions)
     }
 
     fn take_pane_request(&mut self) -> Option<PaneRequest> {
@@ -14638,8 +14680,11 @@ impl View for MainView {
         let live = self.entity_live();
         let entity_titles = self.entity_titles.clone();
         let entity_trashed = self.entity_trashed.clone();
-        let mut acted = false;
-        for tab in self.tabs_mut().iter_mut() {
+        // **Every group, not the focused one.** A Trash tab in the other half
+        // of a split kept the list it opened with: moving a file to the Trash
+        // from the Files column, with focus beside it, never reached it.
+        let mut acted = self.each_tab_mut(|tab| {
+            let mut acted = false;
             if let TabView::Trash(t) = &mut tab.view {
                 acted |= t.set_documents(trashed.clone());
             }
@@ -14653,7 +14698,8 @@ impl View for MainView {
             if let Some(leaf) = leaf {
                 acted |= leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
             }
-        }
+            acted
+        });
         if changed {
             self.sync_trash_count();
             acted = true;
@@ -14730,7 +14776,9 @@ impl View for MainView {
         let live = self.entity_live();
         let entity_titles = self.entity_titles.clone();
         let entity_trashed = self.entity_trashed.clone();
-        for tab in self.tabs_mut().iter_mut() {
+        // Every group, as `set_trashed` does: a link in the other half of a
+        // split names the document as it is now too.
+        self.each_tab_mut(|tab| {
             let leaf = match &mut tab.view {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
@@ -14741,7 +14789,8 @@ impl View for MainView {
             if let Some(leaf) = leaf {
                 leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
             }
-        }
+            false
+        });
         self.relabel_background_tabs();
         // **The parent chains now, the rows at the next draw.** A reveal — a
         // search result unfolding the branch it lives in — runs *before* that

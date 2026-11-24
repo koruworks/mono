@@ -638,6 +638,7 @@ async fn dataset_driver_settles_a_profile_plan_and_reports_the_remote_hint() {
             reader,
             writer,
             cloud_sync::Session {
+                document_removal: false,
                 accepted,
                 scope: f.scope,
                 automatic_limit: transfer::MAX_PAYLOAD,
@@ -810,6 +811,7 @@ async fn agreeing_pass(
             reader,
             writer,
             cloud_sync::Session {
+                document_removal: false,
                 accepted,
                 scope: f.scope,
                 automatic_limit: transfer::MAX_PAYLOAD,

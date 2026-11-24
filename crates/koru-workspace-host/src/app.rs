@@ -8,6 +8,7 @@
 
 mod child_document;
 mod delegate_folder;
+mod document_purge;
 mod file_paste;
 mod image_file;
 mod inspector_window;
@@ -2817,6 +2818,8 @@ struct App<H: Host> {
     /// Workspaces with a durable soft-delete request running off the UI thread.
     /// Prevents a double click from issuing competing Store mutations.
     deleting_workspaces: HashSet<WorkspaceId>,
+    document_purge_asked: HashSet<koru_core::DocumentId>,
+    document_purge_replacements: Vec<koru_core::DocumentId>,
     /// `/attach` waits for the generic file importer to publish its file entry.
     pending_attachment: Option<(WindowId, NodeId)>,
     pending_ai_import: Option<(WindowId, uuid::Uuid)>,
@@ -6517,6 +6520,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
             reader_watch: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending_import: None,
             deleting_workspaces: HashSet::new(),
+            document_purge_asked: HashSet::new(),
+            document_purge_replacements: Vec::new(),
             pending_attachment: None,
             pending_ai_import: None,
             pending_page_attachment: None,
@@ -13464,6 +13469,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// caret. It is not dropped on the floor: it is remembered and retried after
     /// the next open, which is the only moment it stops being active.
     fn release_document(&mut self, id: koru_core::DocumentId) {
+        // The reconciliation worker owns the release boundary; closing its
+        // tab must not drop an as-yet-unbuffered source on an early shutdown.
+        if self.runtime.workspace.document_purge_frozen(id) {
+            return;
+        }
         if !self.runtime.workspace.close_document(id)
             && self.runtime.workspace.document(id).is_some()
             && !self.releasing.contains(&id)
@@ -20665,6 +20675,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                 self.runtime.workspace.tick()
             };
             let entries_changed = self.runtime.workspace.take_entries_changed();
+            self.reconcile_document_purge_ui(event_loop);
             if changed {
                 self.images_dirty = true;
                 self.adopt_everywhere();
@@ -20767,6 +20778,7 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
         };
         let entries_changed = self.runtime.workspace.take_entries_changed();
         self.report_write_failure();
+        self.reconcile_document_purge_ui(event_loop);
         self.report_replay_trouble();
         // Every tick, not only on a change: the chip's own comparison decides
         // whether anything is redrawn, and part of what it reports — how long

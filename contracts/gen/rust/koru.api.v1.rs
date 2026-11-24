@@ -509,6 +509,9 @@ pub struct DocumentMutation {
     /// never a replacement document projection.
     #[prost(message, optional, tag="5")]
     pub text_edit: ::core::option::Option<DocumentTextEdit>,
+    /// Exact frozen local version being answered by purge_keep/purge_delete.
+    #[prost(bytes="vec", tag="6")]
+    pub expected_version: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -791,6 +794,30 @@ pub struct Inventory {
     /// reached through its pill, never as a row.
     #[prost(uint32, tag="8")]
     pub hidden_runs: u32,
+    #[prost(message, repeated, tag="9")]
+    pub document_removals: ::prost::alloc::vec::Vec<DocumentRemovalPrompt>,
+    #[prost(uint32, tag="10")]
+    pub pending_document_removals: u32,
+    /// Close old editor identities even when no user decision is necessary.
+    #[prost(string, repeated, tag="11")]
+    pub purged_document_ids: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentRemovalPrompt {
+    #[prost(string, tag="1")]
+    pub document_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub workspace_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub title: ::prost::alloc::string::String,
+    #[prost(bool, tag="4")]
+    pub unknown: bool,
+    #[prost(bytes="vec", tag="5")]
+    pub expected_version: ::prost::alloc::vec::Vec<u8>,
+    /// The UI must durably stage pending edits and close its editor before acknowledging.
+    #[prost(bool, tag="6")]
+    pub needs_quiescence: bool,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

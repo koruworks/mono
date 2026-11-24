@@ -76,7 +76,11 @@ impl Transport for HostedProjection {
         } else {
             return self.receipt_host.send(request);
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 fn authority() -> EnrollmentAuthorization {

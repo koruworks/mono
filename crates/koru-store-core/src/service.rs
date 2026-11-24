@@ -68,6 +68,8 @@ use crate::text::Locale;
 
 mod account_live;
 mod availability;
+mod document_release;
+mod document_removals;
 mod inspection;
 pub use availability::{
     EnsuredWorkspace, VerifiedWorkspaceManifest, WorkspaceAuthority, WorkspaceAuthorityRead,
@@ -1864,6 +1866,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         document: DocumentId,
         at: Timestamp,
     ) -> Result<()> {
+        if self.document_purge_frozen(workspace, document)? {
+            return Err(Error::bare(Code::InvalidRequest));
+        }
         if self.catalog.workspace(workspace)?.is_none() {
             return Err(Error::bare(Code::WorkspaceNotFound));
         }
@@ -2989,6 +2994,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 "an imported document snapshot is empty",
             ));
         }
+        if self.document_purge_frozen(workspace, id)? {
+            return Err(Error::bare(Code::InvalidRequest));
+        }
         self.ensure_open(workspace)?;
         let open = self.open.get_mut(&workspace).expect("just opened");
         let manifest_before = open.manifest.export_snapshot()?;
@@ -3399,6 +3407,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             ));
         }
         if let Some(candidate) = candidate {
+            if self.document_purge_frozen(workspace, candidate)? {
+                return Err(Error::bare(Code::InvalidRequest));
+            }
             let mut owner = None;
             for known in self.catalog.workspaces_including_deleted()? {
                 let exists = match self.open.get(&known.id) {

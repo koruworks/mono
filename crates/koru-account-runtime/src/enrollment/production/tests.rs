@@ -159,7 +159,11 @@ impl Transport for Hosted {
                 request.path_and_query
             );
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 struct MemoryInbound(Mutex<SqliteTrustRepository>);

@@ -2,6 +2,7 @@
 
 package app.koru.mobile.services
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -17,16 +18,26 @@ class DocumentInvalidationsTest {
     @Test fun registrationAndConcurrentWakesAreConflatedAndCancellationReleases() = runTest {
         lateinit var callback: Runnable
         var reads = 0
+        val firstRead = CompletableDeferred<Unit>()
         val released = mutableListOf<Long>()
         val job = launch {
             documentInvalidations(
                 register = { callback = it; it.run(); 42L },
                 release = { released += it },
-            ).collect { reads++ }
+            ).collect {
+                reads++
+                if (reads == 1) firstRead.await()
+            }
         }
         runCurrent()
         assertEquals(1, reads)
+        // Conflation bounds pending wakes while a read is busy. A receiver
+        // already waiting can accept one wake before the buffer fills, so an
+        // instantaneous collector cannot establish that boundary.
         repeat(100) { callback.run() }
+        runCurrent()
+        assertEquals(1, reads)
+        firstRead.complete(Unit)
         runCurrent()
         assertEquals(2, reads)
         job.cancelAndJoin()

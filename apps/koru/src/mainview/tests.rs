@@ -10148,6 +10148,18 @@ fn close_all_still_leaves_a_welcome_tab_rather_than_closing_the_window() {
     assert_eq!(v.take_window_request(), None, "the window stays");
 }
 
+#[test]
+fn reviewing_deferred_deletions_is_a_host_request_and_does_not_cross_a_workspace_switch() {
+    let (mut view, workspace) = on_document();
+    assert!(!view.take_review_document_deletions());
+    assert!(view.apply(&workspace.ws, Outcome::ReviewDocumentDeletions));
+    assert!(view.take_review_document_deletions());
+    assert!(!view.take_review_document_deletions());
+    assert!(view.apply(&workspace.ws, Outcome::ReviewDocumentDeletions));
+    view.reseat(&workspace.ws);
+    assert!(!view.take_review_document_deletions());
+}
+
 // ------------------------------------------------------------ the update banner
 
 /// A report the agent would push on finding a build, with release notes.
@@ -16711,4 +16723,127 @@ fn typing_in_one_split_pane_updates_the_other_pane_showing_the_same_document_imm
         vec!["Notes", "first line!", "TTT", "second line?"],
         "typing in the left pane must appear immediately in the right pane"
     );
+}
+
+/// **Delete permanently on a Trash row destroys that document.** A row is a
+/// manifest document, not a node in the open one, so the confirmed delete
+/// goes to the shell by document — as Restore and Empty Trash do. It used to
+/// look for the node in the open document, find nothing, and leave the row.
+#[test]
+fn delete_permanently_on_a_trashed_document_asks_the_shell_to_purge_it() {
+    use koru_core::explore::ExploreEntry;
+    let (mut v, mut workspace) = container();
+    let doc = koru_core::DocumentId::new();
+    View::set_entries(&mut v, Vec::new(), None);
+    View::set_trashed(
+        &mut v,
+        vec![ExploreEntry {
+            id: doc,
+            parent: None,
+            ordinal: 0,
+            title: "setup.exe".to_owned(),
+            kind: koru_core::explore::KIND_FILE.to_owned(),
+            mime: None,
+            note: None,
+            trashed_at: Some(1),
+            trashed_by: None,
+        }],
+    );
+    let node = NodeId::from_uuid(doc.as_uuid());
+
+    v.pending_delete_forever = Some((vec![node], false));
+    assert!(v.drain_delete_forever(&mut workspace.ws), "asks first");
+    assert!(
+        View::take_pane_request(&mut v).is_none(),
+        "nothing before the yes"
+    );
+
+    v.pending_delete_forever = Some((vec![node], true));
+    assert!(v.drain_delete_forever(&mut workspace.ws));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::PurgeDocuments(vec![doc])),
+    );
+}
+
+/// **A Trash tab in the other half of a split still hears the bin change.**
+/// The push used to visit the focused group only, so with focus beside it the
+/// Trash tab kept the list it opened with while a file went into the bin.
+#[test]
+fn a_trash_tab_in_an_unfocused_group_takes_the_new_bin() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    use koru_core::explore::ExploreEntry;
+
+    let (mut v, _workspace) = container();
+    v.open_trash_tab();
+    v.panes
+        .split(&PanePath::root(), SplitDir::Right, Tab::welcome());
+    let left = PanePath::root().child(0);
+    v.panes.set_focus(PanePath::root().child(1));
+    assert!(
+        !matches!(v.tabs().active_tab().view, TabView::Trash(_)),
+        "focus is beside the Trash, not on it"
+    );
+
+    let binned = vec![ExploreEntry {
+        id: koru_core::DocumentId::new(),
+        parent: None,
+        ordinal: 0,
+        title: "setup.exe".to_owned(),
+        kind: koru_core::explore::KIND_FILE.to_owned(),
+        mime: None,
+        note: None,
+        trashed_at: Some(1),
+        trashed_by: None,
+    }];
+    View::set_trashed(&mut v, binned.clone());
+
+    let group = v.panes.group_mut(&left).expect("the left group");
+    let trash = group
+        .tabs_mut()
+        .iter_mut()
+        .find_map(|tab| match &mut tab.view {
+            TabView::Trash(t) => Some(t),
+            _ => None,
+        })
+        .expect("the Trash tab stayed on the left");
+    assert!(
+        !trash.set_documents(binned),
+        "the Trash tab already holds the new bin"
+    );
+}
+
+#[test]
+fn purge_quiescence_closes_pinned_and_unfocused_split_editors_in_every_window() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    use koru_workspace_host::View;
+    let document = koru_core::DocumentId::new();
+    let other = koru_core::DocumentId::new();
+    let (mut first, _) = on_document();
+    let (mut split, _) = on_document();
+    let (mut second, _) = on_document();
+    for view in [&mut first, &mut split, &mut second] {
+        view.tabs_mut().active_mut().document = Some(document);
+    }
+    let pinned = first.tabs().active();
+    assert!(first.pin_tab(pinned));
+    let split_index = split.tabs().active();
+    let tab = split.tabs_mut().take_no_floor(split_index).unwrap();
+    first.panes.split(&PanePath::root(), SplitDir::Right, tab);
+    // Another document in the other window must survive.
+    let (mut survivor, _) = on_document();
+    survivor.tabs_mut().active_mut().document = Some(other);
+    let survivor_index = survivor.tabs().active();
+    let tab = survivor.tabs_mut().take_no_floor(survivor_index).unwrap();
+    second.tabs_mut().insert_inactive(tab);
+    for view in [&mut first, &mut second] {
+        assert!(view.quiesce_purged_document(document, None));
+        assert!(
+            view.panes
+                .iter_groups()
+                .all(|(_, group)| { group.iter_tabs().all(|tab| tab.edits() != Some(document)) })
+        );
+        assert!(!view.quiesce_purged_document(document, None));
+    }
+    assert!(second.shown_documents().contains(&other));
 }

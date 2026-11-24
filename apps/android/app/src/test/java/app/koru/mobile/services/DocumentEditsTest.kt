@@ -3,6 +3,7 @@
 package app.koru.mobile.services
 
 import app.koru.mobile.domain.*
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.*
 import org.junit.Assert.*
@@ -16,6 +17,51 @@ class DocumentEditsTest {
     private fun snapshot(text: String) = DocumentSnapshot(document,
         WorkspaceId("30000000-0000-4000-8000-000000000001"), "Test", 1,
         listOf(Block(block, content = BlockContent.Paragraph(RichText(text)))))
+
+    @Test fun queuedEnterAndSplitAfterPurgeFreezeDoNotCreateDraftsOrThrow() = runTest {
+        var writes = 0
+        val edits = DocumentEdits(this) { _, _ -> writes++ }
+        val paragraph = Block(block, content = BlockContent.Paragraph(RichText("Before")))
+        assertTrue(edits.quiesce(document).isEmpty())
+        assertEquals(block, edits.enter(key, paragraph, "Before", "Before\nafter", false, false))
+        assertEquals(block, edits.split(key, paragraph, "Before", "Before after", 6, false, false))
+        runCurrent()
+        assertTrue(edits.drafts.value.isEmpty())
+        assertTrue(edits.paragraphs.value.isEmpty())
+        assertEquals(0, writes)
+    }
+
+    @Test fun purgeQuiescenceJoinsAnAdmittedWriteAndRetainsRejectedText() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        var calls = 0
+        val edits = DocumentEdits(this) { _, _ -> calls++; gate.await(); error("document_removed") }
+        edits.change(key, RichText("Before"), "Typed here")
+        edits.flush(document)
+        runCurrent()
+        val pending = async { edits.quiesce(document) }
+        runCurrent()
+        assertFalse(pending.isCompleted)
+        edits.change(key, RichText("Before"), "Too late")
+        edits.flush(document)
+        gate.complete(Unit)
+        runCurrent()
+        assertEquals(1, calls)
+        assertEquals("Typed here", pending.await().single().after)
+        assertEquals("Typed here", edits.drafts.value.getValue(key).text)
+        edits.transferred(document)
+        assertTrue(edits.drafts.value.isEmpty())
+    }
+
+    @Test fun purgeQuiescenceKeepsAnUnwrittenEnterChainInDependencyOrder() = runTest {
+        val edits = DocumentEdits(this) { _, _ -> error("must not write a frozen source") }
+        val paragraph = Block(block, content = BlockContent.Paragraph(RichText("Before")))
+        val child = edits.split(key, paragraph, "Before", "First tail", 6, false, false)
+        edits.change(BlockEditKey(document, child), RichText("tail"), "Retained tail")
+        val pending = edits.quiesce(document)
+        assertEquals(listOf(block, child), pending.map { it.blockId })
+        assertEquals(child, pending[0].split?.blockId)
+        assertEquals("Retained tail", pending[1].after)
+    }
 
     @Test fun typingCoalescesBehindDurabilityWithoutChangingItsBase() = runTest {
         val gate = CompletableDeferred<Unit>()

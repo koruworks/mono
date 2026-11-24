@@ -199,6 +199,9 @@ pub(super) struct Coordinator<A: Api, H: Host> {
     /// The permits the host holds: Workspace content and Profile units.
     pub(super) live: Vec<CloudPermitV2>,
     pub(super) admissions: BTreeMap<WorkspaceId, Admission>,
+    /// A typed removal ended this scope's stream. Do not downgrade its next
+    /// pass to a worker that cannot read the removal list first.
+    removal_refresh: BTreeSet<Owner>,
     /// The Profiles whose Identity/Private units are independently eligible
     /// this generation, with their admission (§4.4).
     pub(super) profile_units: BTreeMap<ProfileId, Scoped>,
@@ -285,6 +288,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             sequence: 0,
             live: Vec::new(),
             admissions: BTreeMap::new(),
+            removal_refresh: BTreeSet::new(),
             profile_units: BTreeMap::new(),
             catalog: None,
             contract: None,
@@ -563,6 +567,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         scope: CloudPermitScopeV2,
     ) -> Result<CloudPermitV2, Failure> {
         let permit = CloudPermitV2 {
+            document_removal: token.document_removal,
             version: CLOUD_PERMIT_VERSION_V2,
             permit_id: self.mint(),
             account_id: cloud_id(authority.owner.account.as_uuid()),
@@ -1413,6 +1418,18 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 .placement
                 .is_some_and(|profile| self.selected.contains(&profile))
         {
+            return Err(Failure::NotReady);
+        }
+        // **Selected up front, not only after a refusal** (CTO, 2026-11-18).
+        // Content admission stopped asking about the Profile, so the refusal
+        // below no longer comes — but the Cloud file routes still require this
+        // device to be provisioned for the Profile. A freshly signed-in device
+        // synced its documents and was refused every file, for ever. The
+        // signed-in account holds the Profile; selecting it is the service's
+        // idempotent "provision this device", asked once per Profile per
+        // authorization (`select_held_profile` remembers), and the pass runs
+        // again at once on the receipt it produced.
+        if self.select_held_profile(&candidate) {
             return Err(Failure::NotReady);
         }
         let token = match self.authorized(|api, authority| {

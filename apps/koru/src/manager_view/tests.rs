@@ -366,3 +366,29 @@ fn every_view_method_the_container_implements_is_forwarded() {
 }
 
 mod accessibility;
+
+#[test]
+fn purged_popout_closes_by_document_identity_after_source_is_forgotten() {
+    let mut ws = WorkspaceDoc::create(WorkspaceId::new(), "t").unwrap();
+    let root = koru_workspace::document(&mut ws, "Notes").unwrap();
+    let document = ws.own_document_id().unwrap_or_else(|| ws.document_id(root));
+    let mut pane = DocumentPane::open(&ws, root, PopoutClose::default());
+    pane.close = Some(CloseDialog::new());
+    pane.wants_restore_tab = true;
+    let mut view = ManagerView::Document(pane);
+    assert!(!view.quiesce_purged_document(koru_core::DocumentId::new(), None));
+    assert!(view.quiesce_purged_document(document, None));
+    let ManagerView::Document(pane) = &mut view else {
+        unreachable!()
+    };
+    assert!(pane.closing);
+    assert!(pane.close.is_none());
+    assert!(
+        !pane.wants_restore_tab,
+        "retirement must not restore the old tab"
+    );
+    assert!(matches!(
+        view.take_window_request(),
+        Some(WindowRequest::Close)
+    ));
+}

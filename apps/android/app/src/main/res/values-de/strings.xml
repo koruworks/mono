@@ -511,4 +511,16 @@
     <string name="cloud_upload_physical_bytes">Der Cloud-Speicher hat eine physische Sicherheitsgrenze erreicht. Dieser Upload wartet.</string>
     <string name="cloud_upload_staging_bytes">Der temporäre Cloud-Speicher ist voll. Dieser Upload wartet.</string>
     <string name="cloud_upload_removal_capacity">Die Cloud-Bereinigungskapazität ist vorübergehend nicht verfügbar. Dieser Vorgang wartet.</string>
+    <!-- Permanent document removal and changed-copy choices. -->
+    <string name="document_deleted_changed">„%1$s“ wurde auf einem anderen Gerät gelöscht. Sie haben es seitdem hier geändert. Möchten Sie Ihre Version behalten oder löschen?</string>
+    <string name="document_deleted_unknown">„%1$s“ wurde gelöscht. Koru kann nicht feststellen, ob diese Kopie Änderungen enthält. Möchten Sie diese Version behalten oder löschen?</string>
+    <string name="document_deleted_title">Dokument gelöscht</string>
+    <string name="document_deleted_keep">Meine Version behalten</string>
+    <string name="document_deleted_delete">Löschen</string>
+    <string name="document_delete_pending">Wird gelöscht…</string>
+    <string name="document_delete_progress">%1$d werden aus Koru Cloud gelöscht…</string>
+    <string name="document_delete_forever_title">Endgültig löschen?</string>
+    <string name="document_delete_forever_body">„%1$s“ wird endgültig gelöscht. Dies kann nicht rückgängig gemacht werden.</string>
+    <string name="document_delete_forever_confirm">Endgültig löschen</string>
+    <string name="document_delete_review">Ausstehende Löschungen prüfen</string>
 </resources>

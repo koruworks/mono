@@ -55,8 +55,15 @@ impl fmt::Debug for HttpRequest {
 }
 
 pub struct HttpResponse {
+    /// Exact supported response header; HTTP JSON never grants this flag.
+    pub document_removal: bool,
     pub status: u16,
     pub body: Vec<u8>,
+}
+
+fn document_removal_header(headers: &reqwest::header::HeaderMap) -> bool {
+    let mut values = headers.get_all("koru-document-removal").iter();
+    values.next().is_some_and(|value| value.as_bytes() == b"1") && values.next().is_none()
 }
 
 pub trait Transport: Send + Sync + 'static {
@@ -168,6 +175,7 @@ impl Transport for ReqwestTransport {
             return Err(TransportError::ResponseTooLarge);
         }
         Ok(HttpResponse {
+            document_removal: document_removal_header(response.headers()),
             status: response.status().as_u16(),
             body,
         })
@@ -908,18 +916,27 @@ impl AccountClient {
         request: &SyncTokenRequestV2,
         authorization: &AccountAuthorization<'_>,
     ) -> Result<SyncTokenResponseV2, ClientError> {
-        let response: SyncTokenResponseV2 = self.send_json(
-            RouteId::IssueCloudSyncTokenV2,
-            request,
-            Some(authorization),
-            false,
-        )?;
+        let body = serde_json::to_vec(request).map_err(|_| ClientError::InvalidRequest)?;
+        if body.len() > MAX_REQUEST_BODY_BYTES {
+            return Err(ClientError::InvalidRequest);
+        }
+        let (mut response, document_removal): (SyncTokenResponseV2, bool) = self
+            .execute_with_capability(
+                RouteId::IssueCloudSyncTokenV2,
+                body,
+                Some(authorization),
+                false,
+                None,
+            )?;
         response
             .validate()
             .map_err(|_| ClientError::InvalidResponse)?;
         if response.scope != request.scope {
             return Err(ClientError::InvalidResponse);
         }
+        response.document_removal = document_removal
+            && matches!(response.scope, CloudSyncScopeV2::Workspace { .. })
+            && matches!(response.route, CloudRouteResultV2::Available { .. });
         Ok(response)
     }
 
@@ -1045,8 +1062,21 @@ impl AccountClient {
         browser_public: bool,
         path: Option<String>,
     ) -> Result<Response, ClientError> {
+        self.execute_with_capability(route_id, body, authorization, browser_public, path)
+            .map(|(response, _)| response)
+    }
+
+    fn execute_with_capability<Response: DeserializeOwned>(
+        &self,
+        route_id: RouteId,
+        body: Vec<u8>,
+        authorization: Option<&AccountAuthorization<'_>>,
+        browser_public: bool,
+        path: Option<String>,
+    ) -> Result<(Response, bool), ClientError> {
         let started = std::time::Instant::now();
         let mut status = None;
+        let mut document_removal = false;
         let result = self.execute_inner(
             route_id,
             body,
@@ -1054,10 +1084,11 @@ impl AccountClient {
             browser_public,
             path,
             &mut status,
+            &mut document_removal,
         );
         self.diagnostics
             .observe(route_id, status, result.as_ref().err(), started.elapsed());
-        result
+        result.map(|response| (response, document_removal))
     }
 
     fn execute_inner<Response: DeserializeOwned>(
@@ -1068,6 +1099,7 @@ impl AccountClient {
         browser_public: bool,
         path: Option<String>,
         status: &mut Option<u16>,
+        document_removal: &mut bool,
     ) -> Result<Response, ClientError> {
         let route = route_by_id(route_id);
         if (authorization.is_some() && route.access == Access::Public)
@@ -1181,7 +1213,10 @@ impl AccountClient {
                 code: error.code,
             });
         }
-        serde_json::from_slice(&response.body).map_err(|_| ClientError::InvalidResponse)
+        let value =
+            serde_json::from_slice(&response.body).map_err(|_| ClientError::InvalidResponse)?;
+        *document_removal = response.document_removal;
+        Ok(value)
     }
 }
 

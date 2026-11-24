@@ -122,6 +122,17 @@ fun KoruApp(
     val state by model.state.collectAsState()
     val linkState by model.deviceLink.collectAsState()
     val share by model.share.collectAsState()
+    val documentRemovals by model.documentRemovals.collectAsState()
+    val purgedDocumentIds by model.purgedDocumentIds.collectAsState()
+    val preparingRemovals by model.preparingRemovals.collectAsState()
+    val failedRemovalPreparations by model.failedRemovalPreparations.collectAsState()
+    LaunchedEffect(purgedDocumentIds, state.activeDocumentId) {
+        state.activeDocumentId?.takeIf { it in purgedDocumentIds }?.let { document ->
+            model.closeRemovedDocument(document)
+            if (nav.currentBackStackEntry?.arguments?.getString("documentId") == document.value) nav.popBackStack()
+        }
+    }
+    val contentSync by model.contentSyncStatus.collectAsState()
     if (share.receiving || share.pending != null) {
         val shareProfiles by model.visibleProfiles.collectAsState()
         val shareWorkspaces by model.shareWorkspaces.collectAsState()
@@ -138,6 +149,35 @@ fun KoruApp(
             onFinish = { model.clearShare(); onShareFinished() },
         )
         return
+    }
+    documentRemovals.firstOrNull()?.let { prompt ->
+        LaunchedEffect(prompt.documentId, prompt.needsQuiescence) {
+            model.closeRemovedDocument(prompt.documentId)
+            if (nav.currentBackStackEntry?.arguments?.getString("documentId") == prompt.documentId.value) {
+                nav.navigate(Routes.documents(prompt.workspaceId)) {
+                    popUpTo(Routes.Document) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+        }
+        val unnamedDocument = stringResource(R.string.document_subtitle)
+        val name = prompt.title.ifBlank { unnamedDocument }
+        if (!prompt.needsQuiescence || prompt.documentId in failedRemovalPreparations) AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.document_deleted_title)) },
+            text = {
+                if (prompt.needsQuiescence) Text(stringResource(R.string.document_delete_pending))
+                else Text(stringResource(if (prompt.unknown) R.string.document_deleted_unknown else R.string.document_deleted_changed, name))
+            },
+            confirmButton = {
+                if (prompt.needsQuiescence) {
+                    if (prompt.documentId !in preparingRemovals) TextButton(onClick = { model.prepareDocumentRemoval(prompt) }) { Text(stringResource(R.string.retry)) }
+                } else TextButton(onClick = { model.answerDocumentRemoval(prompt, true) }) { Text(stringResource(R.string.document_deleted_keep)) }
+            },
+            dismissButton = {
+                if (!prompt.needsQuiescence) TextButton(onClick = { model.answerDocumentRemoval(prompt, false) }) { Text(stringResource(R.string.document_deleted_delete)) }
+            },
+        )
     }
     NavHost(navController = nav, startDestination = Routes.Profiles) {
         composable(Routes.Devices) {
@@ -207,6 +247,7 @@ fun KoruApp(
             }
             val progress by presenter.state.collectAsStateWithLifecycle()
             CloudProgressScreen(
+                pendingDocumentRemovals = contentSync.pendingDocumentRemovals,
                 profileName = profile?.displayLabel.orEmpty(),
                 state = progress,
                 onToggle = presenter::toggle,
@@ -253,6 +294,7 @@ fun KoruApp(
                 onOpenNote = { file -> model.openFileNote(file) { nav.navigate(Routes.document(it)) } },
                 onRename = model::renameDocument,
                 onTrash = model::moveDocumentToTrash,
+                onDeletePermanently = model::deleteDocumentPermanently,
                 fileDetails = model::fileBlob,
                 // The export waits for the bytes, then Android chooses the
                 // handler. A phone with nothing that plays this MIME is a
@@ -1588,6 +1630,7 @@ internal fun documentVisible(row: DocumentSummary, projection: DocumentProjectio
     onOpenNote: (DocumentSummary) -> Unit,
     onRename: (DocumentId, String) -> Unit,
     onTrash: (DocumentId) -> Unit,
+    onDeletePermanently: (DocumentId) -> Unit,
     /** The file's details, read once the sheet is open. Null while it loads. */
     fileDetails: suspend (DocumentSummary) -> BlobReference?,
     onOpenFile: (DocumentSummary) -> Unit,
@@ -1596,6 +1639,7 @@ internal fun documentVisible(row: DocumentSummary, projection: DocumentProjectio
     var projection by remember { mutableStateOf(DocumentProjection.Documents) }
     var actionDocument by remember { mutableStateOf<DocumentSummary?>(null) }
     var documentForRename by remember { mutableStateOf<DocumentSummary?>(null) }
+    var documentForPermanentDelete by remember { mutableStateOf<DocumentSummary?>(null) }
     // **Files are newest first; Documents keep the order they arrive in.**
     // A file list is a record of what somebody saved, so the thing they just
     // added is the thing they are looking for. Documents are navigated by name
@@ -1715,8 +1759,23 @@ internal fun documentVisible(row: DocumentSummary, projection: DocumentProjectio
                     onTrash(document.id)
                 },
             )
+            WorkspaceActionRow(
+                label = stringResource(R.string.document_delete_forever_confirm),
+                icon = Icons.Outlined.Delete,
+                destructive = true,
+                onClick = { actionDocument = null; documentForPermanentDelete = document },
+            )
             Spacer(Modifier.height(KoruSpacing.lg))
         }
+    }
+    documentForPermanentDelete?.let { document ->
+        AlertDialog(
+            onDismissRequest = { documentForPermanentDelete = null },
+            title = { Text(stringResource(R.string.document_delete_forever_title)) },
+            text = { Text(stringResource(R.string.document_delete_forever_body, document.title)) },
+            confirmButton = { TextButton(onClick = { documentForPermanentDelete = null; onDeletePermanently(document.id) }) { Text(stringResource(R.string.document_delete_forever_confirm)) } },
+            dismissButton = { TextButton(onClick = { documentForPermanentDelete = null }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
     documentForRename?.let { document ->
         RenameDocumentDialog(

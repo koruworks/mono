@@ -501,4 +501,16 @@
     <string name="cloud_upload_physical_bytes">Cloud 存储已达到物理安全上限。此上传正在等待。</string>
     <string name="cloud_upload_staging_bytes">Cloud 临时存储已满。此上传正在等待。</string>
     <string name="cloud_upload_removal_capacity">Cloud 清理容量暂不可用。此操作正在等待。</string>
+    <!-- Permanent document removal and changed-copy choices. -->
+    <string name="document_deleted_changed">“%1$s”已在另一台设备上删除。此后您在这里做了修改。要保留您的版本，还是删除它？</string>
+    <string name="document_deleted_unknown">“%1$s”已删除。Koru 无法判断此副本是否有修改。要保留此版本，还是删除它？</string>
+    <string name="document_deleted_title">文档已删除</string>
+    <string name="document_deleted_keep">保留我的版本</string>
+    <string name="document_deleted_delete">删除</string>
+    <string name="document_delete_pending">正在删除…</string>
+    <string name="document_delete_progress">正在从 Koru Cloud 删除 %1$d 项…</string>
+    <string name="document_delete_forever_title">永久删除？</string>
+    <string name="document_delete_forever_body">“%1$s”将被永久删除。此操作无法撤销。</string>
+    <string name="document_delete_forever_confirm">永久删除</string>
+    <string name="document_delete_review">查看待处理的删除</string>
 </resources>

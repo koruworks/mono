@@ -16,6 +16,7 @@ pub enum MenuAction {
     Import,
     Trash,
     Retry,
+    ReviewDeletions,
 }
 
 impl MenuAction {
@@ -29,6 +30,7 @@ impl MenuAction {
                 Self::Import => "workspace-import",
                 Self::Trash => "workspace-trash",
                 Self::Retry => "workspace-retry",
+                Self::ReviewDeletions => "review-document-deletions",
             },
         )
     }
@@ -41,6 +43,7 @@ impl MenuAction {
             Self::Import => Words::WorkspacesImport,
             Self::Trash => Words::WorkspacesTrash,
             Self::Retry => Words::TryAgain,
+            Self::ReviewDeletions => Words::DocumentDeleteReview,
         }
     }
 
@@ -52,6 +55,7 @@ impl MenuAction {
             Self::Import => Outcome::ImportContent,
             Self::Trash => Outcome::OpenTrash,
             Self::Retry => Outcome::RetryWorkspaceOperation,
+            Self::ReviewDeletions => Outcome::ReviewDocumentDeletions,
         }
     }
 
@@ -63,6 +67,7 @@ impl MenuAction {
             Self::Import,
             Self::Trash,
             Self::Retry,
+            Self::ReviewDeletions,
         ]
         .into_iter()
         .find(|action| action.key() == key)
@@ -137,6 +142,14 @@ pub(crate) fn rule() -> El {
 }
 
 impl ExploreView {
+    pub(crate) fn set_pending_document_deletions(&mut self, count: usize) -> bool {
+        if self.pending_document_deletions == count {
+            return false;
+        }
+        self.pending_document_deletions = count;
+        true
+    }
+
     pub(crate) fn sync_channels(&self) -> SyncChannels {
         SyncChannels {
             devices: self.linked_count > 0,
@@ -474,6 +487,7 @@ impl ExploreView {
             MenuAction::Sync => koru_draw::icons::ARROWS_CLOCKWISE,
             MenuAction::Cloud => koru_draw::icons::CLOUD,
             MenuAction::Retry => koru_draw::icons::ARROWS_CLOCKWISE,
+            MenuAction::ReviewDeletions => koru_draw::icons::TRASH,
         };
         let item = row("Workspace menu action")
             .id(action.key())
@@ -494,6 +508,13 @@ impl ExploreView {
             .gap(Space::S2)
             .child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary))
             .child(text(t(lang, action.words())).role(roles::ROW).fill());
+        if action == MenuAction::ReviewDeletions {
+            contents = contents.child(
+                text(self.pending_document_deletions.to_string())
+                    .role(roles::HINT)
+                    .ink(Ink::Hint),
+            );
+        }
         if action == MenuAction::Trash {
             contents = contents.child(
                 text(self.trash_count.to_string())
@@ -518,6 +539,9 @@ impl ExploreView {
             .gap(Space::S1)
             .child(self.workspace_menu_action(MenuAction::New))
             .child(self.workspace_menu_action(MenuAction::Import));
+        if self.pending_document_deletions > 0 {
+            foot = foot.child(self.workspace_menu_action(MenuAction::ReviewDeletions));
+        }
         if let Some(notice) = self
             .workspace_waiting
             .as_ref()

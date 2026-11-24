@@ -50,6 +50,7 @@ use super::StoreJobs;
 mod comparison;
 pub mod driver;
 mod live;
+mod removal;
 mod rooms;
 pub use live::subscribe_dataset;
 
@@ -74,6 +75,8 @@ pub enum Stage {
 /// installation. `accepted` carries the handshake result the transport owner
 /// completed; nothing here is a data-plane permit by itself.
 pub struct Session {
+    /// This session's issued worker route explicitly supports document removal.
+    pub document_removal: bool,
     pub accepted: PreparedSession,
     pub scope: Scope,
     /// Receiver-set automatic ceiling (TECHNICAL §4.4): payloads at or below
@@ -101,6 +104,9 @@ pub enum Plan {
 
 #[derive(Clone, Debug)]
 pub enum Progress {
+    Removing {
+        pending: u32,
+    },
     PassStarted,
     PassFinished(Box<Outcome>),
     Documents {
@@ -519,6 +525,7 @@ where
     F: FnMut(Progress),
 {
     let scope = session.scope;
+    let document_removal = session.document_removal;
     let priority = Arc::clone(&downloads);
     let receive_worker = worker.clone();
     let receive_authorize = Arc::clone(&authorize);
@@ -666,6 +673,10 @@ where
                     workspace_id: workspace,
                     document_id: cloud(scope.manifest.as_uuid()),
                 };
+                if document_removal && hooks.stage == Stage::Full {
+                    removal::reconcile(&mut sync, scope, &worker, &authorize, &mut progress)
+                        .await?;
+                }
                 drive_unit(
                     &mut sync,
                     manifest,
@@ -680,12 +691,28 @@ where
                     // the full stage's credential.
                     break 'workspace;
                 }
+                if document_removal {
+                    removal::reconcile(&mut sync, scope, &worker, &authorize, &mut progress)
+                        .await?;
+                }
                 // The committed manifest is the authority for which documents
                 // exist. Read it back through the Store, never from the remote.
                 let mut entries = store_result(worker.submit_store(move |store| {
+                    let purged = client_store::removal::load(store, workspace_id)
+                        .map_err(|_| koru_store_core::Error::bare(Code::CorruptState))?
+                        .map(|system| {
+                            system
+                                .content
+                                .purged_documents()
+                                .into_iter()
+                                .map(|id| id.as_uuid())
+                                .collect::<std::collections::HashSet<_>>()
+                        })
+                        .unwrap_or_default();
                     store.documents(workspace_id).map(|entries| {
                         entries
                             .into_iter()
+                            .filter(|entry| !purged.contains(&entry.id.as_uuid()))
                             .map(|entry| entry.id)
                             .collect::<Vec<_>>()
                     })
