@@ -16,7 +16,7 @@
     <string name="cloud_inventory_structure">Workspace structure</string>
     <string name="cloud_inventory_documents_unavailable">Unavailable documents</string>
     <string name="cloud_inventory_non_additive">Files may appear in more than one document. These sizes are not an account total.</string>
-    <string name="cloud_inventory_recovery">Recoverable documents keep their files in Cloud storage.</string>
+    <string name="cloud_inventory_recovery">Deleted documents keep their files in Cloud storage until they are removed, 30 days after they were deleted.</string>
     <string name="cloud_inventory_previous">Previous page</string>
     <string name="cloud_inventory_next">Next page</string>
     <string name="cloud_inventory_first">First page</string>

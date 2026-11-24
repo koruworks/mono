@@ -16,7 +16,7 @@
     <string name="cloud_inventory_structure">Arbeitsbereichsstruktur</string>
     <string name="cloud_inventory_documents_unavailable">Nicht verfügbare Dokumente</string>
     <string name="cloud_inventory_non_additive">Dateien können in mehreren Dokumenten vorkommen. Diese Größen sind keine Kontogesamtsumme.</string>
-    <string name="cloud_inventory_recovery">Wiederherstellbare Dokumente behalten ihre Dateien im Cloud-Speicher.</string>
+    <string name="cloud_inventory_recovery">Gelöschte Dokumente behalten ihre Dateien im Cloud-Speicher, bis sie 30 Tage nach dem Löschen entfernt werden.</string>
     <string name="cloud_inventory_previous">Vorherige Seite</string>
     <string name="cloud_inventory_next">Nächste Seite</string>
     <string name="cloud_inventory_first">Erste Seite</string>

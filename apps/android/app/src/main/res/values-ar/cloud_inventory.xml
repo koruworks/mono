@@ -16,7 +16,7 @@
     <string name="cloud_inventory_structure">بنية مساحة العمل</string>
     <string name="cloud_inventory_documents_unavailable">مستندات غير متاحة</string>
     <string name="cloud_inventory_non_additive">قد تظهر الملفات في أكثر من مستند. هذه الأحجام ليست إجمالي الحساب.</string>
-    <string name="cloud_inventory_recovery">تحتفظ المستندات القابلة للاستعادة بملفاتها في التخزين السحابي.</string>
+    <string name="cloud_inventory_recovery">تحتفظ المستندات المحذوفة بملفاتها في التخزين السحابي حتى تتم إزالتها بعد 30 يومًا من حذفها.</string>
     <string name="cloud_inventory_previous">الصفحة السابقة</string>
     <string name="cloud_inventory_next">الصفحة التالية</string>
     <string name="cloud_inventory_first">الصفحة الأولى</string>

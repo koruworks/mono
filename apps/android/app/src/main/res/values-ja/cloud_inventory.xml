@@ -16,7 +16,7 @@
     <string name="cloud_inventory_structure">ワークスペースの構造</string>
     <string name="cloud_inventory_documents_unavailable">利用できないドキュメント</string>
     <string name="cloud_inventory_non_additive">同じファイルが複数のドキュメントに含まれる場合があります。これらのサイズはアカウントの合計ではありません。</string>
-    <string name="cloud_inventory_recovery">復元可能なドキュメントのファイルはクラウドに保持されます。</string>
+    <string name="cloud_inventory_recovery">削除したドキュメントのファイルは、削除から 30 日後に取り除かれるまでクラウドに保持されます。</string>
     <string name="cloud_inventory_previous">前のページ</string>
     <string name="cloud_inventory_next">次のページ</string>
     <string name="cloud_inventory_first">最初のページ</string>

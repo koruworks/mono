@@ -16,7 +16,7 @@
     <string name="cloud_inventory_structure">工作区结构</string>
     <string name="cloud_inventory_documents_unavailable">不可用的文档</string>
     <string name="cloud_inventory_non_additive">文件可能出现在多个文档中。这些大小不能相加作为账户总用量。</string>
-    <string name="cloud_inventory_recovery">可恢复的文档会保留其云端文件。</string>
+    <string name="cloud_inventory_recovery">已删除的文档会保留其云端文件，直到删除 30 天后被移除。</string>
     <string name="cloud_inventory_previous">上一页</string>
     <string name="cloud_inventory_next">下一页</string>
     <string name="cloud_inventory_first">第一页</string>

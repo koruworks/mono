@@ -16,7 +16,7 @@
     <string name="cloud_inventory_structure">Estrutura do espaço de trabalho</string>
     <string name="cloud_inventory_documents_unavailable">Documentos indisponíveis</string>
     <string name="cloud_inventory_non_additive">Os arquivos podem aparecer em mais de um documento. Estes tamanhos não são o total da conta.</string>
-    <string name="cloud_inventory_recovery">Os documentos recuperáveis mantêm seus arquivos no armazenamento na nuvem.</string>
+    <string name="cloud_inventory_recovery">Os documentos excluídos mantêm seus arquivos no armazenamento na nuvem até serem removidos, 30 dias após a exclusão.</string>
     <string name="cloud_inventory_previous">Página anterior</string>
     <string name="cloud_inventory_next">Próxima página</string>
     <string name="cloud_inventory_first">Primeira página</string>

@@ -16,7 +16,7 @@
     <string name="cloud_inventory_structure">Structure de l’espace de travail</string>
     <string name="cloud_inventory_documents_unavailable">Documents indisponibles</string>
     <string name="cloud_inventory_non_additive">Un fichier peut figurer dans plusieurs documents. Ces tailles ne constituent pas le total du compte.</string>
-    <string name="cloud_inventory_recovery">Les documents récupérables conservent leurs fichiers dans le stockage Cloud.</string>
+    <string name="cloud_inventory_recovery">Les documents supprimés conservent leurs fichiers dans le stockage Cloud jusqu’à leur retrait, 30 jours après leur suppression.</string>
     <string name="cloud_inventory_previous">Page précédente</string>
     <string name="cloud_inventory_next">Page suivante</string>
     <string name="cloud_inventory_first">Première page</string>
