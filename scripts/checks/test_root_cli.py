@@ -19,7 +19,7 @@ class RootArguments(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="koru root ")
         self.addCleanup(self.temp.cleanup)
-        self.repo = Path(self.temp.name)
+        self.repo = Path(self.temp.name).resolve()
         self.dev = self.repo / "scripts/dev"
         self.dev.mkdir(parents=True)
         shutil.copyfile(ROOT / "koru.bat", self.repo / "koru.bat")
