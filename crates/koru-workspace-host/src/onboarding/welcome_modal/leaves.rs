@@ -15,6 +15,11 @@ use koru_ui::toggle::Toggle;
 use vello::Scene;
 use vello::kurbo::{Affine, Arc as KurboArc, BezPath, Circle, Line, Point, Stroke, Vec2};
 
+use super::super::BrowserProvider;
+use super::super::setup::tokens::{
+    SETUP_CHIP, SETUP_RING_GAP, SETUP_RING_RADIUS, SETUP_RING_W, SETUP_TILE_HOVER_ICON,
+    SETUP_TILE_HOVER_SCRIM, SETUP_TILE_RADIUS_RATIO,
+};
 use super::tokens::{
     BROWSER_BADGE_DOT_GAP, BROWSER_BADGE_DOT_RADIUS, BROWSER_BADGE_DOT_STEP, BROWSER_BADGE_MARK,
     BROWSER_BADGE_RADIUS, BROWSER_BADGE_SIZE, BROWSER_BUTTON_H, BROWSER_BUTTON_ICON,
@@ -25,11 +30,6 @@ use super::tokens::{
     WELCOME_PROVIDER_MARK_GAP, WELCOME_PROVIDER_RADIUS, WELCOME_RING_GAP, WELCOME_RING_W,
     WELCOME_SEGMENT_BADGE_GAP, WELCOME_SEGMENT_H, WELCOME_SEGMENT_UNDERLINE_H,
 };
-use super::super::setup::tokens::{
-    SETUP_CHIP, SETUP_RING_GAP, SETUP_RING_RADIUS, SETUP_RING_W, SETUP_TILE_HOVER_ICON,
-    SETUP_TILE_HOVER_SCRIM, SETUP_TILE_RADIUS_RATIO,
-};
-use super::super::BrowserProvider;
 
 /// Koru's spiral logo mark, mipmapped by [`brand::draw_logo`].
 pub(crate) struct LogoLeaf;
@@ -281,8 +281,7 @@ impl BillingSegmentLeaf {
         let style = segment_style(selected);
         let text_w = engine.simple_layout(label, style).width();
         let badge_w = badge.map_or(0.0, |b| {
-            WELCOME_SEGMENT_BADGE_GAP.value
-                + engine.simple_layout(b, segment_badge_style()).width()
+            WELCOME_SEGMENT_BADGE_GAP.value + engine.simple_layout(b, segment_badge_style()).width()
         });
         Self {
             label: label.to_owned(),
@@ -373,7 +372,9 @@ impl Leaf for BillingSegmentLeaf {
         }
         if self.selected {
             let line_y = f64::from(at.y + at.h - underline_h * 0.5);
-            let line_color = p.text.multiply_alpha(if self.disabled { 0.35 } else { 1.0 });
+            let line_color = p
+                .text
+                .multiply_alpha(if self.disabled { 0.35 } else { 1.0 });
             scene::stroke(
                 scene,
                 root,
@@ -457,7 +458,10 @@ impl Leaf for SecondaryFullButtonLeaf {
             icon.line_to((ix + 2.5 * s, iy + 12.0 * s));
             icon.quad_to((ix + 2.5 * s, iy + 13.5 * s), (ix + 4.0 * s, iy + 13.5 * s));
             icon.line_to((ix + 11.5 * s, iy + 13.5 * s));
-            icon.quad_to((ix + 13.0 * s, iy + 13.5 * s), (ix + 13.0 * s, iy + 12.0 * s));
+            icon.quad_to(
+                (ix + 13.0 * s, iy + 13.5 * s),
+                (ix + 13.0 * s, iy + 12.0 * s),
+            );
             icon.line_to((ix + 13.0 * s, iy + 7.5 * s));
             // Diagonal arrow out to top-right.
             icon.move_to((ix + 9.5 * s, iy + 2.5 * s));
@@ -508,7 +512,13 @@ impl Leaf for SpinnerLeaf {
         let p = cx.palette();
         let center = Point::new(f64::from(at.x + at.w * 0.5), f64::from(at.y + at.h * 0.5));
         let radius = f64::from(at.w.min(at.h) * 0.5) - 3.0;
-        scene::stroke(scene, root, p.panel_border, 3.0, &Circle::new(center, radius));
+        scene::stroke(
+            scene,
+            root,
+            p.panel_border,
+            3.0,
+            &Circle::new(center, radius),
+        );
         let arc = KurboArc::new(
             center,
             Vec2::new(radius, radius),
@@ -613,7 +623,11 @@ impl Leaf for BrowserConnectBadgesLeaf {
             root,
             scene::rect(at.x, at.y, at.w, at.h),
             |record| {
-                record.property("provider", format!("{:?}", self.provider), "browser provider");
+                record.property(
+                    "provider",
+                    format!("{:?}", self.provider),
+                    "browser provider",
+                );
             },
         );
 
@@ -639,7 +653,10 @@ impl Leaf for BrowserConnectBadgesLeaf {
                 scene,
                 root,
                 dot_color,
-                &Circle::new(Point::new(f64::from(mid_x + offset), f64::from(mid_y)), dot_r),
+                &Circle::new(
+                    Point::new(f64::from(mid_x + offset), f64::from(mid_y)),
+                    dot_r,
+                ),
             );
         }
 
@@ -732,7 +749,13 @@ impl Leaf for WaitingPillLeaf {
         let sy = at.y + (at.h - spin) * 0.5;
         let center = Point::new(f64::from(sx + spin * 0.5), f64::from(sy + spin * 0.5));
         let radius = f64::from(spin * 0.5) - 1.5;
-        scene::stroke(scene, root, p.panel_border, 1.8, &Circle::new(center, radius));
+        scene::stroke(
+            scene,
+            root,
+            p.panel_border,
+            1.8,
+            &Circle::new(center, radius),
+        );
         let arc = KurboArc::new(
             center,
             Vec2::new(radius, radius),
@@ -833,9 +856,15 @@ impl Leaf for CloudToggleLeaf {
         _cx: &FrameCx,
         _state: ElState,
     ) {
-        Toggle::new(self.on)
-            .enabled(!self.disabled)
-            .draw(scene, root, engine, at, self.rtl, self.hovered, self.focused);
+        Toggle::new(self.on).enabled(!self.disabled).draw(
+            scene,
+            root,
+            engine,
+            at,
+            self.rtl,
+            self.hovered,
+            self.focused,
+        );
     }
 }
 

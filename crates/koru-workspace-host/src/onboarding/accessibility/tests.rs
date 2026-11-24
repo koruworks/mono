@@ -28,16 +28,43 @@ fn workspace_setup_exposes_only_the_modal_and_its_controls() {
     assert_eq!(nodes[0].role, Role::Dialog);
     assert!(nodes[0].modal);
     let flat = flatten(&nodes);
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::OWNER_NAME));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::WORKSPACE_NAME));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::CLOUD_TOGGLE));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::BILLING_MONTHLY));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::BILLING_YEARLY));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::GOOGLE));
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::OWNER_NAME)
+    );
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::WORKSPACE_NAME)
+    );
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::CLOUD_TOGGLE)
+    );
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::BILLING_MONTHLY)
+    );
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::BILLING_YEARLY)
+    );
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::GOOGLE)
+    );
     assert!(flat.iter().any(|node| node.occurrence.part == parts::APPLE));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::CONTINUE_WITH_EMAIL));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::START_WITHOUT_CLOUD));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::WELCOME_EXISTING));
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::CONTINUE_WITH_EMAIL)
+    );
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::START_WITHOUT_CLOUD)
+    );
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::WELCOME_EXISTING)
+    );
     assert!(view.pending.is_none());
 
     // Toggling Koru Cloud OFF switches the footer to the offline primary CTA.
@@ -48,7 +75,10 @@ fn workspace_setup_exposes_only_the_modal_and_its_controls() {
     assert!(nodes[0].modal);
     let flat = flatten(&nodes);
     assert!(flat.iter().any(|node| node.role == Role::TextInput));
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::CONTINUE_OFFLINE));
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::CONTINUE_OFFLINE)
+    );
     assert!(view.pending.is_none());
 
     // Clicking "Sign in" opens the compact Welcome back sign-in dialog.
@@ -58,7 +88,10 @@ fn workspace_setup_exposes_only_the_modal_and_its_controls() {
     assert_eq!(nodes[0].role, Role::Dialog);
     assert!(nodes[0].modal);
     let flat = flatten(&nodes);
-    assert!(flat.iter().any(|node| node.occurrence.part == parts::GOOGLE));
+    assert!(
+        flat.iter()
+            .any(|node| node.occurrence.part == parts::GOOGLE)
+    );
     assert!(flat.iter().any(|node| node.occurrence.part == parts::APPLE));
     assert!(flat.iter().any(|node| node.occurrence.part == parts::BACK));
 
@@ -982,9 +1015,8 @@ fn identity_is_the_same_in_every_language() {
 #[test]
 fn every_authored_name_on_the_route_is_translated() {
     let (window, slot) = slots();
-    let authored = |view: &mut OnboardingView| {
-        labels(&flatten(&view.accessibility_semantics(window, slot)))
-    };
+    let authored =
+        |view: &mut OnboardingView| labels(&flatten(&view.accessibility_semantics(window, slot)));
     let english: Vec<String> = {
         let mut view = at_setup();
         view.language = Lang::En;

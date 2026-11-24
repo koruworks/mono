@@ -39,7 +39,8 @@ pub(crate) const WELCOME_LOGO_SIZE: Metric = Metric::new("WELCOME_LOGO_SIZE", 28
 pub(crate) const WELCOME_OPTION_RADIUS: Metric = Metric::new("WELCOME_OPTION_RADIUS", 12.0);
 
 /// Padding inside an option card header.
-pub(crate) const WELCOME_OPTION_PAD_X: Tagged<Space> = Tagged::new("WELCOME_OPTION_PAD_X", Space::S4);
+pub(crate) const WELCOME_OPTION_PAD_X: Tagged<Space> =
+    Tagged::new("WELCOME_OPTION_PAD_X", Space::S4);
 pub(crate) const WELCOME_OPTION_PAD_Y: Tagged<Space> =
     Tagged::new("WELCOME_OPTION_PAD_Y", Space::S2);
 /// Vertical padding inside the Koru Cloud card.
@@ -72,10 +73,8 @@ pub(crate) const WELCOME_RING_GAP: Metric = Metric::new("WELCOME_RING_GAP", 2.0)
 
 /// Underline-tab Monthly / Yearly billing selector metrics.
 pub(crate) const WELCOME_SEGMENT_H: Metric = Metric::new("WELCOME_SEGMENT_H", 26.0);
-pub(crate) const WELCOME_SEGMENT_GAP: Tagged<Space> =
-    Tagged::new("WELCOME_SEGMENT_GAP", Space::S4);
-pub(crate) const WELCOME_SEGMENT_BADGE_GAP: Metric =
-    Metric::new("WELCOME_SEGMENT_BADGE_GAP", 6.0);
+pub(crate) const WELCOME_SEGMENT_GAP: Tagged<Space> = Tagged::new("WELCOME_SEGMENT_GAP", Space::S4);
+pub(crate) const WELCOME_SEGMENT_BADGE_GAP: Metric = Metric::new("WELCOME_SEGMENT_BADGE_GAP", 6.0);
 pub(crate) const WELCOME_SEGMENT_UNDERLINE_H: Metric =
     Metric::new("WELCOME_SEGMENT_UNDERLINE_H", 2.0);
 

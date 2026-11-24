@@ -1466,8 +1466,12 @@ impl OnboardingView {
             (2_u64, koru_i18n::Key::WelcomePrimaryDisabledNeedWorkspace)
         };
         Some(
-            koru_ui::tooltip::TooltipContent::new(key, rect, koru_i18n::t(self.language, label_key))
-                .above(),
+            koru_ui::tooltip::TooltipContent::new(
+                key,
+                rect,
+                koru_i18n::t(self.language, label_key),
+            )
+            .above(),
         )
     }
 
@@ -1792,14 +1796,11 @@ impl OnboardingView {
         let focused = self.controls().get(self.focus).copied();
         if let Some(focused) = focused {
             let typed = match (self.screen, focused) {
-                (Screen::Setup, Hit::Name)
-                | (Screen::Entry, Hit::Name) => {
-                    self.owner_name
-                        .borrow_mut()
-                        .key(&mut self.engine, key, text, mods)
-                }
-                (Screen::Setup, Hit::WorkspaceName)
-                | (Screen::Entry, Hit::WorkspaceName) => {
+                (Screen::Setup, Hit::Name) | (Screen::Entry, Hit::Name) => self
+                    .owner_name
+                    .borrow_mut()
+                    .key(&mut self.engine, key, text, mods),
+                (Screen::Setup, Hit::WorkspaceName) | (Screen::Entry, Hit::WorkspaceName) => {
                     let before = self.workspace_name.borrow().value();
                     let typed =
                         self.workspace_name
@@ -2581,10 +2582,7 @@ impl OnboardingView {
                 true
             }
             AppearanceOutcome::Save { icon, color } => {
-                let target = self
-                    .workspace_appearance
-                    .as_ref()
-                    .map(|panel| panel.target);
+                let target = self.workspace_appearance.as_ref().map(|panel| panel.target);
                 match target {
                     Some(koru_appearance_ui::Target::DraftProfile) => {
                         self.profile_icon = icon;
@@ -3483,11 +3481,7 @@ mod tests {
             within(&records, card, panel),
             "the card is inside its panel"
         );
-        for component in [
-            "NameField",
-            "Profile tile",
-            "Workspace tile",
-        ] {
+        for component in ["NameField", "Profile tile", "Workspace tile"] {
             let hits: Vec<usize> = records
                 .iter()
                 .enumerate()
@@ -4151,7 +4145,10 @@ mod tests {
 
         // Tab from unfocused enters the first control cleanly without overflow.
         named(&mut view, NamedKey::Tab);
-        assert_eq!(view.controls().get(view.focus), Some(&Hit::ProfileAppearance));
+        assert_eq!(
+            view.controls().get(view.focus),
+            Some(&Hit::ProfileAppearance)
+        );
 
         // Focusing the workspace name again re-selects it, and moving focus to
         // the name field deselects it as well.

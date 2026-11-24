@@ -394,7 +394,9 @@ impl OnboardingView {
         let area = self.setup_area();
         let margin = Spacing::from(WELCOME_CARD_MARGIN).px(koru_draw::theme::Profile::Desktop);
         let width = Length::Runtime(
-            WELCOME_CARD_MAX_W.value.min((area.w - margin * 2.0).max(280.0)),
+            WELCOME_CARD_MAX_W
+                .value
+                .min((area.w - margin * 2.0).max(280.0)),
             "welcome sign-in modal width",
         );
 
@@ -552,7 +554,9 @@ impl OnboardingView {
         let area = self.setup_area();
         let margin = Spacing::from(WELCOME_CARD_MARGIN).px(koru_draw::theme::Profile::Desktop);
         let pad_px = Spacing::from(WELCOME_CARD_PAD).px(koru_draw::theme::Profile::Desktop);
-        let card_w = WELCOME_CARD_MAX_W.value.min((area.w - margin * 2.0).max(280.0));
+        let card_w = WELCOME_CARD_MAX_W
+            .value
+            .min((area.w - margin * 2.0).max(280.0));
         let inner_w = (card_w - pad_px * 2.0).max(200.0);
         let width = Length::Runtime(card_w, "welcome modal width");
 
@@ -1124,13 +1128,7 @@ impl OnboardingView {
                 root,
                 p.panel_border,
                 1.0,
-                &scene::rrect(
-                    rect.x,
-                    rect.y,
-                    rect.w,
-                    rect.h,
-                    WELCOME_OPTION_RADIUS.value,
-                ),
+                &scene::rrect(rect.x, rect.y, rect.w, rect.h, WELCOME_OPTION_RADIUS.value),
             );
         }
     }

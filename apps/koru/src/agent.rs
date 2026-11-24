@@ -739,10 +739,7 @@ impl AgentLink {
     }
 
     pub fn account_browser_url(&self, owner_scope: u64) -> Option<String> {
-        let guard = self
-            .browser_url
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let guard = self.browser_url.lock().unwrap_or_else(|e| e.into_inner());
         guard
             .as_ref()
             .filter(|(scope, _)| *scope == owner_scope || owner_scope == 0)
@@ -1994,9 +1991,7 @@ impl AgentLink {
                                 },
                         } => {
                             {
-                                let mut url = browser_url
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner());
+                                let mut url = browser_url.lock().unwrap_or_else(|e| e.into_inner());
                                 if url.as_ref().is_some_and(|(scope, _)| *scope == owner_scope) {
                                     *url = None;
                                 }

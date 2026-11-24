@@ -170,7 +170,9 @@ impl OnboardingView {
         let area = self.setup_area();
         let margin = Spacing::from(WELCOME_CARD_MARGIN).px(koru_draw::theme::Profile::Desktop);
         let width = Length::Runtime(
-            WELCOME_CARD_MAX_W.value.min((area.w - margin * 2.0).max(280.0)),
+            WELCOME_CARD_MAX_W
+                .value
+                .min((area.w - margin * 2.0).max(280.0)),
             "checkout modal width",
         );
 
@@ -199,11 +201,7 @@ impl OnboardingView {
             .map(str::trim)
             .filter(|e| !e.is_empty())
         {
-            plan_col = plan_col.child(
-                text(email.to_owned())
-                    .role(roles::META)
-                    .ink(Ink::Secondary),
-            );
+            plan_col = plan_col.child(text(email.to_owned()).role(roles::META).ink(Ink::Secondary));
         }
 
         let summary_top = row("Summary top")

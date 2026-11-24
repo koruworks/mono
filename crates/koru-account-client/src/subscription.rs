@@ -253,8 +253,7 @@ impl AccountClient {
             // (`Api { status: 400, .. }`). Fall back cleanly once without the
             // optional A/B metadata so checkout still completes against older servers.
             Err(
-                ClientError::Api { status: 400, .. }
-                | ClientError::ApiWithoutCode { status: 400 },
+                ClientError::Api { status: 400, .. } | ClientError::ApiWithoutCode { status: 400 },
             ) if !ab.is_empty() => send(CheckoutHandoffAb::default())?,
             Err(err) => return Err(err),
         };

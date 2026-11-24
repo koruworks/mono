@@ -135,7 +135,8 @@ pub(crate) fn is_allowed_api_path(path_and_query: &str) -> bool {
 
 impl Transport for ReqwestTransport {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
-        if !is_allowed_api_path(&request.path_and_query) || request.body.len() > MAX_REQUEST_BODY_BYTES
+        if !is_allowed_api_path(&request.path_and_query)
+            || request.body.len() > MAX_REQUEST_BODY_BYTES
         {
             return Err(TransportError::InvalidRequest);
         }

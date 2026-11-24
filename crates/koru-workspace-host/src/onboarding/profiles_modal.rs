@@ -68,9 +68,9 @@ pub(super) struct ProfilesModalLayout {
 }
 
 fn tile_color_for(profile_id: &str) -> &'static str {
-    let hash = profile_id
-        .bytes()
-        .fold(0usize, |acc, b| acc.wrapping_mul(31).wrapping_add(b as usize));
+    let hash = profile_id.bytes().fold(0usize, |acc, b| {
+        acc.wrapping_mul(31).wrapping_add(b as usize)
+    });
     PROFILE_TILE_COLORS[hash % PROFILE_TILE_COLORS.len()]
 }
 
@@ -184,18 +184,18 @@ impl OnboardingView {
         let area = self.setup_area();
         let margin = 24.0_f32;
         let pad = 28.0_f32;
-        let card_w = WELCOME_CARD_MAX_W.value.min((area.w - margin * 2.0).max(280.0));
+        let card_w = WELCOME_CARD_MAX_W
+            .value
+            .min((area.w - margin * 2.0).max(280.0));
         let inner_w = (card_w - pad * 2.0).max(220.0);
 
         let not_you_label = t(lang, T::ProfileChooserNotYou);
-        let not_you_w = LinkLeaf::new(&mut self.engine, not_you_label, false, true, false, false)
-            .width;
+        let not_you_w =
+            LinkLeaf::new(&mut self.engine, not_you_label, false, true, false, false).width;
 
         let heading_text = self.profiles_modal_heading();
-        let heading_style = theme::TextStyle::new(
-            theme::role::subtitle().metrics,
-            theme::FontWeight::SemiBold,
-        );
+        let heading_style =
+            theme::TextStyle::new(theme::role::subtitle().metrics, theme::FontWeight::SemiBold);
         let heading_w = (inner_w - AVATAR_SIZE - AVATAR_GAP).max(120.0);
         let heading_h = self
             .engine
@@ -214,16 +214,22 @@ impl OnboardingView {
             theme::TextStyle::new(theme::role::meta().metrics, theme::FontWeight::Medium);
         let refresh_w = REFRESH_ICON_SIZE
             + REFRESH_ICON_GAP
-            + self.engine.simple_layout(refresh_label, refresh_style).width()
+            + self
+                .engine
+                .simple_layout(refresh_label, refresh_style)
+                .width()
             + 4.0;
 
         let create_label = t(lang, T::ProfileChooserCreate);
-        let create_w = LinkLeaf::new(&mut self.engine, create_label, false, true, false, false)
-            .width;
+        let create_w =
+            LinkLeaf::new(&mut self.engine, create_label, false, true, false, false).width;
         let offline_label = t(lang, T::AccountContinueOffline);
-        let offline_w = LinkLeaf::new(&mut self.engine, offline_label, false, true, false, false)
-            .width;
-        let dot_w = self.engine.simple_layout(" · ", theme::role::meta()).width();
+        let offline_w =
+            LinkLeaf::new(&mut self.engine, offline_label, false, true, false, false).width;
+        let dot_w = self
+            .engine
+            .simple_layout(" · ", theme::role::meta())
+            .width();
 
         let show_cancel = self.selection_has_unfinished() && !self.selection.waiting;
         let cancel_h = if show_cancel {
@@ -320,7 +326,8 @@ impl OnboardingView {
         // Fixed vertical chrome height around the profile list box.
         let eyebrow_h = WELCOME_LINK_H.value;
         let section_h = WELCOME_LINK_H.value;
-        let top_chrome = pad + eyebrow_h + 12.0 + greeting_h + 14.0 + body_h + 22.0 + section_h + 10.0;
+        let top_chrome =
+            pad + eyebrow_h + 12.0 + greeting_h + 14.0 + body_h + 22.0 + section_h + 10.0;
         let bottom_chrome = 20.0 + PRIMARY_H + 14.0 + cancel_h + WELCOME_LINK_H.value + pad;
         let max_card_h = (area.h - margin * 2.0).max(360.0);
         let max_list_h = (max_card_h - top_chrome - bottom_chrome).max(120.0);
@@ -353,9 +360,8 @@ impl OnboardingView {
         let body = Rect::new(x0, body_y, inner_w, body_h);
 
         let section_y = body_y + body_h + 22.0;
-        let refresh = (!self.selection.locked()).then(|| {
-            Rect::new(x0 + inner_w - refresh_w, section_y, refresh_w, section_h)
-        });
+        let refresh = (!self.selection.locked())
+            .then(|| Rect::new(x0 + inner_w - refresh_w, section_y, refresh_w, section_h));
 
         let list_y = section_y + section_h + 10.0;
         let list_box = Rect::new(x0, list_y, inner_w, list_h);
@@ -395,12 +401,7 @@ impl OnboardingView {
         let footer_start_x = card.x + (card.w - footer_total_w) * 0.5;
         let create_new = Rect::new(footer_start_x, footer_y, create_w, WELCOME_LINK_H.value);
         let dot_x = footer_start_x + create_w;
-        let continue_offline = Rect::new(
-            dot_x + dot_w,
-            footer_y,
-            offline_w,
-            WELCOME_LINK_H.value,
-        );
+        let continue_offline = Rect::new(dot_x + dot_w, footer_y, offline_w, WELCOME_LINK_H.value);
 
         let cancel = show_cancel.then(|| {
             let cancel_label = t(lang, T::ProfileChooserCancel);
@@ -540,10 +541,8 @@ impl OnboardingView {
         let owner_name = self.profiles_modal_owner_name();
         KoruAvatar::initial(&owner_name).draw_in(canvas, root, &mut self.engine, layout.avatar, &p);
         let heading = self.profiles_modal_heading();
-        let heading_style = theme::TextStyle::new(
-            theme::role::subtitle().metrics,
-            theme::FontWeight::SemiBold,
-        );
+        let heading_style =
+            theme::TextStyle::new(theme::role::subtitle().metrics, theme::FontWeight::SemiBold);
         draw_wrapped_text(
             &mut self.engine,
             canvas,
@@ -583,7 +582,9 @@ impl OnboardingView {
         } else {
             t(lang, T::ProfileChooserSectionLabel)
         };
-        let sec_layout = self.engine.simple_layout(section_label, theme::role::meta());
+        let sec_layout = self
+            .engine
+            .simple_layout(section_label, theme::role::meta());
         let sec_h = scene::first_line_height(&sec_layout);
         scene::draw_layout(
             canvas,
@@ -607,13 +608,7 @@ impl OnboardingView {
 
         // 5. Grouped rounded profile card
         let list_box = layout.list_box;
-        let list_shape = scene::rrect(
-            list_box.x,
-            list_box.y,
-            list_box.w,
-            list_box.h,
-            LIST_RADIUS,
-        );
+        let list_shape = scene::rrect(list_box.x, list_box.y, list_box.w, list_box.h, LIST_RADIUS);
         scene::fill(canvas, root, p.panel_bg, &list_shape);
         canvas.push_clip_layer(Fill::NonZero, root, &list_shape);
         for (index, row) in layout.rows.iter().enumerate() {
@@ -720,10 +715,8 @@ impl OnboardingView {
                 .action
                 .map_or(row.rect.x + row.rect.w - ROW_PAD_X, |(_, r, _)| r.x - 10.0);
             let text_w = (right_limit - x).max(60.0);
-            let title_style = theme::TextStyle::new(
-                theme::role::row().metrics,
-                theme::FontWeight::Medium,
-            );
+            let title_style =
+                theme::TextStyle::new(theme::role::row().metrics, theme::FontWeight::Medium);
             let title_h = theme::role::row().metrics.line_height;
             let status_h = if row.status.is_empty() {
                 0.0

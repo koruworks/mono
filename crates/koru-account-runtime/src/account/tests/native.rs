@@ -294,8 +294,9 @@ fn creation_cancel_after_provider_proof_never_confirms_exchanges_or_repeats_goog
             .execute(
                 8,
                 AccountCommand::StartGoogle {
-                    locale: "en".into()
-                , ab: None},
+                    locale: "en".into(),
+                    ab: None
+                },
                 None,
                 &Cancel(cancel),
                 &mut |_| {}
@@ -335,8 +336,9 @@ fn lost_creation_reply_retains_chosen_request_even_when_opposite_intent_arrives(
                 .execute(
                     8,
                     AccountCommand::StartGoogle {
-                        locale: "en".into()
-                    , ab: None},
+                        locale: "en".into(),
+                        ab: None
+                    },
                     None,
                     &Cancel(cancel),
                     &mut |_| {}
@@ -591,7 +593,8 @@ fn execute_native(service: &mut ProductionAccountService) -> Result<ServiceOutco
     service.execute(
         7,
         AccountCommand::StartGoogle {
-            locale: "en".into(), ab: None
+            locale: "en".into(),
+            ab: None,
         },
         None,
         &Cancel(Arc::new(AtomicBool::new(false))),
@@ -738,7 +741,8 @@ fn worker_cancel_cannot_report_signed_out_while_exact_recovery_is_unavailable() 
         .enqueue(
             8,
             AccountCommand::StartGoogle {
-                locale: "en".into(), ab: None
+                locale: "en".into(),
+                ab: None,
             },
         )
         .unwrap();
@@ -889,7 +893,8 @@ fn background_retains_inflight_failure_and_queued_retry_until_resume() {
         .enqueue(
             5,
             AccountCommand::StartGoogle {
-                locale: "en".into(), ab: None
+                locale: "en".into(),
+                ab: None,
             },
         )
         .unwrap();

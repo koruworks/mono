@@ -3693,9 +3693,13 @@ fn validate_onboarding_ab(ab: Option<&koru_agent_wire::OnboardingAb>) -> Result<
     let Some(ab) = ab else {
         return Ok(());
     };
-    for value in [ab.code.as_deref(), ab.header.as_deref(), ab.billing.as_deref()]
-        .into_iter()
-        .flatten()
+    for value in [
+        ab.code.as_deref(),
+        ab.header.as_deref(),
+        ab.billing.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
     {
         if value.is_empty()
             || value.len() > 32
@@ -3924,7 +3928,10 @@ fn checked_browser_url(value: String) -> Result<BrowserUrl, ServiceError> {
 
 /// Admits Koru's own web login (`/login`) and checkout (`/subscribe`) pages on
 /// the official site host or the configured `KORU_SUPPORT_URL` origin.
-fn checked_koru_browser_url(value: String, expected_suffix: &str) -> Result<BrowserUrl, ServiceError> {
+fn checked_koru_browser_url(
+    value: String,
+    expected_suffix: &str,
+) -> Result<BrowserUrl, ServiceError> {
     if value.len() > 8192 {
         return Err(ServiceError::terminal("invalid_browser_url"));
     }
@@ -3949,9 +3956,9 @@ fn checked_koru_browser_url(value: String, expected_suffix: &str) -> Result<Brow
     let matches_official = parsed.scheme() == "https"
         && matches!(host.as_str(), "www.koru.do" | "koru.do")
         && parsed.port().is_none();
-    let matches_configured = configured_origin.as_ref().is_some_and(|(s, h, p)| {
-        s == parsed.scheme() && *h == host && *p == parsed.port()
-    });
+    let matches_configured = configured_origin
+        .as_ref()
+        .is_some_and(|(s, h, p)| s == parsed.scheme() && *h == host && *p == parsed.port());
     if !matches_official && !matches_configured {
         return Err(ServiceError::terminal("invalid_browser_url"));
     }

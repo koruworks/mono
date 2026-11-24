@@ -221,7 +221,8 @@ fn browser_creates_unseen_account_and_signs_in_without_another_user_command() {
     let result = browser_execute(
         &mut service,
         AccountCommand::StartGoogle {
-            locale: "en".into(), ab: None
+            locale: "en".into(),
+            ab: None,
         },
         &mut urls,
     )
@@ -251,7 +252,8 @@ fn creation_browser_collision_retry_reuses_listener_state_proof_and_opens_each_u
     let error = browser_execute(
         &mut service,
         AccountCommand::StartGoogle {
-            locale: "en".into(), ab: None
+            locale: "en".into(),
+            ab: None,
         },
         &mut urls,
     )
@@ -302,7 +304,8 @@ fn cancellation_during_known_browser_collision_wait_releases_creation_without_ex
     let result = browser_execute(
         &mut service,
         AccountCommand::StartGoogle {
-            locale: "en".into(), ab: None
+            locale: "en".into(),
+            ab: None,
         },
         &mut urls,
     )
@@ -334,7 +337,8 @@ fn ordinary_browser_collision_authenticates_existing_account_without_a_creation_
     let result = browser_execute(
         &mut service,
         AccountCommand::StartGoogle {
-            locale: "en".into(), ab: None
+            locale: "en".into(),
+            ab: None,
         },
         &mut urls,
     )
@@ -391,7 +395,8 @@ fn assert_control_cancel_recovers(response: usize, exchange: bool) {
         .enqueue(
             9,
             AccountCommand::StartGoogle {
-                locale: "en".into(), ab: None
+                locale: "en".into(),
+                ab: None,
             },
         )
         .unwrap();
@@ -516,7 +521,8 @@ fn control_cancel_and_logout_after_lost_exchange_report_expiry_without_claiming_
             .enqueue(
                 19,
                 AccountCommand::StartGoogle {
-                    locale: "en".into(), ab: None
+                    locale: "en".into(),
+                    ab: None,
                 },
             )
             .unwrap();
@@ -603,7 +609,8 @@ fn control_cancel_after_vault_failure_revokes_known_session_without_replaying_ex
         .enqueue(
             29,
             AccountCommand::StartGoogle {
-                locale: "en".into(), ab: None
+                locale: "en".into(),
+                ab: None,
             },
         )
         .unwrap();

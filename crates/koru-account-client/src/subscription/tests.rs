@@ -195,7 +195,12 @@ fn checkout_handoff_route_is_admitted_by_transport_path_guard() {
 #[test]
 fn cloud_access_is_independent_of_a_purchase_to_manage_and_reports_kind() {
     for (subscriptions, access, current, kind) in [
-        (json!([]), true, false, Some(SubscriptionKind::Complimentary)),
+        (
+            json!([]),
+            true,
+            false,
+            Some(SubscriptionKind::Complimentary),
+        ),
         (json!([]), false, false, None),
         (
             json!([{"status":"past_due"}]),
@@ -215,12 +220,7 @@ fn cloud_access_is_independent_of_a_purchase_to_manage_and_reports_kind() {
             true,
             Some(SubscriptionKind::Active),
         ),
-        (
-            json!([{"status":"canceled"}]),
-            false,
-            false,
-            None,
-        ),
+        (json!([{"status":"canceled"}]), false, false, None),
     ] {
         let client = AccountClient::with_transport(script(vec![json!({
             "subscriptions": subscriptions, "next_cursor": null, "cloud_access": access

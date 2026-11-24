@@ -137,10 +137,7 @@ fn a_selection_sends_only_profiles_that_are_not_here_and_waits_for_a_synced_work
         "do not leave onboarding until at least one synced workspace arrives"
     );
     assert_eq!(view.screen, Screen::ExistingProfiles);
-    assert_eq!(
-        view.synced_workspace_candidates(),
-        Some(&[id(12)][..])
-    );
+    assert_eq!(view.synced_workspace_candidates(), Some(&[id(12)][..]));
     assert!(view.selection.locked());
     assert!(view.selection_controls().contains(&Hit::CancelSelection));
 }
@@ -787,7 +784,7 @@ fn named_space_activates_the_focused_checkbox_without_losing_keyboard_focus() {
 
 #[test]
 fn workspace_modal_chooser_preselects_syncable_profiles_and_supports_not_you_without_resume_on_setup()
-{
+ {
     let mut view = OnboardingView::default();
     view.language = koru_i18n::Lang::En;
     view.show_workspace_setup();

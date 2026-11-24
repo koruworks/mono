@@ -93,10 +93,14 @@ impl OnboardingView {
         let hover = self.hover;
         let area = self.setup_area();
         let margin = Spacing::from(WELCOME_CARD_MARGIN).px(koru_draw::theme::Profile::Desktop);
-        let card_w = WELCOME_CARD_MAX_W.value.min((area.w - margin * 2.0).max(280.0));
+        let card_w = WELCOME_CARD_MAX_W
+            .value
+            .min((area.w - margin * 2.0).max(280.0));
         let width = Length::Runtime(card_w, "browser sign-in modal width");
         let pad_px = Spacing::from(WELCOME_CARD_PAD).px(koru_draw::theme::Profile::Desktop);
-        let body_max_w = BROWSER_BODY_MAX_W.value.min((card_w - pad_px * 2.0).max(220.0));
+        let body_max_w = BROWSER_BODY_MAX_W
+            .value
+            .min((card_w - pad_px * 2.0).max(220.0));
 
         let (body_key, waiting_key) = match provider {
             BrowserProvider::Google => (T::BrowserSigninBodyGoogle, T::BrowserSigninWaitingGoogle),
@@ -104,10 +108,8 @@ impl OnboardingView {
             BrowserProvider::Email => (T::BrowserSigninBodyEmail, T::BrowserSigninWaitingEmail),
         };
 
-        let title_style = theme::TextStyle::new(
-            theme::role::subtitle().metrics,
-            theme::FontWeight::SemiBold,
-        );
+        let title_style =
+            theme::TextStyle::new(theme::role::subtitle().metrics, theme::FontWeight::SemiBold);
         let title_leaf = CenteredTextLeaf::new(
             &mut self.engine,
             t(lang, T::BrowserSigninTitle),

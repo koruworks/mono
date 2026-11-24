@@ -108,7 +108,8 @@ fn a_build_without_koru_cloud_answers_every_account_request_not_configured() {
         (
             2,
             koru_agent_wire::AccountCommand::StartGoogle {
-                locale: "en".into(), ab: None
+                locale: "en".into(),
+                ab: None,
             },
         ),
         (3, koru_agent_wire::AccountCommand::Retry),

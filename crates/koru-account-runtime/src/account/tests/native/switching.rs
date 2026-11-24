@@ -476,7 +476,8 @@ fn production_uncertain_exchange_survives_switch_and_retries_exactly_without_sec
     let a_before = h.bytes(1);
     let b_before = h.bytes(2);
     let original = h.command(AccountCommand::StartGoogle {
-        locale: "en".into(), ab: None
+        locale: "en".into(),
+        ab: None,
     });
     h.hosted.exchange.entered(1);
     let b_scope = h.switch(2);
@@ -536,7 +537,8 @@ fn production_repair_b_rejects_new_a_and_revokes_only_the_issued_session_before_
     assert_eq!(h.control.state().stage, AccountStage::Failed);
     let before = h.directory.snapshot(&slot_entry().namespace()).unwrap();
     let generation = h.command(AccountCommand::StartGoogle {
-        locale: "en".into(), ab: None
+        locale: "en".into(),
+        ab: None,
     });
     h.hosted.exchange.entered(1);
     assert_eq!(h.bytes(1).expose(), a_before.expose());

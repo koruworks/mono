@@ -12,9 +12,12 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-internal fun DocumentCommand.EditBlockText.toWireEdit(): DocumentTextEdit = DocumentTextEdit.newBuilder()
-    .setBlockId(blockId.value).setBefore(before).setAfter(after).setCreateParagraph(createParagraph)
-    .apply { this@toWireEdit.split?.let { setSplit(DocumentTextSplit.newBuilder().setBlockId(it.blockId.value).setAtUtf8(it.atUtf8)) } }.build()
+internal fun DocumentCommand.EditBlockText.toWireEdit(): DocumentTextEdit {
+    val builder = DocumentTextEdit.newBuilder()
+        .setBlockId(blockId.value).setBefore(before).setAfter(after).setCreateParagraph(createParagraph)
+    split?.let { builder.setSplit(DocumentTextSplit.newBuilder().setBlockId(it.blockId.value).setAtUtf8(it.atUtf8)) }
+    return builder.build()
+}
 
 private fun DocumentTextEdit.toEdit() = DocumentCommand.EditBlockText(BlockId(blockId), before, after,
     createParagraph, if (hasSplit()) BlockTextSplit(BlockId(split.blockId), split.atUtf8) else null)
