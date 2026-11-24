@@ -650,6 +650,16 @@ impl Host for MobileCloudHost {
             held.session_generation = principal.session_generation;
             held.session_connection_id = connection_id;
         }
+        // The worker admitted this credential: its signed issue time is the
+        // time the trash sweep may trust for this Workspace, as on the desktop.
+        if let (CloudReplicaPrincipalV1::Workspace { workspace_id, .. }, Some(issued_at)) =
+            (dataset, principal.credential_issued_at_seconds)
+        {
+            host.trash_times().record(
+                WorkspaceId::from_uuid(workspace_id.as_uuid()),
+                issued_at.saturating_mul(1000),
+            );
+        }
         // Which Workspace's pictures this pass makes worth walking. A
         // Profile dataset carries no blobs of its own: the personal
         // Workspaces beside it are datasets in their own right and get their

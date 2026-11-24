@@ -36,6 +36,7 @@ pub use daemon::cloud_sync;
 #[cfg(feature = "test-support")]
 pub use daemon::fake_cloud;
 pub use daemon::memory;
+pub use daemon::trash_sweep;
 pub use daemon::{
     INTERNAL_READY_ENV, StandaloneReady, StoreJobs, StoreReply, StoreRootClaim, StoreWorker,
     StoreWorkerClient, StoreWorkerInfo, WorkerConfig, WorkerError, WorkerExit, WorkerHandle,

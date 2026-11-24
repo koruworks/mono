@@ -52,7 +52,7 @@ pub mod fake_cloud;
 pub mod memory;
 mod session_io;
 mod store_jobs;
-pub(crate) mod trash_sweep;
+pub mod trash_sweep;
 pub use store_jobs::{StoreJobs, StoreReply};
 
 use crate::tray;
@@ -1115,7 +1115,11 @@ async fn run(
     // by this device's clock; a Cloud Workspace waits for the time its Cloud
     // session vouches for, which the Cloud driver records here.
     let trash_times = Arc::new(trash_sweep::TrustedTimes::default());
-    trash_sweep::install(store_client.clone(), Arc::clone(&trash_times));
+    trash_sweep::install(
+        &tokio::runtime::Handle::current(),
+        store_client.clone(),
+        Arc::clone(&trash_times),
+    );
     let replication = if host_iroh {
         tracing::info!("store startup: replication (iroh)");
         let replication_store = Arc::new(crate::replication::LiveReplicationStore::new(

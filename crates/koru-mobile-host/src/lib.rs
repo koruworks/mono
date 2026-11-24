@@ -574,6 +574,9 @@ struct MobileHost {
     /// scope-checked here before touching the embedded domain state.
     gateway: koru_api_gateway_core::MobileGateway,
     _runtime: tokio::runtime::Runtime,
+    /// The Cloud-vouched time per Workspace the 30-day trash sweep trusts,
+    /// recorded by the in-process Cloud host (`account::cloud`).
+    trash_times: Arc<koru_store_server::trash_sweep::TrustedTimes>,
     network: koru_network_iroh::RuntimeHandle,
     signing_key: koru_device::DeviceSigningKey,
     /// `None` when the on-disk identity is inconsistent: the local Store must
@@ -787,6 +790,7 @@ impl MobileHost {
         let host = Arc::new(Self {
             gateway: koru_api_gateway_core::MobileGateway::platform_local(device_name),
             _runtime: runtime,
+            trash_times: Arc::default(),
             network,
             signing_key,
             root: root.clone(),
@@ -812,6 +816,13 @@ impl MobileHost {
         });
         host.refresh_authorization();
         host.start_maintenance();
+        // The 30-day trash sweep, the desktop Store's own module over this
+        // host's Store worker.
+        koru_store_server::trash_sweep::install(
+            &host.tokio(),
+            host.store.clone(),
+            Arc::clone(&host.trash_times),
+        );
         Ok(host)
     }
 
@@ -837,6 +848,10 @@ impl MobileHost {
 
     pub(crate) fn store(&self) -> &koru_store_server::StoreWorkerClient {
         &self.store
+    }
+
+    pub(crate) fn trash_times(&self) -> &koru_store_server::trash_sweep::TrustedTimes {
+        &self.trash_times
     }
 
     /// The blob transfer engine, or `None` on a device whose read model did

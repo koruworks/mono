@@ -13,6 +13,9 @@
 //! this process it waits. A peer-to-peer Workspace has no time anyone vouched
 //! for and its peers may be other people, so it does not empty by itself.
 //!
+//! Android's host runs this same module beside its embedded Store, with the
+//! same Store worker, so the two platforms sweep identically.
+//!
 //! Every step is its own Store call — the due documents, one subtree purge,
 //! one document's bin — so a save never waits behind a whole Workspace.
 
@@ -62,8 +65,14 @@ fn clock(mode: TransportMode, trusted: Option<i64>, device_now_ms: i64) -> Optio
     }
 }
 
-pub(crate) fn install(store: StoreWorkerClient, trusted: Arc<TrustedTimes>) {
-    tokio::spawn(async move {
+/// Start the sweep on `runtime`: the desktop Store's own, or Android's host
+/// runtime beside its embedded Store.
+pub fn install(
+    runtime: &tokio::runtime::Handle,
+    store: StoreWorkerClient,
+    trusted: Arc<TrustedTimes>,
+) {
+    runtime.spawn(async move {
         // The peer this process edits bins with: one per process, as
         // Android's document edits use one per host.
         let peer = loro::LoroDoc::new().peer_id();
