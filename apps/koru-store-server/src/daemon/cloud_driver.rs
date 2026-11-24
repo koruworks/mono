@@ -92,6 +92,7 @@ pub(crate) fn install(
     activity: Arc<Mutex<CloudActivity>>,
     blobs: BlobEngineSlot,
     inspections: Arc<crate::cloud_inspection_host::InspectionHub>,
+    trash_times: Arc<super::trash_sweep::TrustedTimes>,
 ) {
     // One ledger for the whole gateway, minted here rather than inside a
     // session: a bound on consecutive refusals only means something if it
@@ -107,6 +108,7 @@ pub(crate) fn install(
         let blobs = Arc::clone(&blobs);
         let budget = budget.clone();
         let inspections = inspections.clone();
+        let trash_times = Arc::clone(&trash_times);
         tokio::spawn(async move {
             run_session(
                 session,
@@ -118,6 +120,7 @@ pub(crate) fn install(
                 blobs,
                 budget,
                 inspections,
+                trash_times,
             )
             .await;
         });
@@ -280,6 +283,7 @@ async fn run_session(
     blobs: BlobEngineSlot,
     budget: MemoryBudget,
     inspections: Arc<crate::cloud_inspection_host::InspectionHub>,
+    trash_times: Arc<super::trash_sweep::TrustedTimes>,
 ) {
     let Some(principal) = session.principal.cloud().copied() else {
         session.reset(1);
@@ -365,6 +369,14 @@ async fn run_session(
         );
     }
     set_stage(&host, permit_id, CloudStage::Reconciling, None);
+    // The worker admitted this credential, so its signed issue time is a time
+    // the Cloud vouches for: what the trash sweep may trust for this
+    // Workspace (`trash_sweep`). An older Agent carries none.
+    if let (Some(workspace), Some(issued_at)) =
+        (blob_workspace, principal.credential_issued_at_seconds)
+    {
+        trash_times.record(workspace, issued_at.saturating_mul(1000));
+    }
 
     let (reader, writer) = session_io::split(session);
     // The gateway never saw the worker's `SessionAccepted` message: the Agent

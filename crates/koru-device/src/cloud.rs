@@ -142,6 +142,14 @@ pub struct CloudPrincipalV1 {
     pub session_generation: u64,
     /// The admitted credential's expiry (D231: not a route-proof expiry).
     pub expires_at_seconds: i64,
+    /// The admitted credential's signed issue time (`iat`): the API's clock,
+    /// verified with the credential, and accepted by the worker for this
+    /// session. The Store trusts it as "the Cloud's time from its last
+    /// successful session" when the 30-day trash sweep decides what is due
+    /// (`koru_core::trash_expiry`). `None` from an Agent built before it was
+    /// carried; such a session vouches for no time and the sweep waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_issued_at_seconds: Option<i64>,
 }
 
 pub const CLOUD_PRINCIPAL_VERSION: u32 = 1;

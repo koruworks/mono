@@ -52,6 +52,7 @@ pub mod fake_cloud;
 pub mod memory;
 mod session_io;
 mod store_jobs;
+pub(crate) mod trash_sweep;
 pub use store_jobs::{StoreJobs, StoreReply};
 
 use crate::tray;
@@ -1110,6 +1111,11 @@ async fn run(
     // before the projector starts, because its consumer is registered there and
     // the engine it feeds does not exist until the read model is open.
     let blob_changes = crate::daemon::blob_sync::BlobChanges::new();
+    // The 30-day trash sweep, at start and daily. Local-only Workspaces sweep
+    // by this device's clock; a Cloud Workspace waits for the time its Cloud
+    // session vouches for, which the Cloud driver records here.
+    let trash_times = Arc::new(trash_sweep::TrustedTimes::default());
+    trash_sweep::install(store_client.clone(), Arc::clone(&trash_times));
     let replication = if host_iroh {
         tracing::info!("store startup: replication (iroh)");
         let replication_store = Arc::new(crate::replication::LiveReplicationStore::new(
@@ -1183,6 +1189,7 @@ async fn run(
             Arc::clone(&state.cloud_activity),
             Arc::clone(&blob_engine_slot),
             inspections,
+            Arc::clone(&trash_times),
         );
         let mut sessions = network_edge
             .sessions

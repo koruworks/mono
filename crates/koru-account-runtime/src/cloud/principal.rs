@@ -124,6 +124,7 @@ pub fn build_principal(
         account_generation: permit.account_generation,
         session_generation: accepted.session_generation,
         expires_at_seconds: accepted.expires_at_seconds,
+        credential_issued_at_seconds: Some(claims.iat),
     };
     principal.validate().map_err(|_| Failure::DatasetMismatch)?;
     Ok(principal)

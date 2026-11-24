@@ -36,6 +36,7 @@ fn principal() -> NetworkPrincipal {
             account_generation: 1,
             session_generation: 1,
             expires_at_seconds: 600,
+            credential_issued_at_seconds: None,
         },
     }
 }

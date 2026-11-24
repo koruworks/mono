@@ -794,6 +794,7 @@ mod tests {
             account_generation: 2,
             session_generation: 1,
             expires_at_seconds: 1_800_000_000,
+            credential_issued_at_seconds: None,
         }
         .into()
     }

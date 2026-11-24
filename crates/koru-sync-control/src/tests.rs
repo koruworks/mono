@@ -675,6 +675,7 @@ fn principal(
         account_generation: permit.account_generation,
         session_generation,
         expires_at_seconds: permit.expires_at_seconds,
+        credential_issued_at_seconds: None,
     }
 }
 
