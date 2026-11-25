@@ -1,7 +1,8 @@
 <p align="center">
   <a href="https://koru.do"><img src="assets/logo.png" alt="Koru logo" height="80"></a>
 </p>
-<p align="center"><strong>A free and fast app for your notes, documents, files and tasks that works offline and with the AI you choose.</strong></p>
+<p align="center"><strong>Bring your work and your favorite AI together in one workspace.</strong></p>
+<p align="center">Free, fast, private. Works even when you're offline.</p>
 <p align="center">
   <a href="https://koru.do"><img src="https://img.shields.io/badge/%E2%9C%A8-Website-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Website"></a>
   <a href="https://koru.do/#download"><img src="https://img.shields.io/badge/%E2%9C%A8-Download-0a0a0a.svg?style=flat&colorA=0a0a0a" alt="Download Koru"></a>
@@ -17,9 +18,10 @@
 
 # Koru
 
-A free and fast app for your notes, documents, files and tasks that works offline
-and with the AI you choose. Built in Rust, no account required. Bring your notes
-from Notion, Evernote and Google Docs.
+Koru brings your notes, documents, files and tasks together with the AI you
+choose, in one workspace. It is free, fast and private, and it works even when
+you're offline. Built in Rust, no account required. Bring your notes from Notion,
+Evernote and Google Docs.
 
 ## What can you do with Koru?
 
@@ -302,10 +304,10 @@ registration. A build without them turns those features off and says so.
 If Koru is useful to you, a post about it really helps a small, independent
 project get found. Follow the build on X: [@liechti_dev](https://x.com/liechti_dev).
 
-[![Share on Reddit](https://img.shields.io/badge/share%20on-reddit-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/submit?url=https%3A%2F%2Fkoru.do&title=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription)
-[![Share on Hacker News](https://img.shields.io/badge/share%20on-hacker%20news-F0652F?logo=ycombinator&logoColor=white)](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fkoru.do&t=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription)
-[![Share on X](https://img.shields.io/badge/share%20on-x-000000?logo=x&logoColor=white)](https://x.com/intent/post?url=https%3A%2F%2Fkoru.do&text=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription&via=liechti_dev)
-[![Share on Bluesky](https://img.shields.io/badge/share%20on-bluesky-0285FF?logo=bluesky&logoColor=white)](https://bsky.app/intent/compose?text=Koru%3A%20a%20free%2C%20open-source%20notes%20app%20that%20works%20with%20your%20AI%20subscription%20https%3A%2F%2Fkoru.do)
+[![Share on Reddit](https://img.shields.io/badge/share%20on-reddit-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/submit?url=https%3A%2F%2Fkoru.do&title=Koru%3A%20a%20free%2C%20open-source%20workspace%20for%20your%20work%20and%20your%20favorite%20AI)
+[![Share on Hacker News](https://img.shields.io/badge/share%20on-hacker%20news-F0652F?logo=ycombinator&logoColor=white)](https://news.ycombinator.com/submitlink?u=https%3A%2F%2Fkoru.do&t=Koru%3A%20a%20free%2C%20open-source%20workspace%20for%20your%20work%20and%20your%20favorite%20AI)
+[![Share on X](https://img.shields.io/badge/share%20on-x-000000?logo=x&logoColor=white)](https://x.com/intent/post?url=https%3A%2F%2Fkoru.do&text=Koru%3A%20a%20free%2C%20open-source%20workspace%20for%20your%20work%20and%20your%20favorite%20AI&via=liechti_dev)
+[![Share on Bluesky](https://img.shields.io/badge/share%20on-bluesky-0285FF?logo=bluesky&logoColor=white)](https://bsky.app/intent/compose?text=Koru%3A%20a%20free%2C%20open-source%20workspace%20for%20your%20work%20and%20your%20favorite%20AI%20https%3A%2F%2Fkoru.do)
 [![Share on LinkedIn](https://img.shields.io/badge/share%20on-linkedin-0A66C2?logo=linkedin&logoColor=white)](https://www.linkedin.com/sharing/share-offsite/?url=https%3A%2F%2Fkoru.do)
 [![Share on Facebook](https://img.shields.io/badge/share%20on-facebook-1877F2?logo=facebook&logoColor=white)](https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fkoru.do)
 
