@@ -2589,7 +2589,7 @@ impl WorkspaceDoc {
                 .insert(K_DOC_ID, document.to_storage())?;
             self.doc.commit();
         }
-        self.replay_cutting_runs(id, &cutting.runs)?;
+        self.replay_cutting_runs(id, &cutting.runs, None)?;
         for child in &cutting.children {
             self.place_import(child, Parent::Node(id))?;
         }
@@ -2598,9 +2598,12 @@ impl WorkspaceDoc {
 
     /// One cutting and its children, depth first and in order, under `parent`.
     fn place(&mut self, cutting: &Cutting, parent: Parent) -> Result<NodeId> {
-        // A fresh `NodeId`: `Node::new` mints one, and that is what makes this a
-        // copy rather than a second name for the same node.
-        let mut node = Node::new(cutting.kind, cutting.content.clone())?;
+        // Fresh `NodeId` and fresh `AttrId`s: `Node::new` mints the node id, and
+        // remapping every attribute id keeps a duplicated pill distinct from the
+        // original across the document.
+        let mut content = cutting.content.clone();
+        let attr_remap = Self::remap_content_attrs(&mut content);
+        let mut node = Node::new(cutting.kind, content)?;
         node.meta = cutting.meta.clone();
         // A copy of something in the bin is not itself in the bin.
         node.meta.trashed_at = None;
@@ -2609,7 +2612,7 @@ impl WorkspaceDoc {
         node.meta.restored_by = None;
         let id = self.insert(parent, node)?;
 
-        self.replay_cutting_runs(id, &cutting.runs)?;
+        self.replay_cutting_runs(id, &cutting.runs, Some(&attr_remap))?;
 
         for child in &cutting.children {
             self.place(child, Parent::Node(id))?;
@@ -2617,7 +2620,26 @@ impl WorkspaceDoc {
         Ok(id)
     }
 
-    fn replay_cutting_runs(&mut self, id: NodeId, runs: &[TextRun]) -> Result<()> {
+    fn remap_content_attrs(content: &mut Content) -> HashMap<AttrId, AttrId> {
+        let attrs = match content {
+            Content::Text { attrs, .. } | Content::Blob { attrs, .. } => attrs,
+            Content::Embed { .. } => return HashMap::new(),
+        };
+        let mut remap = HashMap::with_capacity(attrs.len());
+        for attr in attrs.iter_mut() {
+            let fresh = AttrId::new();
+            remap.insert(attr.id, fresh);
+            attr.id = fresh;
+        }
+        remap
+    }
+
+    fn replay_cutting_runs(
+        &mut self,
+        id: NodeId,
+        runs: &[TextRun],
+        attr_remap: Option<&HashMap<AttrId, AttrId>>,
+    ) -> Result<()> {
         // Inline formatting, replayed from the ranges `runs` already reported
         // rather than traversed a second time in the mark store.
         for run in runs {
@@ -2646,8 +2668,14 @@ impl WorkspaceDoc {
                 self.set_highlight(id, range.clone(), Some(colour))?;
             }
             if let Some(attr) = run.pill {
-                self.text_handle(id)?
-                    .mark_utf8(range.clone(), PILL_KEY, attr.to_storage())?;
+                let target_attr = attr_remap
+                    .and_then(|map| map.get(&attr).copied())
+                    .unwrap_or(attr);
+                self.text_handle(id)?.mark_utf8(
+                    range.clone(),
+                    PILL_KEY,
+                    target_attr.to_storage(),
+                )?;
                 self.doc.commit();
             }
         }
@@ -3993,7 +4021,13 @@ impl WorkspaceDoc {
         for run in runs {
             if let Some(pill) = run.pill {
                 if let Some(attr) = attrs.iter().find(|a| a.id == pill) {
-                    if self.insert_pill(target, at, attr).is_ok() {
+                    // Mint a fresh `AttrId` on every paste so copied pills never
+                    // collide across paragraphs or inside one paragraph.
+                    let fresh = Attr {
+                        id: AttrId::new(),
+                        ..attr.clone()
+                    };
+                    if self.insert_pill(target, at, &fresh).is_ok() {
                         at += ANCHOR_LEN;
                     }
                 }

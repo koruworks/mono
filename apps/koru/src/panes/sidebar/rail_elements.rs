@@ -75,6 +75,26 @@ const WAITING_TILE_VEIL: f32 = 0.5;
 struct SquareContents {
     contents: Contents,
     dimmed: bool,
+    selected_border: bool,
+}
+
+fn paint_selected_border(scene: &mut Scene, root: Affine, at: Rect, cx: &FrameCx) {
+    let width = koru_draw::theme::BORDER_W * 1.5;
+    let inset = (width * 0.5) as f32;
+    let radius = (Radius::L.px(cx.profile, at.w, at.h) - inset).max(0.0);
+    koru_draw::scene::stroke(
+        scene,
+        root,
+        Accent::Base.of(cx.palette()),
+        width,
+        &koru_draw::scene::rrect(
+            at.x + inset,
+            at.y + inset,
+            (at.w - inset * 2.0).max(0.0),
+            (at.h - inset * 2.0).max(0.0),
+            radius,
+        ),
+    );
 }
 
 impl Leaf for SquareContents {
@@ -139,24 +159,6 @@ impl Leaf for SquareContents {
                         &koru_draw::scene::rect(tile.x, tile.y, tile.w, tile.h),
                     );
                 }
-                if state.selected {
-                    let width = koru_draw::theme::BORDER_W * 1.5;
-                    let inset = (width * 0.5) as f32;
-                    let radius = (Radius::L.px(cx.profile, at.w, at.h) - inset).max(0.0);
-                    koru_draw::scene::stroke(
-                        scene,
-                        root,
-                        Accent::Base.of(cx.palette()),
-                        width,
-                        &koru_draw::scene::rrect(
-                            at.x + inset,
-                            at.y + inset,
-                            (at.w - inset * 2.0).max(0.0),
-                            (at.h - inset * 2.0).max(0.0),
-                            radius,
-                        ),
-                    );
-                }
             }
             Contents::Glyph(glyph) => {
                 let shaped = if state.selected {
@@ -181,10 +183,17 @@ impl Leaf for SquareContents {
                 );
             }
         }
+        if state.selected && self.selected_border {
+            paint_selected_border(scene, root, at, cx);
+        }
     }
 }
 
 fn square(item: &Item) -> El {
+    let selected_border = matches!(
+        item.hit,
+        Hit::Workspace(_) | Hit::WaitingWorkspace | Hit::App(_)
+    );
     boxed("Rail square")
         .id(key(item.hit))
         .w(metrics::RAIL_SQUARE)
@@ -203,6 +212,7 @@ fn square(item: &Item) -> El {
                 SquareContents {
                     contents: item.contents.clone(),
                     dimmed: item.dimmed,
+                    selected_border,
                 },
             )
             .decorative()

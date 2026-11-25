@@ -187,3 +187,74 @@ fn hovering_help_keeps_the_profile_menu_and_crossing_the_gap_keeps_the_submenu()
             .is_none()
     );
 }
+
+#[test]
+fn moving_step_by_step_or_diagonally_from_profile_help_keeps_both_popovers_open() {
+    use crate::panes::explore::PopoverKind;
+    let (mut view, _workspace) = harness::container();
+    view.explore.open_popover(PopoverKind::Profiles);
+    let area = view.explore_popover_area();
+    let parent = view.explore.popover_panel(area, view.viewport).unwrap();
+    let (trigger, settings) = view
+        .explore
+        .with_page(area, view.viewport, |frame| {
+            (
+                frame.node(MenuAction::Help.key()).unwrap().rect,
+                frame.node(MenuAction::Settings.key()).unwrap().rect,
+            )
+        })
+        .unwrap();
+    let (tx, ty) = trigger.centre();
+    view.mouse_move(tx, ty);
+    assert!(view.explore.popover_is(PopoverKind::Help));
+    let child = view.explore.popover_panel(area, view.viewport).unwrap();
+
+    // Horizontal traversal through the parent's right padding and the gap.
+    let pad_x = (trigger.x + trigger.w + parent.x + parent.w) * 0.5;
+    assert!(pad_x > trigger.x + trigger.w && pad_x < parent.x + parent.w);
+    for x in [pad_x, parent.x + parent.w + 2.0, child.x + 12.0] {
+        view.mouse_move(x, ty);
+        assert!(
+            view.explore.popover_is(PopoverKind::Help),
+            "horizontal move at x={x} must keep Help open"
+        );
+        assert_eq!(
+            view.explore.help_parent_panel(area, view.viewport),
+            Some(parent)
+        );
+    }
+
+    // Brushing back into the upper gap beside the flyout does not dismiss it.
+    let gap_x = (parent.x + parent.w + child.x) * 0.5;
+    view.mouse_move(gap_x, child.y + 16.0);
+    assert!(view.explore.popover_is(PopoverKind::Help));
+
+    // Re-anchor on Help, then move diagonally toward the top of the flyout.
+    view.mouse_move(tx, ty);
+    let target = (child.x + 16.0, child.y + 16.0);
+    for step in 1..=12 {
+        let t = step as f32 / 12.0;
+        let x = tx + (target.0 - tx) * t;
+        let y = ty + (target.1 - ty) * t;
+        view.mouse_move(x, y);
+        assert!(
+            view.explore.popover_is(PopoverKind::Help),
+            "diagonal step {step} ({x}, {y}) must keep Help open"
+        );
+        assert_eq!(
+            view.explore.help_parent_panel(area, view.viewport),
+            Some(parent)
+        );
+    }
+
+    // Moving straight up from Help to Settings immediately restores Profiles.
+    view.mouse_move(tx, ty);
+    assert!(view.explore.popover_is(PopoverKind::Help));
+    view.mouse_move(tx, settings.centre().1);
+    assert!(view.explore.popover_is(PopoverKind::Profiles));
+    assert!(
+        view.explore
+            .help_parent_panel(area, view.viewport)
+            .is_none()
+    );
+}

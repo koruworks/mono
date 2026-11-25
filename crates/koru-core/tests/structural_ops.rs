@@ -805,19 +805,29 @@ fn a_document_root_among_the_targets_refuses_the_whole_replacement() {
 fn insert_runs_recreates_a_pill_and_drops_an_orphan() {
     let (mut ws, root, ids) = document_body();
     let attr = document_attr();
+    let source_id = attr.id;
     ws.insert_pill(ids[0], "before".len(), &attr).unwrap();
     let runs = ws.runs(ids[0]).unwrap();
     let attrs = vec![attr];
 
-    // With the attribute beside the runs, the pill is rebuilt.
+    // With the attribute beside the runs, the pill is rebuilt with a fresh
+    // AttrId so pasting never duplicates the source pill's identity.
     let target = ws
         .insert(Parent::Node(root), Node::paragraph("").unwrap())
         .unwrap();
     ws.insert_runs(target, 0, &runs, &attrs);
-    assert_eq!(ws.read(target).unwrap().content.attrs().len(), 1);
+    let pasted_attrs = ws.read(target).unwrap().content.attrs().to_vec();
+    assert_eq!(pasted_attrs.len(), 1);
+    assert_ne!(
+        pasted_attrs[0].id, source_id,
+        "pasting a pill must mint a fresh AttrId"
+    );
+    let pasted_runs = ws.runs(target).unwrap();
     assert!(
-        ws.runs(target).unwrap().iter().any(|r| r.is_pill()),
-        "the anchor carries the pill mark again"
+        pasted_runs
+            .iter()
+            .any(|r| r.pill == Some(pasted_attrs[0].id)),
+        "the anchor carries the fresh pill AttrId"
     );
 
     // Without it, the anchor is dropped rather than written blind.
@@ -828,6 +838,28 @@ fn insert_runs_recreates_a_pill_and_drops_an_orphan() {
     assert_eq!(ws.read(bare).unwrap().content.attrs().len(), 0);
     assert!(ws.runs(bare).unwrap().iter().all(|r| !r.is_pill()));
     assert_eq!(text_of(&ws, bare), "before");
+}
+
+#[test]
+fn duplicate_mints_fresh_pill_attr_ids() {
+    let (mut ws, root, ids) = document_body();
+    let attr = document_attr();
+    ws.insert_pill(ids[0], "before".len(), &attr).unwrap();
+
+    let copy = ws.duplicate(ids[0], Parent::Node(root), "").unwrap();
+    let copy_attrs = ws.read(copy).unwrap().content.attrs().to_vec();
+    assert_eq!(copy_attrs.len(), 1);
+    assert_ne!(
+        copy_attrs[0].id, attr.id,
+        "duplicating a node must mint fresh AttrIds for its attributes"
+    );
+    assert_eq!(copy_attrs[0].role, attr.role);
+    assert_eq!(copy_attrs[0].value, attr.value);
+    let copy_runs = ws.runs(copy).unwrap();
+    assert!(
+        copy_runs.iter().any(|r| r.pill == Some(copy_attrs[0].id)),
+        "the duplicated pill anchor points at the remapped AttrId"
+    );
 }
 
 /// The trail pill stands where the first block stood, so it keeps that

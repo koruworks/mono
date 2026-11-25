@@ -27,7 +27,7 @@
 //! area's top-left**. [`build`] is the one place that multiplies by the scale
 //! factor, and no other part of this feature touches a scale.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use accesskit::{Action, Node, NodeId, Rect, Role, TextSelection, Tree, TreeId, TreeUpdate};
 use koru_draw::geometry::Rect as LogicalRect;
@@ -524,15 +524,30 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
             .collect(),
     };
     let mut nodes: Vec<(NodeId, Node)> = Vec::new();
+    let mut seen_nodes: HashSet<NodeId> = HashSet::new();
+    let mut seen_children: HashSet<NodeId> = HashSet::new();
+    if whole {
+        seen_nodes.insert(root_id);
+    }
 
-    let children = semantics
-        .children
-        .iter()
-        .map(|child| {
-            append(child, &mut nodes, &mut projection, semantics.scale);
-            child.occurrence.node_id()
-        })
-        .collect::<Vec<_>>();
+    let mut children = Vec::with_capacity(semantics.children.len());
+    for child in &semantics.children {
+        if append(
+            child,
+            &mut nodes,
+            &mut projection,
+            &mut seen_nodes,
+            &mut seen_children,
+            semantics.scale,
+        ) {
+            let child_id = child.occurrence.node_id();
+            if seen_children.insert(child_id) {
+                children.push(child_id);
+            } else {
+                note_duplicate(child_id, Some(child.occurrence), &mut projection);
+            }
+        }
+    }
 
     if whole {
         let mut root = Node::new(Role::Window);
@@ -543,7 +558,7 @@ pub fn build(semantics: &WindowSemantics, known: &HashMap<NodeId, Occurrence>) -
         root.set_class_name("KoruWindow");
         root.set_bounds(physical(semantics.client, semantics.scale));
         root.set_children(children);
-        record(root_id, root_occurrence, &mut projection);
+        projection.occurrences.insert(root_id, root_occurrence);
         nodes.push((root_id, root));
     }
 
@@ -594,9 +609,19 @@ fn append(
     node: &SemanticNode,
     nodes: &mut Vec<(NodeId, Node)>,
     projection: &mut Projection,
+    seen_nodes: &mut HashSet<NodeId>,
+    seen_children: &mut HashSet<NodeId>,
     scale: f64,
-) {
+) -> bool {
     let id = node.occurrence.node_id();
+    // **Never hand a duplicate node or child to AccessKit.** `accesskit_consumer`
+    // panics unconditionally on duplicate child IDs inside a single `TreeUpdate`,
+    // which would take the whole application down. Count and log the bug instead
+    // of crashing, and drop the duplicate subtree from this update.
+    if !seen_nodes.insert(id) {
+        note_duplicate(id, Some(node.occurrence), projection);
+        return false;
+    }
     let mut built = Node::new(node.role);
     built.set_author_id(node.occurrence.locator());
     if let Some(label) = &node.label {
@@ -670,6 +695,10 @@ fn append(
         match &text.runs {
             Runs::Published(runs) => {
                 for (run_id, run) in runs {
+                    if !seen_nodes.insert(*run_id) || !seen_children.insert(*run_id) {
+                        note_duplicate(*run_id, None, projection);
+                        continue;
+                    }
                     let mut run = run.clone();
                     scale_text_run(&mut run, scale);
                     children.push(*run_id);
@@ -679,7 +708,15 @@ fn append(
             // Named, not copied: the client already holds these nodes, and the
             // control is being republished because something *about it*
             // changed — its caret, usually.
-            Runs::Retained(ids) => children.extend(ids.iter().copied()),
+            Runs::Retained(ids) => {
+                for run_id in ids {
+                    if seen_children.insert(*run_id) {
+                        children.push(*run_id);
+                    } else {
+                        note_duplicate(*run_id, None, projection);
+                    }
+                }
+            }
         }
         if let Some(selection) = text.selection {
             built.set_text_selection(selection);
@@ -688,34 +725,50 @@ fn append(
             built.set_read_only();
         }
     }
-    let published: Vec<NodeId> = node
-        .children
-        .iter()
-        .map(|child| {
-            append(child, nodes, projection, scale);
-            child.occurrence.node_id()
-        })
-        .collect();
+    let mut published = Vec::with_capacity(node.children.len());
+    for child in &node.children {
+        if append(child, nodes, projection, seen_nodes, seen_children, scale) {
+            published.push(child.occurrence.node_id());
+        }
+    }
     match &node.child_order {
         // A delta republishing a container: the list is what the client must
         // end up holding, not what this update happens to carry.
-        Some(order) => children.extend(order.iter().copied()),
-        None => children.extend(published),
+        Some(order) => {
+            for child_id in order {
+                if seen_children.insert(*child_id) {
+                    children.push(*child_id);
+                } else {
+                    note_duplicate(*child_id, None, projection);
+                }
+            }
+        }
+        None => {
+            for child_id in published {
+                if seen_children.insert(child_id) {
+                    children.push(child_id);
+                } else {
+                    note_duplicate(child_id, None, projection);
+                }
+            }
+        }
     }
     if !children.is_empty() {
         built.set_children(children);
     }
-    record(id, node.occurrence, projection);
+    projection.occurrences.insert(id, node.occurrence);
     nodes.push((id, built));
+    true
 }
 
-fn record(id: NodeId, occurrence: Occurrence, projection: &mut Projection) {
-    // Any repeat is a bug, and the two kinds are worth telling apart in a
-    // debugger but not in the count: either two locators hashed to one id, or
-    // one control was published twice and would then have two parents.
-    if projection.occurrences.insert(id, occurrence).is_some() {
-        projection.duplicate_ids += 1;
-    }
+fn note_duplicate(id: NodeId, occurrence: Option<Occurrence>, projection: &mut Projection) {
+    projection.duplicate_ids += 1;
+    tracing::warn!(
+        target: "koru::accessibility",
+        node_id = id.0,
+        locator = occurrence.map(|o| o.locator()),
+        "skipped duplicate accessibility node id to keep TreeUpdate coherent"
+    );
 }
 
 /// The same conversion, applied to a text run's three geometries.

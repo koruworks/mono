@@ -122,7 +122,14 @@ struct Client {
 
 impl Client {
     fn apply(&mut self, update: &TreeUpdate) {
+        let mut seen_children = std::collections::HashSet::new();
         for (id, node) in &update.nodes {
+            for child in node.children() {
+                assert!(
+                    seen_children.insert(*child),
+                    "TreeUpdate includes duplicate child {child:?}"
+                );
+            }
             self.nodes.insert(*id, node.clone());
         }
         if let Some(tree) = &update.tree {
@@ -1890,4 +1897,88 @@ fn a_loading_image_is_a_busy_image_between_its_paragraphs() {
         "the placeholder left the tree"
     );
     let _ = screen.client.reachable();
+}
+
+/// Legacy documents that pasted or duplicated pills before fresh `AttrId`
+/// minting can carry the same `AttrId` on two different paragraphs (or twice on
+/// one paragraph). Scrolling both into view must never emit a duplicate child
+/// `NodeId` to AccessKit, and deleting one paragraph must leave the other's
+/// pill intact.
+#[test]
+fn two_paragraphs_sharing_a_legacy_pill_attr_id_publish_distinct_controls() {
+    use koru_core::node::{Attr, AttrValue};
+    let mut screen = reading(&["First ", "Second "]);
+    let rows = body_rows(&screen.v);
+    let shared = Attr::labelled("link", AttrValue::Url("https://koru.do".into()), "Koru");
+    screen
+        .w
+        .ws
+        .insert_pill(rows[0], "First ".len(), &shared)
+        .expect("pill on first row");
+    screen
+        .w
+        .ws
+        .insert_pill(rows[1], "Second ".len(), &shared)
+        .expect("same AttrId on second row");
+    // Also repeat the same AttrId a second time in the first paragraph,
+    // separated by plain text so Loro keeps two distinct pill runs.
+    let end = screen
+        .w
+        .ws
+        .read(rows[0])
+        .unwrap()
+        .content
+        .as_text()
+        .unwrap()
+        .len();
+    screen
+        .w
+        .ws
+        .insert_text(rows[0], end, " and ")
+        .expect("separator text");
+    screen
+        .w
+        .ws
+        .insert_pill(rows[0], end + " and ".len(), &shared)
+        .expect("second pill with same AttrId on first row");
+    View::adopt(&mut screen.v, &screen.w.ws);
+    super::leaf_mut(&mut screen.v).expect("a document").reflow();
+
+    screen.service();
+    assert_eq!(
+        screen.pane.counters().duplicate_ids,
+        0,
+        "shared pill AttrIds must get distinct accessibility occurrences"
+    );
+    let _ = screen.client.reachable();
+
+    let first_links: Vec<NodeId> = screen
+        .client
+        .node(screen.paragraph(rows[0]))
+        .children()
+        .iter()
+        .copied()
+        .filter(|id| screen.client.node(*id).role() == Role::Link)
+        .collect();
+    let second_links: Vec<NodeId> = screen
+        .client
+        .node(screen.paragraph(rows[1]))
+        .children()
+        .iter()
+        .copied()
+        .filter(|id| screen.client.node(*id).role() == Role::Link)
+        .collect();
+    assert_eq!(first_links.len(), 2);
+    assert_eq!(second_links.len(), 1);
+    assert_ne!(first_links[0], first_links[1]);
+    assert!(!first_links.contains(&second_links[0]));
+
+    // Removing the first paragraph retires only its pills; the second row's
+    // pill stays reachable and valid.
+    screen.w.ws.delete(rows[0]).expect("delete first row");
+    View::adopt(&mut screen.v, &screen.w.ws);
+    super::leaf_mut(&mut screen.v).expect("a document").reflow();
+    screen.service();
+    assert_eq!(screen.pane.counters().duplicate_ids, 0);
+    assert!(screen.client.reachable().contains(&second_links[0]));
 }

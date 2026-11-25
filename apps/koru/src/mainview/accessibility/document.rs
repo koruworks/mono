@@ -34,7 +34,7 @@
 //!     ├── MultilineTextInput  a paragraph koru:wN/vV/n:<node uuid>#text
 //!     │   ├── TextRun  …                  (not a control; addressed only inside a text position)
 //!     │   ├── CheckBox  the drawn box     koru:wN/vV/n:<node uuid>#check   (a checklist row)
-//!     │   ├── Link | Label  a pill        koru:wN/vV/n:<attr uuid>#pill
+//!     │   ├── Link | Label  a pill        koru:wN/vV/n:<row+attr hash>#pill
 //!     │   └── Label   the task lifecycle  koru:wN/vV/n:<node uuid>#state   (a task)
 //!     ├── Image     a diagram's picture      koru:wN/vV/n:<node uuid>#text   (a `mermaid` block, drawn or drawing)
 //!     └── …
@@ -178,7 +178,7 @@ pub(crate) struct Bodies {
     /// what forces the whole body out again.
     published_read_only: Option<bool>,
     /// The pills published under each row, so one that has gone can be retired.
-    published_pills: HashMap<KoruNodeId, Vec<uuid::Uuid>>,
+    published_pills: HashMap<KoruNodeId, Vec<Occurrence>>,
     /// What each row last went out saying about its box and its lifecycle, so
     /// a control that has left it can be retired.
     ///
@@ -389,7 +389,7 @@ impl MainView {
             .rows
             .iter()
             .map(|row| {
-                state.remember_pills(row);
+                state.remember_pills(cx, row);
                 paragraph(cx, row, read_only)
             })
             .collect();
@@ -737,7 +737,7 @@ impl Bodies {
             for row in rows {
                 self.retired.push(paragraph_occurrence(cx, row));
                 for pill in self.published_pills.remove(&row).unwrap_or_default() {
-                    self.retired.push(pill_occurrence(cx, pill));
+                    self.retired.push(pill);
                 }
                 self.retire_facts(cx, row, None);
             }
@@ -786,7 +786,7 @@ impl Bodies {
         for row in &update.removed {
             self.retired.push(paragraph_occurrence(cx, *row));
             for pill in self.published_pills.remove(row).unwrap_or_default() {
-                self.retired.push(pill_occurrence(cx, pill));
+                self.retired.push(pill);
             }
             self.retire_facts(cx, *row, None);
         }
@@ -797,17 +797,13 @@ impl Bodies {
             self.retire_facts(cx, row.id, Some(row.facts));
         }
         for row in &update.rows {
-            let now: Vec<uuid::Uuid> = row
-                .objects
-                .iter()
-                .map(|object| object.attr.as_uuid())
-                .collect();
+            let now = pill_occurrences(cx, row.id, &row.objects);
             let Some(before) = self.published_pills.get(&row.id) else {
                 continue;
             };
             for pill in before {
                 if !now.contains(pill) {
-                    self.retired.push(pill_occurrence(cx, *pill));
+                    self.retired.push(*pill);
                 }
             }
         }
@@ -816,14 +812,9 @@ impl Bodies {
     /// Remember which pills this row went out with. A row a publish **skipped**
     /// did not change its shaping, so its pills did not move either, and
     /// nothing here has to be told about it.
-    fn remember_pills(&mut self, row: &RowUpdate) {
-        self.published_pills.insert(
-            row.id,
-            row.objects
-                .iter()
-                .map(|object| object.attr.as_uuid())
-                .collect(),
-        );
+    fn remember_pills(&mut self, cx: &Shell, row: &RowUpdate) {
+        self.published_pills
+            .insert(row.id, pill_occurrences(cx, row.id, &row.objects));
     }
 
     /// The chrome fingerprint the client is holding, and whether it is still
@@ -850,7 +841,7 @@ impl Bodies {
         for row in rows {
             self.retired.push(paragraph_occurrence(cx, row));
             for pill in self.published_pills.remove(&row).unwrap_or_default() {
-                self.retired.push(pill_occurrence(cx, pill));
+                self.retired.push(pill);
             }
             self.retire_facts(cx, row, None);
         }
@@ -906,15 +897,16 @@ fn paragraph(cx: &Shell, row: &RowUpdate, read_only: bool) -> SemanticNode {
             &[text],
         ));
     }
+    let pill_ids = pill_occurrences(cx, row.id, &row.objects);
     let objects: Vec<SemanticNode> = row
         .objects
         .iter()
-        .map(|object| {
-            let mut pill =
-                SemanticNode::new(pill_occurrence(cx, object.attr.as_uuid()), object.role())
-                    // The caption the document already carries. **User content**, never
-                    // translated and never invented.
-                    .with_label(object.label.clone());
+        .zip(pill_ids)
+        .map(|(object, occurrence)| {
+            let mut pill = SemanticNode::new(occurrence, object.role())
+                // The caption the document already carries. **User content**, never
+                // translated and never invented.
+                .with_label(object.label.clone());
             if let Some(value) = object.value() {
                 pill = pill.with_value(value.to_string());
             }
@@ -1101,8 +1093,41 @@ pub(crate) fn state_occurrence(cx: &Shell, row: KoruNodeId) -> Occurrence {
     Occurrence::model(cx.window, cx.view, row.as_uuid(), STATE)
 }
 
-pub(crate) fn pill_occurrence(cx: &Shell, attr: uuid::Uuid) -> Occurrence {
-    Occurrence::model(cx.window, cx.view, attr, PILL)
+/// Scope each pill's accessibility occurrence to `(row, attr, ordinal)` so
+/// legacy documents that reused an `AttrId` across rows — or twice inside one
+/// row — never collide in the AccessKit tree.
+fn pill_occurrences(
+    cx: &Shell,
+    row: KoruNodeId,
+    objects: &[koru_editor::accessibility::InlineObject],
+) -> Vec<Occurrence> {
+    let mut seen: HashMap<uuid::Uuid, usize> = HashMap::with_capacity(objects.len());
+    objects
+        .iter()
+        .map(|object| {
+            let attr = object.attr.as_uuid();
+            let ordinal = *seen.entry(attr).and_modify(|n| *n += 1).or_insert(0);
+            pill_occurrence(cx, row, attr, ordinal)
+        })
+        .collect()
+}
+
+pub(crate) fn pill_occurrence(
+    cx: &Shell,
+    row: KoruNodeId,
+    attr: uuid::Uuid,
+    ordinal: usize,
+) -> Occurrence {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"koru:pill:v1");
+    hasher.update(row.as_uuid().as_bytes());
+    hasher.update(attr.as_bytes());
+    hasher.update(&(ordinal as u64).to_le_bytes());
+    let hash = hasher.finalize();
+    let bytes: [u8; 16] = hash.as_bytes()[..16]
+        .try_into()
+        .expect("blake3 digest is 32 bytes");
+    Occurrence::model(cx.window, cx.view, uuid::Uuid::from_bytes(bytes), PILL)
 }
 
 /// A `RefCell` so a `&self` semantic query may mint ids. See the module note.

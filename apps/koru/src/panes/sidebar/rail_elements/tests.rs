@@ -131,10 +131,12 @@ fn active_workspace_paints_an_accent_border_and_inactive_workspaces_do_not() {
         let active_leaf = SquareContents {
             contents: rail.workspaces[0].contents.clone(),
             dimmed: false,
+            selected_border: true,
         };
         let other_leaf = SquareContents {
             contents: rail.workspaces[1].contents.clone(),
             dimmed: false,
+            selected_border: true,
         };
         active_leaf.paint(
             &mut active_scene,
@@ -155,6 +157,83 @@ fn active_workspace_paints_an_accent_border_and_inactive_workspaces_do_not() {
         assert!(
             active_scene.encoding().path_tags.len() > other_scene.encoding().path_tags.len(),
             "the active workspace draws an additional accent border path"
+        );
+    });
+}
+
+#[test]
+fn active_app_paints_an_accent_border_and_inactive_apps_do_not() {
+    let rail = Rail {
+        workspaces: Vec::new(),
+        views: vec![
+            Item {
+                hit: Hit::App(NavigatorMode::Documents),
+                name: "Documents".into(),
+                contents: Contents::Glyph(koru_draw::icons::FILES),
+                selected: true,
+                dimmed: false,
+            },
+            Item {
+                hit: Hit::App(NavigatorMode::Tasks),
+                name: "Tasks".into(),
+                contents: Contents::Glyph(koru_draw::icons::FILES),
+                selected: false,
+                dimmed: false,
+            },
+        ],
+        pins: Vec::new(),
+        foot: Vec::new(),
+    };
+    crate::input_engine::with(|engine| {
+        let layout = rail.layout(
+            engine,
+            &mut TextCache::default(),
+            band(),
+            Interaction::default(),
+        );
+        let active_node = layout
+            .frame
+            .node(key(Hit::App(NavigatorMode::Documents)))
+            .unwrap();
+        let other_node = layout
+            .frame
+            .node(key(Hit::App(NavigatorMode::Tasks)))
+            .unwrap();
+        assert!(active_node.state.selected);
+        assert!(!other_node.state.selected);
+
+        let mut active_scene = Scene::new();
+        let mut other_scene = Scene::new();
+        let cx = FrameCx::root();
+        let active_leaf = SquareContents {
+            contents: rail.views[0].contents.clone(),
+            dimmed: false,
+            selected_border: true,
+        };
+        let other_leaf = SquareContents {
+            contents: rail.views[1].contents.clone(),
+            dimmed: false,
+            selected_border: true,
+        };
+        active_leaf.paint(
+            &mut active_scene,
+            Affine::IDENTITY,
+            engine,
+            active_node.rect,
+            &cx,
+            active_node.state,
+        );
+        other_leaf.paint(
+            &mut other_scene,
+            Affine::IDENTITY,
+            engine,
+            other_node.rect,
+            &cx,
+            other_node.state,
+        );
+        assert!(
+            active_scene.encoding().path_tags.len() > other_scene.encoding().path_tags.len(),
+            "the active app draws the same accent border path as the active workspace"
         );
     });
 }

@@ -972,6 +972,9 @@ pub struct ExploreView {
     /// The profile menu retained behind its Help flyout. The active popover
     /// continues to own Help's existing input, scroll and accessibility.
     help_parent: Option<Popover>,
+    /// Pointer anchor for the diagonal aim corridor from the Profile menu's
+    /// *Help* row toward the Help flyout.
+    help_aim: Option<(f32, f32)>,
     /// The Workspaces page's own text engine and shaping cache, for the
     /// frame that answers input and the accessibility tree.
     page_layout: RefCell<popover_elements::PageLayout>,
@@ -3719,6 +3722,7 @@ impl ExploreView {
     pub fn close_popover(&mut self) -> bool {
         // A cascade opens and closes as one unit. Removing its anchor while
         // fading the child would relocate Help to the standalone position.
+        self.help_aim = None;
         if self.help_parent.take().is_some() {
             return self.popover.take().is_some();
         }
@@ -3790,6 +3794,7 @@ impl ExploreView {
     /// anchor.
     fn toggle_popover_from(&mut self, kind: PopoverKind, anchor: PopoverAnchor) {
         self.help_parent = None;
+        self.help_aim = None;
         let now = Instant::now();
         let switcher = |k: PopoverKind| k != PopoverKind::LibraryActions;
         match self.popover.as_mut() {
@@ -5417,6 +5422,9 @@ impl ExploreView {
         mods: PressMods,
     ) -> Outcome {
         let PressMods { ctrl, shift, .. } = mods;
+        // A click outside the trigger/bridge chooses that parent row directly
+        // rather than being swallowed by the hover aim corridor.
+        self.help_aim = None;
         self.help_pointer_to_parent(area, viewport, x, y);
         if self.help_parent_or_bridge_contains(area, viewport, x, y) {
             return Outcome::Consumed;
@@ -6343,6 +6351,11 @@ impl ExploreView {
             moved |= p.hover != popover;
             p.hover = popover;
         }
+        if self.hovering_profile_help() {
+            self.help_aim = Some((x, y));
+        } else if self.help_parent.is_none() {
+            self.help_aim = None;
+        }
         moved
     }
 
@@ -7174,6 +7187,7 @@ impl ExploreView {
     }
 
     pub fn clear_hover(&mut self) -> bool {
+        self.help_aim = None;
         let restored_parent = self.restore_help_parent();
         let had = self.rail.clear_hover()
             || restored_parent

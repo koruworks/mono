@@ -384,6 +384,56 @@ fn a_control_published_twice_is_counted_rather_than_silently_reparented() {
         ],
     ));
     assert_eq!(projection.duplicate_ids, 1);
+    // The emitted TreeUpdate must still have unique child IDs across every
+    // parent, because `accesskit_consumer` panics on duplicate child IDs.
+    let mut seen_children = std::collections::HashSet::new();
+    for (_, node) in &projection.update.nodes {
+        for child in node.children() {
+            assert!(
+                seen_children.insert(*child),
+                "TreeUpdate contained duplicate child {child:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn duplicate_child_under_two_parents_is_counted_and_omitted_from_tree_update() {
+    let window = WindowSlot::from_raw(1);
+    let view = ViewSlot::from_raw(1);
+    let shared = Occurrence::model(window, view, doc(), ControlPart::new("pill"));
+    let first = SemanticNode::new(
+        Occurrence::instance(window, view, "row", 1, ControlPart::ROOT),
+        Role::Group,
+    )
+    .with_children(vec![SemanticNode::new(shared, Role::Link)]);
+    let second = SemanticNode::new(
+        Occurrence::instance(window, view, "row", 2, ControlPart::ROOT),
+        Role::Group,
+    )
+    .with_children(vec![SemanticNode::new(shared, Role::Link)]);
+
+    let projection = build(&semantics(window, "Notes", vec![first, second]));
+    assert_eq!(projection.duplicate_ids, 1);
+    let mut seen_children = std::collections::HashSet::new();
+    for (_, node) in &projection.update.nodes {
+        for child in node.children() {
+            assert!(
+                seen_children.insert(*child),
+                "TreeUpdate contained duplicate child {child:?}"
+            );
+        }
+    }
+    let shared_id = shared.node_id();
+    assert_eq!(
+        projection
+            .update
+            .nodes
+            .iter()
+            .filter(|(id, _)| *id == shared_id)
+            .count(),
+        1
+    );
 }
 
 #[test]
