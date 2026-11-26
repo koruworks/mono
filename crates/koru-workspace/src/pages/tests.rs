@@ -571,13 +571,16 @@ fn final_purge_keeps_one_fixed_event_per_document_and_the_original_root() {
     let before = ws.document_purge_events().unwrap().unwrap();
     assert_eq!(before.len(), 2);
     for event in &before {
+        let recorded = event
+            .version
+            .as_deref()
+            .map(|bytes| loro::VersionVector::decode(bytes).expect("valid version vector"));
         assert_eq!(
-            event.version,
+            recorded,
             Some(
                 _directory
                     .1
                     .version(DocumentId::from_uuid(event.document_id))
-                    .encode()
             ),
             "a closed source still has exact stored coverage"
         );
