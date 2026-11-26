@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{Workspace, document_root, seed_document};
-use koru_core::{Attr, AttrValue, DocumentId, Mark, Node, WorkspaceId};
+use koru_core::{Attr, AttrValue, Content, DocumentId, Mark, Node, WorkspaceId};
 
 fn empty() -> WorkspaceDoc {
     WorkspaceDoc::from_snapshot(
@@ -66,7 +66,28 @@ fn initialization_preserves_complete_content_and_only_destination_identity() {
         assert_eq!(from_depth, to_depth);
         assert_eq!(original.kind, copied.kind);
         assert_eq!(original.meta, copied.meta);
-        assert_eq!(original.content, copied.content);
+        match (&original.content, &copied.content) {
+            (
+                Content::Text {
+                    text: original_text,
+                    attrs: original_attrs,
+                },
+                Content::Text {
+                    text: copied_text,
+                    attrs: copied_attrs,
+                },
+            ) => {
+                assert_eq!(original_text, copied_text);
+                assert_eq!(original_attrs.len(), copied_attrs.len());
+                for (from_attr, to_attr) in original_attrs.iter().zip(copied_attrs) {
+                    assert_ne!(from_attr.id, to_attr.id);
+                    assert_eq!(from_attr.role, to_attr.role);
+                    assert_eq!(from_attr.value, to_attr.value);
+                    assert_eq!(from_attr.label, to_attr.label);
+                }
+            }
+            _ => assert_eq!(original.content, copied.content),
+        }
         assert_eq!(source.runs(*from).unwrap(), destination.runs(*to).unwrap());
     }
     assert_eq!(source.version(), before);

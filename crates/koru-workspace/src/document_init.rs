@@ -18,7 +18,7 @@ pub(super) enum InitialContents<'a> {
 ///
 /// This is the in-memory part of [`crate::Workspace::create_document_from_cutting_after`].
 /// Existing content, including trash, is refused before any write. `plant`
-/// preserves the subtree's content and remints node identities; the destination's
+/// preserves the subtree's content and remints node and attribute identities; the destination's
 /// workspace/document stamps remain its own. A nonempty title renames the root.
 ///
 /// The caller must discard the unpublished destination on error. Core edit
