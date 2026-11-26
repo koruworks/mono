@@ -105,7 +105,7 @@ experimental features.
 
 | Platform | Status |
 | --- | --- |
-| **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as an installer, or a zip to run without installing; either updates itself. They are not code-signed yet, so SmartScreen asks before the first run and reminders show no notifications |
+| **Windows** (x86-64) | Supported. Builds, runs and packages from this repository. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as a signed installer, or a zip to run without installing; either updates itself |
 | **macOS** (Apple silicon, macOS 13.4+) | Supported. A [stable build](https://github.com/koruworks/mono/releases/latest) and a [nightly build](https://github.com/koruworks/mono/releases/tag/nightly) are published as signed and notarized disk images that update themselves, and it builds and runs from source |
 | **Android** | Not released yet. The native app builds with Gradle and is in active development; see [Android setup and verification](apps/android/README.md) |
 | **iOS** | Held. The project in `apps/ios` is not released yet; the first release waits for it to be built and verified on a Mac |

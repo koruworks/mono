@@ -68,25 +68,19 @@ pub(crate) const NIGHTLY_NOTES_USAGE: &str = "usage: koru-release nightly-notes\
 ///
 /// **One page for every platform's build**, and each build writes the same
 /// body, so it names them all rather than only the one it built; the publish
-/// job adds a line for a platform whose build failed this time. The Windows
-/// line goes when the nightly is signed (NIGHTLY rev2 §5).
+/// job adds a line for a platform whose build failed this time.
 const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "**Linux** is a preview — X11 only (XWayland on Wayland desktops), no dictation yet.",
-    "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
-     reminders show no notifications.",
     "**Android** nightlies (the `-android-aarch64.apk` below, when it is listed) install as their own \
      app, *Koru Nightly*, beside Koru, and offer the next nightly in the app; installing it is your \
      choice, on the system's own screen.",
 ];
 
 /// The same for a stable release (STABLE.md), which is built with Koru Cloud
-/// (S8). The Windows line goes when the release is signed, as the nightly's
-/// does.
+/// (S8).
 const STABLE_PLATFORM_NOTES: &[&str] = &[
     "**Linux** runs as an X11 app (XWayland on Wayland desktops); text may look soft at \
      fractional scaling. Dictation is not available on Linux yet.",
-    "**Windows** is not code-signed yet — SmartScreen asks before the first run, and \
-     reminders show no notifications.",
 ];
 
 fn platform_notes(channel: ReleaseChannel) -> &'static [&'static str] {

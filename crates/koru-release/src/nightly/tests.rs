@@ -271,7 +271,7 @@ fn the_release_body_is_the_notes_then_the_build_then_the_platform_notes() {
     assert!(body.contains(
         "[`0123456`](https://github.com/koruworks/mono/commit/0123456789abcdef0123456789abcdef01234567)"
     ));
-    assert!(body.contains("- **Windows** is not code-signed yet"));
+    assert!(!body.contains("not code-signed yet"));
     assert!(!body.contains("No Koru Cloud"));
     assert!(body.contains("- **Android** nightlies (the `-android-aarch64.apk` below"));
 
@@ -323,7 +323,7 @@ fn a_stable_manifest_points_at_its_own_tagged_release() {
     assert_eq!(release_tag(ReleaseChannel::Stable, "0.1.4"), "v0.1.4");
 }
 
-/// The stable page says what Linux and Windows lack, and none of the
+/// The stable page says what Linux lacks, and none of the
 /// nightly's own lines: it has Koru Cloud, so it never says it has not.
 #[test]
 fn a_stable_release_body_has_the_stable_platform_notes() {
@@ -332,10 +332,7 @@ fn a_stable_release_body_has_the_stable_platform_notes() {
     assert!(body.contains("`0.1.4`"), "{body}");
     assert!(body.contains("- **Linux** runs as an X11 app"), "{body}");
     assert!(body.contains("Dictation is not available on Linux yet."));
-    assert!(
-        body.contains("- **Windows** is not code-signed yet"),
-        "{body}"
-    );
+    assert!(!body.contains("not code-signed yet"), "{body}");
     assert!(!body.contains("Koru Cloud"), "{body}");
     assert!(!body.contains("is a preview"), "{body}");
     assert!(!body.contains("in the nightly"), "{body}");

@@ -78,25 +78,6 @@ struct SquareContents {
     selected_border: bool,
 }
 
-fn paint_selected_border(scene: &mut Scene, root: Affine, at: Rect, cx: &FrameCx) {
-    let width = koru_draw::theme::BORDER_W * 1.5;
-    let inset = (width * 0.5) as f32;
-    let radius = (Radius::L.px(cx.profile, at.w, at.h) - inset).max(0.0);
-    koru_draw::scene::stroke(
-        scene,
-        root,
-        Accent::Base.of(cx.palette()),
-        width,
-        &koru_draw::scene::rrect(
-            at.x + inset,
-            at.y + inset,
-            (at.w - inset * 2.0).max(0.0),
-            (at.h - inset * 2.0).max(0.0),
-            radius,
-        ),
-    );
-}
-
 impl Leaf for SquareContents {
     fn measure(&self, _: Option<f32>) -> (f32, f32) {
         (metrics::RAIL_SQUARE.value, metrics::RAIL_SQUARE.value)
@@ -184,7 +165,22 @@ impl Leaf for SquareContents {
             }
         }
         if state.selected && self.selected_border {
-            paint_selected_border(scene, root, at, cx);
+            let width = koru_draw::theme::BORDER_W * 1.5;
+            let inset = (width * 0.5) as f32;
+            let radius = (Radius::L.px(cx.profile, at.w, at.h) - inset).max(0.0);
+            koru_draw::scene::stroke(
+                scene,
+                root,
+                Accent::Base.of(cx.palette()),
+                width,
+                &koru_draw::scene::rrect(
+                    at.x + inset,
+                    at.y + inset,
+                    (at.w - inset * 2.0).max(0.0),
+                    (at.h - inset * 2.0).max(0.0),
+                    radius,
+                ),
+            );
         }
     }
 }
