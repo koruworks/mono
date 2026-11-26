@@ -1,0 +1,39 @@
+title = "Signed Windows builds, 30-day automatic trash cleanup, and stability fixes"
+
+summary = [
+  "Windows nightlies are now code-signed by Koru Works, Inc. and include the signed notification identity package so reminders can deliver native Windows notifications.",
+  "Trashed documents, document bin rows, and deleted task-list notes now empty automatically after 30 days on desktop and Android for local-only and Koru Cloud workspaces, with removal countdowns shown in desktop Trash.",
+  "Fixed a desktop crash when scrolling documents with copied or duplicated inline pills, added an accent border to the active app in the left rail, and made moving from the Profile menu into the Help flyout reliable.",
+]
+
+body = """
+## Signed Windows builds
+
+- On Windows, the nightly installer, uninstaller, and executables are now
+  code-signed by **Koru Works, Inc.**
+- Signed builds now include the Windows notification identity package, enabling
+  native Windows reminder notifications.
+
+## Automatic 30-day trash cleanup
+
+- Trashed documents, rows in a document's bin, and deleted task-list notes are
+  now removed automatically after 30 days on both desktop and Android for
+  local-only and Koru Cloud workspaces.
+- Peer-to-peer workspaces keep manual trash cleanup and are not emptied
+  automatically.
+- On desktop, the **Trash** view now displays when each item will be removed
+  (*Removed in N days*, *Removed in 1 day*, or *Removed today*) in workspaces
+  with automatic cleanup, and **Koru Cloud** storage notes that deleted
+  documents count toward storage until they are removed after 30 days.
+- Stored OCR text from deleted pictures is also cleaned up once a page no
+  longer references the image.
+
+## Desktop rail, menus, and fixes
+
+- The active app in the left rail now shows the same accent-color border as the
+  active workspace.
+- Moving the pointer horizontally or diagonally from **Help** in the Profile
+  menu into the **Help** flyout no longer closes the submenu on the way over.
+- Fixed a desktop crash when scrolling documents containing copied or
+  duplicated inline pills.
+"""
