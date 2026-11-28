@@ -59,7 +59,7 @@ fn prepare_themed(
             let offset = run.stream_offsets.draw_data;
             let selected = select_run_settings(encoding.draw_data[offset], light, dark, dark_theme);
             let gamma = if selected.gamma.is_finite() {
-                selected.gamma.clamp(0.5, 3.0)
+                selected.gamma.clamp(0.0, 3.0)
             } else {
                 1.0
             };

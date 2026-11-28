@@ -5,13 +5,16 @@ standalone comparison editor; it does not open a Koru profile or store.
 Arguments after the command go to the editor, for example:
 
 ```bat
-koru.bat font-test --font=Inter --coverage-gamma=1.75 --coverage-cutoff=0.05
+koru.bat font-test --font=Inter --color=#0C0C0C --coverage-gamma=1.75 --coverage-cutoff=0.05
 ```
 
 The sample uses Quiet.md's Feishu theme metrics, initially with Segoe UI.
-Use **F3/F4** for Koru fonts, **F5** for heading weight, **F6** for hinting,
+Use **F2** (or click the hex badge at top right) to type a `#RRGGBB` or `#RGB`
+font color (live preview at 6 digits, **Enter** to apply, **Esc** to cancel),
+**F3/F4** for Koru fonts, **F5** for heading weight, **F6** for hinting,
 **F7** for antialiasing, **F8** for physical offset, **F9** for coverage gamma,
 **F10** for cutoff, and **F11** to reset coverage. The title shows each value.
+`--color=#RRGGBB` (or `--font-color=#RRGGBB`) sets the initial font color.
 `--font-report` reports the resolved faces. `--fonts-dir=PATH` overrides the
 default repository `assets/fonts` directory.
 

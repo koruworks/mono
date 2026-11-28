@@ -42,6 +42,7 @@ fn main() {
         "coverage/tests.rs",
         "fonts.rs",
         "quiet.rs",
+        "quiet/tests.rs",
         "zoom.rs",
         "zoom/tests.rs",
         "zoom.wgsl",

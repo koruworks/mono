@@ -74,6 +74,26 @@ fn coverage_changes_only_glyph_edges_on_light_and_dark_backgrounds() {
             pixel(&filtered, 31, 15),
             "coverage below cutoff must disappear into the background"
         );
+
+        // Gamma 0.0: any positive coverage at or above cutoff snaps to full
+        // solid coverage (matching the interior), while zero-coverage
+        // background pixels stay untouched even when cutoff is 0.0.
+        let mut zero_gamma = original.clone();
+        zero_gamma.encoding_mut().draw_data[data + 1] = 0.0_f32.to_bits();
+        zero_gamma.encoding_mut().draw_data[data + 2] = 0.0_f32.to_bits();
+        let solid =
+            crate::offscreen::raster_with(&mut renderer, handle, &zero_gamma, 32, 16, background)
+                .unwrap();
+        assert_eq!(
+            pixel(&solid, 31, 15),
+            pixel(&normal, 31, 15),
+            "zero-coverage background must stay untouched at gamma 0.0"
+        );
+        assert_eq!(
+            pixel(&solid, 18, 7),
+            pixel(&normal, 22, 7),
+            "partial edge coverage must snap to full interior ink at gamma 0.0"
+        );
     }
 }
 

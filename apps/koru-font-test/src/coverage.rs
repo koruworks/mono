@@ -27,8 +27,8 @@ impl Coverage {
             if let Some(value) = arg.strip_prefix("--coverage-gamma=") {
                 settings.gamma = value.parse()?;
                 anyhow::ensure!(
-                    settings.gamma.is_finite() && (0.5..=3.0).contains(&settings.gamma),
-                    "coverage gamma must be 0.5..=3.0"
+                    settings.gamma.is_finite() && (0.0..=3.0).contains(&settings.gamma),
+                    "coverage gamma must be 0.0..=3.0"
                 );
             } else if let Some(value) = arg.strip_prefix("--coverage-cutoff=") {
                 settings.cutoff = value.parse()?;
@@ -38,7 +38,7 @@ impl Coverage {
                 );
             } else {
                 anyhow::bail!(
-                    "Unknown argument {arg}. Usage: koru.bat font-test [--font=NAME] [--fonts-dir=PATH] [--list-fonts] [--font-report] [--coverage-gamma=1.0] [--coverage-cutoff=0.0]"
+                    "Unknown argument {arg}. Usage: koru.bat font-test [--font=NAME] [--color=#RRGGBB] [--fonts-dir=PATH] [--list-fonts] [--font-report] [--coverage-gamma=1.0] [--coverage-cutoff=0.0]"
                 );
             }
         }
@@ -46,10 +46,10 @@ impl Coverage {
     }
 
     pub fn next_gamma(&mut self) {
-        self.gamma = [1.0, 1.1, 1.25, 1.5, 1.75, 2.0]
+        self.gamma = [0.0, 0.5, 0.75, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
             .into_iter()
             .find(|value| *value > self.gamma)
-            .unwrap_or(1.0);
+            .unwrap_or(0.0);
     }
 
     pub fn next_cutoff(&mut self) {

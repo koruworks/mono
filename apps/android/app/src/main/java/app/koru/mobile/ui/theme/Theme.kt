@@ -119,7 +119,7 @@ object AppearanceStore {
 
 private val Light = lightColorScheme(
     background = Color.White, surface = Color.White,
-    onBackground = Color(0xFF191919), onSurface = Color(0xFF191919),
+    onBackground = Color(0xFF000000), onSurface = Color(0xFF000000),
     primary = Color(0xFF3B6BB5), onPrimary = Color.White,
     secondaryContainer = Color(0xFFF2F2F2), outline = Color(0xFFE0E0E0),
     surfaceVariant = Color(0xFFF1F1F3),

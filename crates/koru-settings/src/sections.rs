@@ -619,10 +619,10 @@ impl GlobalPatch {
         }
         for (field, value, min, max) in [
             ("text_offset", self.text_offset, 0.0, 1.0),
-            ("text_gamma", self.text_gamma, 0.5, 3.0),
+            ("text_gamma", self.text_gamma, 0.0, 3.0),
             ("text_cutoff", self.text_cutoff, 0.0, 0.5),
             ("text_offset_dark", self.text_offset_dark, 0.0, 1.0),
-            ("text_gamma_dark", self.text_gamma_dark, 0.5, 3.0),
+            ("text_gamma_dark", self.text_gamma_dark, 0.0, 3.0),
             ("text_cutoff_dark", self.text_cutoff_dark, 0.0, 0.5),
         ] {
             if value.is_some_and(|value| !value.is_finite() || !(min..=max).contains(&value)) {

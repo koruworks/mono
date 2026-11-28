@@ -299,11 +299,11 @@ pub struct TerminalPalette {
 
 static LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
     background: rgb(0xFF, 0xFF, 0xFF),
-    foreground: rgb(0x19, 0x19, 0x19),
-    cursor: rgb(0x19, 0x19, 0x19),
+    foreground: rgb(0x00, 0x00, 0x00),
+    cursor: rgb(0x00, 0x00, 0x00),
     selection: rgb(0xCF, 0xDD, 0xEE),
     ansi: [
-        rgb(0x19, 0x19, 0x19),
+        rgb(0x00, 0x00, 0x00),
         rgb(0x9F, 0x31, 0x2B),
         rgb(0x2F, 0x6B, 0x38),
         rgb(0x6B, 0x60, 0x1F),
@@ -318,7 +318,7 @@ static LIGHT_TERMINAL: TerminalPalette = TerminalPalette {
         rgb(0x2F, 0x6F, 0xB5),
         rgb(0xA8, 0x3C, 0x77),
         rgb(0x1F, 0x7D, 0x75),
-        rgb(0x19, 0x19, 0x19),
+        rgb(0x00, 0x00, 0x00),
     ],
 };
 
@@ -357,7 +357,7 @@ static DARK_TERMINAL: TerminalPalette = TerminalPalette {
 const LIGHT_TABLE: Palette = Palette {
     bg: rgb(0xFF, 0xFF, 0xFF),
     canvas: rgb(0xED, 0xEE, 0xF0),
-    text: rgb(0x19, 0x19, 0x19),
+    text: rgb(0x00, 0x00, 0x00),
     // 4.9:1 on a #F6F6F6 pane, past WCAG AA's 4.5:1 for 13 px text. The
     // #8A8A8A it replaces was 3.2:1, and vello's greyscale coverage (no gamma,
     // no contrast boost, stems at fractional x) made that pale grey read as blur.
@@ -367,7 +367,7 @@ const LIGHT_TABLE: Palette = Palette {
     // A separate field that happens to match `text`. It will not follow it —
     // moving one without the other leaves the caret a different colour from the
     // line it sits in.
-    caret: rgb(0x19, 0x19, 0x19),
+    caret: rgb(0x00, 0x00, 0x00),
     checkbox: rgb(0x8A, 0x8A, 0x8A),
     checkbox_done: rgb(0x45, 0x45, 0x45),
     // The notch punched out of a ticked box. It exists to match `bg`, so it

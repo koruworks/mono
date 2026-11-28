@@ -44,7 +44,7 @@ diff --git a/shader/fine.wgsl b/shader/fine.wgsl
 index f81f872..281cc2b 100644
 --- a/shader/fine.wgsl
 +++ b/shader/fine.wgsl
-@@ -1017,6 +1017,20 @@ fn main(
+@@ -1017,6 +1017,21 @@ fn main(
                  }
                  cmd_ix += 2u;
              }
@@ -55,8 +55,9 @@ index f81f872..281cc2b 100644
 +                for (var i = 0u; i < PIXELS_PER_THREAD; i += 1u) {
 +                    let raw = clamp(area[i], 0.0, 1.0);
 +                    var coverage = raw;
-+                    if raw < cutoff { coverage = 0.0; }
-+                    else if gamma != 1.0 && raw > 0.0 && raw < 1.0 { coverage = pow(raw, gamma); }
++                    if raw <= 0.0 || raw < cutoff { coverage = 0.0; }
++                    else if gamma == 0.0 { coverage = 1.0; }
++                    else if gamma != 1.0 && raw < 1.0 { coverage = pow(raw, gamma); }
 +                    let fg_i = fg * coverage;
 +                    rgba[i] = rgba[i] * (1.0 - fg_i.a) + fg_i;
 +                }
@@ -150,7 +151,7 @@ index 85f78c0..44fdb7b 100644
 +                            let gamma = f32::from_bits(ptcl[(cmd_ix + 2) as usize]);
 +                            let cutoff = f32::from_bits(ptcl[(cmd_ix + 3) as usize]);
 +                            ai = ai.clamp(0.0, 1.0);
-+                            ai = if ai < cutoff { 0.0 } else if gamma == 1.0 { ai } else { ai.powf(gamma) };
++                            ai = if ai <= 0.0 || ai < cutoff { 0.0 } else if gamma == 0.0 { 1.0 } else if gamma == 1.0 { ai } else { ai.powf(gamma) };
 +                        }
                          let fg_i = [fg[0] * ai, fg[1] * ai, fg[2] * ai, fg[3] * ai];
                          for j in 0..4 {

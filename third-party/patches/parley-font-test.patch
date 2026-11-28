@@ -1,9 +1,9 @@
 --- a/main.rs
 +++ b/main.rs
-@@ -1,14 +1,5 @@
+@@ -1,15 +1,6 @@
  // Copyright 2024 the Parley Authors
  // SPDX-License-Identifier: Apache-2.0 OR MIT
--
+
 -#![allow(missing_docs, reason = "We have many as-yet undocumented items.")]
 -#![expect(
 -    missing_debug_implementations,
@@ -12,10 +12,11 @@
 -    clippy::cast_possible_truncation,
 -    reason = "Deferred"
 -)]
- 
+-
  use accesskit::{Node, Role, Tree, TreeId, TreeUpdate};
  use anyhow::Result;
-@@ -18,7 +9,7 @@
+ use std::num::NonZeroUsize;
+@@ -18,7 +9,7 @@ use ui_events_winit::{WindowEventReducer, WindowEventTranslation};
  use vello::peniko::Color;
  use vello::util::{RenderContext, RenderSurface};
  use vello::wgpu;
@@ -24,99 +25,100 @@
  use winit::application::ApplicationHandler;
  use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
  use winit::event::{StartCause, WindowEvent};
-@@ -28,9 +19,13 @@
+@@ -28,9 +19,13 @@ use winit::window::Window;
  mod access_ids;
  use access_ids::{TEXT_INPUT_ID, WINDOW_ID};
- 
+
 +mod coverage;
 +mod fonts;
 +mod quiet;
  mod text;
--
--const WINDOW_TITLE: &str = "Vello Text Editor";
 +mod zoom;
-+
+
+-const WINDOW_TITLE: &str = "Vello Text Editor";
 +const WINDOW_TITLE: &str = "Koru font test — Parley / Vello reference";
- 
+
  // Simple struct to hold the state of the renderer
  pub struct ActiveRenderState<'s> {
-@@ -39,10 +34,11 @@
+@@ -39,10 +34,11 @@ pub struct ActiveRenderState<'s> {
      access_adapter: accesskit_winit::Adapter,
      window: Arc<Window>,
      sent_initial_access_update: bool,
 +    pixel_blitter: zoom::PixelBlitter,
  }
- 
+
  impl ActiveRenderState<'_> {
 -    fn access_update(&mut self, editor: &mut text::Editor) {
 +    fn access_update(&mut self, editor: &mut quiet::Page) {
          self.access_adapter.update_if_active(|| {
              let mut update = TreeUpdate {
                  tree_id: TreeId::ROOT,
-@@ -100,10 +96,10 @@
+@@ -100,10 +96,10 @@ struct SimpleVelloApp<'s> {
      scene: Scene,
- 
+
      /// Our `Editor`, which owns a `parley::PlainEditor`.
 -    editor: text::Editor,
 +    editor: quiet::Page,
- 
+
      /// The last generation of the editor layout that we drew.
 -    last_drawn_generation: text::Generation,
 +    last_drawn_generation: u64,
- 
+
      /// The IME cursor area we last sent to the platform.
      last_sent_ime_cursor_area: parley::BoundingBox,
-@@ -113,6 +109,7 @@
- 
+@@ -113,6 +109,7 @@ struct SimpleVelloApp<'s> {
+
      /// Translate winit events into ui-events events.
      event_reducer: WindowEventReducer,
 +    zoom: zoom::Zoom,
  }
- 
+
  impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
-@@ -134,6 +131,9 @@
+@@ -134,6 +131,9 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
          window.set_ime_allowed(true);
- 
+
          let size = window.inner_size();
 +        window.set_title(&self.editor.window_title());
 +        self.editor
 +            .resize(size.width, size.height, window.scale_factor());
- 
+
          // Create a vello Surface
          let surface_future = {
-@@ -159,6 +159,8 @@
+@@ -159,6 +159,8 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
                  .create_render_surface(surface, size.width, size.height, present_mode)
          };
          let surface = pollster::block_on(surface_future).expect("Error creating surface");
 +        let pixel_blitter =
 +            zoom::PixelBlitter::new(&self.context.devices[surface.dev_id].device, surface.format);
- 
+
          // Create a vello Renderer for the surface (using its device id)
          self.renderers
-@@ -173,6 +175,7 @@
+@@ -173,6 +175,7 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
              access_adapter,
              window,
              sent_initial_access_update: false,
 +            pixel_blitter,
          });
- 
+
          event_loop.set_control_flow(ControlFlow::Wait);
-@@ -197,7 +200,7 @@
+@@ -197,7 +200,7 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
                  self.editor.cursor_blink();
- 
+
                  if let Some(next_time) = self.editor.next_blink_time() {
 -                    self.last_drawn_generation = text::Generation::default();
 +                    self.last_drawn_generation = 0;
                      if let RenderState::Active(state) = &self.state {
                          state.window.request_redraw();
                      }
-@@ -233,7 +236,20 @@
+@@ -233,7 +236,22 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
              .access_adapter
              .process_event(&render_state.window, &event);
- 
+
 -        if !matches!(
 +        let size = render_state.window.inner_size();
-+        if self.zoom.event(&event, [size.width, size.height]) {
++        let editing_color_key = self.editor.editing_color()
++            && matches!(event, WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_));
++        if !editing_color_key && self.zoom.event(&event, [size.width, size.height]) {
 +            render_state.window.set_title(&format!(
 +                "Pixels {}x | {}",
 +                self.zoom.factor,
@@ -132,7 +134,7 @@
              event,
              WindowEvent::KeyboardInput {
                  is_synthetic: true,
-@@ -247,6 +263,11 @@
+@@ -247,9 +265,19 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
                  match wet {
                      WindowEventTranslation::Keyboard(k) => {
                          self.editor.handle_keyboard_event(&k);
@@ -144,8 +146,16 @@
                      }
                      WindowEventTranslation::Pointer(p) => {
                          self.editor.handle_pointer_event(&p);
-@@ -259,17 +280,14 @@
- 
++                        render_state.window.set_title(&format!(
++                            "Pixels {}x | {}",
++                            self.zoom.factor,
++                            self.editor.window_title()
++                        ));
+                     }
+                 }
+             } else {
+@@ -259,17 +287,14 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
+
          if self.last_drawn_generation != self.editor.generation() {
              render_state.window.request_redraw();
 -            let area = self.editor.editor().ime_cursor_area();
@@ -164,7 +174,7 @@
                      PhysicalSize::new(area.width(), area.height()),
                  );
              }
-@@ -286,9 +304,14 @@
+@@ -286,9 +311,14 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
              WindowEvent::Resized(size) => {
                  self.context
                      .resize_surface(&mut render_state.surface, size.width, size.height);
@@ -181,8 +191,8 @@
 +                self.editor.resize(size.width, size.height, scale_factor);
                  render_state.window.request_redraw();
              }
- 
-@@ -296,7 +319,7 @@
+
+@@ -296,7 +326,7 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
              WindowEvent::Focused(false) => {
                  self.editor.disable_blink();
                  self.editor.cursor_blink();
@@ -191,7 +201,7 @@
                  if let RenderState::Active(state) = &self.state {
                      state.window.request_redraw();
                  }
-@@ -338,10 +361,14 @@
+@@ -338,10 +368,14 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
                          &self.scene,
                          &surface.target_view,
                          &vello::RenderParams {
@@ -208,7 +218,7 @@
                          },
                      )
                      .expect("failed to render to surface");
-@@ -359,14 +386,27 @@
+@@ -359,14 +393,27 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
                          .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                              label: Some("Surface Blit"),
                          });
@@ -244,7 +254,7 @@
                  device_handle.queue.submit([encoder.finish()]);
                  // Queue the texture to be presented on the surface.
                  surface_texture.present();
-@@ -388,11 +428,9 @@
+@@ -388,11 +435,9 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
                  render_state.access_update(&mut self.editor);
              }
              accesskit_winit::WindowEvent::ActionRequested(req) => {
@@ -259,12 +269,13 @@
                  }
              }
              accesskit_winit::WindowEvent::AccessibilityDeactivated => {
-@@ -403,6 +441,52 @@
+@@ -403,6 +448,61 @@ impl ApplicationHandler<accesskit_winit::Event> for SimpleVelloApp<'_> {
  }
- 
+
  fn main() -> Result<()> {
 +    let args: Vec<_> = std::env::args().skip(1).collect();
 +    let mut font_index = 0;
++    let mut text_color = None;
 +    let mut directory =
 +        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/fonts");
 +    let mut font_report = false;
@@ -273,6 +284,11 @@
 +    for arg in args {
 +        if let Some(name) = arg.strip_prefix("--font=") {
 +            font_index = fonts::find(name)?;
++        } else if let Some(value) = arg
++            .strip_prefix("--color=")
++            .or_else(|| arg.strip_prefix("--font-color="))
++        {
++            text_color = Some(quiet::parse_hex_color(value)?);
 +        } else if let Some(path) = arg.strip_prefix("--fonts-dir=") {
 +            directory = path.into();
 +        } else if arg == "--font-report" {
@@ -308,11 +324,14 @@
 +    }
 +    let mut editor = quiet::Page::new(&font_context);
 +    editor.set_font(font_index);
++    if let Some(rgb) = text_color {
++        editor.set_text_color(rgb);
++    }
 +    editor.coverage = coverage;
      // Create a winit event loop:
      let event_loop = EventLoop::with_user_event().build()?;
- 
-@@ -412,26 +496,25 @@
+
+@@ -412,26 +512,25 @@ fn main() -> Result<()> {
          renderers: vec![],
          state: RenderState::Suspended(None),
          scene: Scene::new(),
@@ -325,7 +344,7 @@
          event_reducer: WindowEventReducer::default(),
 +        zoom: zoom::Zoom::default(),
      };
- 
+
      // Run the winit event loop
      event_loop
          .run_app(&mut app)
@@ -334,7 +353,7 @@
 -    print!("{text}");
      Ok(())
  }
- 
+
  /// Helper function that creates a Winit window and returns it (wrapped in an Arc for sharing between threads)
  fn create_winit_window(event_loop: &ActiveEventLoop) -> Arc<Window> {
      let attr = Window::default_attributes()
@@ -345,8 +364,8 @@
          .with_visible(false);
 --- a/text.rs
 +++ b/text.rs
-@@ -8,9 +8,8 @@
- 
+@@ -8,9 +8,8 @@ use web_time::Instant;
+
  use accesskit::{Node, TextDecoration, TextDecorationStyle, TreeUpdate};
  use core::default::Default;
 -use parley::editing::SplitString;
@@ -356,16 +375,16 @@
  use std::time::Duration;
  use ui_events::pointer::PointerButton;
  use ui_events::{
-@@ -30,7 +29,7 @@
- 
+@@ -30,7 +29,7 @@ use parley::{FontContext, LayoutContext, PlainEditor, PlainEditorDriver};
+
  use crate::access_ids::next_node_id;
- 
+
 -pub const BACKGROUND_COLOR: AlphaColor<Srgb> = palette::css::STEEL_BLUE;
 +pub const BACKGROUND_COLOR: AlphaColor<Srgb> = palette::css::WHITE;
  pub const INSET: f32 = 32.0;
- 
+
  pub struct Editor {
-@@ -40,6 +39,10 @@
+@@ -40,6 +39,11 @@ pub struct Editor {
      cursor_visible: bool,
      start_time: Option<Instant>,
      blink_period: Duration,
@@ -373,12 +392,13 @@
 +    pub scale: f64,
 +    pub hint: bool,
 +    font_stack: &'static str,
++    color: AlphaColor<Srgb>,
  }
- 
+
  fn convert_rect(rect: &parley::BoundingBox) -> peniko::kurbo::Rect {
-@@ -83,21 +86,30 @@
+@@ -83,21 +87,31 @@ fn set_accesskit_brush_properties(node: &mut Node, style: &Style<Brush>) {
  }
- 
+
  impl Editor {
 -    pub fn new(text: &str) -> Self {
 -        let mut editor = PlainEditor::new(32.0);
@@ -410,13 +430,14 @@
 +            scale: 1.0,
 +            hint: true,
 +            font_stack: crate::fonts::CHOICES[0].stack,
++            color: AlphaColor::from_rgb8(31, 35, 41),
          }
      }
- 
-@@ -109,8 +121,85 @@
+
+@@ -109,8 +123,103 @@ impl Editor {
          &mut self.editor
      }
- 
+
 -    pub fn text(&self) -> SplitString<'_> {
 -        self.editor.text()
 +    pub fn configure(&mut self, size: f32, line: f32, weight: f32) {
@@ -445,6 +466,24 @@
 +        self.editor
 +            .edit_styles()
 +            .insert(parley::FontFamily::Source(stack.into()).into());
++    }
++
++    pub fn set_color(&mut self, color: AlphaColor<Srgb>) {
++        self.color = color;
++        self.editor
++            .edit_styles()
++            .insert(StyleProperty::Brush(color.into()));
++    }
++
++    pub fn raw_text_len(&self) -> usize {
++        self.editor.raw_text().len()
++    }
++
++    pub fn insert_text(&mut self, text: &str) {
++        self.cursor_reset();
++        self.editor
++            .driver(&mut self.font_cx, &mut self.layout_cx)
++            .insert_or_replace_selection(text);
 +    }
 +
 +    pub fn font_report(&mut self) -> String {
@@ -499,9 +538,9 @@
 +            self.hint,
 +        );
      }
- 
+
      pub fn cursor_reset(&mut self) {
-@@ -304,8 +393,8 @@
+@@ -304,8 +413,8 @@ impl Editor {
                  self.cursor_reset();
                  let mut drv = self.editor.driver(&mut self.font_cx, &mut self.layout_cx);
                  let cursor_pos = (
@@ -512,7 +551,7 @@
                  );
                  match state.count {
                      2 => drv.select_word_at_point(cursor_pos.0, cursor_pos.1),
-@@ -323,8 +412,8 @@
+@@ -323,8 +432,8 @@ impl Editor {
                  if pressed(&u.pointer, &u.current) && !self.editor.is_composing() =>
              {
                  let cursor_pos = (
@@ -523,8 +562,8 @@
                  );
                  self.cursor_reset();
                  self.driver()
-@@ -336,10 +425,6 @@
- 
+@@ -336,10 +445,6 @@ impl Editor {
+
      pub fn handle_event(&mut self, event: WindowEvent) {
          match event {
 -            WindowEvent::Resized(size) => {
@@ -534,10 +573,10 @@
              WindowEvent::Ime(Ime::Disabled) => {
                  self.driver().clear_compose();
              }
-@@ -365,21 +450,17 @@
+@@ -365,21 +470,17 @@ impl Editor {
          }
      }
- 
+
 -    /// Return the current `Generation` of the layout.
 -    pub fn generation(&self) -> Generation {
 -        self.editor.generation()
@@ -559,12 +598,12 @@
                  None,
                  &convert_rect(&rect),
              );
-@@ -389,112 +470,14 @@
+@@ -389,128 +490,132 @@ impl Editor {
                  scene.fill(
                      Fill::NonZero,
                      transform,
 -                    palette::css::WHITE,
-+                    AlphaColor::from_rgb8(31, 35, 41),
++                    self.color,
                      None,
                      &convert_rect(&cursor),
                  );
@@ -673,8 +712,13 @@
 +        paint_layout(scene, layout, transform, self.hint);
          self.editor.generation()
      }
- 
-@@ -504,13 +487,112 @@
+
+     pub fn accessibility(&mut self, update: &mut TreeUpdate, node: &mut Node) {
++        if self.editor.raw_text().len() > u16::MAX as usize {
++            return;
++        }
+         let mut drv = self.editor.driver(&mut self.font_cx, &mut self.layout_cx);
+         drv.accessibility(
              update,
              node,
              next_node_id,
@@ -686,10 +730,8 @@
          );
      }
  }
- 
+
 -pub const LOREM: &str = r" Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi cursus mi sed euismod euismod. Orci varius natoque penatibus et magnis dis parturient montes, nascetur ridiculus mus. Nullam placerat efficitur tellus at semper. Morbi ac risus magna. Donec ut cursus ex. Etiam quis posuere tellus. Mauris posuere dui et turpis mollis, vitae luctus tellus consectetur. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Curabitur eu facilisis nisl.
--
--Phasellus in viverra dolor, vitae facilisis est. Maecenas malesuada massa vel ultricies feugiat. Vivamus venenatis et gהתעשייה בנושא האינטרנטa nibh nec pharetra. Phasellus vestibulum elit enim, nec scelerisque orci faucibus id. Vivamus consequat purus sit amet orci egestas, non iaculis massa porttitor. Vestibulum ut eros leo. In fermentum convallis magna in finibus. Donec justo leo, maximus ac laoreet id, volutpat ut elit. Mauris sed leo non neque laoreet faucibus. Aliquam orci arcu, faucibus in molestie eget, ornare non dui. Donec volutpat nulla in fringilla elementum. Aliquam vitae ante egestas ligula tempus vestibulum sit amet sed ante. ";
 +// The upstream example's glyph painting path, shared by document blocks and labels.
 +fn paint_layout(scene: &mut Scene, layout: &parley::Layout<Brush>, transform: Affine, hint: bool) {
 +    for line in layout.lines() {
@@ -776,7 +818,8 @@
 +                // standard strikethrough width.
 +                // Remember that we are using a y-down coordinate system
 +                let y = glyph_run.baseline() - offset + run_metrics.strikethrough_size / 2.;
-+
+
+-Phasellus in viverra dolor, vitae facilisis est. Maecenas malesuada massa vel ultricies feugiat. Vivamus venenatis et gהתעשייה בנושא האינטרנטa nibh nec pharetra. Phasellus vestibulum elit enim, nec scelerisque orci faucibus id. Vivamus consequat purus sit amet orci egestas, non iaculis massa porttitor. Vestibulum ut eros leo. In fermentum convallis magna in finibus. Donec justo leo, maximus ac laoreet id, volutpat ut elit. Mauris sed leo non neque laoreet faucibus. Aliquam orci arcu, faucibus in molestie eget, ornare non dui. Donec volutpat nulla in fringilla elementum. Aliquam vitae ante egestas ligula tempus vestibulum sit amet sed ante. ";
 +                let line = Line::new(
 +                    (glyph_run.offset() as f64, y as f64),
 +                    ((glyph_run.offset() + glyph_run.advance()) as f64, y as f64),

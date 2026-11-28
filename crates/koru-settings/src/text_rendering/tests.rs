@@ -94,6 +94,17 @@ fn invalid_parameters_are_rejected_and_bad_file_values_keep_defaults() {
             .is_err()
         );
     }
+    for value in [0.0, 0.5, 1.0, 3.0] {
+        assert!(
+            GlobalPatch {
+                text_gamma: Some(value),
+                text_gamma_dark: Some(value),
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
+    }
     for value in [f32::NAN, f32::INFINITY, -0.1, 3.1] {
         assert!(
             GlobalPatch {

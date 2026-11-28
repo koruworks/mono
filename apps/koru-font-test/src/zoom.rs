@@ -137,7 +137,8 @@ impl Zoom {
                     && !matches!(
                         code,
                         PhysicalKey::Code(
-                            KeyCode::F3
+                            KeyCode::F2
+                                | KeyCode::F3
                                 | KeyCode::F4
                                 | KeyCode::F5
                                 | KeyCode::F6

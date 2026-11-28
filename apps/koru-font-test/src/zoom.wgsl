@@ -19,7 +19,16 @@ fn fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let color = textureLoad(source, vec2<i32>(min(pixel, last)), 0);
     if settings.coverage_enabled == 0u { return color; }
     // Vello 0.8 writes straight RGBA: remap coverage, preserving ink color.
-    var coverage = pow(clamp(color.a, 0.0, 1.0), settings.gamma);
-    if color.a < settings.cutoff { coverage = 0.0; }
+    let raw = clamp(color.a, 0.0, 1.0);
+    var coverage = 0.0;
+    if raw > 0.0 && raw >= settings.cutoff {
+        if settings.gamma == 0.0 {
+            coverage = 1.0;
+        } else if settings.gamma == 1.0 {
+            coverage = raw;
+        } else {
+            coverage = pow(raw, settings.gamma);
+        }
+    }
     return vec4<f32>(mix(vec3<f32>(1.0), color.rgb, coverage), 1.0);
 }

@@ -47,7 +47,7 @@ index 76db001..ff25b04 100644
 +    /// Set coverage on solid glyphs only, without altering brush opacity,
 +    /// shapes, images, clip masks or scene ordering. Call on the final scene.
 +    pub fn set_glyph_coverage(&mut self, gamma: f32, cutoff: f32) {
-+        let gamma = if gamma.is_finite() { gamma.clamp(0.5, 3.0) } else { 1.0 };
++        let gamma = if gamma.is_finite() { gamma.clamp(0.0, 3.0) } else { 1.0 };
 +        let cutoff = if cutoff.is_finite() { cutoff.clamp(0.0, 0.5) } else { 0.0 };
 +        for run in &self.resources.glyph_runs {
 +            if self.draw_tags.get(run.stream_offsets.draw_tags) == Some(&DrawTag::GLYPH_COLOR) {

@@ -100,7 +100,7 @@ pub struct CaretSet {
 
 pub(super) static LIGHT_CARETS: CaretSet = CaretSet {
     colors: [
-        rgb(0x19, 0x19, 0x19),
+        rgb(0x00, 0x00, 0x00),
         rgb(0x25, 0x63, 0xEB),
         rgb(0xD9, 0x77, 0x06),
         rgb(0x7C, 0x3A, 0xED),
@@ -108,7 +108,7 @@ pub(super) static LIGHT_CARETS: CaretSet = CaretSet {
     // The caret's hue at about a quarter opacity over the page; the neutral
     // caret casts a neutral wash, not a leftover blue.
     selections: [
-        Color::from_rgba8(0x19, 0x19, 0x19, 0x40),
+        Color::from_rgba8(0x00, 0x00, 0x00, 0x40),
         Color::from_rgba8(0x25, 0x63, 0xEB, 0x40),
         Color::from_rgba8(0xD9, 0x77, 0x06, 0x40),
         Color::from_rgba8(0x7C, 0x3A, 0xED, 0x40),
@@ -250,11 +250,13 @@ static FIXTURE_HIGH_TABLE: Palette = FIXTURE_HIGH;
 const FIXTURE_STANDARD: Palette = Palette {
     bg: sepia(LIGHT_TABLE.bg),
     canvas: sepia(LIGHT_TABLE.canvas),
-    text: sepia(LIGHT_TABLE.text),
+    // Pure black stays #000000 under multiplicative tinting; keep a distinct
+    // warm/cool dark ink in the test fixture so contrast/theme checks hold.
+    text: sepia(rgb(0x19, 0x19, 0x19)),
     text_dim: sepia(LIGHT_TABLE.text_dim),
     placeholder: sepia(LIGHT_TABLE.placeholder),
     selection: sepia(LIGHT_TABLE.selection),
-    caret: sepia(LIGHT_TABLE.caret),
+    caret: sepia(rgb(0x19, 0x19, 0x19)),
     checkbox: sepia(LIGHT_TABLE.checkbox),
     checkbox_done: sepia(LIGHT_TABLE.checkbox_done),
     checkbox_mark: sepia(LIGHT_TABLE.checkbox_mark),
@@ -305,11 +307,11 @@ const FIXTURE_STANDARD: Palette = Palette {
 const FIXTURE_HIGH: Palette = Palette {
     bg: slate(LIGHT_TABLE.bg),
     canvas: slate(LIGHT_TABLE.canvas),
-    text: slate(LIGHT_TABLE.text),
+    text: slate(rgb(0x19, 0x19, 0x19)),
     text_dim: slate(LIGHT_TABLE.text_dim),
     placeholder: slate(LIGHT_TABLE.placeholder),
     selection: slate(LIGHT_TABLE.selection),
-    caret: slate(LIGHT_TABLE.caret),
+    caret: slate(rgb(0x19, 0x19, 0x19)),
     checkbox: slate(LIGHT_TABLE.checkbox),
     checkbox_done: slate(LIGHT_TABLE.checkbox_done),
     checkbox_mark: slate(LIGHT_TABLE.checkbox_mark),
