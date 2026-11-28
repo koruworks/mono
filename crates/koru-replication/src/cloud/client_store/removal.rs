@@ -18,6 +18,20 @@ fn invalid() -> Failure {
     Error::Invalid.into()
 }
 
+/// An empty `LoroDoc` on this Store's own peer, for every system document
+/// this module opens or creates. A `LoroDoc` left on its random peer gave
+/// every recorded purge — and every page of them from Cloud — a fresh peer
+/// that lives forever in the document's version vector: a workspace with
+/// 1,400 purges reached 440 peers, a 4.6 KB vector, more than Cloud accepts
+/// in a request. The Store's peer is safe here: these run inside the Store
+/// owner and fork from the Store's current state (`snapshot`), so the next
+/// counter follows the Store's own and the update goes straight back into it.
+fn writer<C: Catalog, B: Backend>(store: &Store<C, B>) -> Result<loro::LoroDoc, Failure> {
+    let doc = loro::LoroDoc::new();
+    doc.set_peer_id(store.peer_id()).map_err(|_| invalid())?;
+    Ok(doc)
+}
+
 fn system_ids<C: Catalog, B: Backend>(
     store: &mut Store<C, B>,
     workspace: WorkspaceId,
@@ -46,7 +60,7 @@ pub fn load<C: Catalog, B: Backend>(
             Err(error) if error.code() == Code::DocumentNotFound => continue,
             Err(error) => return Err(error.into()),
         };
-        let content = SystemDoc::from_snapshot(&bytes).map_err(|_| invalid())?;
+        let content = SystemDoc::from_snapshot_on(writer(store)?, &bytes).map_err(|_| invalid())?;
         if content.version().is_empty() {
             continue;
         }
@@ -148,7 +162,7 @@ pub fn consume<C: Catalog, B: Backend>(
         Some(system) => system,
         None if entries.is_empty() => return Ok(()),
         None => {
-            let content = SystemDoc::create().map_err(|_| invalid())?;
+            let content = SystemDoc::create_on(writer(store)?).map_err(|_| invalid())?;
             initial = Some(content.export_snapshot().map_err(|_| invalid())?);
             System {
                 document: DocumentId::new(),
@@ -253,7 +267,7 @@ pub(super) fn purge<C: Catalog, B: Backend>(
     let mut system = match load(store, workspace)? {
         Some(system) => system,
         None => {
-            let content = SystemDoc::create().map_err(|_| invalid())?;
+            let content = SystemDoc::create_on(writer(store)?).map_err(|_| invalid())?;
             let snapshot = content.export_snapshot().map_err(|_| invalid())?;
             let (document, _) = store.import_document(
                 workspace,

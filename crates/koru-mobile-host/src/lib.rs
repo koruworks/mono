@@ -5751,6 +5751,49 @@ mod tests {
         pair
     }
 
+    /// Every purge used to commit on a fresh random Loro peer, so the system
+    /// document's version vector grew by one peer per deletion until Cloud
+    /// refused to answer for it. Deleting more must add no peer but the Store's.
+    #[test]
+    fn mobile_permanent_deletes_write_the_system_document_on_the_store_peer() {
+        let directory = tempfile::tempdir().unwrap();
+        let host =
+            MobileHost::open(directory.path().to_path_buf(), [83; 64], "Test", true).unwrap();
+        let (workspace, first) = document_removal_fixture(&host);
+        let more = with_test_store(&host, move |store| {
+            (0..3)
+                .map(|n| {
+                    let model =
+                        koru_core::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "Document")
+                            .unwrap();
+                    store
+                        .import_document(
+                            workspace,
+                            &format!("More {n}"),
+                            koru_core::explore::KIND_DOCUMENT,
+                            None,
+                            model.export_snapshot().unwrap(),
+                            Timestamp::from_millis(10 + n),
+                        )
+                        .unwrap()
+                        .0
+                })
+                .collect::<Vec<_>>()
+        });
+        for document in std::iter::once(first).chain(more) {
+            host.mutate_document(&document.to_storage(), "delete_permanently", "")
+                .unwrap();
+        }
+        with_test_store(&host, move |store| {
+            let system = koru_replication::cloud::client_store::removal::load(store, workspace)
+                .unwrap()
+                .unwrap();
+            assert_eq!(system.content.purge_events().unwrap().len(), 4);
+            let peers: Vec<u64> = system.content.version().iter().map(|(p, _)| *p).collect();
+            assert_eq!(peers, vec![store.peer_id()], "four purges, one writer");
+        });
+    }
+
     #[test]
     fn mobile_permanent_delete_persists_coverage_before_releasing_source() {
         let directory = tempfile::tempdir().unwrap();
